@@ -15,8 +15,8 @@ The self-collision system is organized into several distinct layers:
 The system is highly configurable via the `self_collision_mujoco` dictionary in the robot's parameter files (e.g., `stretch4_body/robot/robot_params_SE4.py`). These parameters dictate what is checked and how sensitive the system is:
 
 *   **`k_brake_distance`:** The system doesn't just check the robot's exact current position; it checks a "virtual" position slightly ahead of the robot based on its current velocity and braking capabilities. The `k_brake_distance` parameter (e.g., `{'lift': 1.1, 'arm': 1.1}`) acts as a multiplier. A value of 1.1 means the system pads the joint's position by 110% of its required braking distance, ensuring the robot stops *before* making contact.
-*   **`ignore_links`:** A list of URDF link names (e.g., `link_wheel_0`, `link_camera_center`) that will be completely ignored by the collision engine. Their collision properties are disabled internally to save computation time and ignore benign hardware.
-*   **`exclusions`:** A list of link pairs (e.g., `["link_head", "link_lift"]`). These specific pairs are allowed to intersect or touch without triggering a collision event. This is necessary because many adjacent links in a URDF naturally overlap at their joints during normal operation.
+*   **`ignore_links`:** A list of URDF link names (e.g., `wheel_0_link`, `camera_center_link`) that will be completely ignored by the collision engine. Their collision properties are disabled internally to save computation time and ignore benign hardware.
+*   **`exclusions`:** A list of link pairs (e.g., `["head_link", "lift_link"]`). These specific pairs are allowed to intersect or touch without triggering a collision event. This is necessary because many adjacent links in a URDF naturally overlap at their joints during normal operation.
 
 ## 3. Flow of Control
 

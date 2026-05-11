@@ -314,21 +314,21 @@ if __name__ == "__main__":
     # Create joint states (arm segments share the same extension)
     arm_per_segment = args.arm / 4.0  # Total arm divided by 4 segments
     joint_states = MujocoJointStates(
-        joint_lift=args.lift,
-        joint_arm_l0=arm_per_segment,
-        joint_arm_l1=arm_per_segment,
-        joint_arm_l2=arm_per_segment,
-        joint_arm_l3=arm_per_segment,
-        joint_wrist_yaw=args.wrist_yaw,
-        joint_wrist_pitch=args.wrist_pitch,
-        joint_wrist_roll=args.wrist_roll,
-        joint_gripper_slide=0.0,
-        joint_gripper_finger_left=0.0,
-        joint_gripper_finger_right=0.0,
+        lift_joint=args.lift,
+        arm_l0_joint=arm_per_segment,
+        arm_l1_joint=arm_per_segment,
+        arm_l2_joint=arm_per_segment,
+        arm_l3_joint=arm_per_segment,
+        wrist_yaw_joint=args.wrist_yaw,
+        wrist_pitch_joint=args.wrist_pitch,
+        wrist_roll_joint=args.wrist_roll,
+        gripper_slide_joint=0.0,
+        gripper_finger_left_joint=0.0,
+        gripper_finger_right_joint=0.0,
     )
 
     joint_states = MujocoJointStates.from_urdf_joint_state(
-      {'joint_lift': 0.42120704119986957, 'joint_arm_l0': 0.0008689873049044256, 'joint_arm_l1': 0.0008689873049044256, 'joint_arm_l2': 0.0008689873049044256, 'joint_arm_l3': 0.0008689873049044256, 'joint_wrist_yaw': 1.4035924209153616, 'joint_wrist_pitch': 2.8723790253158628, 'joint_wrist_roll': -3.0833013836501384, 'gripper': 0.48013598660820567}
+      {'lift_joint': 0.42120704119986957, 'arm_l0_joint': 0.0008689873049044256, 'arm_l1_joint': 0.0008689873049044256, 'arm_l2_joint': 0.0008689873049044256, 'arm_l3_joint': 0.0008689873049044256, 'wrist_yaw_joint': 1.4035924209153616, 'wrist_pitch_joint': 2.8723790253158628, 'wrist_roll_joint': -3.0833013836501384, 'gripper': 0.48013598660820567}
     )
 
 

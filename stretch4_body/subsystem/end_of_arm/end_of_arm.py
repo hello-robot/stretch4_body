@@ -244,8 +244,8 @@ class EndOfArm(FeetechSMChain):
     #                 if 'gripper' in j:
     #                     dx = self.params['collision_mgmt']['k_brake_distance'][j]
     #         finger_angle = self.get_joint(gripper_joint).status['gripper_conversion']['finger_rad'] + dx
-    #         ret['joint_gripper_finger_left'] = finger_angle/2
-    #         ret['joint_gripper_finger_right'] = finger_angle/2
+    #         ret['gripper_finger_left_joint'] = finger_angle/2
+    #         ret['gripper_finger_right_joint'] = finger_angle/2
     #
     #     return ret
     

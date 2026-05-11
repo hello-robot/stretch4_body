@@ -21,21 +21,21 @@ from stretch4_body.utils.file_access_utils import (acquire_lock_if_available,
 class MujocoJointStates:
     """Represent joint states in Mujoco convention
     Facilitate conversion to/from URDF convention"""
-    joint_lift: float
-    joint_arm_l0: float
-    joint_arm_l1: float
-    joint_arm_l2: float
-    joint_arm_l3: float
+    lift_joint: float
+    arm_l0_joint: float
+    arm_l1_joint: float
+    arm_l2_joint: float
+    arm_l3_joint: float
 
-    joint_wrist_yaw: float
-    joint_wrist_pitch: float
-    joint_wrist_roll: float
+    wrist_yaw_joint: float
+    wrist_pitch_joint: float
+    wrist_roll_joint: float
 
-    joint_gripper_slide: float = 0.0
-    joint_gripper_finger_left: float = 0.0
-    joint_gripper_finger_right: float = 0.0
-    joint_finger_left: float = 0.0
-    joint_finger_right: float = 0.0
+    gripper_slide_joint: float = 0.0
+    gripper_finger_left_joint: float = 0.0
+    gripper_finger_right_joint: float = 0.0
+    finger_left_joint: float = 0.0
+    finger_right_joint: float = 0.0
 
 
     def to_dict(self) -> dict[str, float]:
@@ -54,10 +54,10 @@ class MujocoJointStates:
         """
         Take in urdf joint state and convert to mujoco joint state convention
         eg state =
-        {'joint_lift': 0.11316090153133451, 'joint_arm_l0': 0.0014814796174020114,
-        'joint_arm_l1': 0.0014814796174020114, 'joint_arm_l2': 0.0014814796174020114,
-        'joint_arm_l3': 0.0014814796174020114, 'joint_wrist_yaw': 0.06366020269725411,
-        'joint_wrist_pitch': 0.12425244381873693, 'joint_wrist_roll': 0.07363107781851078}
+        {'lift_joint': 0.11316090153133451, 'arm_l0_joint': 0.0014814796174020114,
+        'arm_l1_joint': 0.0014814796174020114, 'arm_l2_joint': 0.0014814796174020114,
+        'arm_l3_joint': 0.0014814796174020114, 'wrist_yaw_joint': 0.06366020269725411,
+        'wrist_pitch_joint': 0.12425244381873693, 'wrist_roll_joint': 0.07363107781851078}
 
         """
         if robot_params is None:
@@ -69,28 +69,26 @@ class MujocoJointStates:
         jfl = 0.0
         jfr = 0.0
         if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
-            jgfl = state.get("joint_gripper_finger_left")
-            jgfr = state.get("joint_gripper_finger_right")
+            jgfl = state.get("gripper_finger_left_joint")
+            jgfr = state.get("gripper_finger_right_joint")
         elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
-            jfl = state.get("joint_finger_left")
-            jfr = state.get("joint_finger_right")
+            jfl = state.get("finger_left_joint")
+            jfr = state.get("finger_right_joint")
 
         mujoco_state = MujocoJointStates(
-            joint_lift=state.get("joint_lift", 0.0),
-            joint_arm_l0=state.get("joint_arm_l0", 0.0),
-            joint_arm_l1=state.get("joint_arm_l1", 0.0),
-            joint_arm_l2=state.get("joint_arm_l2", 0.0),
-            joint_arm_l3=state.get("joint_arm_l3", 0.0),
-            joint_wrist_yaw=state.get("joint_wrist_yaw", 0.0),
-            joint_wrist_pitch=state.get("joint_wrist_pitch", 0.0), #+math.radians(-45.0),#
-            # Temporary pitch inversion until the URDF is changed to match stretch4_body joints
-            joint_wrist_roll=state.get("joint_wrist_roll", 0.0), #+math.radians(-45.0)
-            # Temporary pitch inversion until the URDF is changed to match stretch4_body joints
-            joint_gripper_slide=0.0,  # state.get("joint_gripper_slide", 0.0),
-            joint_gripper_finger_left=jgfl,
-            joint_gripper_finger_right=jgfr,
-            joint_finger_left=jfl,
-            joint_finger_right=jfr,
+            lift_joint=state.get("lift_joint", 0.0),
+            arm_l0_joint=state.get("arm_l0_joint", 0.0),
+            arm_l1_joint=state.get("arm_l1_joint", 0.0),
+            arm_l2_joint=state.get("arm_l2_joint", 0.0),
+            arm_l3_joint=state.get("arm_l3_joint", 0.0),
+            wrist_yaw_joint=state.get("wrist_yaw_joint", 0.0),
+            wrist_pitch_joint=state.get("wrist_pitch_joint", 0.0),
+            wrist_roll_joint=state.get("wrist_roll_joint", 0.0),
+            gripper_slide_joint=0.0,
+            gripper_finger_left_joint=jgfl,
+            gripper_finger_right_joint=jgfr,
+            finger_left_joint=jfl,
+            finger_right_joint=jfr,
         )
         return mujoco_state
 
@@ -243,7 +241,7 @@ class MujocoURDFCollisionViz(Device):
     def update(self, urdf_joint_state, contact_dict=None):
         """
         urdf_joint_state: dict of joint positions matching urdf joint state convention
-             (e.g. {'joint_lift': 0.5, ...})
+             (e.g. {'lift_joint': 0.5, ...})
         contact_dict: dict of collisions, e.g. {'link_a': ['link_b'], ...}
                       Links in this dict will be highlighted red.
         """
@@ -304,17 +302,17 @@ if __name__ == "__main__":
             
             # Simulate some motion
             val = {
-                'joint_lift': 0.5 + 0.3 * math.sin(t),
-                'joint_arm_l0': 0.1, # Just base
+                'lift_joint': 0.5 + 0.3 * math.sin(t),
+                'arm_l0_joint': 0.1, # Just base
                 # Other arm joints will be zeroed if not set or handled by from_urdf_joint_state defaults
-                'joint_wrist_yaw': math.cos(t),
+                'wrist_yaw_joint': math.cos(t),
                 'gripper': 0.0
             }
             
             # Simulate collisions periodically
             collisions = {}
             if (int(t) % 2) == 0:
-                collisions = {'link_lift': ['link_base'], 'link_head': ['link_mast']} # Dummy names
+                collisions = {'lift_link': ['base_link'], 'head_link': ['mast_link']} # Dummy names
             
             viz.update(val, collisions)
             time.sleep(0.01)

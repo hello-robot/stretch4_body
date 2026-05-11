@@ -80,32 +80,32 @@ class ControlMapping(Enum):
             # Wrist Yaw Control
             if gamepad_teleop.controller_state['right_shoulder_button_pressed']:
                 gamepad_teleop.wrist_yaw_command.command_button_to_motion(-1,robot)
-                actuated_joints['joint_wrist_yaw'] = -1
+                actuated_joints['wrist_yaw_joint'] = -1
 
             elif gamepad_teleop.controller_state['left_shoulder_button_pressed']:
                 gamepad_teleop.wrist_yaw_command.command_button_to_motion(1,robot)
-                actuated_joints['joint_wrist_yaw'] = 1
+                actuated_joints['wrist_yaw_joint'] = 1
             else:
                 if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                     gamepad_teleop.wrist_yaw_command.stop_motion(robot)
             if gamepad_teleop.controller_state['top_pad_pressed']:
                 cmd = 1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else -1
                 gamepad_teleop.wrist_pitch_command.command_button_to_motion(cmd,robot)
-                actuated_joints['joint_wrist_pitch'] = cmd
+                actuated_joints['wrist_pitch_joint'] = cmd
             elif gamepad_teleop.controller_state['bottom_pad_pressed']:
                 cmd = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else 1
                 gamepad_teleop.wrist_pitch_command.command_button_to_motion(cmd, robot)
-                actuated_joints['joint_wrist_pitch'] = cmd
+                actuated_joints['wrist_pitch_joint'] = cmd
             else:
                 if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                     gamepad_teleop.wrist_pitch_command.stop_motion(robot)
 
             if gamepad_teleop.controller_state['left_pad_pressed']:
                 gamepad_teleop.wrist_roll_command.command_button_to_motion(1,robot)
-                actuated_joints['joint_wrist_roll'] = 1
+                actuated_joints['wrist_roll_joint'] = 1
             elif gamepad_teleop.controller_state['right_pad_pressed']:
                 gamepad_teleop.wrist_roll_command.command_button_to_motion(-1,robot)
-                actuated_joints['joint_wrist_roll'] = -1
+                actuated_joints['wrist_roll_joint'] = -1
             else:
                 if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                     gamepad_teleop.wrist_roll_command.stop_motion(robot)
@@ -182,22 +182,22 @@ class ControlMapping(Enum):
             # Wrist Yaw Control
             if abs(right_stick_x) > 0.1:
                 gamepad_teleop.wrist_yaw_command.command_stick_to_motion(-right_stick_x, robot)
-                actuated_joints['joint_wrist_yaw'] = -right_stick_x
+                actuated_joints['wrist_yaw_joint'] = -right_stick_x
 
             # Wrist Pitch Control
             if abs(right_stick_y) > 0.1:
                 handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
                 cmd = handedness_inversion * right_stick_y
                 gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd, robot)
-                actuated_joints['joint_wrist_pitch'] = right_stick_y
+                actuated_joints['wrist_pitch_joint'] = right_stick_y
 
             # Wrist Roll Control
             if gamepad_teleop.controller_state['left_pad_pressed']:
                 gamepad_teleop.wrist_roll_command.command_button_to_motion(1,robot)
-                actuated_joints['joint_wrist_roll'] = 1
+                actuated_joints['wrist_roll_joint'] = 1
             elif gamepad_teleop.controller_state['right_pad_pressed']:
                 gamepad_teleop.wrist_roll_command.command_button_to_motion(-1,robot)
-                actuated_joints['joint_wrist_roll'] = -1
+                actuated_joints['wrist_roll_joint'] = -1
             else:
                 if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                     gamepad_teleop.wrist_roll_command.stop_motion(robot)

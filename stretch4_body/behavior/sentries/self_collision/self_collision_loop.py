@@ -141,28 +141,28 @@ class SelfCollisionLoop(Device):
         if 'arm' in kbd:
             da = kbd['arm'] * s['arm']['braking_distance'] / 4.0
             configuration = {
-                'joint_arm_l0': da + s['arm']['pos'] / 4.0,
-                'joint_arm_l1': da + s['arm']['pos'] / 4.0,
-                'joint_arm_l2': da + s['arm']['pos'] / 4.0,
-                'joint_arm_l3': da + s['arm']['pos'] / 4.0
+                'arm_l0_joint': da + s['arm']['pos'] / 4.0,
+                'arm_l1_joint': da + s['arm']['pos'] / 4.0,
+                'arm_l2_joint': da + s['arm']['pos'] / 4.0,
+                'arm_l3_joint': da + s['arm']['pos'] / 4.0
             }
-        configuration['joint_lift'] = dl + s['lift']['pos']
+        configuration['lift_joint'] = dl + s['lift']['pos']
 
         if 'end_of_arm' in s:
             dwy = kbd['wrist_yaw'] * s['end_of_arm']['wrist_yaw']['braking_distance']
             dwp = kbd['wrist_pitch'] * s['end_of_arm']['wrist_pitch']['braking_distance']
             dwr = kbd['wrist_roll'] * s['end_of_arm']['wrist_roll']['braking_distance']
-            configuration['joint_wrist_yaw']=s['end_of_arm']['wrist_yaw']['pos']+dwy
-            configuration['joint_wrist_pitch'] = s['end_of_arm']['wrist_pitch']['pos']+dwp
-            configuration['joint_wrist_roll'] = s['end_of_arm']['wrist_roll']['pos']+dwr
+            configuration['wrist_yaw_joint']=s['end_of_arm']['wrist_yaw']['pos']+dwy
+            configuration['wrist_pitch_joint'] = s['end_of_arm']['wrist_pitch']['pos']+dwp
+            configuration['wrist_roll_joint'] = s['end_of_arm']['wrist_roll']['pos']+dwr
             if d.robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
                 #print('SelfCollisionLoop Gripper Conversion',robot_status['end_of_arm']['stretch_gripper']['gripper_conversion'])
-                configuration['joint_gripper_finger_left'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
-                configuration['joint_gripper_finger_right'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
-                #configuration['joint_stretch_gripper'] = self.robot.end_of_arm.status['stretch_gripper']['pos']
+                configuration['gripper_finger_left_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
+                configuration['gripper_finger_right_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
+                #configuration['stretch_gripper_joint'] = self.robot.end_of_arm.status['stretch_gripper']['pos']
             elif d.robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
-                configuration['joint_finger_left'] = robot_status['end_of_arm']['parallel_gripper']['pos']
-                configuration['joint_finger_right'] = robot_status['end_of_arm']['parallel_gripper']['pos']
+                configuration['finger_left_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
+                configuration['finger_right_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
 
         return configuration
 
@@ -180,16 +180,16 @@ if __name__ == "__main__":
             qq=0.5*math.cos(math.pi*2*tn)+0.5#goes from 0 to 1 oscillating
             q[jn]=jrange[jn][0]+qq*(jrange[jn][1]-jrange[jn][0]) #oscillated across range of motion
 
-        joint_cfg2={'joint_lift': q['lift'], 'joint_arm_l0': q['arm']/4,
-         'joint_arm_l1': q['arm']/4, 'joint_arm_l2': q['arm']/4,
-         'joint_arm_l3': q['arm']/4, 'joint_wrist_yaw': q['wrist_yaw'],
-         'joint_wrist_pitch': q['wrist_roll'], 'joint_wrist_roll': q['wrist_pitch'],
+        joint_cfg2={'lift_joint': q['lift'], 'arm_l0_joint': q['arm']/4,
+         'arm_l1_joint': q['arm']/4, 'arm_l2_joint': q['arm']/4,
+         'arm_l3_joint': q['arm']/4, 'wrist_yaw_joint': q['wrist_yaw'],
+         'wrist_pitch_joint': q['wrist_roll'], 'wrist_roll_joint': q['wrist_pitch'],
          'gripper': 0.0}
 
-        joint_cfg={'joint_lift': q['lift'], 'joint_arm_l0': q['arm']/4,
-         'joint_arm_l1': q['arm']/4, 'joint_arm_l2': q['arm']/4,
-         'joint_arm_l3': q['arm']/4, 'joint_wrist_yaw': 0,
-         'joint_wrist_pitch': 0, 'joint_wrist_roll': 0,
+        joint_cfg={'lift_joint': q['lift'], 'arm_l0_joint': q['arm']/4,
+         'arm_l1_joint': q['arm']/4, 'arm_l2_joint': q['arm']/4,
+         'arm_l3_joint': q['arm']/4, 'wrist_yaw_joint': 0,
+         'wrist_pitch_joint': 0, 'wrist_roll_joint': 0,
          'gripper': 0.0}
 
         return joint_cfg
