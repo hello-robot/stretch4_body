@@ -1,0 +1,3 @@
+[submodule "stretch4_body/core/transport/cpp/readerwriterqueue"]
+	path = stretch4_body/core/transport/cpp/readerwriterqueue
+	url = https://github.com/cameron314/readerwriterqueue

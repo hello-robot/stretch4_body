@@ -1,0 +1,128 @@
+[build-system]
+build-backend = "build_backend" # custom mesonpy that uses local ninja (no build isolation)
+backend-path = ["."]
+requires = ["meson-python", "ninja"]
+
+[project]
+name = "hello-robot-stretch4-body"
+dynamic = ["version"]
+description = "Stretch Body low level Python API for Stretch 4 hardware"
+authors = [
+    { name="Hello Robot Inc.", email="support@hello-robot.com" }
+]
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=2.0.0",
+    "scipy",
+    "matplotlib>=3.8",
+    "ipython",
+    "evdev",
+    "drawnow",
+    "click",
+    "cma",
+    "colorama",
+    "open3d",
+    "psutil",
+    "opencv-contrib-python",
+    "aioserial",
+    "pyserial",
+    "pyusb",
+    "python-xlib",
+    "hello-robot-stretch4-urdf>=2026.5.12",
+    "pygame",
+    "fpdf2",
+    "sshkeyboard",
+    "mujoco",
+    "rerun-sdk>=0.28.1",
+    "depthai==3.1.0",
+    "meson",
+    "ninja",
+    "pyzmq",
+]
+
+[project.optional-dependencies]
+calibration = [
+    "hello-robot-stretch4-animate",
+]
+
+[project.urls]
+Homepage = "https://github.com/hello-robot/stretch4_body"
+
+[project.scripts]
+stretch_configure_tool = "stretch4_body._cli_wrapper:stretch_configure_tool"
+stretch_robot_rates = "stretch4_body._cli_wrapper:stretch_robot_rates"
+stretch_robot_stow = "stretch4_body._cli_wrapper:stretch_robot_stow"
+stretch_robot_home = "stretch4_body._cli_wrapper:stretch_robot_home"
+stretch_audio_test = "stretch4_body._cli_wrapper:stretch_audio_test"
+stretch_arm_home = "stretch4_body._cli_wrapper:stretch_arm_home"
+stretch_gripper_home = "stretch4_body._cli_wrapper:stretch_gripper_home"
+stretch_line_sensor_viz_3d = "stretch4_body._cli_wrapper:stretch_line_sensor_viz_3d"
+stretch_power_periph_scope = "stretch4_body._cli_wrapper:stretch_power_periph_scope"
+stretch_feetech_monitor = "stretch4_body._cli_wrapper:stretch_feetech_monitor"
+stretch_dex_wrist_jog = "stretch4_body._cli_wrapper:stretch_dex_wrist_jog"
+stretch_feetech_reboot = "stretch4_body._cli_wrapper:stretch_feetech_reboot"
+stretch_wrist_pitch_home = "stretch4_body._cli_wrapper:stretch_wrist_pitch_home"
+stretch_wrist_roll_home = "stretch4_body._cli_wrapper:stretch_wrist_roll_home"
+stretch_lift_jog = "stretch4_body._cli_wrapper:stretch_lift_jog"
+stretch_battery_check = "stretch4_body._cli_wrapper:stretch_battery_check"
+stretch_about = "stretch4_body._cli_wrapper:stretch_about"
+stretch_wrist_yaw_home = "stretch4_body._cli_wrapper:stretch_wrist_yaw_home"
+stretch_collision_viz = "stretch4_body._cli_wrapper:stretch_collision_viz"
+stretch_camera_show = "stretch4_body._cli_wrapper:stretch_camera_show"
+stretch_rgbd_show = "stretch4_body._cli_wrapper:stretch_rgbd_show"
+stretch_gamepad_teleop = "stretch4_body._cli_wrapper:stretch_gamepad_teleop"
+stretch_eoa_power = "stretch4_body._cli_wrapper:stretch_eoa_power"
+stretch_omni_base_jog = "stretch4_body._cli_wrapper:stretch_omni_base_jog"
+stretch_lift_home = "stretch4_body._cli_wrapper:stretch_lift_home"
+stretch_gripper_jog = "stretch4_body._cli_wrapper:stretch_gripper_jog"
+stretch_params = "stretch4_body._cli_wrapper:stretch_params"
+stretch_change_param = "stretch4_body._cli_wrapper:stretch_change_param"
+stretch_keyboard_omni_teleop = "stretch4_body._cli_wrapper:stretch_keyboard_omni_teleop"
+stretch_arm_jog = "stretch4_body._cli_wrapper:stretch_arm_jog"
+stretch_dex_wrist_home = "stretch4_body._cli_wrapper:stretch_dex_wrist_home"
+stretch_status_viz = "stretch4_body._cli_wrapper:stretch_status_viz"
+stretch_body_server = "stretch4_body._cli_wrapper:stretch_body_server"
+stretch_power_periph_jog = "stretch4_body._cli_wrapper:stretch_power_periph_jog"
+re1_disable_audio_suspension = "stretch4_body._cli_wrapper:re1_disable_audio_suspension"
+REx_firmware_flash = "stretch4_body._cli_wrapper:REx_firmware_flash"
+REx_joint_sweep = "stretch4_body._cli_wrapper:REx_joint_sweep"
+REx_imu_viz = "stretch4_body._cli_wrapper:REx_imu_viz"
+REx_feetech_reboot = "stretch4_body._cli_wrapper:REx_feetech_reboot"
+REx_base_tuning = "stretch4_body._cli_wrapper:REx_base_tuning"
+REx_feetech_set_baud = "stretch4_body._cli_wrapper:REx_feetech_set_baud"
+REx_stepper_calibration_YAML_to_flash = "stretch4_body._cli_wrapper:REx_stepper_calibration_YAML_to_flash"
+REx_feetech_jog = "stretch4_body._cli_wrapper:REx_feetech_jog"
+REx_firmware_updater = "stretch4_body._cli_wrapper:REx_firmware_updater"
+REx_stepper_contact_calibration = "stretch4_body._cli_wrapper:REx_stepper_contact_calibration"
+REx_stepper_type = "stretch4_body._cli_wrapper:REx_stepper_type"
+REx_feetech_id_change = "stretch4_body._cli_wrapper:REx_feetech_id_change"
+REx_omnibase_calibrate_imu_process = "stretch4_body._cli_wrapper:REx_omnibase_calibrate_imu_process"
+REx_dmesg_monitor = "stretch4_body._cli_wrapper:REx_dmesg_monitor"
+REx_stepper_gains_YAML_to_flash = "stretch4_body._cli_wrapper:REx_stepper_gains_YAML_to_flash"
+REx_line_sensor_display = "stretch4_body._cli_wrapper:REx_line_sensor_display"
+REx_omnibase_calibrate_imu_collect = "stretch4_body._cli_wrapper:REx_omnibase_calibrate_imu_collect"
+REx_feetech_id_scan = "stretch4_body._cli_wrapper:REx_feetech_id_scan"
+REx_stepper_ctrl_tuning = "stretch4_body._cli_wrapper:REx_stepper_ctrl_tuning"
+REx_base_contact_calibration = "stretch4_body._cli_wrapper:REx_base_contact_calibration"
+REx_routines_run = "stretch4_body._cli_wrapper:REx_routines_run"
+REx_stepper_calibration_run = "stretch4_body._cli_wrapper:REx_stepper_calibration_run"
+REx_stepper_jog = "stretch4_body._cli_wrapper:REx_stepper_jog"
+REx_firebase_jog = "stretch4_body._cli_wrapper:REx_firebase_jog"
+REx_line_sensor_calibrate = "stretch4_body._cli_wrapper:REx_line_sensor_calibrate"
+test_firmware_available = "stretch4_body._cli_wrapper:test_firmware_available"
+REx_stepper_gains_read = "stretch4_body._cli_wrapper:REx_stepper_gains_read"
+REx_monitor_robot_temp = "stretch4_body._cli_wrapper:REx_monitor_robot_temp"
+REx_xrandr_display = "stretch4_body._cli_wrapper:REx_xrandr_display"
+REx_stepper_calibration_flash_to_YAML = "stretch4_body._cli_wrapper:REx_stepper_calibration_flash_to_YAML"
+REx_actuator_control = "stretch4_body._cli_wrapper:REx_actuator_control"
+REx_camera_calibrate = "stretch4_body._cli_wrapper:REx_camera_calibrate"
+REx_camera_focus = "stretch4_body._cli_wrapper:REx_camera_focus"
+REx_camera_list = "stretch4_body._cli_wrapper:REx_camera_list"
+stretch_runstop = "stretch4_body._cli_wrapper:stretch_runstop"
+stretch_puppet_teleop = "stretch4_body._cli_wrapper:stretch_puppet_teleop"
+stretch_eye_animations = "stretch4_body._cli_wrapper:stretch_eye_animations"
+

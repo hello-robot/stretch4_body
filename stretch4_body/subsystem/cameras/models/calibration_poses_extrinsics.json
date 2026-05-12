@@ -1,0 +1,494 @@
+[
+    {
+        "name": "pose_0",
+        "timestamp": 1778259462.223657,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.4719620224132341,
+                "velocity": 0.0004073516538746697,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.2678578560429533,
+                "velocity": 0.0002006618746120159,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.05292233718205462,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.23853401251621723,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": -0.11044661672776615,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7346492317514967,
+            "y": -1.442324185584859,
+            "theta": -6.092968461101403
+        }
+    },
+    {
+        "name": "pose_1",
+        "timestamp": 1778259468.9279287,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.4719544013748451,
+                "velocity": 0.00032105217980602424,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.2678376872532442,
+                "velocity": -0.00011480433049415203,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.05292233718205462,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.23853401251621723,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": -0.11044661672776615,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7344960235987399,
+            "y": -1.4421236410296459,
+            "theta": -6.0930550515944715
+        }
+    },
+    {
+        "name": "pose_2",
+        "timestamp": 1778259479.37417,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.4719544013748451,
+                "velocity": 5.339251319252958e-05,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.3760624110714105,
+                "velocity": -0.0005237109415051712,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.05292233718205462,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.23853401251621723,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": -0.11044661672776615,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7345791661860281,
+            "y": -1.4421330459393409,
+            "theta": -6.092195210447291
+        }
+    },
+    {
+        "name": "pose_3",
+        "timestamp": 1778259491.3961313,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.4718939907046887,
+                "velocity": 0.0004739739495373813,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.3748658742474906,
+                "velocity": -0.00016985059629915156,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.22856313739496056,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": 0.03451456772742693,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": 0.953369059670926,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7344297929350388,
+            "y": -1.4425366253070082,
+            "theta": -6.0899389392589915
+        }
+    },
+    {
+        "name": "pose_4",
+        "timestamp": 1778259523.8691528,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.2043392776831608,
+                "velocity": 0.0003623105618624982,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.37390394986810116,
+                "velocity": -0.000471278466662023,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": 0.11888351106113719,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": 0.03451456772742693,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": 1.935883754311679,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7338123355506305,
+            "y": -1.4424032560644027,
+            "theta": -6.090056915781613
+        }
+    },
+    {
+        "name": "pose_5",
+        "timestamp": 1778259536.6292403,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.20434691730944826,
+                "velocity": 2.0733237425473463e-05,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.3733475717652309,
+                "velocity": 3.2697565054394023e-06,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": 0.06979612584879667,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": 0.03604854851531257,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": -1.1182719943686323,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7335880934261353,
+            "y": -1.4417293160889884,
+            "theta": -6.092390936442608
+        }
+    },
+    {
+        "name": "pose_6",
+        "timestamp": 1778259573.9140337,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.20435440823254766,
+                "velocity": 9.85236403381073e-05,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.7168836688181965,
+                "velocity": -0.0006199946270954518,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": 0.17410681942502026,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": 0.03451456772742693,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": 2.051699303797045,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7334698691868636,
+            "y": -1.4411121805399343,
+            "theta": -6.0911641982805715
+        }
+    },
+    {
+        "name": "pose_7",
+        "timestamp": 1778259638.1839864,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.552598073410666,
+                "velocity": 0.0002979845796032724,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.9949376828600184,
+                "velocity": -0.0007237878359094052,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.24697090684958825,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": 0.11658253987930874,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": 1.3698448435818775,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7338220426957929,
+            "y": -1.4421552837499794,
+            "theta": -6.090862971199777
+        }
+    },
+    {
+        "name": "pose_8",
+        "timestamp": 1778259661.3380446,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.501236326830904,
+                "velocity": 0.0001541972735053604,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.9946290736638399,
+                "velocity": -0.00016656320905757184,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.24697090684958825,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.17794177139473438,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": -0.5246214294568893,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7348799051608462,
+            "y": -1.4429980960920497,
+            "theta": -6.091657807473216
+        }
+    },
+    {
+        "name": "pose_9",
+        "timestamp": 1778259742.6957002,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.5006477967882907,
+                "velocity": -0.0004453509456242842,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.6842943774199645,
+                "velocity": -0.0008996870375550494,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.8283496254582463,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.0,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": 0.03374757733348411,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7347514432669344,
+            "y": -1.4429367828593596,
+            "theta": -6.086827834915657
+        }
+    },
+    {
+        "name": "pose_10",
+        "timestamp": 1778259752.1220255,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.5006366068733878,
+                "velocity": 0.0002165613067073389,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.9473443479518397,
+                "velocity": -0.0005560186819522244,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.8283496254582463,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.0,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": 0.03374757733348411,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.7350237271839326,
+            "y": -1.4429303135310456,
+            "theta": -6.086630250800102
+        }
+    },
+    {
+        "name": "pose_11",
+        "timestamp": 1778259765.3069625,
+        "joints": {
+            "arm": {
+                "name": "arm",
+                "position": 0.5006290973623899,
+                "velocity": 0.0005647284563986397,
+                "effort": 0.0
+            },
+            "lift": {
+                "name": "lift",
+                "position": 0.520148645457937,
+                "velocity": 0.00013620278029639603,
+                "effort": 0.0
+            },
+            "wrist_pitch": {
+                "name": "wrist_pitch",
+                "position": -0.37199034106226797,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_roll": {
+                "name": "wrist_roll",
+                "position": -0.0,
+                "velocity": -0.0,
+                "effort": 0.0
+            },
+            "wrist_yaw": {
+                "name": "wrist_yaw",
+                "position": -0.07209709703062514,
+                "velocity": -0.0,
+                "effort": 0.0
+            }
+        },
+        "base": {
+            "x": -0.735981286533,
+            "y": -1.4429783580892017,
+            "theta": -6.0878150016634365
+        }
+    }
+]
