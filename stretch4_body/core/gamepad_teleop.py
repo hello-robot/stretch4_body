@@ -115,9 +115,9 @@ class GamePadTeleop(Device):
         self.effort_trackers = {
             'lift': gc.JointEffortTracker('lift', pos_thresholds=[34.0, 45.0], neg_thresholds= [25.0, 35.0]),
             'arm': gc.JointEffortTracker('arm', pos_thresholds=[10.0, 20.0], neg_thresholds=[10.0, 20.0]),
-            'joint_wrist_yaw': gc.JointEffortTracker('eoa', pos_thresholds=[3.0, 10.0], neg_thresholds=[3.0, 10.0], joint_name='wrist_yaw'),
-            'joint_wrist_pitch': gc.JointEffortTracker('eoa', pos_thresholds=[3.0, 10.0], neg_thresholds=[3.0, 10.0], joint_name='wrist_pitch'),
-            'joint_wrist_roll': gc.JointEffortTracker('eoa', pos_thresholds=[3.0, 10.0], neg_thresholds=[3.0, 10.0], joint_name='wrist_roll'),
+            'wrist_yaw_joint': gc.JointEffortTracker('eoa', pos_thresholds=[3.0, 10.0], neg_thresholds=[3.0, 10.0], joint_name='wrist_yaw'),
+            'wrist_pitch_joint': gc.JointEffortTracker('eoa', pos_thresholds=[3.0, 10.0], neg_thresholds=[3.0, 10.0], joint_name='wrist_pitch'),
+            'wrist_roll_joint': gc.JointEffortTracker('eoa', pos_thresholds=[3.0, 10.0], neg_thresholds=[3.0, 10.0], joint_name='wrist_roll'),
             self.gripper_name: gc.JointEffortTracker('eoa', pos_thresholds=[5.0, 20.0], neg_thresholds=[5.0, 20.0], joint_name=self.gripper_name),
         }
 

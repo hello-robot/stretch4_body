@@ -104,7 +104,7 @@ SE4_wrist_yaw_DW4={
 SE4_stretch_gripper_DW4={
 
     'gripper_conversion': {
-        'finger_length_m': 0.18205,# Straight length from `link_gripper_finger_right.STL`, ignoring the bend in the metal
+        'finger_length_m': 0.18205,# Straight length from `gripper_finger_right_link.STL`, ignoring the bend in the metal
         'aperture_open_m': 0.150,  # Measured by hand, from fingertip to fingertip
         'aperture_closed_m': 0.0
     },
@@ -319,11 +319,11 @@ SE4_wrist_roll_DW4={
     'retry_on_comm_failure': 1,
     'baud': 1000000,
     'range_pad_deg': [1.0, 1.0],
-    'range_deg': [-245, 65],
+    'range_deg': [-65,245],
     'homing_offset_bias_t': -127,              
     'homing_to_neg_limit': 1,
-    'homing_pwm': -200,
-    'flip_encoder_polarity': 1,
+    'homing_pwm': 200,
+    'flip_encoder_polarity': 0,
     'stall_backoff': 0.017,
     'stall_max_effort': 20.0,
     'stall_max_time': 1.0,
@@ -451,10 +451,10 @@ SE4_eoa_wrist_dw4_tool_pg4={
         'collision_mgmt': {
             'k_brake_distance': {'wrist_pitch': 0.25, 'wrist_yaw': 0.25, 'wrist_roll': 0.25},
             'collision_pairs': {
-                'link_wrist_pitch_TO_base_link': {'link_pts': 'link_wrist_pitch', 'link_cube': 'base_link','detect_as': 'pts'},
-                'link_wrist_yaw_bottom_TO_base_link': {'link_pts': 'link_wrist_yaw_bottom', 'link_cube': 'base_link','detect_as': 'pts'}},
-            'joints': {'lift': [{'motion_dir': 'neg', 'collision_pair': 'link_wrist_pitch_TO_base_link'},
-                                {'motion_dir': 'neg', 'collision_pair': 'link_wrist_yaw_bottom_TO_base_link'}]}},
+                'wrist_pitch_link_TO_base_link': {'link_pts': 'wrist_pitch_link', 'link_cube': 'base_link','detect_as': 'pts'},
+                'wrist_yaw_bottom_link_TO_base_link': {'link_pts': 'wrist_yaw_bottom_link', 'link_cube': 'base_link','detect_as': 'pts'}},
+            'joints': {'lift': [{'motion_dir': 'neg', 'collision_pair': 'wrist_pitch_link_TO_base_link'},
+                                {'motion_dir': 'neg', 'collision_pair': 'wrist_yaw_bottom_link_TO_base_link'}]}},
 
         'devices': {
             'wrist_pitch': {
@@ -1216,7 +1216,7 @@ nominal_params={
     'sentry_self_collision': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_self_collision',
         'py_class_name': 'SentrySelfCollision',
-        'urdf_joints_to_sentry':['joint_lift','joint_arm_l0','joint_arm_l1','joint_arm_l2','joint_arm_l3','joint_wrist_yaw','joint_wrist_pitch','joint_wrist_roll'],
+        'urdf_joints_to_sentry':['lift_joint','arm_l1_joint','arm_l2_joint','arm_l3_joint','arm_l4_joint','wrist_yaw_joint','wrist_pitch_joint','wrist_roll_joint'],
         'required_subsystems': ['arm', 'lift','end_of_arm'],
         'enabled': 1,
     },
@@ -1448,71 +1448,71 @@ nominal_params={
     },
     'self_collision_mujoco':{
         'SE4':{'k_brake_distance': {'lift': 1.1, 'arm': 1.1,'wrist_pitch':1.1,'wrist_yaw':1.1,'wrist_roll':1.1},
-               # 'ignore_links': ['link_wheel_0','link_wheel_1', 'link_wheel_2', 'link_wrist','gripper_camera_link','link_tool_attachment_site','link_camera_right',
-               #                  'link_camera_left','link_camera_center'],
-               'ignore_links': ['link_wheel_0','link_wheel_1', 'link_wheel_2','link_tool_attachment_site', 'link_grasp_center'],
+               # 'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link', 'wrist_link','gripper_camera_link','tool_attachment_site_link','camera_right_link',
+               #                  'camera_left_link','camera_center_link'],
+               'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link','tool_attachment_site_link', 'grasp_center_link'],
                'exclusions':[
-                   ["link_head", "link_lift"],
-                   ["base_link", "link_mast"],
-                   ["link_lift", "link_mast"],
-                   ["link_lift", "link_head"],
-                   ["link_arm_l4","link_head"],
+                   ["head_link", "lift_link"],
+                   ["base_link", "mast_link"],
+                   ["lift_link", "mast_link"],
+                   ["lift_link", "head_link"],
+                   ["arm_l0_link","head_link"],
 
-                   ["link_wrist", "link_arm_l4"],
-                   ["link_wrist", "link_arm_l3"],
-                   ["link_wrist", "link_arm_l2"],
-                   ["link_wrist", "link_arm_l1"],
-                   ["link_wrist", "link_arm_l0"],
-                   ["link_wrist", "link_lift"],
+                   ["wrist_link", "arm_l4_link"],
+                   ["wrist_link", "arm_l3_link"],
+                   ["wrist_link", "arm_l2_link"],
+                   ["wrist_link", "arm_l1_link"],
+                   ["wrist_link", "arm_l0_link"],
+                   ["wrist_link", "lift_link"],
 
-                   ["link_arm_l0", "link_arm_l1"],
-                   ["link_arm_l0", "link_arm_l2"],
-                   ["link_arm_l0", "link_arm_l3"],
-                   ["link_arm_l0", "link_arm_l4"],
-                   ["link_arm_l0", "link_lift"],
+                   ["arm_l0_link", "arm_l1_link"],
+                   ["arm_l0_link", "arm_l2_link"],
+                   ["arm_l0_link", "arm_l3_link"],
+                   ["arm_l0_link", "arm_l4_link"],
+                   ["arm_l0_link", "lift_link"],
+                   ["arm_l0_link", "mast_link"],
 
-                   ["link_arm_l1", "link_arm_l2"],
-                   ["link_arm_l1", "link_arm_l3"],
-                   ["link_arm_l1", "link_arm_l4"],
-                   ["link_arm_l1", "link_lift"],
+                   ["arm_l1_link", "arm_l2_link"],
+                   ["arm_l1_link", "arm_l3_link"],
+                   ["arm_l1_link", "arm_l4_link"],
+                   ["arm_l1_link", "lift_link"],
 
 
-                   ["link_arm_l2", "link_arm_l3"],
-                   ["link_arm_l2", "link_arm_l4"],
-                   ["link_arm_l2", "link_lift"],
+                   ["arm_l2_link", "arm_l3_link"],
+                   ["arm_l2_link", "arm_l4_link"],
+                   ["arm_l2_link", "lift_link"],
 
-                   ["link_arm_l3", "link_arm_l4"],
-                   ["link_arm_l3", "link_lift"],
+                   ["arm_l3_link", "arm_l4_link"],
+                   ["arm_l3_link", "lift_link"],
 
-                   ["link_arm_l4", "link_lift"],
-                   ["link_arm_l4", "link_mast"],
+                   ["arm_l4_link", "lift_link"],
 
-                   ["link_wrist_yaw", "link_arm_l0"],
-                   ["link_wrist_yaw", "link_arm_l1"],
-                   ["link_wrist_yaw", "link_arm_l2"],
-                   ["link_wrist_yaw", "link_arm_l3"],
-                   ["link_wrist_yaw", "link_arm_l4"],
+                   ["wrist_yaw_link", "arm_l0_link"],
+                   ["wrist_yaw_link", "arm_l1_link"],
+                   ["wrist_yaw_link", "arm_l2_link"],
+                   ["wrist_yaw_link", "arm_l3_link"],
+                   ["wrist_yaw_link", "arm_l4_link"],
 
 
                     ]},
         'eoa_wrist_dw4_tool_sg4':{'k_brake_distance': {},
                'exclusions':[
-                   ["link_gripper_finger_left", "link_wrist_pitch"],
-                   ["link_gripper_finger_left", "link_gripper_finger_right"],
-                   ["link_gripper_finger_left", "link_gripper_fingertip_right"],
-                   ["link_gripper_finger_right", "link_wrist_pitch"],
-                   ["link_gripper_finger_right","link_gripper_fingertip_left"],
-                   ["link_gripper_fingertip_left","link_gripper_fingertip_right"],
-                   ["link_aruco_fingertip_left","link_aruco_fingertip_right"],
-                   ["link_aruco_fingertip_left","link_gripper_finger_right"],
-                   ["link_aruco_fingertip_left","link_gripper_fingertip_right"],
-                   ["link_aruco_fingertip_right","link_gripper_finger_left"],
-                   ["link_aruco_fingertip_right","link_gripper_fingertip_left"],
+                   ["gripper_finger_left_link", "wrist_pitch_link"],
+                   ["gripper_finger_left_link", "gripper_finger_right_link"],
+                   ["gripper_finger_left_link", "gripper_fingertip_right_link"],
+                   ["gripper_finger_right_link", "wrist_pitch_link"],
+                   ["gripper_finger_right_link","gripper_fingertip_left_link"],
+                   ["gripper_fingertip_left_link","gripper_fingertip_right_link"],
+                   ["aruco_fingertip_left_link","aruco_fingertip_right_link"],
+                   ["aruco_fingertip_left_link","gripper_finger_right_link"],
+                   ["aruco_fingertip_left_link","gripper_fingertip_right_link"],
+                   ["aruco_fingertip_right_link","gripper_finger_left_link"],
+                   ["aruco_fingertip_right_link","gripper_fingertip_left_link"],
 
                ]},
         'eoa_wrist_dw4_tool_pg4':{'k_brake_distance': {},
                'exclusions':[
-                   ["link_finger_left", "link_finger_right"],
+                   ["finger_left_link", "finger_right_link"],
                ]},
         'eoa_wrist_dw4_tool_nil':{'k_brake_distance': {},
                'exclusions':[

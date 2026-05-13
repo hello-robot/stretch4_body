@@ -13,14 +13,14 @@ class SentrySelfCollision(Sentry):
         Sentry.__init__(self, name="sentry_self_collision", robot=robot)
         self.self_collision_loop=SelfCollisionLoop(robot)
 
-        self.urdf_joint_map={'joint_lift':'lift',
-                             'joint_arm_l0':'arm',
-                             'joint_arm_l1': 'arm',
-                             'joint_arm_l2': 'arm',
-                             'joint_arm_l3': 'arm', #Should we ignor 3 of the arm 'joints'?
-                             'joint_wrist_yaw': 'wrist_yaw',
-                             'joint_wrist_pitch': 'wrist_pitch',
-                             'joint_wrist_roll': 'wrist_roll'}
+        self.urdf_joint_map={'lift_joint':'lift',
+                             'arm_l1_joint':'arm',
+                             'arm_l2_joint': 'arm',
+                             'arm_l3_joint': 'arm',
+                             'arm_l4_joint': 'arm',
+                             'wrist_yaw_joint': 'wrist_yaw',
+                             'wrist_pitch_joint': 'wrist_pitch',
+                             'wrist_roll_joint': 'wrist_roll'}
         self.status={}
         for j in self.params['urdf_joints_to_sentry']:
             self.status[self.urdf_joint_map[j]]={'in_collision_stop':{'pos': False, 'neg': False},'ts_collision_stop':0}
@@ -56,7 +56,7 @@ class SentrySelfCollision(Sentry):
     @staticmethod
     def extract_collision_dirs(ccd, ecd=None):
         #Given nested collison direction dictionary, return dictionary of just the joints and their gradients that will resolve the collision
-        #Eg {'joint_lift': -0.7044160659317538} indicates moving the lift in the negative direction will resolve.
+        #Eg {'lift_joint': -0.7044160659317538} indicates moving the lift in the negative direction will resolve.
         if ecd is None: #avoid mutable
             ecd={}
         for l in ccd:

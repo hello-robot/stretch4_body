@@ -47,9 +47,9 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
         #This maps from the name of a joint in the URDF to the name of the joint in Stretch Body
         #It is used by CollisionMgmt.
         self.urdf_map={
-            'joint_wrist_yaw':'wrist_yaw',
-            'joint_wrist_pitch': 'wrist_pitch',
-            'joint_wrist_roll':'wrist_roll'}
+            'wrist_yaw_joint':'wrist_yaw',
+            'wrist_pitch_joint': 'wrist_pitch',
+            'wrist_roll_joint':'wrist_roll'}
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -83,9 +83,9 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
         #This maps from the name of a joint in the URDF to the name of the joint in Stretch Body
         #It is used by CollisionMgmt.
         self.urdf_map={
-            'joint_wrist_yaw':'wrist_yaw',
-            'joint_wrist_pitch': 'wrist_pitch',
-            'joint_wrist_roll':'wrist_roll'}
+            'wrist_yaw_joint':'wrist_yaw',
+            'wrist_pitch_joint': 'wrist_pitch',
+            'wrist_roll_joint':'wrist_roll'}
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -127,9 +127,9 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
         #This maps from the name of a joint in the URDF to the name of the joint in Stretch Body
         #It is used by CollisionMgmt.
         self.urdf_map={
-            'joint_wrist_yaw':'wrist_yaw',
-            'joint_wrist_pitch': 'wrist_pitch',
-            'joint_wrist_roll':'wrist_roll'}
+            'wrist_yaw_joint':'wrist_yaw',
+            'wrist_pitch_joint': 'wrist_pitch',
+            'wrist_roll_joint':'wrist_roll'}
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')

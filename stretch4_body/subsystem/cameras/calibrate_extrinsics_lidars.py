@@ -116,7 +116,7 @@ class DualLidarCalibration:
         return pts_new
 
     def get_lidar_to_base_transform(self, is_right_lidar: bool):      
-        lidar_link = "link_lidar_right" if is_right_lidar else "link_lidar_left"
+        lidar_link = "lidar_right_link" if is_right_lidar else "lidar_left_link"
 
         if lidar_link in self._cached_lidar_transforms:
             return self._cached_lidar_transforms[lidar_link]

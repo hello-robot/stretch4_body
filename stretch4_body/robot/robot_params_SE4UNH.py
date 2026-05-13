@@ -658,12 +658,12 @@ nominal_params={
     },
     'self_collision_mujoco':{
         'SE4UNH':{'k_brake_distance': {'lift': 1.1},
-               'ignore_links': ['link_wheel_0','link_wheel_1', 'link_wheel_2'],
+               'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link'],
                'exclusions':[
-                   ["link_head", "link_lift"],
-                   ["base_link", "link_mast"],
-                   ["link_lift", "link_mast"],
-                   ["link_lift", "link_head"],
+                   ["head_link", "lift_link"],
+                   ["base_link", "mast_link"],
+                   ["lift_link", "mast_link"],
+                   ["lift_link", "head_link"],
 
                     ]},
         'eoa_wrist_nil_tool_unh':{'k_brake_distance': {},
