@@ -1216,7 +1216,7 @@ nominal_params={
     'sentry_self_collision': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_self_collision',
         'py_class_name': 'SentrySelfCollision',
-        'urdf_joints_to_sentry':['lift_joint','arm_l0_joint','arm_l1_joint','arm_l2_joint','arm_l3_joint','wrist_yaw_joint','wrist_pitch_joint','wrist_roll_joint'],
+        'urdf_joints_to_sentry':['lift_joint','arm_l1_joint','arm_l2_joint','arm_l3_joint','arm_l4_joint','wrist_yaw_joint','wrist_pitch_joint','wrist_roll_joint'],
         'required_subsystems': ['arm', 'lift','end_of_arm'],
         'enabled': 1,
     },

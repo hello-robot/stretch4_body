@@ -22,10 +22,10 @@ class MujocoJointStates:
     """Represent joint states in Mujoco convention
     Facilitate conversion to/from URDF convention"""
     lift_joint: float
-    arm_l0_joint: float
     arm_l1_joint: float
     arm_l2_joint: float
     arm_l3_joint: float
+    arm_l4_joint: float
 
     wrist_yaw_joint: float
     wrist_pitch_joint: float
@@ -54,9 +54,9 @@ class MujocoJointStates:
         """
         Take in urdf joint state and convert to mujoco joint state convention
         eg state =
-        {'lift_joint': 0.11316090153133451, 'arm_l0_joint': 0.0014814796174020114,
-        'arm_l1_joint': 0.0014814796174020114, 'arm_l2_joint': 0.0014814796174020114,
-        'arm_l3_joint': 0.0014814796174020114, 'wrist_yaw_joint': 0.06366020269725411,
+        {'lift_joint': 0.11316090153133451, 'arm_l1_joint': 0.0014814796174020114,
+        'arm_l2_joint': 0.0014814796174020114, 'arm_l3_joint': 0.0014814796174020114,
+        'arm_l4_joint': 0.0014814796174020114, 'wrist_yaw_joint': 0.06366020269725411,
         'wrist_pitch_joint': 0.12425244381873693, 'wrist_roll_joint': 0.07363107781851078}
 
         """
@@ -77,10 +77,10 @@ class MujocoJointStates:
 
         mujoco_state = MujocoJointStates(
             lift_joint=state.get("lift_joint", 0.0),
-            arm_l0_joint=state.get("arm_l0_joint", 0.0),
             arm_l1_joint=state.get("arm_l1_joint", 0.0),
             arm_l2_joint=state.get("arm_l2_joint", 0.0),
             arm_l3_joint=state.get("arm_l3_joint", 0.0),
+            arm_l4_joint=state.get("arm_l4_joint", 0.0),
             wrist_yaw_joint=state.get("wrist_yaw_joint", 0.0),
             wrist_pitch_joint=state.get("wrist_pitch_joint", 0.0),
             wrist_roll_joint=state.get("wrist_roll_joint", 0.0),
@@ -303,7 +303,7 @@ if __name__ == "__main__":
             # Simulate some motion
             val = {
                 'lift_joint': 0.5 + 0.3 * math.sin(t),
-                'arm_l0_joint': 0.1, # Just base
+                'arm_l4_joint': 0.1, # Just base
                 # Other arm joints will be zeroed if not set or handled by from_urdf_joint_state defaults
                 'wrist_yaw_joint': math.cos(t),
                 'gripper': 0.0

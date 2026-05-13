@@ -14,10 +14,10 @@ class SentrySelfCollision(Sentry):
         self.self_collision_loop=SelfCollisionLoop(robot)
 
         self.urdf_joint_map={'lift_joint':'lift',
-                             'arm_l0_joint':'arm',
-                             'arm_l1_joint': 'arm',
+                             'arm_l1_joint':'arm',
                              'arm_l2_joint': 'arm',
-                             'arm_l3_joint': 'arm', #Should we ignor 3 of the arm 'joints'?
+                             'arm_l3_joint': 'arm',
+                             'arm_l4_joint': 'arm',
                              'wrist_yaw_joint': 'wrist_yaw',
                              'wrist_pitch_joint': 'wrist_pitch',
                              'wrist_roll_joint': 'wrist_roll'}

@@ -141,10 +141,10 @@ class SelfCollisionLoop(Device):
         if 'arm' in kbd:
             da = kbd['arm'] * s['arm']['braking_distance'] / 4.0
             configuration = {
-                'arm_l0_joint': da + s['arm']['pos'] / 4.0,
                 'arm_l1_joint': da + s['arm']['pos'] / 4.0,
                 'arm_l2_joint': da + s['arm']['pos'] / 4.0,
-                'arm_l3_joint': da + s['arm']['pos'] / 4.0
+                'arm_l3_joint': da + s['arm']['pos'] / 4.0,
+                'arm_l4_joint': da + s['arm']['pos'] / 4.0
             }
         configuration['lift_joint'] = dl + s['lift']['pos']
 
@@ -180,15 +180,15 @@ if __name__ == "__main__":
             qq=0.5*math.cos(math.pi*2*tn)+0.5#goes from 0 to 1 oscillating
             q[jn]=jrange[jn][0]+qq*(jrange[jn][1]-jrange[jn][0]) #oscillated across range of motion
 
-        joint_cfg2={'lift_joint': q['lift'], 'arm_l0_joint': q['arm']/4,
-         'arm_l1_joint': q['arm']/4, 'arm_l2_joint': q['arm']/4,
-         'arm_l3_joint': q['arm']/4, 'wrist_yaw_joint': q['wrist_yaw'],
+        joint_cfg2={'lift_joint': q['lift'], 'arm_l1_joint': q['arm']/4,
+         'arm_l2_joint': q['arm']/4, 'arm_l3_joint': q['arm']/4,
+         'arm_l4_joint': q['arm']/4, 'wrist_yaw_joint': q['wrist_yaw'],
          'wrist_pitch_joint': q['wrist_roll'], 'wrist_roll_joint': q['wrist_pitch'],
          'gripper': 0.0}
 
-        joint_cfg={'lift_joint': q['lift'], 'arm_l0_joint': q['arm']/4,
-         'arm_l1_joint': q['arm']/4, 'arm_l2_joint': q['arm']/4,
-         'arm_l3_joint': q['arm']/4, 'wrist_yaw_joint': 0,
+        joint_cfg={'lift_joint': q['lift'], 'arm_l1_joint': q['arm']/4,
+         'arm_l2_joint': q['arm']/4, 'arm_l3_joint': q['arm']/4,
+         'arm_l4_joint': q['arm']/4, 'wrist_yaw_joint': 0,
          'wrist_pitch_joint': 0, 'wrist_roll_joint': 0,
          'gripper': 0.0}
 
