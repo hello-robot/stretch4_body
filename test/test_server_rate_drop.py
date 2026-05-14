@@ -3,8 +3,8 @@
 import time
 import psutil
 import sys
-from stretch_body_ii.robot.robot_client import RobotClient
-from stretch_body_ii.core.hello_utils import LoopStats
+from stretch4_body.robot.robot_client import RobotClient
+from stretch4_body.core.hello_utils import LoopStats
 
 def main():
     robot = RobotClient()

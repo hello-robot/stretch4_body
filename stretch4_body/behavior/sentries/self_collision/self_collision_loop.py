@@ -132,7 +132,7 @@ class SelfCollisionLoop(Device):
         Convert robot.status to URDF compatible dictionary of robot's current pose + padding based on current velocity of joint
         """
         s = robot_status
-        from stretch_body_ii.core.robot_params import RobotParams
+        from stretch4_body.core.robot_params import RobotParams
         _, robot_params = RobotParams.get_params()
         kbd = robot_params['self_collision_mujoco'][robot_params['robot']['model_name']]['k_brake_distance']
         dl = kbd['lift'] * s['lift']['braking_distance']
@@ -156,12 +156,12 @@ class SelfCollisionLoop(Device):
             configuration['wrist_yaw_joint']=s['end_of_arm']['wrist_yaw']['pos']+dwy
             configuration['wrist_pitch_joint'] = s['end_of_arm']['wrist_pitch']['pos']+dwp
             configuration['wrist_roll_joint'] = s['end_of_arm']['wrist_roll']['pos']+dwr
-            if d.robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
+            if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
                 #print('SelfCollisionLoop Gripper Conversion',robot_status['end_of_arm']['stretch_gripper']['gripper_conversion'])
                 configuration['gripper_finger_left_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
                 configuration['gripper_finger_right_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
                 #configuration['stretch_gripper_joint'] = self.robot.end_of_arm.status['stretch_gripper']['pos']
-            elif d.robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
+            elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
                 configuration['finger_left_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
                 configuration['finger_right_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
 
