@@ -139,7 +139,7 @@ class GripperHandedness(Enum):
         elif self is GripperHandedness.LEFT:
             yaw_to = np.pi
             pitch_to = np.pi
-            roll_to = -np.pi
+            roll_to = np.pi
         else: raise NotImplementedError(f"No move_to defined for {self}")
         
         robot.end_of_arm.move_to('wrist_yaw', yaw_to, v_yaw, a_yaw)

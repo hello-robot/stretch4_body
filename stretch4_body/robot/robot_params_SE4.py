@@ -320,7 +320,7 @@ SE4_wrist_roll_DW4={
     'baud': 1000000,
     'range_pad_deg': [1.0, 1.0],
     'range_deg': [-65,245],
-    'homing_offset_bias_t': -127,              
+    'homing_offset_bias_t': 100,
     'homing_to_neg_limit': 1,
     'homing_pwm': 200,
     'flip_encoder_polarity': 0,

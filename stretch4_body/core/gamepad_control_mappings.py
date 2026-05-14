@@ -193,11 +193,11 @@ class ControlMapping(Enum):
 
             # Wrist Roll Control
             if gamepad_teleop.controller_state['left_pad_pressed']:
-                gamepad_teleop.wrist_roll_command.command_button_to_motion(1,robot)
-                actuated_joints['wrist_roll_joint'] = 1
-            elif gamepad_teleop.controller_state['right_pad_pressed']:
                 gamepad_teleop.wrist_roll_command.command_button_to_motion(-1,robot)
                 actuated_joints['wrist_roll_joint'] = -1
+            elif gamepad_teleop.controller_state['right_pad_pressed']:
+                gamepad_teleop.wrist_roll_command.command_button_to_motion(1,robot)
+                actuated_joints['wrist_roll_joint'] = 1
             else:
                 if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                     gamepad_teleop.wrist_roll_command.stop_motion(robot)
