@@ -38,6 +38,8 @@ def print_status(robot_client):
     print('Loop count:         ' + str(robot_client.status['server']['control_loop']['num_loops']))
     print('Loop overruns:      ' + str(robot_client.status['server']['control_loop']['missed_loops']))
     print("")
+    print("Use `stretch_body_server --print` to view the latest logs.")
+    print("")
 
 
 def init_logs(log_file:str):
@@ -174,15 +176,11 @@ def print_last_n_logs(log_file:str, n:int):
 def tail_log_file(log_file:str):    
 
     try:
-        # Handle log rotations gracefully: 
-        # Scenario 1: The log file is renamed (e.g. stretchbody.log -> stretchbody.log.1) and a new blank file is created. This will change the inode (the file's unique system identifier), 
-        # so we add a check to catch any changes and open the new file if needed.
-        # Scenario 2: The log file contents is copied to a new file (e.g. stretchbody.log.1), and the original file contents are truncated. The inode will stay the same, but the file size will 
-        # reset to near 0. This will cause the python reader cursor to be set at a much larger byte offset than the new file size, which can be caught by comparing the current file size to the
-        # reader's cursor position. Re-opening the file will reset the cursor position so reading can continue. 
-
-        f = open(log_file, "a+")
-        f.seek(0, 2) # Seek to the end of the file by default to skip old logs
+        Path(log_file).touch(exist_ok=True)
+        f = open(log_file, "r")
+        # Only seek to end if the file is already somewhat large, otherwise it's a fresh file and we want to see the startup logs
+        if os.path.getsize(log_file) > 10000:
+            f.seek(0, 2)
         file_id = os.stat(log_file).st_ino
         while True:
             line = f.readline()
@@ -190,6 +188,7 @@ def tail_log_file(log_file:str):
                 color_print(line)
             else:
                 try:
+                    f.seek(f.tell()) # Clear EOF flag
                     current_stat = os.stat(log_file)
                     if current_stat.st_ino != file_id or current_stat.st_size < f.tell():
                         f.close()
@@ -238,12 +237,7 @@ def _parse_args():
 
     return args
 
-def is_server_active(robot_client:RobotClient, verbose:bool=False):# -> Any | bool:
-    from stretch4_body.utils.file_access_utils import is_file_in_use
-    from stretch4_body.core.client_server import PORT_ADMIN
-    if is_file_in_use(f"{PORT_ADMIN}_lock"):
-        return True
-
+def is_server_active(robot_client:RobotClient, verbose:bool=False) -> bool:
     is_active = robot_client.startup(verbose=verbose, allow_different_user_connection=True) and robot_client.is_server_active()
     robot_client.stop()
     return is_active
@@ -287,6 +281,7 @@ def main():
         if not start_daemon():
             raise RuntimeError("Could not start the Stretch Body Server system service")
         tail_log_file(log_file)
+        robot_client.stop()
         return
 
 
@@ -412,11 +407,9 @@ def get_service_file_content(log_level: str) -> str:
     repo_root = Path(__file__).resolve().parents[2]
     
     python_path = Path(sys.executable)
-    if (repo_root / ".venv" / "bin" / "python3").is_file():
-        python_path = repo_root / ".venv" / "bin" / "python3"
         
-    hello_fleet_path = os.environ.get("HELLO_FLEET_PATH", str(user_home / "stretch_user"))
-    hello_fleet_id = os.environ.get("HELLO_FLEET_ID", "")
+    hello_fleet_path = os.environ["HELLO_FLEET_PATH"]
+    hello_fleet_id = os.environ["HELLO_FLEET_ID"]
     
     exec_cmd = "stretch_body_server --launch"
     if log_level:
@@ -426,13 +419,13 @@ def get_service_file_content(log_level: str) -> str:
 
     service_file_template = f"""\
 [Unit]
-Description=Stretch Body Server Server
+Description=Stretch Body Server Service
 After=network.target
 Wants=network.target
 
 [Service]
 Type=simple
-Environment="PYTHONUNBUFFERED=1"
+#Environment="PYTHONUNBUFFERED=1"
 Environment="HELLO_FLEET_PATH={hello_fleet_path}"
 Environment="HELLO_FLEET_ID={hello_fleet_id}"
 Environment="RMW_IMPLEMENTATION=rmw_zenoh_cpp"
