@@ -4,4 +4,4 @@
 # 3) we can import it into your module
 
 # Versioning follow CalVer (YYYY.MM.DD) for PEP 440 compliance
-__version__ = '2026.05.12'
+__version__ = '2026.05.14'
