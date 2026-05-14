@@ -281,7 +281,6 @@ def main():
         if not start_daemon():
             raise RuntimeError("Could not start the Stretch Body Server system service")
         tail_log_file(log_file)
-        robot_client.stop()
         return
 
 
@@ -447,7 +446,7 @@ def _manage_daemon(action:str):
     action_with_suffix = f"{action}ing"
     if action == "stop": action_with_suffix = "stopping"
     elif action == "status": action_with_suffix = "getting status of"
-    log_level = "INFO"
+    log_level =  RobotParams._robot_params['logging']['root']['level']
     logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service...")
     
     user_systemd_dir = Path.home() / ".config" / "systemd" / "user"
