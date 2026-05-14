@@ -502,7 +502,7 @@ Sleep time (s): {self.sleep_time_s}""")
         jitter_allowance_s = 0.4 * (1.0 / self.target_loop_rate)
         if self.sleep_time_s < -jitter_allowance_s and time.perf_counter()-self.ts_0>5.0: #Allow 5s for timing to stabilize on startup
             self.status['missed_loops'] += 1
-            if self.status['missed_loops'] == 1:
+            if self.status['missed_loops'] %10==0:
                 self.logger.warning(f'Missed target loop rate of {self.target_loop_rate} Hz for {self.loop_name}. Currently {self.status["curr_rate_hz"]:.2f} Hz')
 
     def mark_loop_end(self):

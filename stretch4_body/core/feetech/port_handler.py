@@ -8,7 +8,7 @@ import sys
 import platform
 
 DEFAULT_BAUDRATE = 1000000
-LATENCY_TIMER = 50 
+LATENCY_TIMER = 10 # was 50 # ms
 
 class PortHandler(object):
     def __init__(self, port_name):
@@ -99,7 +99,7 @@ class PortHandler(object):
             # parity = serial.PARITY_ODD,
             # stopbits = serial.STOPBITS_TWO,
             bytesize=serial.EIGHTBITS,
-            timeout=0.01
+            timeout=0.002
         )
 
         self.is_open = True
