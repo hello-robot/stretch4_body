@@ -406,9 +406,34 @@ def run_server():
         rs.stop()
         exit(1)
 
-    rs.run_controller()
-    rs.stop()
+    profile_enabled = os.environ.get('STRETCH_PROFILE') == '1'
+    if profile_enabled:
+        try:
+            import yappi
+            yappi.start()
+        except ImportError:
+            print("yappi not installed. Profiling disabled.")
+            profile_enabled = False
 
+    rs.run_controller()
+
+    if profile_enabled:
+        try:
+            import yappi
+            import sys
+            import io
+            print("\n" + "="*20 + " PROFILING SUMMARY: STRETCH_BODY_SERVER " + "="*20, file=sys.stderr)
+            yappi.stop()
+            stats = yappi.get_func_stats()
+            stats.sort('ttot', 'desc')
+            s = io.StringIO()
+            stats.print_all(out=s)
+            lines = s.getvalue().splitlines()
+            print('\n'.join(lines[:25]), file=sys.stderr)
+            print("="*80 + "\n", file=sys.stderr)
+        except Exception as e:
+            print(f"Error printing profile summary: {e}", file=sys.stderr)
+    rs.stop()
 
 # ###########################################################################################
 

@@ -132,8 +132,9 @@ class SelfCollisionLoop(Device):
         Convert robot.status to URDF compatible dictionary of robot's current pose + padding based on current velocity of joint
         """
         s = robot_status
-        d = Device("foo",req_params=False)
-        kbd = d.robot_params['self_collision_mujoco'][d.robot_params['robot']['model_name']]['k_brake_distance']
+        from stretch_body_ii.core.robot_params import RobotParams
+        _, robot_params = RobotParams.get_params()
+        kbd = robot_params['self_collision_mujoco'][robot_params['robot']['model_name']]['k_brake_distance']
         dl = kbd['lift'] * s['lift']['braking_distance']
 
         configuration = {}
