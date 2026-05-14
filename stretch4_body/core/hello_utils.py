@@ -498,10 +498,12 @@ Sleep time (s): {self.sleep_time_s}""")
 
         # Calculate sleep time to achieve desired loop rate
         self.sleep_time_s = (1 / self.target_loop_rate) - self.status['execution_time_s']
-        if self.sleep_time_s < 0.0 and time.perf_counter()-self.ts_0>5.0: #Allow 5s for timing to stabilize on startup
+        # Allow 40% timing jitter (4ms at 100Hz) before recording a "missed" loop, since Python/Linux scheduling can easily jitter 2-3ms.
+        jitter_allowance_s = 0.4 * (1.0 / self.target_loop_rate)
+        if self.sleep_time_s < -jitter_allowance_s and time.perf_counter()-self.ts_0>5.0: #Allow 5s for timing to stabilize on startup
             self.status['missed_loops'] += 1
             if self.status['missed_loops'] == 1:
-                self.logger.warning(f'Missed target loop rate of {self.target_loop_rate} Hz for {self.loop_name}. Currently {self.status['curr_rate_hz']} Hz')
+                self.logger.warning(f'Missed target loop rate of {self.target_loop_rate} Hz for {self.loop_name}. Currently {self.status["curr_rate_hz"]:.2f} Hz')
 
     def mark_loop_end(self):
         # First two cycles initialize vars / log

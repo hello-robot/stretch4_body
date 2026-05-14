@@ -211,10 +211,12 @@ class RobotServer(RobotCore):
                         self.logger.error(f'RobotServer _cb_command_dispatch : invalid  cmd {cmd}')
             else:
                 self.logger.error(f'RobotServer not able to run command {method} as subsystem {subsystem} is not present')
-        #Cleanup cmd results so doesn't overflow
-        tt=time.time()
-        self.cmd_results={key: value for key, value in self.cmd_results.items() if  (tt-value['ts']<100)} #Drop results over 100s old
-
+        # Cleanup cmd results to keep max history using O(1) operations
+        MAX_CMD_HISTORY = 5000
+        while len(self.cmd_results) > MAX_CMD_HISTORY:
+            # In Python 3.7+, dicts maintain insertion order. iter() gets the oldest key.
+            oldest_key = next(iter(self.cmd_results))
+            del self.cmd_results[oldest_key]
         return cmd_ids_dispatched
 
     def publish_status_msg(self):
