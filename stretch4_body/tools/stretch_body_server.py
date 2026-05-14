@@ -339,7 +339,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
             robot_server.run_server()
         except Exception as e: 
             logger.error(f"Unexpected error while running stretch body server: {e}")
-        finally: 
+        finally:
             archive_session_logs()
     
         return
@@ -406,51 +406,101 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
     return
 
 
-def get_service_script():
-    """A helper to get the service script path"""
-    import shutil
+def get_service_file_content(log_level: str) -> str:
+    """Creates the linux service file that gets copied to ~/.config/systemd/user/"""
+    user_home = Path.home()
+    repo_root = Path(__file__).resolve().parents[2]
+    
+    python_path = Path(sys.executable)
+    if (repo_root / ".venv" / "bin" / "python3").is_file():
+        python_path = repo_root / ".venv" / "bin" / "python3"
+        
+    hello_fleet_path = os.environ.get("HELLO_FLEET_PATH", str(user_home / "stretch_user"))
+    hello_fleet_id = os.environ.get("HELLO_FLEET_ID", "")
+    
+    exec_cmd = "stretch_body_server --launch"
+    if log_level:
+        exec_cmd += f" --log_level {log_level}"
+        
+    path_env = f"{user_home}/.local/bin:{user_home}/bin:{python_path.parent}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-    # 1. Check if it's in the system PATH
-    which_path = shutil.which("_stretch_body_server_daemon.sh")
-    if which_path:
-        return which_path
+    service_file_template = f"""\
+[Unit]
+Description=Stretch Body Server Server
+After=network.target
+Wants=network.target
 
-    # 2. Check ~/.local/bin explicitly as a fallback for pip user installs
-    local_bin_path = os.path.expanduser("~/.local/bin/_stretch_body_server_daemon.sh")
-    if os.path.exists(local_bin_path):
-        return local_bin_path
+[Service]
+Type=simple
+Environment="PYTHONUNBUFFERED=1"
+Environment="HELLO_FLEET_PATH={hello_fleet_path}"
+Environment="HELLO_FLEET_ID={hello_fleet_id}"
+Environment="RMW_IMPLEMENTATION=rmw_zenoh_cpp"
+Environment="PATH={path_env}"
+WorkingDirectory={repo_root}
+ExecStart=/bin/bash -c "{exec_cmd}"
+ExecStopPost={python_path} -c "from stretch4_body.tools.stretch_body_server import archive_session_logs; print('Stopping daemon...'); archive_session_logs()"
+Restart=on-failure
+RestartSec=10
 
-    # 3. Check the source tree location (e.g., when running from source or editable install)
-    repo_tools_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
-        "tools",
-        "_stretch_body_server_daemon.sh",
-    )
-    if os.path.exists(repo_tools_path):
-        return repo_tools_path
+[Install]
+WantedBy=default.target
+"""
 
-    # Fallback default
-    return local_bin_path
+    return service_file_template
 
 def _manage_daemon(action:str):
     """Expected action words: install, start, stop, restart, status, uninstall"""
     action_with_suffix = f"{action}ing"
     if action == "stop": action_with_suffix = "stopping"
     elif action == "status": action_with_suffix = "getting status of"
-    log_level = RobotParams.get_params()[1]["logging"]["handlers"]["file_handler"]["level"]
+    log_level = "INFO"
     logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service...")
-    linux_service_script_path = get_service_script()
-    if os.path.exists(linux_service_script_path):
-        try:
-            subprocess.run(["bash", linux_service_script_path, f"--{action}", "--log_level", log_level], check=True)
-            logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service: SUCCESS")
-            return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Error while {action_with_suffix} Stretch Body Server system service: {e}")
-    else:
-        logger.error(f"Error: Service script not found at {linux_service_script_path}")
+    
+    user_systemd_dir = Path.home() / ".config" / "systemd" / "user"
+    service_file_path = user_systemd_dir / "stretch_body_server.service"
 
-    return False
+    try:
+        if action == "install":
+            user_systemd_dir.mkdir(parents=True, exist_ok=True)
+            with open(service_file_path, "w") as f:
+                f.write(get_service_file_content(log_level))
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "enable", "stretch_body_server.service"], check=True)
+            
+        elif action == "uninstall":
+            subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=False)
+            subprocess.run(["systemctl", "--user", "disable", "stretch_body_server.service"], check=False)
+            if service_file_path.exists():
+                service_file_path.unlink()
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            
+        elif action == "start":
+            user_systemd_dir.mkdir(parents=True, exist_ok=True)
+            with open(service_file_path, "w") as f:
+                f.write(get_service_file_content(log_level))
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "start", "stretch_body_server.service"], check=True)
+            
+        elif action == "stop":
+            subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=True)
+            
+        elif action == "restart":
+            user_systemd_dir.mkdir(parents=True, exist_ok=True)
+            with open(service_file_path, "w") as f:
+                f.write(get_service_file_content(log_level))
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "restart", "stretch_body_server.service"], check=True)
+            
+        elif action == "status":
+            subprocess.run(["systemctl", "--user", "status", "stretch_body_server.service", "--no-pager"], check=False)
+            subprocess.run(["journalctl", "--user", "-u", "stretch_body_server.service", "-n", "20", "--no-pager"], check=False)
+            
+        logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service: SUCCESS")
+        return True
+    except Exception as e:
+        logger.error(f"Error while {action_with_suffix} Stretch Body Server system service: {e}")
+        return False
 
 def start_daemon() -> bool:
     """Installs the systemctl service, and then calls restart to (re)start it, if there isn't already an active non-daemon server running. Note: It calls restart in case a service is already running."""
@@ -500,6 +550,6 @@ def uninstall_daemon() -> bool:
 def install_daemon() -> bool:
     return _manage_daemon("install")
 
-
 if __name__ == "__main__":
     main()
+
