@@ -38,6 +38,8 @@ def print_status(robot_client):
     print('Loop count:         ' + str(robot_client.status['server']['control_loop']['num_loops']))
     print('Loop overruns:      ' + str(robot_client.status['server']['control_loop']['missed_loops']))
     print("")
+    print("Use `stretch_body_server --print` to view the latest logs.")
+    print("")
 
 
 def init_logs(log_file:str):
@@ -159,30 +161,29 @@ def color_print(line):
     else:
         print(line)
 
-def print_last_n_logs(log_file:str, n:int):
-    # Print the last n number of lines for additional context
 
-    try: 
-        f = open(log_file, "r")
-        lines = f.readlines()
-    except:
-        return 
-
-    for line in lines[-n:]:
-        color_print(line)
-
-def tail_log_file(log_file:str):    
+def tail_log_file(log_file:str, n:int=50):    
 
     try:
-        # Handle log rotations gracefully: 
-        # Scenario 1: The log file is renamed (e.g. stretchbody.log -> stretchbody.log.1) and a new blank file is created. This will change the inode (the file's unique system identifier), 
-        # so we add a check to catch any changes and open the new file if needed.
-        # Scenario 2: The log file contents is copied to a new file (e.g. stretchbody.log.1), and the original file contents are truncated. The inode will stay the same, but the file size will 
-        # reset to near 0. This will cause the python reader cursor to be set at a much larger byte offset than the new file size, which can be caught by comparing the current file size to the
-        # reader's cursor position. Re-opening the file will reset the cursor position so reading can continue. 
-
-        f = open(log_file, "a+")
-        f.seek(0, 2) # Seek to the end of the file by default to skip old logs
+        Path(log_file).touch(exist_ok=True)
+        f = open(log_file, "r")
+        if n <= 0:
+            f.seek(0, 2)
+        else:
+            positions = [0] * n
+            count = 0
+            while True:
+                pos = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                positions[count % n] = pos
+                count += 1
+            
+            if count <= n:
+                f.seek(0)
+            else:
+                f.seek(positions[count % n])
         file_id = os.stat(log_file).st_ino
         while True:
             line = f.readline()
@@ -190,6 +191,7 @@ def tail_log_file(log_file:str):
                 color_print(line)
             else:
                 try:
+                    f.seek(f.tell()) # Clear EOF flag
                     current_stat = os.stat(log_file)
                     if current_stat.st_ino != file_id or current_stat.st_size < f.tell():
                         f.close()
@@ -238,12 +240,7 @@ def _parse_args():
 
     return args
 
-def is_server_active(robot_client:RobotClient, verbose:bool=False):# -> Any | bool:
-    from stretch4_body.utils.file_access_utils import is_file_in_use
-    from stretch4_body.core.client_server import PORT_ADMIN
-    if is_file_in_use(f"{PORT_ADMIN}_lock"):
-        return True
-
+def is_server_active(robot_client:RobotClient, verbose:bool=False) -> bool:
     is_active = robot_client.startup(verbose=verbose, allow_different_user_connection=True) and robot_client.is_server_active()
     robot_client.stop()
     return is_active
@@ -339,7 +336,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
             robot_server.run_server()
         except Exception as e: 
             logger.error(f"Unexpected error while running stretch body server: {e}")
-        finally: 
+        finally:
             archive_session_logs()
     
         return
@@ -374,7 +371,6 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 
     if is_server_active(robot_client):
         if args.print:
-            print_last_n_logs(log_file=log_file, n=10)
             tail_log_file(log_file)
 
         if args.status:
@@ -406,51 +402,99 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
     return
 
 
-def get_service_script():
-    """A helper to get the service script path"""
-    import shutil
+def get_service_file_content(log_level: str) -> str:
+    """Creates the linux service file that gets copied to ~/.config/systemd/user/"""
+    user_home = Path.home()
+    repo_root = Path(__file__).resolve().parents[2]
+    
+    python_path = Path(sys.executable)
+        
+    hello_fleet_path = os.environ["HELLO_FLEET_PATH"]
+    hello_fleet_id = os.environ["HELLO_FLEET_ID"]
+    
+    exec_cmd = "stretch_body_server --launch"
+    if log_level:
+        exec_cmd += f" --log_level {log_level}"
+        
+    path_env = f"{user_home}/.local/bin:{user_home}/bin:{python_path.parent}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-    # 1. Check if it's in the system PATH
-    which_path = shutil.which("_stretch_body_server_daemon.sh")
-    if which_path:
-        return which_path
+    service_file_template = f"""\
+[Unit]
+Description=Stretch Body Server Service
+After=network.target
+Wants=network.target
 
-    # 2. Check ~/.local/bin explicitly as a fallback for pip user installs
-    local_bin_path = os.path.expanduser("~/.local/bin/_stretch_body_server_daemon.sh")
-    if os.path.exists(local_bin_path):
-        return local_bin_path
+[Service]
+Type=simple
+#Environment="PYTHONUNBUFFERED=1"
+Environment="HELLO_FLEET_PATH={hello_fleet_path}"
+Environment="HELLO_FLEET_ID={hello_fleet_id}"
+Environment="RMW_IMPLEMENTATION=rmw_zenoh_cpp"
+Environment="PATH={path_env}"
+WorkingDirectory={repo_root}
+ExecStart=/bin/bash -c "{exec_cmd}"
+ExecStopPost={python_path} -c "from stretch4_body.tools.stretch_body_server import archive_session_logs; print('Stopping daemon...'); archive_session_logs()"
+Restart=on-failure
+RestartSec=10
 
-    # 3. Check the source tree location (e.g., when running from source or editable install)
-    repo_tools_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
-        "tools",
-        "_stretch_body_server_daemon.sh",
-    )
-    if os.path.exists(repo_tools_path):
-        return repo_tools_path
+[Install]
+WantedBy=default.target
+"""
 
-    # Fallback default
-    return local_bin_path
+    return service_file_template
 
 def _manage_daemon(action:str):
     """Expected action words: install, start, stop, restart, status, uninstall"""
     action_with_suffix = f"{action}ing"
     if action == "stop": action_with_suffix = "stopping"
     elif action == "status": action_with_suffix = "getting status of"
-    log_level = RobotParams.get_params()[1]["logging"]["handlers"]["file_handler"]["level"]
+    log_level =  RobotParams._robot_params['logging']['root']['level']
     logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service...")
-    linux_service_script_path = get_service_script()
-    if os.path.exists(linux_service_script_path):
-        try:
-            subprocess.run(["bash", linux_service_script_path, f"--{action}", "--log_level", log_level], check=True)
-            logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service: SUCCESS")
-            return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Error while {action_with_suffix} Stretch Body Server system service: {e}")
-    else:
-        logger.error(f"Error: Service script not found at {linux_service_script_path}")
+    
+    user_systemd_dir = Path.home() / ".config" / "systemd" / "user"
+    service_file_path = user_systemd_dir / "stretch_body_server.service"
 
-    return False
+    try:
+        if action == "install":
+            user_systemd_dir.mkdir(parents=True, exist_ok=True)
+            with open(service_file_path, "w") as f:
+                f.write(get_service_file_content(log_level))
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "enable", "stretch_body_server.service"], check=True)
+            
+        elif action == "uninstall":
+            subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=False)
+            subprocess.run(["systemctl", "--user", "disable", "stretch_body_server.service"], check=False)
+            if service_file_path.exists():
+                service_file_path.unlink()
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            
+        elif action == "start":
+            user_systemd_dir.mkdir(parents=True, exist_ok=True)
+            with open(service_file_path, "w") as f:
+                f.write(get_service_file_content(log_level))
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "start", "stretch_body_server.service"], check=True)
+            
+        elif action == "stop":
+            subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=True)
+            
+        elif action == "restart":
+            user_systemd_dir.mkdir(parents=True, exist_ok=True)
+            with open(service_file_path, "w") as f:
+                f.write(get_service_file_content(log_level))
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "--user", "restart", "stretch_body_server.service"], check=True)
+            
+        elif action == "status":
+            subprocess.run(["systemctl", "--user", "status", "stretch_body_server.service", "--no-pager"], check=False)
+            subprocess.run(["journalctl", "--user", "-u", "stretch_body_server.service", "-n", "20", "--no-pager"], check=False)
+            
+        logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service: SUCCESS")
+        return True
+    except Exception as e:
+        logger.error(f"Error while {action_with_suffix} Stretch Body Server system service: {e}")
+        return False
 
 def start_daemon() -> bool:
     """Installs the systemctl service, and then calls restart to (re)start it, if there isn't already an active non-daemon server running. Note: It calls restart in case a service is already running."""
@@ -500,6 +544,6 @@ def uninstall_daemon() -> bool:
 def install_daemon() -> bool:
     return _manage_daemon("install")
 
-
 if __name__ == "__main__":
     main()
+
