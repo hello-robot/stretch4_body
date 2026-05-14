@@ -161,26 +161,29 @@ def color_print(line):
     else:
         print(line)
 
-def print_last_n_logs(log_file:str, n:int):
-    # Print the last n number of lines for additional context
 
-    try: 
-        f = open(log_file, "r")
-        lines = f.readlines()
-    except:
-        return 
-
-    for line in lines[-n:]:
-        color_print(line)
-
-def tail_log_file(log_file:str):    
+def tail_log_file(log_file:str, n:int=50):    
 
     try:
         Path(log_file).touch(exist_ok=True)
         f = open(log_file, "r")
-        # Only seek to end if the file is already somewhat large, otherwise it's a fresh file and we want to see the startup logs
-        if os.path.getsize(log_file) > 10000:
+        if n <= 0:
             f.seek(0, 2)
+        else:
+            positions = [0] * n
+            count = 0
+            while True:
+                pos = f.tell()
+                line = f.readline()
+                if not line:
+                    break
+                positions[count % n] = pos
+                count += 1
+            
+            if count <= n:
+                f.seek(0)
+            else:
+                f.seek(positions[count % n])
         file_id = os.stat(log_file).st_ino
         while True:
             line = f.readline()
@@ -368,7 +371,6 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 
     if is_server_active(robot_client):
         if args.print:
-            print_last_n_logs(log_file=log_file, n=10)
             tail_log_file(log_file)
 
         if args.status:
