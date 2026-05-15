@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import time
-from stretch4_body.core.device import Device
 from multiprocessing import Process, Event
+import math
+from stretch4_body.core.device import Device
 from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
-import math
+from stretch4_body.core.robot_params import RobotParams
 # ###########################################################################################
 
 def _cb_solver_loop_exit(lsa):
@@ -95,21 +96,20 @@ class SelfCollisionLoop(Device):
         return True #not timeout
 
     def step(self,joint_cfg=None):
-        #Update collision model given joint_cfg (or get joint_cfg from robot if not provided)
-        #Called at 100hz from main control loop. 
-        # Send joint configuration to solver loop, get back latest collisions (async)
+        """
+        Update collision model given joint_cfg (or get joint_cfg from robot if not provided)
+        Called at 100hz from main control loop. 
+        Send joint configuration to solver loop, get back latest collisions (async)
+        """
         if joint_cfg is None:
             joint_cfg=self.get_urdf_joint_configuration(self.robot.status)
         self.q_cmd.put(joint_cfg)
         s=self.q_status.get_latest()
         if s is not None:
             self.status.update(s)
-            # if len(s['collisions']) > 0:
-            #     print('COLL',s['collisions'])
 
 
     def _manage_ctrlC(self, *args):
-        # If you have multiple event processing processes, set each Event.
         self.do_exit.set()
 
     def stop(self):
@@ -132,7 +132,6 @@ class SelfCollisionLoop(Device):
         Convert robot.status to URDF compatible dictionary of robot's current pose + padding based on current velocity of joint
         """
         s = robot_status
-        from stretch4_body.core.robot_params import RobotParams
         _, robot_params = RobotParams.get_params()
         kbd = robot_params['self_collision_mujoco'][robot_params['robot']['model_name']]['k_brake_distance']
         dl = kbd['lift'] * s['lift']['braking_distance']
