@@ -85,15 +85,7 @@ class SelfCollisionLoop(Device):
                 args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin, self.q_cmd, self.q_status)
             )
             self.solver_process.start()
-            #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.pjr_process.pid)) #Assign process to core
-
-            # Wait for system to start posting status
-            # ts=time.time()
-            # while self.status['last_frame_time']==0 and not timeout:
-            #     self.status.update(self.q_status.get(block=True, timeout=0.1))
-            #     if time.time()-ts>2.0:
-            #         timeout=True
-        return True #not timeout
+        return True
 
     def step(self,joint_cfg=None):
         """

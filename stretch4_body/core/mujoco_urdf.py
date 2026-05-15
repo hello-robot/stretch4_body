@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-import os
-import tempfile
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 import mujoco
 import mujoco.viewer
@@ -12,9 +9,6 @@ from stretch4_urdf import get_urdf
 
 from stretch4_body.core.device import Device
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import *
-from stretch4_body.utils.file_access_utils import (acquire_lock_if_available,
-                                                     is_file_in_use,
-                                                     setup_shared_directory)
 from stretch4_body.core.robot_params import RobotParams
 
 @dataclass
