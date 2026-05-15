@@ -907,11 +907,21 @@ class HelloLoggerFile(logging.Formatter):
         return formatter.format(record)
 
 class LoggerThrottleFilter(logging.Filter):
-    def __init__(self, name=""):
+    """
+    A logging filter that throttles log messages based on time.
+    
+    Usage:
+        logger.info("This message will appear every 10 seconds at most", extra={'throttle_s': 10.0})
+        logger.warning("This warning will appear every 5 seconds", extra={'throttle_s': 5.0})
+    """
+    def __init__(self, name):
         super().__init__(name)
         self.last_log_times = {}
 
     def filter(self, record):
+        """
+        Tracks log frequency using a combination of the file name and the exact line number (record.pathname, record.lineno).
+        """
         throttle_s = getattr(record, 'throttle_s', 0)
         if throttle_s <= 0:
             return True
