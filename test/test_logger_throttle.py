@@ -57,6 +57,36 @@ def test_device_filter_not_duplicated():
     # Confirm it actually prevents multiple filters of the same name
     assert len([f for f in logger.filters if f.name == "test_dev_filter"]) == 1
 
+def test_device_filter_not_duplicated_empty_name():
+    dev1 = Device(req_params=False)
+    logger = logging.getLogger("")
+    
+    filters = [f for f in logger.filters if isinstance(f, LoggerThrottleFilter)]
+    assert len(filters) == 1
+    
+    for _ in range(10):
+        dev2 = Device(req_params=False)
+        filters = [f for f in logger.filters if isinstance(f, LoggerThrottleFilter)]
+        assert len(filters) == 1
+
+    assert len(dev2.logger.filters) == 1
+    
+    # Confirm it actually prevents multiple filters of the same name
+    assert len([f for f in logger.filters if f.name == ""]) == 1
+
+def test_adding_filter_logic():
+    name = "test_logger_filter"
+    logger = logging.getLogger(name)
+    
+    for _ in range(10):
+        throttle_filters = [filter for filter in logger.filters if filter.name == name and isinstance(filter, LoggerThrottleFilter)]
+        if len(throttle_filters) == 0:
+            # Add a filter only if none exists, avoids adding multiple filters on multiple inits
+            logger.addFilter(LoggerThrottleFilter(name))
+
+    assert len(logger.filters) == 1
+    assert isinstance(logger.filters[0], LoggerThrottleFilter)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -40,6 +40,7 @@ class Device:
         
         throttle_filters = [filter for filter in self.logger.filters if filter.name == self.name and isinstance(filter, hello_utils.LoggerThrottleFilter)]
         if len(throttle_filters) == 0:
+            # Add a filter only if none exists, avoids adding multiple filters on multiple inits
             self.logger.addFilter(hello_utils.LoggerThrottleFilter(self.name))
 
         if self.params == {} and req_params:
