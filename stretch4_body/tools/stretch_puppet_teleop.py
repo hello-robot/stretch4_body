@@ -101,6 +101,7 @@ def main():
     parser.add_argument("--pg4c", action='store_true',help="Run a PG4 on the controller side.")
     parser.add_argument("--print_only", action='store_true', help="Print controller and puppet joint positions without commanding motion.")
     parser.add_argument("--base_rotate_only", action='store_true', help="Controller base motion will only generate pure rotation commands on the puppet base.")
+    parser.add_argument("--tool_nil_controller", action='store_true', help="Run when the controller has eoa_wrist_dw4_tool_nil (no gripper on controller side).")
     args = parser.parse_args()
 
     if not args.no_puppet and args.puppet_ip is None:
@@ -117,6 +118,7 @@ def main():
             controller.end_of_arm.joints.append('parallel_gripper')
         if 'stretch_gripper' in controller.end_of_arm.joints:
             controller.end_of_arm.joints.remove('stretch_gripper')
+
 
     # Validate that wrist joints have enable_torque_after_runstop set to 0
     invalid_params = []
@@ -142,11 +144,17 @@ def main():
             controller.stop()
             sys.exit(1)
             
-        if args.pg4 and puppet.end_of_arm is not None:
-            if 'parallel_gripper' not in puppet.end_of_arm.joints:
-                puppet.end_of_arm.joints.append('parallel_gripper')
-            if 'stretch_gripper' in puppet.end_of_arm.joints:
-                puppet.end_of_arm.joints.remove('stretch_gripper')
+        if puppet.end_of_arm is not None:
+            if args.pg4:
+                if 'parallel_gripper' not in puppet.end_of_arm.joints:
+                    puppet.end_of_arm.joints.append('parallel_gripper')
+                if 'stretch_gripper' in puppet.end_of_arm.joints:
+                    puppet.end_of_arm.joints.remove('stretch_gripper')
+            else:
+                if 'stretch_gripper' not in puppet.end_of_arm.joints:
+                    puppet.end_of_arm.joints.append('stretch_gripper')
+                if 'parallel_gripper' in puppet.end_of_arm.joints:
+                    puppet.end_of_arm.joints.remove('parallel_gripper')
 
     # Validate homing
     print("Checking if controller is homed...")
@@ -295,6 +303,8 @@ def main():
             if is_active:
                 if args.pg4c and eoa_j == 'parallel_gripper':
                     pass
+                elif args.tool_nil_controller and eoa_j in ['stretch_gripper', 'parallel_gripper']:
+                    pass
                 else:
                     print('Disabling controller torque on',eoa_j)
                     controller.end_of_arm.disable_torque(eoa_j)
@@ -339,7 +349,7 @@ def main():
                 eoa_vel_r = 12.0
                 eoa_accel_r=10.0
                 lift_vel_m=controller.lift.params['motion']['max']['vel_m']
-                lift_accel_m=controller.lift.params['motion']['max']['accel_m']
+                lift_accel_m=controller.lift.params['motion']['max']['accel_m']*0.7
                 arm_vel_m=controller.arm.params['motion']['max']['vel_m']
                 arm_accel_m=controller.arm.params['motion']['max']['accel_m']
 
@@ -409,6 +419,8 @@ def main():
                                 for eoa_j in controller.end_of_arm.joints:
                                     if args.pg4c and eoa_j == 'parallel_gripper':
                                         continue
+                                    if args.tool_nil_controller and eoa_j in ['stretch_gripper', 'parallel_gripper']:
+                                        continue
                                     print('Torque diesable',eoa_j)
                                     controller.end_of_arm.disable_torque(eoa_j)
                             controller.push_command()
@@ -466,7 +478,9 @@ def main():
                         for eoa_j in controller.end_of_arm.joints:
                 
                             if eoa_j in ['stretch_gripper', 'parallel_gripper']:
-                                if args.pg4c and eoa_j == 'parallel_gripper':
+                                if args.tool_nil_controller:
+                                    pass
+                                elif args.pg4c and eoa_j == 'parallel_gripper':
                                     pg4_range = controller.robot_params.get('parallel_gripper', {}).get('range_mm', 80.0)
                                     controller.end_of_arm.move_to_mm('parallel_gripper', current_slider_val * pg4_range)
                                 else:
@@ -475,17 +489,17 @@ def main():
                                     target_pct = current_slider_val * (pct_max_open + 100.0) - 100.0
                                     controller.end_of_arm.move_to(eoa_j, target_pct)
                                     
-                                if not args.no_puppet and puppet is not None and hasattr(puppet, 'end_of_arm') and puppet.end_of_arm is not None:
-                                    if 'gripper' in active_joints:
-                                        if args.pg4:
-                                            pg4_range = puppet.robot_params.get('parallel_gripper', {}).get('range_mm', 80.0)
-                                            pg4_cmd_log_mm = current_slider_val * pg4_range
-                                            puppet.end_of_arm.move_to_mm('parallel_gripper', pg4_cmd_log_mm)
-                                        else:
-                                            params = puppet.robot_params.get('stretch_gripper', {})
-                                            pct_max_open=100*abs(params['range_deg'][1]/params['range_deg'][0]) if 'range_deg' in params and params['range_deg'][0] != 0 else 100.0
-                                            target_pct = current_slider_val * (pct_max_open + 100.0) - 100.0
-                                            puppet.end_of_arm.move_to('stretch_gripper', target_pct)
+                    if not args.no_puppet and puppet is not None and hasattr(puppet, 'end_of_arm') and puppet.end_of_arm is not None:
+                        if 'gripper' in active_joints:
+                            if args.pg4 and 'parallel_gripper' in puppet.end_of_arm.joints:
+                                pg4_range = puppet.robot_params.get('parallel_gripper', {}).get('range_mm', 80.0)
+                                pg4_cmd_log_mm = current_slider_val * pg4_range
+                                puppet.end_of_arm.move_to_mm('parallel_gripper', pg4_cmd_log_mm)
+                            elif 'stretch_gripper' in puppet.end_of_arm.joints:
+                                params = puppet.robot_params.get('stretch_gripper', {})
+                                pct_max_open=100*abs(params['range_deg'][1]/params['range_deg'][0]) if 'range_deg' in params and params['range_deg'][0] != 0 else 100.0
+                                target_pct = current_slider_val * (pct_max_open + 100.0) - 100.0
+                                puppet.end_of_arm.move_to('stretch_gripper', target_pct)
                 
             controller.push_command()
             if not args.no_puppet and puppet is not None:
