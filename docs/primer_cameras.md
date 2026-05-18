@@ -2,7 +2,7 @@
 
 ## Preview from the Cameras from the command line
 
-You can use the following tool to display the camera feeds in opencv, rerun and store them locally anywhere from the command line: [stretch_camera_show](../../tools/stretch_camera_show.py).
+You can use the following tool to display the camera feeds in opencv, rerun and store them locally anywhere from the command line: [stretch_camera_show](../stretch4_body/tools/stretch_camera_show.py).
 
 Run `stretch_camera_show --help` for all the available options.
 
@@ -29,11 +29,11 @@ stretch_camera_show --left --recording_directory ./recordings # Store images to 
 
 ### Stream-API 
 
-The camera subsystem exposes Python [generators](https://book.pythontips.com/en/latest/generators.html) for streaming frames from the cameras. These generators yield [ImageFrame](./models/image_frame.py) or [SyncedImageFrame](./models/image_frame.py) objects.
+The camera subsystem exposes Python [generators](https://book.pythontips.com/en/latest/generators.html) for streaming frames from the cameras. These generators yield [ImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) or [SyncedImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) objects.
 
-[ImageFrame](./models/image_frame.py) is a container for a single camera's image and metadata. Access the image using the `image` attribute, timestamp with `timestamp`, and [AI model results](#custom-ai-models-eg-rtmo-pose-estimation) with `ai_model_results`.
+[ImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) is a container for a single camera's image and metadata. Access the image using the `image` attribute, timestamp with `timestamp`, and [AI model results](#custom-ai-models-eg-rtmo-pose-estimation) with `ai_model_results`.
 
-[SyncedImageFrame](./models/image_frame.py) is a container for multiple cameras' images and metadata. You can access the individual camera frames using the `left`, `right`, and `center` attributes of the `SyncedImageFrame` object, which are `ImageFrame` objects.
+[SyncedImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) is a container for multiple cameras' images and metadata. You can access the individual camera frames using the `left`, `right`, and `center` attributes of the `SyncedImageFrame` object, which are `ImageFrame` objects.
 
 Using one camera yields an ImageFrame.
 
@@ -335,19 +335,19 @@ Cameras are calibrated in the factory and the calibration files are stored in th
 
 If you need to re-calibrate your cameras, you can use the following tools. 
 
-First focus your camera lens using [REx_camera_focus](../../tools/factory/REx_camera_focus.py).
+First focus your camera lens using [REx_camera_focus](../stretch4_body/tools/factory/REx_camera_focus.py).
 
-Then calibrate the camera intrinsics and extrinsics using [REx_camera_calibrate](../../tools/factory/REx_camera_calibrate.py).
+Then calibrate the camera intrinsics and extrinsics using [REx_camera_calibrate](../stretch4_body/tools/factory/REx_camera_calibrate.py).
 
 The calibration process does the following:
-1. Calibrates the camera intrinsics using [calibrate_camera_intrinsics](./calibrate_intrinsics.py).
+1. Calibrates the camera intrinsics using [calibrate_camera_intrinsics](../stretch4_body/subsystem/cameras/calibrate_intrinsics.py).
     This saves the calibration yaml file that contains `head_center`, `head_left`, and `head_right` keys with the K and D matrices, along with other information, at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/calibration_rgb_head_camera.yaml` and a few other yaml files for ROS2 to work correctly.
-2. Verifies the camera intrinsics using [camera_intrinsics_validate_l2_distance](./camera_intrinsics_validate_l2_distance.py). This uses pre-tape-measured values to verify the camera intrinsics are correct. The values are expected to vary a little across robots, but it's a good "sanity check".
-3. Calibrates the camera-camera extrinsics using [calibrate_extrinsics_cameras](./calibrate_extrinsics_cameras.py).
+2. Verifies the camera intrinsics using [camera_intrinsics_validate_l2_distance](../stretch4_body/subsystem/cameras/camera_intrinsics_validate_l2_distance.py). This uses pre-tape-measured values to verify the camera intrinsics are correct. The values are expected to vary a little across robots, but it's a good "sanity check".
+3. Calibrates the camera-camera extrinsics using [calibrate_extrinsics_cameras](../stretch4_body/subsystem/cameras/calibrate_extrinsics_cameras.py).
     This saves the calibration transforms as a yaml file containing `left_to_center` and `right_to_center` keys at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/camera_extrinsics.yaml`
-4. Calibrates the camera-lidar extrinsics using [calibrate_extrinsics_lidars](./calibrate_extrinsics_lidars.py).
+4. Calibrates the camera-lidar extrinsics using [calibrate_extrinsics_lidars](../stretch4_body/subsystem/cameras/calibrate_extrinsics_lidars.py).
     This appends the camera-lidar extrinsics `transform_right_lidar_to_head_center` key to the `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_dual_lidar/dual_lidar_calibration.yaml` file.
 
-These values are used to estimate the distance to ArUco markers of known size using [detector_aruco.py](./detectors/detector_aruco.py) that uses `cv2.solve_pnp` or `cv2.fisheye.solve_pnp` depending on the lens type.
+These values are used to estimate the distance to ArUco markers of known size using [detector_aruco.py](../stretch4_body/subsystem/cameras/detectors/detector_aruco.py) that uses `cv2.solve_pnp` or `cv2.fisheye.solve_pnp` depending on the lens type.
 
-These values are also used by [emulated_rgbd.py](./emulated_rgbd.py) to create an colored point clouds and depth images using the left and right lidars, and each head camera using `cv2.projectPoints` or `cv2.fisheye.projectPoints` depending on the lens type. This also requires the lidar extrinsics to be calibrated using https://github.com/hello-robot/stretch_dual_lidar_calibration.
+These values are also used by [emulated_rgbd.py](../stretch4_body/subsystem/cameras/emulated_rgbd.py) to create an colored point clouds and depth images using the left and right lidars, and each head camera using `cv2.projectPoints` or `cv2.fisheye.projectPoints` depending on the lens type. This also requires the lidar extrinsics to be calibrated using https://github.com/hello-robot/stretch_dual_lidar_calibration.
