@@ -6,7 +6,7 @@ This document explains the usage of the Gamepad Teleoperation interface for the 
 
 The `GamePadTeleop` class maps gamepad inputs (Xbox controller) to robot motions. It supports multiple control mappings, mode switching, and custom user functions.
 
-![Gamepad Mappings](../../images/gamepad_cycling_mapping.png)
+![Gamepad Mappings](../images/gamepad_cycling_mapping.png)
 
 ## Key Features
 

@@ -60,16 +60,16 @@ For an in-depth understanding of how specific parts of the system are designed, 
 
 | Primer | Description |
 |--------|-------------|
-| [Core Architecture](./stretch4_body/core/primer_core.md) | Maps out the foundational classes, IPC communication, and file organization of the core library. |
-| [Robot Parameters](./stretch4_body/robot/primer_robot_params.md) | Explains the multi-layered parameter system (default vs user) and dynamic runtime generation. |
-| [Robot Client API](./stretch4_body/robot/primer_robot_client.md) | A guide to using the RobotClient API for reading status and commanding motion asynchronously. |
-| [Hardware Subsystems](./stretch4_body/subsystem/primer_subsystems.md) | Overview of the primary hardware abstractions (Arm, Lift, Base) and how they are instantiated. |
-| [End-Of-Arm EOA](./stretch4_body/subsystem/end_of_arm/primer_end_of_arm.md) | Details the dynamically instantiated, multi-process architecture for interchangeable tool attachments. |
-| [Line Sensors](./stretch4_body/subsystem/line_sensor/pimer_line_sensor.md) | Details the operation and background processing for the downward-facing Pixart line sensors. |
-| [Server Behaviors](./stretch4_body/behavior/primer_behaviors.md) | Explains the plugin architecture for Sentries, Safe Motions, and Routines within the 100Hz server loop. |
-| [Self-Collision](./stretch4_body/behavior/sentries/primer_self_collision.md) | Details the MuJoCo-based collision checking system, its background loop, and configuration parameters. |
-| [Gamepad Teleop](./stretch4_body/core/primer_gamepad_teleop.md) | Explains how different control schemes can be mapped onto a standard gamepad controller + how to extend it. |
-| [Cameras](./stretch4_body/subsystem/cameras/primer_cameras.md) | A guide to the cameras on Stretch 4's head and wrist, with an overview of the CLIs and API. |
+| [Core Architecture](./docs/primer_core.md) | Maps out the foundational classes, IPC communication, and file organization of the core library. |
+| [Robot Parameters](./docs/primer_robot_params.md) | Explains the multi-layered parameter system (default vs user) and dynamic runtime generation. |
+| [Robot Client API](./docs/primer_robot_client.md) | A guide to using the RobotClient API for reading status and commanding motion asynchronously. |
+| [Hardware Subsystems](./docs/primer_subsystems.md) | Overview of the primary hardware abstractions (Arm, Lift, Base) and how they are instantiated. |
+| [End-Of-Arm EOA](./docs/primer_end_of_arm.md) | Details the dynamically instantiated, multi-process architecture for interchangeable tool attachments. |
+| [Line Sensors](./docs/primer_line_sensor.md) | Details the operation and background processing for the downward-facing Pixart line sensors. |
+| [Server Behaviors](./docs/primer_behaviors.md) | Explains the plugin architecture for Sentries, Safe Motions, and Routines within the 100Hz server loop. |
+| [Self-Collision](./docs/primer_self_collision.md) | Details the MuJoCo-based collision checking system, its background loop, and configuration parameters. |
+| [Gamepad Teleop](./docs/primer_gamepad_teleop.md) | Explains how different control schemes can be mapped onto a standard gamepad controller + how to extend it. |
+| [Cameras](./docs/primer_cameras.md) | A guide to the cameras on Stretch 4's head and wrist, with an overview of the CLIs and API. |
 
 ## Installation
  1. `pip3 install -e .`
