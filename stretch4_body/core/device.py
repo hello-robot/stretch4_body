@@ -37,7 +37,11 @@ class Device:
         self.user_params, self.robot_params = RobotParams.get_params()
         self.params = self.robot_params.get(self.name, {})
         self.logger = logging.getLogger(self.name)
-        self.logger.addFilter(hello_utils.LoggerThrottleFilter())
+        
+        throttle_filters = [filter for filter in self.logger.filters if filter.name == self.name and isinstance(filter, hello_utils.LoggerThrottleFilter)]
+        if len(throttle_filters) == 0:
+            # Add a filter only if none exists, avoids adding multiple filters on multiple inits
+            self.logger.addFilter(hello_utils.LoggerThrottleFilter(self.name))
 
         if self.params == {} and req_params:
             self.logger.error('Parameters for device %s not found. Check parameter YAML and device name. Exiting...' % self.name.upper())

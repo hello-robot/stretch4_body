@@ -61,14 +61,14 @@ def end_of_arm_loop_worker(do_exit, rate_hz, q_admin, q_cmd, q_status):
             loop_name='end_of_arm_loop',
             rate_hz=rate_hz,
             worker_instance=eoa,
+            do_exit=do_exit,
             q_admin=q_admin,
             q_status=q_status,
             q_cmd=q_cmd,
-            do_exit=do_exit,
-            callback_step=_cb_end_of_arm_loop_step,
-            callback_pause=_cb_end_of_arm_loop_pause,
-            callback_unpause=_cb_end_of_arm_unpause,
-            callback_exit=_cb_end_of_arm_loop_exit
+            callback_exit=lambda w_inst: _cb_end_of_arm_loop_exit(w_inst),
+            callback_pause=lambda w_inst: _cb_end_of_arm_loop_pause(w_inst),
+            callback_unpause=lambda w_inst: _cb_end_of_arm_unpause(w_inst),
+            callback_step=lambda w_inst, q_c, s_out: _cb_end_of_arm_loop_step(w_inst, q_c, s_out)
         )
 
         eoa.stop()

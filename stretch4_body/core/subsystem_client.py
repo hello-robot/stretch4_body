@@ -134,12 +134,6 @@ class SubsystemClient(Device):
                 
                 dt = now - self._last_push_command_time
                 if dt < min_dt:
-                    # Only warn if the call is outside a 40% jitter margin (allow OS sleep inaccuracies)
-                    if dt < (min_dt * 0.6):
-                        if now - self._last_rate_warn_time > 1.0 and (now - self._startup_time > 2.0):
-                            self.logger.warning(f"Warning: push_command rate throttled to {max_rate} Hz. Decrease push_command occurrences in your client loop.")
-                            self._last_rate_warn_time = now
-                    
                     sleep_time = min_dt - dt
                     time.sleep(sleep_time)
                     now = time.time()

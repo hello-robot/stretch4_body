@@ -211,10 +211,12 @@ class RobotServer(RobotCore):
                         self.logger.error(f'RobotServer _cb_command_dispatch : invalid  cmd {cmd}')
             else:
                 self.logger.error(f'RobotServer not able to run command {method} as subsystem {subsystem} is not present')
-        #Cleanup cmd results so doesn't overflow
-        tt=time.time()
-        self.cmd_results={key: value for key, value in self.cmd_results.items() if  (tt-value['ts']<100)} #Drop results over 100s old
-
+        # Cleanup cmd results to keep max history using O(1) operations
+        MAX_CMD_HISTORY = 5000
+        while len(self.cmd_results) > MAX_CMD_HISTORY:
+            # In Python 3.7+, dicts maintain insertion order. iter() gets the oldest key.
+            oldest_key = next(iter(self.cmd_results))
+            del self.cmd_results[oldest_key]
         return cmd_ids_dispatched
 
     def publish_status_msg(self):
@@ -404,9 +406,34 @@ def run_server():
         rs.stop()
         exit(1)
 
-    rs.run_controller()
-    rs.stop()
+    profile_enabled = os.environ.get('STRETCH_PROFILE') == '1'
+    if profile_enabled:
+        try:
+            import yappi
+            yappi.start()
+        except ImportError:
+            print("yappi not installed. Profiling disabled.")
+            profile_enabled = False
 
+    rs.run_controller()
+
+    if profile_enabled:
+        try:
+            import yappi
+            import sys
+            import io
+            print("\n" + "="*20 + " PROFILING SUMMARY: STRETCH_BODY_SERVER " + "="*20, file=sys.stderr)
+            yappi.stop()
+            stats = yappi.get_func_stats()
+            stats.sort('ttot', 'desc')
+            s = io.StringIO()
+            stats.print_all(out=s)
+            lines = s.getvalue().splitlines()
+            print('\n'.join(lines[:25]), file=sys.stderr)
+            print("="*80 + "\n", file=sys.stderr)
+        except Exception as e:
+            print(f"Error printing profile summary: {e}", file=sys.stderr)
+    rs.stop()
 
 # ###########################################################################################
 

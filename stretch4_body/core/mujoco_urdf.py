@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-import os
-import tempfile
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
-from pathlib import Path
 
 import mujoco
 import mujoco.viewer
@@ -12,10 +9,7 @@ from stretch4_urdf import get_urdf
 
 from stretch4_body.core.device import Device
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import *
-from stretch4_body.utils.file_access_utils import (acquire_lock_if_available,
-                                                     is_file_in_use,
-                                                     setup_shared_directory)
-
+from stretch4_body.core.robot_params import RobotParams
 
 @dataclass
 class MujocoJointStates:
@@ -50,6 +44,7 @@ class MujocoJointStates:
             fields.append(f"{k}={v:.2f}")   
         return "\n".join(fields)
 
+    @staticmethod
     def from_urdf_joint_state(state: dict, robot_params=None):
         """
         Take in urdf joint state and convert to mujoco joint state convention
@@ -61,8 +56,7 @@ class MujocoJointStates:
 
         """
         if robot_params is None:
-            d = Device(req_params=False)
-            robot_params=d.robot_params
+            _, robot_params = RobotParams.get_params()
 
         jgfl = 0.0
         jgfr = 0.0
@@ -98,11 +92,11 @@ def get_mujoco_collision_model_stretch4_urdf():
     If stretch4_body is installed, it will be used to get the batch and model name to load the correct URDF.
     Return path to built collision model
     """
-    d = Device(req_params=False)
+    _, robot_params = RobotParams.get_params()
     
-    model_name=d.robot_params['robot']['model_name']
-    batch_name=d.robot_params['robot']['batch_name']
-    eoa_name=d.robot_params['robot']['tool']
+    model_name=robot_params['robot']['model_name']
+    batch_name=robot_params['robot']['batch_name']
+    eoa_name=robot_params['robot']['tool']
 
     urdf_contents = get_urdf(model_name, batch_name, eoa_name, do_add_file_prefix_to_absolute_paths=False)
     urdf_contents = urdf_contents.replace("<robot name=\"stretch\">", f'''
@@ -112,8 +106,8 @@ def get_mujoco_collision_model_stretch4_urdf():
             </mujoco>''', 1)
 
 
-    robot_exclusions=d.robot_params['self_collision_mujoco'][model_name]['exclusions']
-    eoa_exclusions=d.robot_params['self_collision_mujoco'][eoa_name]['exclusions']
+    robot_exclusions=robot_params['self_collision_mujoco'][model_name]['exclusions']
+    eoa_exclusions=robot_params['self_collision_mujoco'][eoa_name]['exclusions']
     exclusions = "<contact>\n"
 
     for e in robot_exclusions+eoa_exclusions:
@@ -121,8 +115,8 @@ def get_mujoco_collision_model_stretch4_urdf():
     exclusions = exclusions +"</contact>\n"
 
     # Handle ignored links (disable collision)
-    ignore_links = d.robot_params['self_collision_mujoco'][model_name].get('ignore_links', []) + \
-                   d.robot_params['self_collision_mujoco'][eoa_name].get('ignore_links', [])
+    ignore_links = robot_params['self_collision_mujoco'][model_name].get('ignore_links', []) + \
+                   robot_params['self_collision_mujoco'][eoa_name].get('ignore_links', [])
 
     spec = mujoco.MjSpec.from_string(urdf_contents)
     spec.compile()
@@ -131,8 +125,8 @@ def get_mujoco_collision_model_stretch4_urdf():
     root = ET.fromstring(spec.to_xml())
     
     # Handle ignored links (disable collision)
-    ignore_links = d.robot_params['self_collision_mujoco'][model_name].get('ignore_links', []) + \
-                    d.robot_params['self_collision_mujoco'][eoa_name].get('ignore_links', [])
+    ignore_links = robot_params['self_collision_mujoco'][model_name].get('ignore_links', []) + \
+                    robot_params['self_collision_mujoco'][eoa_name].get('ignore_links', [])
     print(f"{ignore_links=}")
     for link_name in ignore_links:
         # Find body with name=link_name in the MJCF
@@ -203,11 +197,11 @@ class MujocoURDFCollisionViz(Device):
         self.model.vis.rgba.haze[:] = self.bg_rgba
 
         # Retrieve ignore links
-        d = Device(req_params=False)
-        model_name = d.robot_params['robot']['model_name']
-        eoa_name = d.robot_params['robot']['tool']
-        ignore_links = d.robot_params['self_collision_mujoco'][model_name].get('ignore_links', []) + \
-                       d.robot_params['self_collision_mujoco'][eoa_name].get('ignore_links', [])
+        _, robot_params = RobotParams.get_params()
+        model_name = robot_params['robot']['model_name']
+        eoa_name = robot_params['robot']['tool']
+        ignore_links = robot_params['self_collision_mujoco'][model_name].get('ignore_links', []) + \
+                       robot_params['self_collision_mujoco'][eoa_name].get('ignore_links', [])
         ignore_links_set = set(ignore_links)
         
         for i in range(self.model.ngeom):

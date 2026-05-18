@@ -17,6 +17,14 @@ def worker_loop(loop_name,rate_hz,worker_instance,
                 callback_pause,
                 callback_unpause,
                 callback_exit):
+    profile_enabled = os.environ.get('STRETCH_PROFILE') == '1'
+    if profile_enabled:
+        try:
+            import yappi
+            yappi.start()
+        except ImportError:
+            profile_enabled = False
+
     logger = worker_instance.logger if hasattr(worker_instance, 'logger') else logging.getLogger()
     logger.info('-------- Starting %s with PID %d --------'%(loop_name.capitalize(),os.getpid()))
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -82,6 +90,23 @@ def worker_loop(loop_name,rate_hz,worker_instance,
     q_cmd.queue.cancel_join_thread()
     q_status.queue.cancel_join_thread()
     
+    if profile_enabled:
+        try:
+            import yappi
+            import sys
+            import io
+            print("\n" + "="*20 + f" PROFILING SUMMARY: {loop_name.upper()} " + "="*20, file=sys.stderr)
+            yappi.stop()
+            stats = yappi.get_func_stats()
+            stats.sort('ttot', 'desc')
+            s = io.StringIO()
+            stats.print_all(out=s)
+            lines = s.getvalue().splitlines()
+            print('\n'.join(lines[:25]), file=sys.stderr)
+            print("="*80 + "\n", file=sys.stderr)
+        except Exception as e:
+            print(f"Error printing profile summary for {loop_name}: {e}", file=sys.stderr)
+
     return True
 
 # ###########################################################################################

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import time
-from stretch4_body.core.device import Device
 from multiprocessing import Process, Event
+import math
+from stretch4_body.core.device import Device
 from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
-import math
+from stretch4_body.core.robot_params import RobotParams
 # ###########################################################################################
 
 def _cb_solver_loop_exit(lsa):
@@ -84,32 +85,23 @@ class SelfCollisionLoop(Device):
                 args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin, self.q_cmd, self.q_status)
             )
             self.solver_process.start()
-            #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.pjr_process.pid)) #Assign process to core
-
-            # Wait for system to start posting status
-            # ts=time.time()
-            # while self.status['last_frame_time']==0 and not timeout:
-            #     self.status.update(self.q_status.get(block=True, timeout=0.1))
-            #     if time.time()-ts>2.0:
-            #         timeout=True
-        return True #not timeout
+        return True
 
     def step(self,joint_cfg=None):
-        #Update collision model given joint_cfg (or get joint_cfg from robot if not provided)
-        #Called at 100hz from main control loop. 
-        # Send joint configuration to solver loop, get back latest collisions (async)
+        """
+        Update collision model given joint_cfg (or get joint_cfg from robot if not provided)
+        Called at 100hz from main control loop. 
+        Send joint configuration to solver loop, get back latest collisions (async)
+        """
         if joint_cfg is None:
             joint_cfg=self.get_urdf_joint_configuration(self.robot.status)
         self.q_cmd.put(joint_cfg)
         s=self.q_status.get_latest()
         if s is not None:
             self.status.update(s)
-            # if len(s['collisions']) > 0:
-            #     print('COLL',s['collisions'])
 
 
     def _manage_ctrlC(self, *args):
-        # If you have multiple event processing processes, set each Event.
         self.do_exit.set()
 
     def stop(self):
@@ -132,8 +124,8 @@ class SelfCollisionLoop(Device):
         Convert robot.status to URDF compatible dictionary of robot's current pose + padding based on current velocity of joint
         """
         s = robot_status
-        d = Device("foo",req_params=False)
-        kbd = d.robot_params['self_collision_mujoco'][d.robot_params['robot']['model_name']]['k_brake_distance']
+        _, robot_params = RobotParams.get_params()
+        kbd = robot_params['self_collision_mujoco'][robot_params['robot']['model_name']]['k_brake_distance']
         dl = kbd['lift'] * s['lift']['braking_distance']
 
         configuration = {}
@@ -155,12 +147,12 @@ class SelfCollisionLoop(Device):
             configuration['wrist_yaw_joint']=s['end_of_arm']['wrist_yaw']['pos']+dwy
             configuration['wrist_pitch_joint'] = s['end_of_arm']['wrist_pitch']['pos']+dwp
             configuration['wrist_roll_joint'] = s['end_of_arm']['wrist_roll']['pos']+dwr
-            if d.robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
+            if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
                 #print('SelfCollisionLoop Gripper Conversion',robot_status['end_of_arm']['stretch_gripper']['gripper_conversion'])
                 configuration['gripper_finger_left_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
                 configuration['gripper_finger_right_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
                 #configuration['stretch_gripper_joint'] = self.robot.end_of_arm.status['stretch_gripper']['pos']
-            elif d.robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
+            elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
                 configuration['finger_left_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
                 configuration['finger_right_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
 

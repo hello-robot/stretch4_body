@@ -230,6 +230,7 @@ def _parse_args():
     # group.add_argument("--pause", help="Pause control loop",action="store_true")
     # group.add_argument("--unpause", help="Unpause control loop",action="store_true")
     group.add_argument("--free_up_control", help="Kills the process currently controlling the robot",action="store_true")
+    parser.add_argument("--profile", help="Enable yappi CPU profiling on all server processes", action="store_true")
 
     parser.add_argument("--daemon", help="Starts a daemon that runs in the background on login. Use --kill to stop the service.", action="store_true")
     parser.add_argument("--install_daemon", help="Installs a daemon that runs in the background on login.", action="store_true")
@@ -332,7 +333,9 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 """)
                 return
 
-        try: 
+        try:
+            if args.profile:
+                os.environ['STRETCH_PROFILE'] = '1'
             robot_server.run_server()
         except Exception as e: 
             logger.error(f"Unexpected error while running stretch body server: {e}")
