@@ -673,7 +673,7 @@ class PrismaticJointClient(SubsystemClient):
         self.logger.info('Homing %s...'%self.name)
         rid=self._queue_command(subsystem="routines", command="routine_%s_home"%self.name)
         self.push_command()
-        finished=self._wait_on_routine(rid, timeout=10.0)
+        finished=self._wait_on_routine(rid, timeout=20.0)
         success = finished and self.status['routines'].get('last_routine_successful', True)
         if success and self.is_homed():
             self.logger.info('Successfully homed %s.'%self.name)
