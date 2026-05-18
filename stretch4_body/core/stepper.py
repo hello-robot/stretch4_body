@@ -108,6 +108,8 @@ class StepperDefn():
     TRIGGER_MARK_POS_ON_CONTACT = 64
     TRIGGER_ENABLE_TRACE = 128
     TRIGGER_DISABLE_TRACE = 256
+    TRIGGER_RESET_DRV_FAULT = 512
+    TRIGGER_RESET_MARK_POS_ON_CONTACT=1024
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -812,6 +814,10 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
 
     def board_reset(self):
         self._trigger = self._trigger | self.TRIGGER_BOARD_RESET
+        self._dirty_trigger=True
+
+    def reset_mark_position_on_contact(self):
+        self._trigger = self._trigger | self.TRIGGER_RESET_MARK_POS_ON_CONTACT
         self._dirty_trigger=True
 
     def mark_position_on_contact(self,x):

@@ -1069,7 +1069,8 @@ nominal_params={
         # Absolute hardstop limits. Tune carefully to prevent physical damage.
         'range_m' : [0.0, 1.20], #Calder no shells, [0.0, 1.21], #Dali w/ shells, [0.0, 1.20]
         # Homing procedure settings. contact_sensitivity adjusts how hard the lift hits the hardstop.
-        'homing': {'contact_sensitivity': 0.2,'end_pos':0.5,'v_m':0.15,'a_m':0.3,'to_positive_stop':True,'safety_hold':1,'safety_stiffness':0.7},
+        'homing': {'contact_sensitivity': 0.0,'end_pos':0.5,'v_m':0.15,'a_m':0.3,'to_positive_stop':True,'safety_hold':1,'safety_stiffness':0.1},
+        #'homing': {'contact_sensitivity': 0.2,'end_pos':0.5,'v_m':0.15,'a_m':0.3,'to_positive_stop':True,'safety_hold':1,'safety_stiffness':0.7},
         'belt_pitch_m': 0.005,
           'motion':{
             # Predefined motion profiles (m/s, m/s^2)

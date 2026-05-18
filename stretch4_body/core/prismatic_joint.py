@@ -648,28 +648,34 @@ class PrismaticJoint(Device):
                      contact_sensitivity_pos=self.params['homing']['contact_sensitivity'],
                      contact_sensitivity_neg=self.params['homing']['contact_sensitivity'], req_calibration=False)
         self.push_command()
+        if to_positive_stop:
+            x = self.translate_m_to_motor_rad(self.params['range_m'][1])
+        else:
+            x = self.translate_m_to_motor_rad(self.params['range_m'][0])
+
+        time.sleep(0.5)
+        self.motor.mark_position_on_contact(x)
+        self.push_command()
+
         # Move to stop
         # self.motor.pretty_print()
         if self.wait_for_contact(timeout=15.0):  # timeout=15.0):
             # input('Enter to continue')  # Needs time to settle
-            time.sleep(1.0)
+            #time.sleep(1.0)
             self.pull_status()
             # self.motor.pretty_print()
             self.logger.info(f'Hardstop detected at motor position (rad) {self.motor.status["pos"]}')
-            x_dir_1 = self.status['pos']
 
             if to_positive_stop:
-                x = self.translate_m_to_motor_rad(self.params['range_m'][1])
                 self.logger.info(f'Marking {self.name.capitalize()} position to {self.params["range_m"][1]} (m)')
             else:
-                x = self.translate_m_to_motor_rad(self.params['range_m'][0])
                 self.logger.info(f'Marking {self.name.capitalize()} position to {self.params["range_m"][0]} (m)')
-            self.motor.mark_position(x)
             self.motor.set_pos_calibrated()
             self.push_command()
-
         else:
             self.logger.warning('%s homing failed. Failed to detect contact' % self.name.capitalize())
+            self.motor.reset_mark_position_on_contact()
+            self.push_command()
             success = False
         # input('Enter to continue2')
         time.sleep(1.0)

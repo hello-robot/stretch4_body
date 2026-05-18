@@ -172,22 +172,28 @@ class RoutinePrismaticJointHome(RoutineHome):
                      contact_sensitivity_pos=self.joint.params['homing']['contact_sensitivity'],
                      contact_sensitivity_neg=self.joint.params['homing']['contact_sensitivity'], req_calibration=False)
         #self.wait_duration(t=1.0)
+
+        if to_positive_stop:
+            x = self.joint.translate_m_to_motor_rad(self.joint.params['range_m'][1])
+        else:
+            x = self.joint.translate_m_to_motor_rad(self.joint.params['range_m'][0])
+
+        self.wait_duration(0.5)
+        self.joint.motor.mark_position_on_contact(x)
+        self.update_controller()
+
         if self.wait_until_contact(self.joint.motor, timeout=15.0, t_ignore=0.5):
             self.wait_duration(t=1.0)
             self.logger.info(f'Hardstop detected at motor position (rad) {self.joint.motor.status["pos"]}')
             x_dir_1 = self.joint.status['pos']
-            if to_positive_stop:
-                x = self.joint.translate_m_to_motor_rad(self.joint.params['range_m'][1])
-            else:
-                x = self.joint.translate_m_to_motor_rad(self.joint.params['range_m'][0])
             self.logger.info(f'Marking {self.joint.name.capitalize()} position to {x} (rad)')
-            self.joint.motor.mark_position(x)
             self.joint.motor.set_pos_calibrated()
             self.update_controller()
         else:
             if self.is_canceled:
+                self.joint.motor.reset_mark_position_on_contact()
                 self.joint.enable_safety()
-                self.joint.push_command()
+                self.update_controller()
             if not self.is_canceled:
                 self.logger.warning('%s homing failed. Failed to detect contact' % self.name.capitalize())
             success = False
