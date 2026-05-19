@@ -155,9 +155,6 @@ class ControlMapping(Enum):
         - Otherwise standard arm/lift/base control.
         """
         # Set control modes flags
-        gamepad_teleop.precision_mode = gamepad_teleop.controller_state['left_trigger_pulled'] > 0.9
-        gamepad_teleop.use_arm_lift_mode = gamepad_teleop.controller_state['right_trigger_pulled'] > 0.9
-
         dxl_zero_vel_set_division_factor = 3 
 
         right_stick_x = gamepad_teleop.controller_state['right_stick_x']
