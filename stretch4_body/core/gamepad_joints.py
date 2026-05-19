@@ -65,8 +65,8 @@ class CommandBase:
 
         accel_w = self.accel_w_for_translation if v_w == 0 else self.accel_w_for_rotation_only
 
-        kk = 1.0 - 0.75 * self.precision_mode
-        robot.base.set_velocity(kk*v_x, kk*v_y, kk*v_w, self.accel_xy, accel_w)
+        scale = 1.0 - 0.75 * self.precision_mode
+        robot.base.set_velocity(scale*v_x, scale*v_y, scale*v_w, self.accel_xy, accel_w)
     
     def stop_motion(self, robot):
         """Stop the joint motion. To be used when ever the controller is idle/no-inputs
