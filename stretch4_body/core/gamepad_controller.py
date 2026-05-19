@@ -658,7 +658,6 @@ class JointEffortTracker:
             return
 
         if self.hold_duration > 0.1:
-            print("HERE reset for timeout")
             self._reset()
 
 
