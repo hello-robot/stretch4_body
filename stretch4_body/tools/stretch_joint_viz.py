@@ -84,7 +84,7 @@ def main():
                         rr.log(mesh_path, rr.Transform3D(translation=v_trans, mat3x3=v_mat), static=True)
                     
                     try:
-                        rr.log(mesh_path, rr.Asset3D(path=visual.geometry.mesh.filename), static=True)
+                        rr.log(mesh_path, rr.Asset3D(path=visual.geometry.mesh.filename, albedo_factor=[200, 200, 200, 100]), static=True)
                     except Exception as e:
                         print(f"Failed to log mesh {visual.geometry.mesh.filename}: {e}")
 
