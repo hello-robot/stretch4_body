@@ -5,12 +5,7 @@ from stretch4_body.utils.file_access_utils import setup_shared_directory, acquir
 from stretch4_body.core.gamepad_teleop import GamePadTeleop
 from stretch4_body.core.hello_utils import print_stretch_re_use
 
-print_stretch_re_use()
-parser=argparse.ArgumentParser(description='Control Stretch from a GamePad')
-parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
-args=parser.parse_args()
-
-def _check_singleton():
+def check_gamepad_teleop_singleton():
    tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_teleop_singleton.lock"
 
    setup_shared_directory(Path(tmp_file).parent)
@@ -21,8 +16,13 @@ def _check_singleton():
 
 
 if __name__ == "__main__":
+   
+   print_stretch_re_use()
+   parser=argparse.ArgumentParser(description='Control Stretch from a GamePad')
+   parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
+   args=parser.parse_args()
 
-   if not _check_singleton():
+   if not check_gamepad_teleop_singleton():
       print("Gamepad teleop is already running!")
       exit(1)
    
