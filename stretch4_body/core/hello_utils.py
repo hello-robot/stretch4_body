@@ -275,26 +275,37 @@ def force_kill_process(script_name):
 from multiprocessing import   Queue
 import queue
 class CircularMultiprocessingQueue:
-    def __init__(self, maxsize):
+    def __init__(self, maxsize, name:str):
         self.queue = Queue(maxsize=maxsize)
         self.maxsize = maxsize
+        self.logger = logging.getLogger(f"{name}_ring_buffer")
 
     def put(self, item):
         """
-        Manage ring buffer.
-        Note: Should never block, but can if there's a race condition on full, so doing multiple tries (hack for now)
+        Manage ring buffer. Pops the oldest item from the local buffer or pipe when full.
         """
-        for itr in range(10):
+        while True:
             try:
                 self.queue.put(item, block=False)
                 return
             except queue.Full:
                 try:
+                    # Attempt to pop from the OS pipe
                     self.queue.get_nowait()
                 except queue.Empty:
-                    pass
-                time.sleep(0.001)
-        self.logger.warning('Queue full, dropping item')
+                    # OS pipe is empty, so items are stuck in the local buffer waiting for the background thread
+                    popped = False
+                    try:
+                        with self.queue._notempty:
+                            if self.queue._buffer:
+                                self.queue._buffer.popleft()
+                                self.queue._sem.release()
+                                popped = True
+                    except Exception as e:
+                        self.logger.warning(f"Failed to pop from local buffer: {e}")
+                    
+                    if not popped:
+                        time.sleep(0.001)
 
     def get_latest(self):
         #Clear out queue, returning the latest item

@@ -26,9 +26,9 @@ class SentryUbuntuPowerManagement(Sentry):
             last_check=time.time(), last_known_mode=None
         )
 
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(10)
-        self.q_status = hello_utils.CircularMultiprocessingQueue(10)
-        self.q_admin = hello_utils.CircularMultiprocessingQueue(10)
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(10, name="sentry_ubuntu_power_management_cmd")
+        self.q_status = hello_utils.CircularMultiprocessingQueue(10, name="sentry_ubuntu_power_management_status")
+        self.q_admin = hello_utils.CircularMultiprocessingQueue(10, name="sentry_ubuntu_power_management_admin")
 
         self.do_exit = Event()
 

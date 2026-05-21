@@ -86,9 +86,9 @@ class EndOfArmLoop(Device):
     def __init__(self):
         Device.__init__(self, 'end_of_arm_loop')
         self.eoa_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(100)
-        self.q_status = hello_utils.CircularMultiprocessingQueue(100)
-        self.q_admin = hello_utils.CircularMultiprocessingQueue(100)
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(100, name="end_of_arm_loop_cmd")
+        self.q_status = hello_utils.CircularMultiprocessingQueue(100, name="end_of_arm_loop_status")
+        self.q_admin = hello_utils.CircularMultiprocessingQueue(100, name="end_of_arm_loop_admin")
         self.status = {}
         self.status_aux={}
         self.do_exit = Event()

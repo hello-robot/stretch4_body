@@ -60,9 +60,9 @@ class LineSensorLoop(Device):
     def __init__(self):
         Device.__init__(self, 'line_sensor_loop')
         self.pjr_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(3)
-        self.q_status = hello_utils.CircularMultiprocessingQueue(3)
-        self.q_admin = hello_utils.CircularMultiprocessingQueue(3)
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(3, name="line_sensor_loop_cmd")
+        self.q_status = hello_utils.CircularMultiprocessingQueue(3, name="line_sensor_loop_status")
+        self.q_admin = hello_utils.CircularMultiprocessingQueue(3, name="line_sensor_loop_admin")
         self.status: "LineSensorLoopStatus" = {'last_frame_time':0, 'rate_hz': 0}
         self.status_aux = {}
         self.do_exit = Event()
