@@ -143,7 +143,7 @@ class LineSensorLoop(Device):
         for sn in self.params['sensor_names']:
             self.frame_id_last[sn]=self.status[sn]['frame_id']
 
-        while self.q_status.qsize():
+        while True:
             try:
                 um_status=self.q_status.get(block=False)
                 #print(um_status.keys())
@@ -158,7 +158,7 @@ class LineSensorLoop(Device):
                         if len(self.rate_log[sn])>self.n_rate_log:
                             self.rate_log[sn].pop(0)
             except queue.Empty:
-                pass
+                break
 
     def enable_rate_logging(self,max_samples=1000):
         self.n_rate_log=max_samples

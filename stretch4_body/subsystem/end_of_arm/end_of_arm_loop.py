@@ -31,7 +31,7 @@ def _cb_end_of_arm_unpause(eoa):
 def _cb_end_of_arm_loop_step(eoa, q_cmd_in, status_out):
     eoa.pull_status()
     status_out.update(eoa.status)
-    while q_cmd_in.qsize():
+    while True:
         try:
             cmd=q_cmd_in.get(block=False)
             subsystem, method, cmd_id,args, kwargs = cmd
@@ -42,7 +42,7 @@ def _cb_end_of_arm_loop_step(eoa, q_cmd_in, status_out):
             except AttributeError:
                 print('EndOfArmLoop _cb_end_of_arm_loop_step : invalid  cmd', cmd)
         except queue.Empty:
-            pass
+            break
     return True
 
 # ###########################################################################################
@@ -148,7 +148,7 @@ class EndOfArmLoop(Device):
         Get latest status, empty queue. Non blocking.
         Empties the queue of older data.
         """
-        while self.q_status.qsize():
+        while True:
             try:
                 self.status.update(self.q_status.get(block=False))
                 if self.n_rate_log:
@@ -157,7 +157,7 @@ class EndOfArmLoop(Device):
                         self.rate_log.pop(0)
                 # print(self.status)
             except queue.Empty:
-                pass
+                break
 
     def enable_rate_logging(self,max_samples=1000):
         self.n_rate_log=max_samples

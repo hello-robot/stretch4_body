@@ -284,20 +284,17 @@ class CircularMultiprocessingQueue:
         Manage ring buffer.
         Note: Should never block, but can if there's a race condition on full, so doing multiple tries (hack for now)
         """
-        itr=0
-        while True:
-            if self.queue.full():# Remove the oldest item to make space
-                try:
-                    self.queue.get_nowait()
-                except queue.Empty:# Should not happen if full() is true, but good for robustness
-                    pass
+        for itr in range(10):
             try:
-                self.queue.put(item,block=True,timeout=.001)
+                self.queue.put(item, block=False)
                 return
             except queue.Full:
-                itr=itr+1
-                print('Full queue race condition. Trying again. Itr %d.'%itr)
-                pass
+                try:
+                    self.queue.get_nowait()
+                except queue.Empty:
+                    pass
+                time.sleep(0.001)
+        self.logger.warning('Queue full, dropping item')
 
     def get_latest(self):
         #Clear out queue, returning the latest item
