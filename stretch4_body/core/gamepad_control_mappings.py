@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 from stretch4_body.core.gamepad_enums import GripperHandedness
 from stretch4_body.core.hello_utils import *
 
+import pinocchio as pin
+
 if TYPE_CHECKING:
     from stretch4_body.core.gamepad_teleop import GamePadTeleop
 
@@ -15,7 +17,9 @@ class ControlMapping(Enum):
     """Omnibase controller mapping that mixes both manipulation controls and omnibase movement."""
     MANIPULATION = 2
     """MANIPULATION separates base motion and arm/wrist motion with a manipulation mode (Holding down right trigger)"""
-    
+    FLYING_GRIPPER_IK = 3
+    """FLYING_GRIPPER_IK provides IK-based Cartesian control of the gripper."""
+
     def cycle(self, is_forward:bool):
         """
         Cycle through the available control mappings.
@@ -41,6 +45,8 @@ class ControlMapping(Enum):
             file_name = "gamepad_teleop_mapping_omnibase.wav"
         elif self is ControlMapping.MANIPULATION:
             file_name = "gamepad_teleop_mapping_manipulation.wav"
+        elif self is ControlMapping.FLYING_GRIPPER_IK:
+            file_name = "gamepad_teleop_mapping_flying_gripper_ik.wav"
         else:
             raise NotImplementedError(f"No sound file for {self}")
         
@@ -58,6 +64,8 @@ class ControlMapping(Enum):
             return self._map_omnibase(robot, gamepad_teleop)
         elif self == ControlMapping.MANIPULATION:
             return self._map_manipulation(robot, gamepad_teleop)
+        elif self == ControlMapping.FLYING_GRIPPER_IK:
+            return self._map_flying_gripper_ik(robot, gamepad_teleop)
         else: raise NotImplementedError(f"No controls callback for {self}")
 
     def _map_omnibase(self, robot, gamepad_teleop: "GamePadTeleop"):
@@ -243,3 +251,105 @@ class ControlMapping(Enum):
 
         return actuated_joints
 
+    def _map_flying_gripper_ik(self, robot, gamepad_teleop: "GamePadTeleop") -> dict:
+        ikin = gamepad_teleop.flying_gripper_controller
+
+        ikin.q[0] = robot.base.status['x']
+        ikin.q[1] = robot.base.status['y']
+        ikin.q[2] = np.cos(robot.base.status['theta'])
+        ikin.q[3] = np.sin(robot.base.status['theta'])
+        ikin.q[4] = robot.lift.status['pos']
+        ikin.q[5] = robot.arm.status['pos']
+        ikin.q[6] = robot.end_of_arm.status['wrist_yaw']['pos']
+        ikin.q[7] = robot.end_of_arm.status['wrist_pitch']['pos'] 
+        ikin.q[8] = robot.end_of_arm.status['wrist_roll']['pos']
+        
+        pin.forwardKinematics(ikin.model, ikin.data, ikin.q)
+        pin.updateFramePlacements(ikin.model, ikin.data)
+
+
+        v_desired = np.zeros(3)
+        rot_change = np.zeros(3)
+
+        def deadzone(val, thresh=0.15): return val if abs(val) > thresh else 0.0
+
+        v_desired[0] = deadzone(gamepad_teleop.controller_state.get('left_stick_y', 0.0))
+        v_desired[1] = deadzone(-gamepad_teleop.controller_state.get('left_stick_x', 0.0))
+        rot_change[1] = deadzone(gamepad_teleop.controller_state.get('right_stick_y', 0.0))
+        rot_change[0] = deadzone(-gamepad_teleop.controller_state.get('right_stick_x', 0.0))
+
+        if gamepad_teleop.controller_state.get('top_pad_pressed'): v_desired[2] = 1.0
+        elif gamepad_teleop.controller_state.get('bottom_pad_pressed'): v_desired[2] = -1.0
+
+        if gamepad_teleop.controller_state.get('left_pad_pressed'): rot_change[2] = -1.0
+        elif gamepad_teleop.controller_state.get('right_pad_pressed'): rot_change[2] = 1.0
+
+        left_trigger = gamepad_teleop.controller_state.get('left_trigger_pulled', 0.0)
+        speed_multiplier = 1.0 - (0.75 * left_trigger)
+
+        control_mode = 1
+
+        dt = 1.0 / gamepad_teleop.sleep
+
+        gamepad_speed_trans = 0.15
+        gamepad_speed_rot = 0.5
+
+        v_desired_vel = v_desired *gamepad_speed_trans* speed_multiplier * dt
+        rot_change_vel = rot_change *gamepad_speed_rot * speed_multiplier * dt
+        v, _ = ikin.compute_ik_step(v_desired_vel, rot_change_vel, control_mode)
+        v_vel = v / dt
+        
+        # v maps to joint displacements [delta_q_base_x, delta_q_base_y, delta_q_base_theta, delta_q_lift, delta_q_arm, delta_q_yaw, delta_q_ pitch, delta_q_roll]
+        v, _ = ikin.compute_ik_step(v_desired, rot_change, control_mode)
+        
+        # Scale from displacement `v` back to continuous velocity by dividing by `dt`
+        v_vel = v / dt
+
+
+        actuated_joints = {}
+
+        if np.any(v != 0):
+            
+            gamepad_teleop.base_command._move(v_vel[0], v_vel[1], v_vel[2], robot)
+            gamepad_teleop.lift_command._move(v_vel[3], robot)
+            gamepad_teleop.arm_command._move(v_vel[4], robot)
+            
+            # Smoothing move_by control commands using a high lookahead targeting horizon
+            lookahead = 10.0
+            
+            # Yaw
+            yaw_cmd_rad = v[5] * lookahead
+            gamepad_teleop.wrist_yaw_command._move(np.degrees(yaw_cmd_rad), robot, velocity = v[5])
+            # Pitch
+            handedness_inversion = 1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else -1
+            pitch_cmd_rad = v[6] * lookahead * handedness_inversion
+            gamepad_teleop.wrist_pitch_command._move(np.degrees(pitch_cmd_rad), robot, velocity = v[6])
+            # Roll
+            roll_cmd_rad = v[7] * lookahead * handedness_inversion
+            gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot, velocity = v[7])
+
+            if abs(v_vel[0]) > 0 or abs(v_vel[1]) > 0 or abs(v_vel[2]) > 0:
+                actuated_joints['base'] = v_vel[0] + v_vel[1] + v_vel[2]
+            if abs(v_vel[3]) > 0:
+                actuated_joints['lift'] = v_vel[3]
+            if abs(v_vel[4]) > 0:
+                actuated_joints['arm'] = v_vel[4]
+            if abs(yaw_cmd_rad) > 0:
+                actuated_joints['joint_wrist_yaw'] = yaw_cmd_rad
+            if abs(pitch_cmd_rad) > 0:
+                actuated_joints['joint_wrist_pitch'] = pitch_cmd_rad
+            if abs(roll_cmd_rad) > 0:
+                actuated_joints['joint_wrist_roll'] = roll_cmd_rad
+            
+
+        if gamepad_teleop.use_devices['gripper']:
+            if gamepad_teleop.controller_state['right_button_pressed']:
+                gamepad_teleop.gripper.open_gripper(robot)
+                actuated_joints['stretch_gripper'] = 1
+            elif gamepad_teleop.controller_state['bottom_button_pressed']:
+                gamepad_teleop.gripper.close_gripper(robot)
+                actuated_joints['stretch_gripper'] = -1
+            else:
+                gamepad_teleop.gripper.stop_gripper(robot)
+
+        return actuated_joints

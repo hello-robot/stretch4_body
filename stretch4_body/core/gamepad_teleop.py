@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from stretch4_flying_gripper.teleop_config import _get_base_planar_ik_urdf_file
 from pathlib import Path
 
 from stretch4_body.core.gamepad_control_mappings import ControlMapping
@@ -19,6 +20,7 @@ import subprocess
 import threading
 
 from stretch4_body.utils.file_access_utils import acquire_lock_if_available, setup_shared_directory
+from stretch4_flying_gripper.kinematic_controller import KinematicController
 
 # Header constants
 STEP_SLEEP = 1/15
@@ -128,6 +130,8 @@ class GamePadTeleop(Device):
         self.left_stick_button_fn = None
         self.right_stick_button_fn = None
         self.currently_stowing = False
+
+        self.flying_gripper_controller = KinematicController(_get_base_planar_ik_urdf_file())
 
         self.contact_sensitivity_profile.apply(self.robot)
 

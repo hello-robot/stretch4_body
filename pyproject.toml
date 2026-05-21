@@ -42,6 +42,7 @@ dependencies = [
     "meson",
     "ninja",
     "pyzmq",
+    "hello-robot-stretch4-flying-gripper",
 ]
 
 [project.optional-dependencies]
