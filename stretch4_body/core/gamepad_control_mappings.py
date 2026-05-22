@@ -3,6 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 from stretch4_body.core.gamepad_enums import GripperHandedness
 from stretch4_body.core.hello_utils import *
+from stretch4_body.core.gamepad_enums import MotionProfile
 
 import pinocchio as pin
 
@@ -284,18 +285,24 @@ class ControlMapping(Enum):
         if gamepad_teleop.controller_state.get('left_pad_pressed'): rot_change[2] = -1.0
         elif gamepad_teleop.controller_state.get('right_pad_pressed'): rot_change[2] = 1.0
 
-        left_trigger = gamepad_teleop.controller_state.get('left_trigger_pulled', 0.0)
-        speed_multiplier = 1.0 - (0.75 * left_trigger)
-
         control_mode = 1
 
         dt = gamepad_teleop.sleep
 
-        gamepad_speed_trans = 0.15
-        gamepad_speed_rot = 0.5
+        if gamepad_teleop.motion_profile == MotionProfile.FAST:
+            gamepad_speed_trans = 0.25
+            gamepad_speed_rot = 1.0
+        elif gamepad_teleop.motion_profile == MotionProfile.MEDIUM:
+            gamepad_speed_trans = 0.15
+            gamepad_speed_rot = 0.5
+        elif gamepad_teleop.motion_profile == MotionProfile.SLOW:
+            gamepad_speed_trans = 0.05
+            gamepad_speed_rot = 0.4
+        else:
+            raise ValueError(f"Unknown motion profile: {gamepad_teleop.motion_profile}")
 
-        v_desired_vel = v_desired *gamepad_speed_trans* speed_multiplier * dt
-        rot_change_vel = rot_change *gamepad_speed_rot * speed_multiplier * dt
+        v_desired_vel = v_desired *gamepad_speed_trans * dt
+        rot_change_vel = rot_change *gamepad_speed_rot * dt
         v, _ = ikin.compute_ik_step(v_desired_vel, rot_change_vel, control_mode)
         v_vel = v / dt
 
