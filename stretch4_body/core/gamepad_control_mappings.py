@@ -19,6 +19,10 @@ class ControlMapping(Enum):
     FLYING_GRIPPER_IK = 3
     """FLYING_GRIPPER_IK provides IK-based Cartesian control of the gripper."""
 
+    def _get_cycleable_options(self):
+        # return list(type(self))
+        return [ControlMapping.MANIPULATION,ControlMapping.FLYING_GRIPPER_IK]
+        
     def cycle(self, is_forward:bool):
         """
         Cycle through the available control mappings.
@@ -30,8 +34,7 @@ class ControlMapping(Enum):
             ControlMapping: The next control mapping.
         """
         index_offset = 1 if is_forward else -1
-
-        members = list(type(self))
+        members = self._get_cycleable_options()
         index = members.index(self)
         return members[(index + index_offset) % len(members)]
 
