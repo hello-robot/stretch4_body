@@ -326,7 +326,7 @@ class ControlMapping(Enum):
             pitch_cmd_rad = v[6] * lookahead * handedness_inversion
             gamepad_teleop.wrist_pitch_command._move(np.degrees(pitch_cmd_rad), robot, velocity=abs(v_vel[6]))
             # Roll
-            roll_cmd_rad = v[7] * lookahead * handedness_inversion
+            roll_cmd_rad = v[7] * lookahead * handedness_inversion * -1 
             gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot, velocity=abs(v_vel[7]))
 
             if abs(v_vel[0]) > 0 or abs(v_vel[1]) > 0 or abs(v_vel[2]) > 0:
