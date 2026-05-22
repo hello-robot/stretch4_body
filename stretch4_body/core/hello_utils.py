@@ -314,7 +314,15 @@ class CircularMultiprocessingQueue:
         ret=None
         while True:
             try:
-                ret=self.queue.get_nowait()
+                # OS pipe or buffer is full. Try to drop from local buffer first.
+                with self.queue._notempty:
+                    if self.queue._buffer:
+                        ret=self.queue._buffer.popleft()
+                        self.queue._sem.release()
+                    else:
+                        # OS pipe is full and local buffer is empty
+                        # Drop from the OS pipe directly
+                        ret=self.queue.get_nowait()
             except queue.Empty:
                 return ret
 
