@@ -282,30 +282,31 @@ class CircularMultiprocessingQueue:
 
     def put(self, item):
         """
-        Manage ring buffer. Pops the oldest item from the local buffer or pipe when full.
+        Manage ring buffer.
+        Pops the oldest item from the local buffer then the pipe when full.
+        Note: Should never block, but can if there's a race condition on full, so doing multiple tries (hack for now)
         """
-        try:
-            self.queue.put(item, block=False)
-            return
-        except queue.Full:
+        is_retry = False
+        while True:
             try:
-                # Attempt to pop from the OS pipe
-                self.queue.get_nowait()
-            except queue.Empty:
-                # OS pipe is empty, so items are stuck in the local buffer waiting for the background thread
+                self.queue.put(item, block=False)
+                return
+            except queue.Full:
+                if is_retry:
+                    self.logger.warning(f"Queue remains full. Cannot add new message.")
+                is_retry = True
                 try:
+                    # OS pipe or buffer is full. Try to drop from local buffer first.
                     with self.queue._notempty:
                         if self.queue._buffer:
                             self.queue._buffer.popleft()
                             self.queue._sem.release()
+                        else:
+                            # OS pipe is full and local buffer is empty
+                            # Drop from the OS pipe directly
+                            self.queue.get_nowait()
                 except Exception as e:
-                    self.logger.warning(f"Failed to pop from local buffer: {e}")
-                
-            # Retry put after making space
-            try:
-                self.queue.put(item, block=False)
-            except queue.Full:
-                self.logger.warning("Queue remains full after pop attempt. Dropping item.")
+                    pass
 
     def get_latest(self):
         #Clear out queue, returning the latest item
