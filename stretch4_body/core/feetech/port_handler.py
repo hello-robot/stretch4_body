@@ -28,6 +28,7 @@ class PortHandler(object):
     def closePort(self):
         self.ser.close()
         self.is_open = False
+        self.is_using = False
 
     def clearPort(self):
         self.ser.flush()
@@ -44,6 +45,7 @@ class PortHandler(object):
         if baud <= 0:
             # self.setupPort(38400)
             # self.baudrate = baudrate
+            raise ValueError("Invalid baudrate: %d" % baudrate)
             return False  # TODO: setCustomBaudrate(baudrate)
         else:
             self.baudrate = baudrate
@@ -78,9 +80,9 @@ class PortHandler(object):
             return True
 
         return False
-
+    
     def getCurrentTime(self):
-        return round(time.time() * 1000000000) / 1000000.0
+        return time.monotonic() * 1000.0
 
     def getTimeSinceStart(self):
         time_since = self.getCurrentTime() - self.packet_start_time
@@ -99,10 +101,12 @@ class PortHandler(object):
             # parity = serial.PARITY_ODD,
             # stopbits = serial.STOPBITS_TWO,
             bytesize=serial.EIGHTBITS,
-            timeout=0.002
+            timeout=0.002,
+            write_timeout=0.002
         )
 
         self.is_open = True
+        self.is_using = False
 
         self.ser.reset_input_buffer()
 

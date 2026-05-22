@@ -4,7 +4,7 @@ import copy
 from multiprocessing import   Process
 import time
 
-q = CircularMultiprocessingQueue(100)
+q = CircularMultiprocessingQueue(100, name="test_multiprocess_circular_queue")
 def consumer_loop():
     while True:
         cfg = q.get_nowait()
