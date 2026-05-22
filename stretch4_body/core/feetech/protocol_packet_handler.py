@@ -2,6 +2,8 @@
 #And https://github.com/adityakamath/SCServo_Linux
 #And https://github.com/iotdesignshop/Feetech-tuna/blob/main/LICENSE
 
+import time
+
 from .scservo_def import *
 
 TXPACKET_MAX_LEN = 250
@@ -145,7 +147,17 @@ class protocol_packet_handler(object):
 
         # tx packet
         self.portHandler.clearPort()
-        written_packet_length = self.portHandler.writePort(txpacket)
+        try:
+            written_packet_length = self.portHandler.writePort(txpacket)
+        except Exception as e:
+            # Reset port on hard hardware error (e.g. write timeout or disconnect)
+            self.portHandler.is_using = False
+            try:
+                self.portHandler.closePort()
+                self.portHandler.openPort()
+            except Exception:
+                pass
+            return COMM_TX_FAIL
         if total_packet_length != written_packet_length:
             self.portHandler.is_using = False
             return COMM_TX_FAIL
@@ -161,7 +173,17 @@ class protocol_packet_handler(object):
         wait_length = 6  # minimum length (HEADER0 HEADER1 ID LENGTH ERROR CHKSUM)
 
         while True:
-            rxpacket.extend(self.portHandler.readPort(wait_length - rx_length))
+            try:
+                rxpacket.extend(self.portHandler.readPort(wait_length - rx_length))
+            except Exception as e:
+                # Reset port on hard hardware error
+                self.portHandler.is_using = False
+                try:
+                    self.portHandler.closePort()
+                    self.portHandler.openPort()
+                except Exception:
+                    pass
+                return rxpacket, COMM_RX_FAIL
             rx_length = len(rxpacket)
             if rx_length >= wait_length:
                 # find packet header
@@ -192,6 +214,7 @@ class protocol_packet_handler(object):
                                 result = COMM_RX_CORRUPT
                             break
                         else:
+                            time.sleep(0.0001)
                             continue
 
                     # calculate checksum
@@ -219,6 +242,8 @@ class protocol_packet_handler(object):
                     else:
                         result = COMM_RX_CORRUPT
                     break
+                else:
+                    time.sleep(0.0001)
 
         self.portHandler.is_using = False
         return rxpacket, result
@@ -247,6 +272,11 @@ class protocol_packet_handler(object):
         while True:
             rxpacket, result = self.rxPacket()
             if result != COMM_SUCCESS or txpacket[PKT_ID] == rxpacket[PKT_ID]:
+                break
+                
+            # Explicitly check for timeout if we are stuck reading wrong-ID packets
+            if self.portHandler.isPacketTimeout():
+                result = COMM_RX_TIMEOUT
                 break
 
         if result == COMM_SUCCESS and txpacket[PKT_ID] == rxpacket[PKT_ID]:
@@ -319,6 +349,11 @@ class protocol_packet_handler(object):
             rxpacket, result = self.rxPacket()
 
             if result != COMM_SUCCESS or rxpacket[PKT_ID] == scs_id:
+                break
+                
+            # Explicitly check for timeout if we are stuck reading wrong-ID packets
+            if self.portHandler.isPacketTimeout():
+                result = COMM_RX_TIMEOUT
                 break
 
         if result == COMM_SUCCESS and rxpacket[PKT_ID] == scs_id:
@@ -498,13 +533,32 @@ class protocol_packet_handler(object):
         self.portHandler.setPacketTimeout(wait_length)
         rxpacket = []
         rx_length = 0
+        
         while True:
-            rxpacket.extend(self.portHandler.readPort(wait_length - rx_length))
+            try:
+                # Capture the read data to check its length later
+                read_data = self.portHandler.readPort(wait_length - rx_length)
+                rxpacket.extend(read_data)
+            except Exception as e:
+                # Reset port on hard hardware error
+                self.portHandler.is_using = False
+                try:
+                    self.portHandler.closePort()
+                    self.portHandler.openPort()
+                except Exception:
+                    pass
+                return COMM_RX_FAIL, rxpacket
+                
             rx_length = len(rxpacket)
             if rx_length >= wait_length:
                 result = COMM_SUCCESS
                 break
             else:
+                # Prevent 100% CPU lockups on silent hardware disconnects
+                # If PySerial returns instantly with 0 bytes, yield 1ms to the OS
+                if len(read_data) == 0:
+                    time.sleep(0.001)
+
                 # check timeout
                 if self.portHandler.isPacketTimeout():
                     if rx_length == 0:
@@ -512,6 +566,7 @@ class protocol_packet_handler(object):
                     else:
                         result = COMM_RX_CORRUPT
                     break
+                
         self.portHandler.is_using = False
         return result, rxpacket
 

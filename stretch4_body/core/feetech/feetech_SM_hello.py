@@ -442,6 +442,9 @@ class FeetechSMHello(Device):
         if not self.hw_valid:
             return
 
+        if not hasattr(self, '_last_pos_valid'):
+            self._last_pos_valid = True
+
 
         pos_valid = True
         vel_valid = True
@@ -492,6 +495,7 @@ class FeetechSMHello(Device):
                 if not pos_valid or not vel_valid or not i_mA_valid or not temp_valid or not err_valid:
                     self.logger.warning('FeetechSMHello communication error during pull_status on %s: ' % self.name)
                     self.comm_errors.add_error(rx=True, gsr=False)
+                    self._last_pos_valid = False
                     return
                 ts = time.time()
             except(termios.error, FeetechCommError, IndexError):
@@ -499,6 +503,7 @@ class FeetechSMHello(Device):
                 # self.motor.port_handler.ser.reset_output_buffer()
                 # self.motor.port_handler.ser.reset_input_buffer()
                 self.comm_errors.add_error(rx=True, gsr=False)
+                self._last_pos_valid = False
                 if self.bubble_up_comm_exception:
                     raise FeetechCommError
                 return
@@ -518,6 +523,15 @@ class FeetechSMHello(Device):
         # Now update status dictionary
 
         if pos_valid:
+            if not self._last_pos_valid:
+                self.logger.info(f"FeetechSMHello {self.name}: Communication recovered. Auto-reenabling torque.")
+                if self.status.get('torque_enabled', False):
+                    try:
+                        self.motor.enable_torque()
+                    except:
+                        pass
+            self._last_pos_valid = True
+            
             self.status['pos_ticks'] = x
             self.status['pos'] = self.ticks_to_world_rad(float(x))
         if vel_valid:
