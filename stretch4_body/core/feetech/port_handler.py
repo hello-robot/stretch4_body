@@ -45,6 +45,7 @@ class PortHandler(object):
         if baud <= 0:
             # self.setupPort(38400)
             # self.baudrate = baudrate
+            raise ValueError("Invalid baudrate: %d" % baudrate)
             return False  # TODO: setCustomBaudrate(baudrate)
         else:
             self.baudrate = baudrate
@@ -79,9 +80,9 @@ class PortHandler(object):
             return True
 
         return False
-
+    
     def getCurrentTime(self):
-        return round(time.time() * 1000000000) / 1000000.0
+        return time.monotonic() * 1000.0
 
     def getTimeSinceStart(self):
         time_since = self.getCurrentTime() - self.packet_start_time

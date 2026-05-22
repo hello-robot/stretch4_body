@@ -273,6 +273,11 @@ class protocol_packet_handler(object):
             rxpacket, result = self.rxPacket()
             if result != COMM_SUCCESS or txpacket[PKT_ID] == rxpacket[PKT_ID]:
                 break
+                
+            # Explicitly check for timeout if we are stuck reading wrong-ID packets
+            if self.portHandler.isPacketTimeout():
+                result = COMM_RX_TIMEOUT
+                break
 
         if result == COMM_SUCCESS and txpacket[PKT_ID] == rxpacket[PKT_ID]:
             error = rxpacket[PKT_ERROR]
@@ -344,6 +349,11 @@ class protocol_packet_handler(object):
             rxpacket, result = self.rxPacket()
 
             if result != COMM_SUCCESS or rxpacket[PKT_ID] == scs_id:
+                break
+                
+            # Explicitly check for timeout if we are stuck reading wrong-ID packets
+            if self.portHandler.isPacketTimeout():
+                result = COMM_RX_TIMEOUT
                 break
 
         if result == COMM_SUCCESS and rxpacket[PKT_ID] == scs_id:
@@ -523,9 +533,12 @@ class protocol_packet_handler(object):
         self.portHandler.setPacketTimeout(wait_length)
         rxpacket = []
         rx_length = 0
+        
         while True:
             try:
-                rxpacket.extend(self.portHandler.readPort(wait_length - rx_length))
+                # Capture the read data to check its length later
+                read_data = self.portHandler.readPort(wait_length - rx_length)
+                rxpacket.extend(read_data)
             except Exception as e:
                 # Reset port on hard hardware error
                 self.portHandler.is_using = False
@@ -535,11 +548,17 @@ class protocol_packet_handler(object):
                 except Exception:
                     pass
                 return COMM_RX_FAIL, rxpacket
+                
             rx_length = len(rxpacket)
             if rx_length >= wait_length:
                 result = COMM_SUCCESS
                 break
             else:
+                # Prevent 100% CPU lockups on silent hardware disconnects
+                # If PySerial returns instantly with 0 bytes, yield 1ms to the OS
+                if len(read_data) == 0:
+                    time.sleep(0.001)
+
                 # check timeout
                 if self.portHandler.isPacketTimeout():
                     if rx_length == 0:
@@ -547,8 +566,7 @@ class protocol_packet_handler(object):
                     else:
                         result = COMM_RX_CORRUPT
                     break
-                else:
-                    time.sleep(0.0001)
+                
         self.portHandler.is_using = False
         return result, rxpacket
 
