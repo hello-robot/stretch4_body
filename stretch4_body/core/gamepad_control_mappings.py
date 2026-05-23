@@ -20,10 +20,12 @@ class ControlMapping(Enum):
     """FLYING_GRIPPER_IK provides IK-based Cartesian control of the gripper."""
     EASY_MODE = 4
     """EASY_MODE provides simplified control of the gripper."""
+    IMPROVED_MANIPULATION = 5
+    """IMPROVED_MANIPULATION mapping with navigation and manipulation modes."""
 
     def _get_cycleable_options(self):
         # return list(type(self))
-        return [ControlMapping.EASY_MODE,ControlMapping.FLYING_GRIPPER_IK]
+        return [ControlMapping.IMPROVED_MANIPULATION,ControlMapping.FLYING_GRIPPER_IK]
         
     def cycle(self, is_forward:bool):
         """
@@ -53,6 +55,8 @@ class ControlMapping(Enum):
             file_name = "gamepad_teleop_mapping_flying_gripper_ik.wav"
         elif self is ControlMapping.EASY_MODE:
             file_name = "gamepad_teleop_mapping_omnibase.wav"
+        elif self is ControlMapping.IMPROVED_MANIPULATION:
+            file_name = "gamepad_teleop_mapping_manipulation.wav"
         else:
             raise NotImplementedError(f"No sound file for {self}")
         
@@ -74,6 +78,8 @@ class ControlMapping(Enum):
             return self._map_flying_gripper_ik(robot, gamepad_teleop)
         elif self == ControlMapping.EASY_MODE:
             return self._map_easy_mode(robot, gamepad_teleop)
+        elif self == ControlMapping.IMPROVED_MANIPULATION:
+            return self._map_manip_improved(robot, gamepad_teleop)
         else: raise NotImplementedError(f"No controls callback for {self}")
 
     def _map_omnibase(self, robot, gamepad_teleop: "GamePadTeleop"):
@@ -416,6 +422,146 @@ class ControlMapping(Enum):
                     if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                         gamepad_teleop.wrist_yaw_command.stop_motion(robot)
          
+        return actuated_joints
+
+    def _map_manip_improved(self, robot, gamepad_teleop: "GamePadTeleop"):
+        """
+        Improved Manip Mapping suggested by BM:
+        - Left trigger - Precision mode
+        - Right trigger - Navigation / End effector control switch
+        
+        Navigation mode (RT released):
+        - Left stick - omnibase translate
+        - Right stick - omnibase rotate
+        - D-pad - Lift (Up/Down) and Arm (Left/Right)
+        
+        Manipulation mode (RT pulled):
+        - Left stick Y - Arm
+        - Left stick X - Lift (deadzone 0.2)
+        - D-pad - Lift (Up/Down)
+        - Right stick - pitch and yaw
+        - Bumpers - roll
+        - A-B - gripper open/close
+        """
+        dxl_zero_vel_set_division_factor = 3
+        actuated_joints = {}
+        
+        state = gamepad_teleop.controller_state
+        gamepad_teleop.precision_mode = state.get('left_trigger_pulled', 0.0) > 0.9
+        gamepad_teleop.use_arm_lift_mode = state.get('right_trigger_pulled', 0.0) > 0.9
+        rt_pulled = gamepad_teleop.use_arm_lift_mode
+
+        # Gripper (Manipulation Mode only)
+        if gamepad_teleop.use_devices['gripper']:
+            if state.get('right_button_pressed'):
+                gamepad_teleop.gripper.open_gripper(robot)
+                actuated_joints[gamepad_teleop.gripper.name] = 1
+            elif state.get('bottom_button_pressed'):
+                gamepad_teleop.gripper.close_gripper(robot)
+                actuated_joints[gamepad_teleop.gripper.name] = -1
+            else:
+                gamepad_teleop.gripper.stop_gripper(robot)
+        
+        # Omnibase translation & rotation (Navigation Mode)
+        if gamepad_teleop.use_devices['base']:
+            if not rt_pulled:
+                ls_x = state.get('left_stick_x', 0.0)
+                ls_y = state.get('left_stick_y', 0.0)
+                cmd_y = ls_y if abs(ls_y) > 0.1 else 0.0
+                cmd_x = -ls_x if abs(ls_x) > 0.1 else 0.0
+                
+                rs_x = state.get('right_stick_x', 0.0)
+                cmd_t = -rs_x if abs(rs_x) > 0.1 else 0.0
+                
+                gamepad_teleop.base_command.command_stick_to_motion(cmd_y, cmd_x, cmd_t, robot)
+                if abs(cmd_y) > 0.1 or abs(cmd_x) > 0.1 or abs(cmd_t) > 0.1:
+                    actuated_joints['base'] = cmd_x + cmd_y + cmd_t
+            else:
+                gamepad_teleop.base_command.stop_motion(robot)
+                
+        cmd_lift = 0.0
+        cmd_arm = 0.0
+        
+        # Lift and Arm (D-pad & Sticks)
+        if state.get('top_pad_pressed'):
+            cmd_lift = 1.0
+        elif state.get('bottom_pad_pressed'):
+            cmd_lift = -1.0
+        if state.get('left_pad_pressed'):
+            cmd_arm = -1.0 # retract
+        elif state.get('right_pad_pressed'):
+            cmd_arm = 1.0 # extend
+            
+        if rt_pulled:
+            # Manipulation mode
+            ls_y = state.get('left_stick_y', 0.0)
+            if abs(ls_y) > 0.1:
+                cmd_lift = ls_y
+                
+            ls_x = state.get('left_stick_x', 0.0)
+            if abs(ls_x) > 0.2:
+                cmd_arm = ls_x
+                
+        if gamepad_teleop.use_devices['lift']:
+            if abs(cmd_lift) > 0.1:
+                gamepad_teleop.lift_command.command_stick_to_motion(cmd_lift, robot)
+                actuated_joints['lift'] = cmd_lift
+            else:
+                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                    gamepad_teleop.lift_command.stop_motion(robot)
+                    
+        if gamepad_teleop.use_devices['arm']:
+            if abs(cmd_arm) > 0.1:
+                gamepad_teleop.arm_command.command_stick_to_motion(cmd_arm, robot)
+                actuated_joints['arm'] = cmd_arm
+            else:
+                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                    gamepad_teleop.arm_command.stop_motion(robot)
+                    
+        # Wrist Pitch, Yaw, Roll (Manipulation Mode)
+        if gamepad_teleop.use_devices['eoa']:
+            if rt_pulled:
+                handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
+                
+                # Pitch
+                rs_y = state.get('right_stick_y', 0.0)
+                cmd_pitch = rs_y if abs(rs_y) > 0.1 else 0.0
+                if cmd_pitch != 0:
+                    gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd_pitch * handedness_inversion, robot)
+                    actuated_joints['wrist_pitch_joint'] = cmd_pitch
+                else:
+                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                        gamepad_teleop.wrist_pitch_command.stop_motion(robot)
+
+                # Yaw
+                rs_x = state.get('right_stick_x', 0.0)
+                cmd_yaw = -rs_x if abs(rs_x) > 0.1 else 0.0
+                if cmd_yaw != 0:
+                    gamepad_teleop.wrist_yaw_command.command_stick_to_motion(cmd_yaw, robot)
+                    actuated_joints['wrist_yaw_joint'] = cmd_yaw
+                else:
+                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                        gamepad_teleop.wrist_yaw_command.stop_motion(robot)
+
+                # Roll
+                cmd_roll = 0.0
+                if state.get('left_shoulder_button_pressed'):
+                    cmd_roll = -1.0
+                elif state.get('right_shoulder_button_pressed'):
+                    cmd_roll = 1.0
+                    
+                if cmd_roll != 0:
+                    gamepad_teleop.wrist_roll_command.command_button_to_motion(cmd_roll, robot)
+                    actuated_joints['wrist_roll_joint'] = cmd_roll
+                else:
+                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                        gamepad_teleop.wrist_roll_command.stop_motion(robot)
+            else:
+                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                    gamepad_teleop.wrist_pitch_command.stop_motion(robot)
+                    gamepad_teleop.wrist_yaw_command.stop_motion(robot)
+                    gamepad_teleop.wrist_roll_command.stop_motion(robot)
+                    
         return actuated_joints
 
     def _map_flying_gripper_ik(self, robot, gamepad_teleop: "GamePadTeleop") -> dict:
