@@ -100,6 +100,7 @@ class GamePadTeleop(Device):
         self.start_button_counter = gc.ButtonPressCounter("start_button_pressed")
         self.top_button_counter = gc.ButtonPressCounter("top_button_pressed")
         self.bottom_button_counter = gc.ButtonPressCounter("bottom_button_pressed")
+        self.left_button_counter = gc.ButtonPressCounter("left_button_pressed")
         self.right_button_counter = gc.ButtonPressCounter("right_button_pressed")
         self.select_button_counter = gc.ButtonPressCounter("select_button_pressed")
         self.is_gamepad_active = False
@@ -384,25 +385,37 @@ class GamePadTeleop(Device):
 
         self.top_button_counter.step(self.controller_state)
         self.bottom_button_counter.step(self.controller_state)
+        self.left_button_counter.step(self.controller_state)
         self.right_button_counter.step(self.controller_state)
         self.select_button_counter.step(self.controller_state)
 
-        def on_top_tap():
-            self.cycle_mapping()
-        self.top_button_counter.trigger_on_tap(on_top_tap)
+        # Y Hold (Top Button): Toggle wrist handedness
+        def on_top_hold():
+            self.change_gripper_handedness(robot, do_motion=True)
+        self.top_button_counter.trigger_on_hold(2.0, on_top_hold)
 
+        # X Hold (Left Button): Stow robot
+        def on_left_hold():
+            self.stow_robot()
+        self.left_button_counter.trigger_on_hold(2.0, on_left_hold)
+
+        # Right Trigger + A: Cycle motion profile (kept for backwards compat)
         def on_bottom_tap():
-            if rt_pulled:
+            if rt_pulled and self.control_mapping != ControlMapping.IMPROVED_MANIPULATION:
                 self.cycle_motion_profile()
         self.bottom_button_counter.trigger_on_tap(on_bottom_tap)
 
+        # Right Trigger + B: Cycle contact sensitivity (kept for backwards compat)
         def on_right_tap():
-            if rt_pulled:
+            if rt_pulled and self.control_mapping != ControlMapping.IMPROVED_MANIPULATION:
                 self.cycle_contact_sensitivity_profile()
         self.right_button_counter.trigger_on_tap(on_right_tap)
 
+        # Select tap: Read out settings (or speed in Blaine mode)
         def on_select_tap():
-            if rt_pulled:
+            if self.control_mapping == ControlMapping.IMPROVED_MANIPULATION:
+                self.cycle_motion_profile()
+            elif rt_pulled:
                 self.gripper_handedness.play_sound_file()
                 time.sleep(SOUND_DELAY_MEDIUM_S)
                 self.motion_profile.play_sound_file()
@@ -412,8 +425,11 @@ class GamePadTeleop(Device):
                 self.control_mapping.play_sound_file()
         self.select_button_counter.trigger_on_tap(on_select_tap)
 
+        # Select hold: Cycle strength in Blaine mode, or stow otherwise
         def on_select_hold():
-            if rt_pulled:
+            if self.control_mapping == ControlMapping.IMPROVED_MANIPULATION:
+                self.cycle_contact_sensitivity_profile()
+            elif rt_pulled:
                 self.stow_robot()
         self.select_button_counter.trigger_on_hold(2.0, on_select_hold)
             
@@ -577,7 +593,7 @@ class GamePadTeleop(Device):
         Manage the state of the Start button.
 
         - If the robot is NOT homed, pressing Start triggers homing.
-        - If the robot IS homed, holding Start for START_BUTTON_HOLD_TIME_S (3s) changes gripper handedness with motion.
+        - If the robot IS homed, tapping Start cycles the gamepad control mapping.
 
         Args:
             robot (robot.Robot): Valid robot instance.
@@ -594,9 +610,7 @@ class GamePadTeleop(Device):
 
 
         if robot.is_homed() and not self.currently_stowing:
-            """If the user holds the start button, it will do the automatic handedness change motion"""
-            self.start_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, lambda:self.change_gripper_handedness(robot, do_motion=True))
-            self.start_button_counter.trigger_on_tap( lambda:self.change_gripper_handedness(robot, do_motion=False))
+            self.start_button_counter.trigger_on_tap(self.cycle_mapping)
     
     def manage_select_button(self, robot):
         pass
