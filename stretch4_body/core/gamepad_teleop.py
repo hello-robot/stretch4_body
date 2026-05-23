@@ -447,6 +447,10 @@ class GamePadTeleop(Device):
         if not self.use_devices['eoa']:
             print("No eoa device")
             return
+        if self.use_devices['lift'] and robot.lift.status['pos'] <= 0.35:
+            print("Lift too low for handedness change")
+            self.gamepad_controller.vibrate(duration_ms=400, strong_magnitude=1.0, weak_magnitude=1.0)
+            return
 
         print('Switching gripper handedness')
 
