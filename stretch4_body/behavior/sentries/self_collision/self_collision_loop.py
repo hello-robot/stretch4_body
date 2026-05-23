@@ -63,9 +63,9 @@ class SelfCollisionLoop(Device):
     def __init__(self,robot):
         Device.__init__(self, 'self_collision_loop')
         self.solver_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(10)
-        self.q_status = hello_utils.CircularMultiprocessingQueue(10)
-        self.q_admin = hello_utils.CircularMultiprocessingQueue(10)
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(10, name="self_collision_loop_cmd")
+        self.q_status = hello_utils.CircularMultiprocessingQueue(10, name="self_collision_loop_status")
+        self.q_admin = hello_utils.CircularMultiprocessingQueue(10, name="self_collision_loop_admin")
         self.status = {'collisions':{},'collision_directions':{},'ts_solver':0}
         self.do_exit = Event()
         self.n_rate_log = 0

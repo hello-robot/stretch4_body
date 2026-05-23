@@ -56,9 +56,9 @@ class SentryCPUTemp(Sentry):
         Sentry.__init__(self, name="sentry_cpu_temp", robot=robot)
         self.status = {'cpu_temp': 0.0, 'ts_temp': 0}
         self.temp_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(10)
-        self.q_status = hello_utils.CircularMultiprocessingQueue(10)
-        self.q_admin = hello_utils.CircularMultiprocessingQueue(10)
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(10, name="sentry_cpu_temp_cmd")
+        self.q_status = hello_utils.CircularMultiprocessingQueue(10, name="sentry_cpu_temp_status")
+        self.q_admin = hello_utils.CircularMultiprocessingQueue(10, name="sentry_cpu_temp_admin")
         self.do_exit = Event()
         self._ts_last_fan_on = None
 

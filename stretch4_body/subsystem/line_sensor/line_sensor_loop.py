@@ -60,9 +60,9 @@ class LineSensorLoop(Device):
     def __init__(self):
         Device.__init__(self, 'line_sensor_loop')
         self.pjr_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(3)
-        self.q_status = hello_utils.CircularMultiprocessingQueue(3)
-        self.q_admin = hello_utils.CircularMultiprocessingQueue(3)
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(3, name="line_sensor_loop_cmd")
+        self.q_status = hello_utils.CircularMultiprocessingQueue(3, name="line_sensor_loop_status")
+        self.q_admin = hello_utils.CircularMultiprocessingQueue(3, name="line_sensor_loop_admin")
         self.status: "LineSensorLoopStatus" = {'last_frame_time':0, 'rate_hz': 0}
         self.status_aux = {}
         self.do_exit = Event()
@@ -143,7 +143,7 @@ class LineSensorLoop(Device):
         for sn in self.params['sensor_names']:
             self.frame_id_last[sn]=self.status[sn]['frame_id']
 
-        while self.q_status.qsize():
+        while True:
             try:
                 um_status=self.q_status.get(block=False)
                 #print(um_status.keys())
@@ -158,7 +158,7 @@ class LineSensorLoop(Device):
                         if len(self.rate_log[sn])>self.n_rate_log:
                             self.rate_log[sn].pop(0)
             except queue.Empty:
-                pass
+                break
 
     def enable_rate_logging(self,max_samples=1000):
         self.n_rate_log=max_samples
