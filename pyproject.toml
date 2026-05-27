@@ -32,7 +32,7 @@ dependencies = [
     "pyserial",
     "pyusb",
     "python-xlib",
-    "hello-robot-stretch4-urdf>=2026.5.14",
+    "hello-robot-stretch4-urdf>=2026.5.27",
     "pygame",
     "fpdf2",
     "sshkeyboard",
