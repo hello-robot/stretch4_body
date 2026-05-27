@@ -73,6 +73,10 @@ def stretch_collision_viz():
     sys.argv[0] = "stretch_collision_viz"
     runpy.run_module("stretch4_body.tools.stretch_collision_viz", run_name="__main__")
 
+def stretch_joint_viz():
+    sys.argv[0] = "stretch_joint_viz"
+    runpy.run_module("stretch4_body.tools.stretch_joint_viz", run_name="__main__")
+
 def stretch_camera_show():
     sys.argv[0] = "stretch_camera_show"
     runpy.run_module("stretch4_body.tools.stretch_camera_show", run_name="__main__")
