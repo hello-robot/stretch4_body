@@ -13,7 +13,7 @@ class SentryJointRunaway(Sentry):
 
     def step(self):
         if self.robot.get_subsystem('lift') is not None:
-            if abs(self.robot.lift.status['vel'])>self.params['lift_runaway_vel'] and self.robot.lift.motor.hw_valid:
+            if self.robot.lift.status['vel']<0 and abs(self.robot.lift.status['vel'])>self.params['lift_runaway_vel'] and self.robot.lift.motor.hw_valid and not self.robot.power_periph.status['runstop_event']:
                 self.logger.warning('Runaway velocity of lift of %f m/s. Shutting down actuator!'%self.robot.lift.status['vel'])
                 self.logger.warning('Stop the server with stretch_body_server --kill')
                 self.logger.warning('Run REx_actuator_control --lift to re-enable joint')
