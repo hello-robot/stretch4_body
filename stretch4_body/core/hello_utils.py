@@ -275,29 +275,38 @@ def force_kill_process(script_name):
 from multiprocessing import   Queue
 import queue
 class CircularMultiprocessingQueue:
-    def __init__(self, maxsize):
+    def __init__(self, maxsize, name:str):
         self.queue = Queue(maxsize=maxsize)
         self.maxsize = maxsize
+        self.logger = logging.getLogger(f"{name}_ring_buffer")
 
     def put(self, item):
         """
         Manage ring buffer.
+        Pops the oldest item from the local buffer then the pipe when full.
         Note: Should never block, but can if there's a race condition on full, so doing multiple tries (hack for now)
         """
-        itr=0
+        is_retry = False
         while True:
-            if self.queue.full():# Remove the oldest item to make space
-                try:
-                    self.queue.get_nowait()
-                except queue.Empty:# Should not happen if full() is true, but good for robustness
-                    pass
             try:
-                self.queue.put(item,block=True,timeout=.001)
+                self.queue.put(item, block=False)
                 return
             except queue.Full:
-                itr=itr+1
-                print('Full queue race condition. Trying again. Itr %d.'%itr)
-                pass
+                if is_retry:
+                    self.logger.warning(f"Queue remains full. Cannot add new message.")
+                is_retry = True
+                try:
+                    # OS pipe or buffer is full. Try to drop from local buffer first.
+                    with self.queue._notempty:
+                        if self.queue._buffer:
+                            self.queue._buffer.popleft()
+                            self.queue._sem.release()
+                        else:
+                            # OS pipe is full and local buffer is empty
+                            # Drop from the OS pipe directly
+                            self.queue.get_nowait()
+                except Exception as e:
+                    pass
 
     def get_latest(self):
         #Clear out queue, returning the latest item
@@ -305,7 +314,15 @@ class CircularMultiprocessingQueue:
         ret=None
         while True:
             try:
-                ret=self.queue.get_nowait()
+                # OS pipe or buffer is full. Try to drop from local buffer first.
+                with self.queue._notempty:
+                    if self.queue._buffer:
+                        ret=self.queue._buffer.popleft()
+                        self.queue._sem.release()
+                    else:
+                        # OS pipe is full and local buffer is empty
+                        # Drop from the OS pipe directly
+                        ret=self.queue.get_nowait()
             except queue.Empty:
                 return ret
 
