@@ -660,7 +660,7 @@ def execute_command_non_blocking(command):
         )
         
         # Optionally, you can save the process ID (PID) for later management if needed
-        tmp_file = "/tmp/stretch_gamepadteleop/gamepad_fn_command_process.pid"
+        tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_fn_command_process.pid"
 
         setup_shared_directory(Path(tmp_file).parent)
         
