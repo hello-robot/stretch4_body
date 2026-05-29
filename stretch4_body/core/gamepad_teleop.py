@@ -71,8 +71,7 @@ class GamePadTeleop(Device):
         self.contact_sensitivity_profile = GuardedContactSensitivity.HIGH_SENSITIVITY_MANIPULATION
 
         self.gamepad_controller = gc.GamePadController(print_dongle_status=print_dongle_status)
-        self.precision_mode = False
-        self.fast_base_mode = False
+        self.precision_mode = 0.0
         self.use_arm_lift_mode = False
         self.robot = robot
         self.use_server=use_server
@@ -178,6 +177,44 @@ class GamePadTeleop(Device):
         self.gamepad_controller.vibrate(duration_ms=duration, strong_magnitude=1.0, weak_magnitude=1.0)
         self.contact_sensitivity_profile.apply(self.robot)
 
+    def _handle_vibration(self, actuated_joints):
+        """
+        Handle vibration feedback for the gamepad controller.
+        
+        Parameters
+        ----------
+        actuated_joints : Dict[str, JointState]
+            Dictionary of actuated joints and their commands.
+        """
+        for joint_id, tracker in self.effort_trackers.items():
+            is_actuated = joint_id in actuated_joints
+            tracker.step(self.robot, is_actuated, actuated_joints.get(joint_id, 0))
+
+            if not is_actuated: continue
+            
+            def trigger_vibrate(effort, j_id=joint_id, t=tracker):
+                strong_mag = 1.0
+                weak_mag = 1.0
+                try:
+                    thresholds = t.pos_thresholds if t.last_direction >= 0 else t.neg_thresholds
+                    min_e, max_e = thresholds
+                    abs_effort = abs(effort)
+                    if max_e > min_e:
+                        fraction = min(1.0, max(0.0, (abs_effort - min_e) / (max_e - min_e)))
+                        strong_mag = 0.2 + 0.8 * fraction
+                        weak_mag = strong_mag
+                except Exception:
+                    pass
+                
+                self.gamepad_controller.vibrate_sequence(
+                    sequence_ms=[100, 50, 100], 
+                    strong_magnitude=strong_mag, 
+                    weak_magnitude=weak_mag, 
+                    tag=f"effort_{j_id}", 
+                    cooldown=0.1
+                )
+            tracker.trigger_on_hold(0.25, trigger_vibrate)
+
     def do_motion(self, state = None, robot = None):
         """
         This method should called in the control loop (mainloop())
@@ -239,7 +276,7 @@ class GamePadTeleop(Device):
                 if self.gamepad_controller.is_gamepad_active or state:
                     self.manage_fn_button(robot, self.controller_state['left_button_pressed'])
 
-                    self.precision_mode = self.controller_state['left_trigger_pulled'] > TRIGGER_THRESHOLD
+                    self.precision_mode = self.controller_state['left_trigger_pulled']
                     self.use_arm_lift_mode = self.controller_state['right_trigger_pulled'] > TRIGGER_THRESHOLD
                     
                     actuated_joints = self.control_mapping.do_motion(robot, self)
@@ -253,36 +290,7 @@ class GamePadTeleop(Device):
                             pass
                     
                         if self.precision_mode:
-                            for joint_id, tracker in self.effort_trackers.items():
-                                is_actuated = joint_id in actuated_joints
-                                tracker.step(robot, is_actuated, actuated_joints.get(joint_id, 0))
-
-                                if not is_actuated: continue
-                                
-                                def trigger_vibrate(effort, j_id=joint_id, t=tracker):
-                                    strong_mag = 1.0
-                                    weak_mag = 1.0
-                                    try:
-                                        thresholds = t.pos_thresholds if t.last_direction >= 0 else t.neg_thresholds
-                                        min_e, max_e = thresholds
-                                        abs_effort = abs(effort)
-                                        if max_e > min_e:
-                                            fraction = min(1.0, max(0.0, (abs_effort - min_e) / (max_e - min_e)))
-                                            strong_mag = 0.2 + 0.8 * fraction
-                                            weak_mag = strong_mag
-                                    except Exception:
-                                        pass
-                                    
-                                    self.gamepad_controller.vibrate_sequence(
-                                        sequence_ms=[100, 50, 100], 
-                                        strong_magnitude=strong_mag, 
-                                        weak_magnitude=weak_mag, 
-                                        tag=f"effort_{j_id}", 
-                                        cooldown=0.1
-                                    )
-                                tracker.trigger_on_hold(0.25, trigger_vibrate)
-
-
+                            self._handle_vibration(actuated_joints)
 
                     self.manage_top_button(robot) # Stow the robot on Y/top_button long 2s press
                     self.manage_select_button(robot) # Stows the robot and performs a PC shutdown when the Back/SELECT_BUTTON is long pressed for 10s. Comment to turn off
@@ -354,7 +362,6 @@ class GamePadTeleop(Device):
             self.arm_command.precision_mode = self.precision_mode
         self.lift_command.precision_mode = self.precision_mode
         self.base_command.precision_mode = self.precision_mode
-        self.base_command.fast_base_mode = False#self.fast_base_mode
         if self.use_devices['gripper']:
             self.gripper.precision_mode = self.precision_mode
         if self.use_devices['eoa']:
@@ -509,7 +516,7 @@ class GamePadTeleop(Device):
         if self.use_devices['base']:
             self.base_command.command_stick_to_motion(0,0,0,robot)
 
-    def stow_robot(self, robot):
+    def stow_robot(self):
         """
         Stow the robot to a safe position.
 
@@ -518,7 +525,7 @@ class GamePadTeleop(Device):
         Args:
             robot (robot.Robot): Valid robot instance.
         """
-        if robot.is_homed():
+        if self.robot.is_homed():
             # Reset motion params as fast for xbox
             self.currently_stowing = True
             params = RobotParams().get_params()[1]['wrist_yaw']
@@ -527,8 +534,8 @@ class GamePadTeleop(Device):
             # robot.end_of_arm.motors['wrist_yaw'].set_motion_params(v, a)
             self.wrist_yaw_command.max_vel = v
             self.wrist_yaw_command.acc = a
-            robot.stow()
-            self.do_single_beep(robot)
+            self.robot.stow()
+            self.do_single_beep(self.robot)
             self.currently_stowing = False
     
     def stop(self):
