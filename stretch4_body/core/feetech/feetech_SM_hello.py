@@ -299,8 +299,8 @@ class FeetechSMHello(Device):
             self.motor.enable_pos()
             self.set_motion_params(force=True)
             self.in_vel_mode = False
-        except (termios.error, FeetechCommError):
-            self.logger.warning('FeetechSMHello communication error during enable_pos on %s: ' % self.name)
+        except (termios.error, FeetechCommError) as e:
+            self.logger.warning('FeetechSMHello communication error during enable_pos on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
                 raise FeetechCommError
@@ -313,8 +313,8 @@ class FeetechSMHello(Device):
                 self.enable_torque()
             self.motor.enable_pwm()
             self.in_vel_mode = False
-        except (termios.error, FeetechCommError):
-            self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: ' % self.name)
+        except (termios.error, FeetechCommError) as e:
+            self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
                 raise FeetechCommError
@@ -327,9 +327,9 @@ class FeetechSMHello(Device):
             if not self.status['torque_enabled']:
                 self.enable_torque()
             self.motor.enable_vel()
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.in_vel_mode = False
-            self.logger.warning('FeetechSMHello communication error during enable_vel on %s: ' % self.name)
+            self.logger.warning('FeetechSMHello communication error during enable_vel on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
                 raise FeetechCommError
@@ -361,8 +361,8 @@ class FeetechSMHello(Device):
             if a_des != self.a_des or force:
                 self.motor.set_profile_acceleration(abs(self.world_rad_to_ticks_per_sec_sec(a_des)))
                 self.a_des = a_des
-        except (termios.error, FeetechCommError):
-            self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s' % self.name)
+        except (termios.error, FeetechCommError) as e:
+            self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
                 raise FeetechCommError
@@ -493,13 +493,13 @@ class FeetechSMHello(Device):
                 self.status_mux_id = (self.status_mux_id + 1) % 3
                 self.check_servo_errors()
                 if not pos_valid or not vel_valid or not i_mA_valid or not temp_valid or not err_valid:
-                    self.logger.warning('FeetechSMHello communication error during pull_status on %s: ' % self.name)
+                    self.logger.warning('FeetechSMHello communication error during pull_status on %s: pos_valid=%s, vel_valid=%s, i_mA_valid=%s, temp_valid=%s, err_valid=%s' % (self.name, pos_valid, vel_valid, i_mA_valid, temp_valid, err_valid))
                     self.comm_errors.add_error(rx=True, gsr=False)
                     self._last_pos_valid = False
                     return
                 ts = time.time()
-            except(termios.error, FeetechCommError, IndexError):
-                self.logger.warning('FeetechSMHello communication error during pull_status  on %s: ' % self.name)
+            except(termios.error, FeetechCommError, IndexError) as e:
+                self.logger.warning('FeetechSMHello communication error during pull_status  on %s: %s' % (self.name, e))
                 # self.motor.port_handler.ser.reset_output_buffer()
                 # self.motor.port_handler.ser.reset_input_buffer()
                 self.comm_errors.add_error(rx=True, gsr=False)
@@ -524,8 +524,17 @@ class FeetechSMHello(Device):
 
         if pos_valid:
             if not self._last_pos_valid:
-                self.logger.info(f"FeetechSMHello {self.name}: Communication recovered. Auto-reenabling torque.")
-                if self.status.get('torque_enabled', False):
+                is_homing = self.status.get('is_homing', False)
+                is_torque_enabled = self.status.get('torque_enabled', False)
+                if is_homing:
+                    self.status['is_homing'] = False
+                    if hasattr(self, '_cancel_homing_event') and self._cancel_homing_event is not None:
+                        self.logger.error('Feetech comm error canceled homing via event.')
+                        self._cancel_homing_event.set()
+                    else:
+                        raise FeetechCommError('Feetech comm error canceled homing.')
+                elif is_torque_enabled:
+                    self.logger.info(f"FeetechSMHello {self.name}: Communication recovered. Auto-reenabling torque.")
                     try:
                         self.motor.enable_torque()
                     except:
@@ -973,6 +982,7 @@ class FeetechSMHello(Device):
 
 
     def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0):
+        self._cancel_homing_event = cancel_homing_event
         self.bubble_up_comm_exception = True
         self.status['is_homing']=False
         try:

@@ -25,3 +25,4 @@ COMM_RX_WAITING = -5  # Now recieving status packet
 COMM_RX_TIMEOUT = -6  # There is no status packet
 COMM_RX_CORRUPT = -7  # Incorrect status packet
 COMM_NOT_AVAILABLE = -9  #
+COMM_TX_TIMEOUT = -10 # Failed transmit instruction packet

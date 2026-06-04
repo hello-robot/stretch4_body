@@ -102,7 +102,7 @@ class PortHandler(object):
             # stopbits = serial.STOPBITS_TWO,
             bytesize=serial.EIGHTBITS,
             timeout=0.002,
-            write_timeout=0.002
+            write_timeout=0.002,
         )
 
         self.is_open = True
