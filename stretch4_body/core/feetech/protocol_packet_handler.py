@@ -3,7 +3,7 @@
 #And https://github.com/iotdesignshop/Feetech-tuna/blob/main/LICENSE
 
 import time
-
+import serial
 from .scservo_def import *
 
 TXPACKET_MAX_LEN = 250
@@ -87,6 +87,8 @@ class protocol_packet_handler(object):
             return "[TxRxResult] Port is in use!"
         elif result == COMM_TX_FAIL:
             return "[TxRxResult] Failed transmit instruction packet!"
+        elif result == COMM_TX_TIMEOUT:
+            return "[TxRxResult] Transmit instruction packet timed out!"
         elif result == COMM_RX_FAIL:
             return "[TxRxResult] Failed get status packet from device!"
         elif result == COMM_TX_ERROR:
@@ -122,47 +124,52 @@ class protocol_packet_handler(object):
 
     def txPacket(self, txpacket):
         checksum = 0
-        total_packet_length = txpacket[PKT_LENGTH] + 4  # 4: HEADER0 HEADER1 ID LENGTH
+        result = COMM_SUCCESS
 
+        total_packet_length = txpacket[PKT_LENGTH] + 4  # 4: HEADER0 HEADER1 ID LENGTH
+        
         if self.portHandler.is_using:
             return COMM_PORT_BUSY
-        self.portHandler.is_using = True
+        else:
+            self.portHandler.is_using = True
+            
+            # check max packet length
+            if total_packet_length > TXPACKET_MAX_LEN:
+                 result = COMM_TX_ERROR
+            else:
+                # make packet header
+                txpacket[PKT_HEADER0] = 0xFF
+                txpacket[PKT_HEADER1] = 0xFF
 
-        # check max packet length
-        if total_packet_length > TXPACKET_MAX_LEN:
-            self.portHandler.is_using = False
-            return COMM_TX_ERROR
+                # add a checksum to the packet
+                for idx in range(2, total_packet_length - 1):  # except header, checksum
+                    checksum += txpacket[idx]
 
-        # make packet header
-        txpacket[PKT_HEADER0] = 0xFF
-        txpacket[PKT_HEADER1] = 0xFF
+                txpacket[total_packet_length - 1] = ~checksum & 0xFF
 
-        # add a checksum to the packet
-        for idx in range(2, total_packet_length - 1):  # except header, checksum
-            checksum += txpacket[idx]
+                # tx packet
+                self.portHandler.clearPort()
+                written_packet_length = 0
+                try:
+                    written_packet_length = self.portHandler.writePort(txpacket)
+                except serial.SerialTimeoutException:
+                    result = COMM_TX_TIMEOUT
+                except:
+                    result = COMM_TX_FAIL
 
-        txpacket[total_packet_length - 1] = ~checksum & 0xFF
+                if total_packet_length != written_packet_length:
+                    result = COMM_TX_FAIL
 
-        #print "[TxPacket] %r" % txpacket
-
-        # tx packet
-        self.portHandler.clearPort()
-        try:
-            written_packet_length = self.portHandler.writePort(txpacket)
-        except Exception as e:
-            # Reset port on hard hardware error (e.g. write timeout or disconnect)
-            self.portHandler.is_using = False
+        # Reset port on hard hardware error (e.g. write timeout or disconnect)
+        if result == COMM_TX_FAIL:
             try:
                 self.portHandler.closePort()
                 self.portHandler.openPort()
             except Exception:
                 pass
-            return COMM_TX_FAIL
-        if total_packet_length != written_packet_length:
-            self.portHandler.is_using = False
-            return COMM_TX_FAIL
 
-        return COMM_SUCCESS
+        self.portHandler.is_using = False
+        return result
 
     def rxPacket(self):
         rxpacket = []
@@ -524,7 +531,6 @@ class protocol_packet_handler(object):
 
         txpacket[PKT_PARAMETER0 + 2: PKT_PARAMETER0 + 2 + param_length] = param[0: param_length]
 
-        # print(txpacket)
         result = self.txPacket(txpacket)
         return result
 

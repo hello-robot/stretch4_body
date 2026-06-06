@@ -299,11 +299,11 @@ class FeetechSMHello(Device):
             self.motor.enable_pos()
             self.set_motion_params(force=True)
             self.in_vel_mode = False
-        except (termios.error, FeetechCommError):
-            self.logger.warning('FeetechSMHello communication error during enable_pos on %s: ' % self.name)
+        except (termios.error, FeetechCommError) as e:
+            self.logger.warning('FeetechSMHello communication error during enable_pos on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     def enable_pwm(self):
         if not self.hw_valid:
@@ -313,11 +313,11 @@ class FeetechSMHello(Device):
                 self.enable_torque()
             self.motor.enable_pwm()
             self.in_vel_mode = False
-        except (termios.error, FeetechCommError):
-            self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: ' % self.name)
+        except (termios.error, FeetechCommError) as e:
+            self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     def enable_velocity_ctrl(self):
         if not self.hw_valid:
@@ -327,12 +327,12 @@ class FeetechSMHello(Device):
             if not self.status['torque_enabled']:
                 self.enable_torque()
             self.motor.enable_vel()
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.in_vel_mode = False
-            self.logger.warning('FeetechSMHello communication error during enable_vel on %s: ' % self.name)
+            self.logger.warning('FeetechSMHello communication error during enable_vel on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     def enable_torque(self):
         if not self.hw_valid:
@@ -361,11 +361,11 @@ class FeetechSMHello(Device):
             if a_des != self.a_des or force:
                 self.motor.set_profile_acceleration(abs(self.world_rad_to_ticks_per_sec_sec(a_des)))
                 self.a_des = a_des
-        except (termios.error, FeetechCommError):
-            self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s' % self.name)
+        except (termios.error, FeetechCommError) as e:
+            self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     # ############## Utility #####################################
 
@@ -442,10 +442,6 @@ class FeetechSMHello(Device):
         if not self.hw_valid:
             return
 
-        if not hasattr(self, '_last_pos_valid'):
-            self._last_pos_valid = True
-
-
         pos_valid = True
         vel_valid = True
         i_mA_valid = True
@@ -493,19 +489,15 @@ class FeetechSMHello(Device):
                 self.status_mux_id = (self.status_mux_id + 1) % 3
                 self.check_servo_errors()
                 if not pos_valid or not vel_valid or not i_mA_valid or not temp_valid or not err_valid:
-                    self.logger.warning('FeetechSMHello communication error during pull_status on %s: ' % self.name)
+                    self.logger.warning(f"FeetechSMHello communication error during pull_status on {self.name}: {pos_valid=}, {vel_valid=}, {i_mA_valid=}, {temp_valid=}, {err_valid=}")
                     self.comm_errors.add_error(rx=True, gsr=False)
-                    self._last_pos_valid = False
                     return
                 ts = time.time()
-            except(termios.error, FeetechCommError, IndexError):
-                self.logger.warning('FeetechSMHello communication error during pull_status  on %s: ' % self.name)
-                # self.motor.port_handler.ser.reset_output_buffer()
-                # self.motor.port_handler.ser.reset_input_buffer()
+            except(termios.error, FeetechCommError, IndexError) as e:
+                self.logger.warning(f"FeetechSMHello communication error during pull_status on {self.name}: {e}")
                 self.comm_errors.add_error(rx=True, gsr=False)
-                self._last_pos_valid = False
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise FeetechCommError(f"{e}")
                 return
         else:
             x = data['x']
@@ -522,16 +514,7 @@ class FeetechSMHello(Device):
 
         # Now update status dictionary
 
-        if pos_valid:
-            if not self._last_pos_valid:
-                self.logger.info(f"FeetechSMHello {self.name}: Communication recovered. Auto-reenabling torque.")
-                if self.status.get('torque_enabled', False):
-                    try:
-                        self.motor.enable_torque()
-                    except:
-                        pass
-            self._last_pos_valid = True
-            
+        if pos_valid:            
             self.status['pos_ticks'] = x
             self.status['pos'] = self.ticks_to_world_rad(float(x))
         if vel_valid:
@@ -603,11 +586,11 @@ class FeetechSMHello(Device):
         try:
             self.motor.disable_torque()
             self.motor.enable_torque()
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.logger.warning('FeetechSMHello communication error during quick_stop on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     def set_pwm(self, x):
         if self.was_runstopped:
@@ -616,11 +599,11 @@ class FeetechSMHello(Device):
             return
         try:
             self.motor.set_goal_pwm(x)
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.logger.warning('FeetechSMHello communication error during set_pwm on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     # ############## Safety and Sentry #####################################
 
@@ -736,11 +719,11 @@ class FeetechSMHello(Device):
                 self.motor.go_to_pos(t_des)
                 success = True
                 break
-            except (termios.error, FeetechCommError, IndexError):
+            except (termios.error, FeetechCommError, IndexError) as e:
                 self.logger.warning('FeetechSMHello communication error during move_to on %s: ' % self.name)
                 self.comm_errors.add_error(rx=False, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise FeetechCommError(f"{e}")
 
     def move_by(self, x_des, v_des=None, a_des=None):
         if True in [self.check_nan_value(d) for d in (x_des, v_des, a_des)]:
@@ -785,11 +768,11 @@ class FeetechSMHello(Device):
                     self.move_to(cx + x_des, v_des, a_des)
                 else:
                     self.logger.error('Move_By comm failure on %s' % self.name)
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.logger.warning('FeetechSMHello communication error during move_by on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise FeetechCommError(f"{e}")
 
     # #############Safe Velocity Control ########################
 
@@ -844,11 +827,11 @@ class FeetechSMHello(Device):
                     self._prev_set_vel_ts = time.time()
                 success = True
                 break
-            except(termios.error, FeetechCommError, IndexError):
+            except(termios.error, FeetechCommError, IndexError) as e:
                 self.logger.warning('FeetechSMHello communication error during set_velocity on %s: ' % self.name)
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise FeetechCommError(f"{e}")
 
     def _step_vel_braking(self, v_des, a_des):
         """
@@ -941,38 +924,61 @@ class FeetechSMHello(Device):
     def is_calibration_required(self):
         return self.params['req_calibration'] and not self.status['pos_calibrated']
 
-    """ 
-    Servo calibration works by:
+    def pre_home(self, cancel_homing_event:threading.Event, pwm_val:float, negative_vel:float, positive_vel:float, timeout:float=5):
+        """
+        The pre_home function is called before the motor starts homing.
+        It should be used to move the motor to the desired pre-home position.
+        """
+        self.status['is_homing'] = True
+        self.motor.set_overcurrent(10)
+        self.enable_pwm()
+        self.set_pwm(-pwm_val)
+        time.sleep(0.2)
+        t = time.time()
+        while self.status['vel'] < negative_vel and time.time() - t < timeout and not cancel_homing_event.is_set():
+            time.sleep(0.001)
+            
+        if not cancel_homing_event.is_set(): 
+            self.set_pwm(pwm_val)
+            time.sleep(0.2)
+            t = time.time()
+            while self.status['vel'] > positive_vel and time.time() - t < timeout and not cancel_homing_event.is_set(): 
+                time.sleep(0.001)
 
-    Homing
-    ==============
-    * Move with a fixed PWM to a hardstop
-    * Store the current position (ticks) in the SRAM homing offset such that self.motor.status['pos']==0 at that hardstop
-
-    Calibration to SI / joint range:
-    ===============
-    Once homed, the servo can move to positions within self.range_t (ticks).
-
-    For SE4 Feetech wrist we simplify homing to multi-turn mode only, where:
-    *  self.params['range_nom_t'] is the (signed) full range of motion in ticks
-    *  self.params['zero_nom_t'] is the (signed) offset from the first hard stop to jont zero (in ticks)
-    These values are known from CAD. Then,
-    1) Move to first hardstop via PWM and mark position self.home_pos_offset
-    2) The second hardstop, Position B = self.home_pos_offset + self.params['range_nom_t'], 
-    3) The raw encoder position of the joint zero Z = self.params['zero_nom_t']+self.home_pos_offset
-
-    So then, given a servo reported position X (ticks), the joint position in ticks is 
-    Q = X-Z, where Q is limited between A and B
-
-    Ex 1, PWM of -300 moves --> A=1420
-    self.params['range_nom_t']=-6250, so B=-4830
-    self.params['zero_nom_t']=-3042, so Z=-1622
-    ,then when X=-=1622, Q=0
-
-    """
-
+        self.set_pwm(0.0)
+        self.enable_pos()
+        self.status['is_homing'] = False
 
     def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0):
+        """ 
+        Servo calibration works by:
+
+        Homing
+        ==============
+        * Move with a fixed PWM to a hardstop
+        * Store the current position (ticks) in the SRAM homing offset such that self.motor.status['pos']==0 at that hardstop
+
+        Calibration to SI / joint range:
+        ===============
+        Once homed, the servo can move to positions within self.range_t (ticks).
+
+        For SE4 Feetech wrist we simplify homing to multi-turn mode only, where:
+        *  self.params['range_nom_t'] is the (signed) full range of motion in ticks
+        *  self.params['zero_nom_t'] is the (signed) offset from the first hard stop to jont zero (in ticks)
+        These values are known from CAD. Then,
+        1) Move to first hardstop via PWM and mark position self.home_pos_offset
+        2) The second hardstop, Position B = self.home_pos_offset + self.params['range_nom_t'], 
+        3) The raw encoder position of the joint zero Z = self.params['zero_nom_t']+self.home_pos_offset
+
+        So then, given a servo reported position X (ticks), the joint position in ticks is 
+        Q = X-Z, where Q is limited between A and B
+
+        Ex 1, PWM of -300 moves --> A=1420
+        self.params['range_nom_t']=-6250, so B=-4830
+        self.params['zero_nom_t']=-3042, so Z=-1622
+        ,then when X=-=1622, Q=0
+
+        """
         self.bubble_up_comm_exception = True
         self.status['is_homing']=False
         try:
