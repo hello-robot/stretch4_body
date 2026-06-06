@@ -442,10 +442,6 @@ class FeetechSMHello(Device):
         if not self.hw_valid:
             return
 
-        if not hasattr(self, '_last_pos_valid'):
-            self._last_pos_valid = True
-
-
         pos_valid = True
         vel_valid = True
         i_mA_valid = True
@@ -493,17 +489,15 @@ class FeetechSMHello(Device):
                 self.status_mux_id = (self.status_mux_id + 1) % 3
                 self.check_servo_errors()
                 if not pos_valid or not vel_valid or not i_mA_valid or not temp_valid or not err_valid:
-                    self.logger.warning('FeetechSMHello communication error during pull_status on %s: pos_valid=%s, vel_valid=%s, i_mA_valid=%s, temp_valid=%s, err_valid=%s' % (self.name, pos_valid, vel_valid, i_mA_valid, temp_valid, err_valid))
+                    self.logger.warning(f"FeetechSMHello communication error during pull_status on {self.name}: {pos_valid=}, {vel_valid=}, {i_mA_valid=}, {temp_valid=}, {err_valid=}")
                     self.comm_errors.add_error(rx=True, gsr=False)
-                    self._last_pos_valid = False
                     return
                 ts = time.time()
             except(termios.error, FeetechCommError, IndexError) as e:
-                self.logger.warning('FeetechSMHello communication error during pull_status  on %s: %s' % (self.name, e))
+                self.logger.warning(f"FeetechSMHello communication error during pull_status  on {self.name}: {e}")
                 # self.motor.port_handler.ser.reset_output_buffer()
                 # self.motor.port_handler.ser.reset_input_buffer()
                 self.comm_errors.add_error(rx=True, gsr=False)
-                self._last_pos_valid = False
                 if self.bubble_up_comm_exception:
                     raise FeetechCommError
                 return
@@ -522,25 +516,7 @@ class FeetechSMHello(Device):
 
         # Now update status dictionary
 
-        if pos_valid:
-            if not self._last_pos_valid:
-                is_homing = self.status.get('is_homing', False)
-                is_torque_enabled = self.status.get('torque_enabled', False)
-                if is_homing:
-                    self.status['is_homing'] = False
-                    if hasattr(self, '_cancel_homing_event') and self._cancel_homing_event is not None:
-                        self.logger.error('Feetech comm error canceled homing via event.')
-                        self._cancel_homing_event.set()
-                    else:
-                        raise FeetechCommError('Feetech comm error canceled homing.')
-                elif is_torque_enabled:
-                    self.logger.info(f"FeetechSMHello {self.name}: Communication recovered. Auto-reenabling torque.")
-                    try:
-                        self.motor.enable_torque()
-                    except:
-                        pass
-            self._last_pos_valid = True
-            
+        if pos_valid:            
             self.status['pos_ticks'] = x
             self.status['pos'] = self.ticks_to_world_rad(float(x))
         if vel_valid:
