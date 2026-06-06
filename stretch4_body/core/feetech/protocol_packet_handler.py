@@ -169,7 +169,7 @@ class protocol_packet_handler(object):
                 result = COMM_TX_FAIL
 
         # Reset port on hard hardware error (e.g. write timeout or disconnect)
-        if result == COMM_TX_FAIL:
+        if result != COMM_SUCCESS:
             self._recover_port()
 
         self.port_handler.is_writing_packet = False
