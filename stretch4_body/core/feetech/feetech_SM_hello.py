@@ -926,39 +926,64 @@ class FeetechSMHello(Device):
     def is_calibration_required(self):
         return self.params['req_calibration'] and not self.status['pos_calibrated']
 
-    """ 
-    Servo calibration works by:
+    def pre_home(self, cancel_homing_event:threading.Event, pwm_val:float, negative_vel:float, positive_vel:float, timeout:float=5):
+        """
+        The pre_home function is called before the motor starts homing.
+        It should be used to move the motor to the desired pre-home position.
+        """
+        self.status['is_homing'] = True
+        self.motor.set_overcurrent(10)
+        self.enable_pwm()
+        self.set_pwm(-pwm_val)
+        time.sleep(0.2)
+        t = time.time()
+        while self.status['vel'] < negative_vel and time.time() - t < timeout and not cancel_homing_event.is_set():
+            time.sleep(0.001)
+            
+        if cancel_homing_event.is_set():
+            self.set_pwm(0.0)
+            self.enable_pos()
+            self.status['is_homing'] = False
+            return False
+            
+        self.set_pwm(pwm_val)
+        time.sleep(0.2)
+        t = time.time()
+        while self.status['vel'] > positive_vel and time.time() - t < timeout and not cancel_homing_event.is_set(): 
+            time.sleep(0.001)
 
-    Homing
-    ==============
-    * Move with a fixed PWM to a hardstop
-    * Store the current position (ticks) in the SRAM homing offset such that self.motor.status['pos']==0 at that hardstop
-
-    Calibration to SI / joint range:
-    ===============
-    Once homed, the servo can move to positions within self.range_t (ticks).
-
-    For SE4 Feetech wrist we simplify homing to multi-turn mode only, where:
-    *  self.params['range_nom_t'] is the (signed) full range of motion in ticks
-    *  self.params['zero_nom_t'] is the (signed) offset from the first hard stop to jont zero (in ticks)
-    These values are known from CAD. Then,
-    1) Move to first hardstop via PWM and mark position self.home_pos_offset
-    2) The second hardstop, Position B = self.home_pos_offset + self.params['range_nom_t'], 
-    3) The raw encoder position of the joint zero Z = self.params['zero_nom_t']+self.home_pos_offset
-
-    So then, given a servo reported position X (ticks), the joint position in ticks is 
-    Q = X-Z, where Q is limited between A and B
-
-    Ex 1, PWM of -300 moves --> A=1420
-    self.params['range_nom_t']=-6250, so B=-4830
-    self.params['zero_nom_t']=-3042, so Z=-1622
-    ,then when X=-=1622, Q=0
-
-    """
-
+        self.set_pwm(0.0)
 
     def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0):
-        self._cancel_homing_event = cancel_homing_event
+        """ 
+        Servo calibration works by:
+
+        Homing
+        ==============
+        * Move with a fixed PWM to a hardstop
+        * Store the current position (ticks) in the SRAM homing offset such that self.motor.status['pos']==0 at that hardstop
+
+        Calibration to SI / joint range:
+        ===============
+        Once homed, the servo can move to positions within self.range_t (ticks).
+
+        For SE4 Feetech wrist we simplify homing to multi-turn mode only, where:
+        *  self.params['range_nom_t'] is the (signed) full range of motion in ticks
+        *  self.params['zero_nom_t'] is the (signed) offset from the first hard stop to jont zero (in ticks)
+        These values are known from CAD. Then,
+        1) Move to first hardstop via PWM and mark position self.home_pos_offset
+        2) The second hardstop, Position B = self.home_pos_offset + self.params['range_nom_t'], 
+        3) The raw encoder position of the joint zero Z = self.params['zero_nom_t']+self.home_pos_offset
+
+        So then, given a servo reported position X (ticks), the joint position in ticks is 
+        Q = X-Z, where Q is limited between A and B
+
+        Ex 1, PWM of -300 moves --> A=1420
+        self.params['range_nom_t']=-6250, so B=-4830
+        self.params['zero_nom_t']=-3042, so Z=-1622
+        ,then when X=-=1622, Q=0
+
+        """
         self.bubble_up_comm_exception = True
         self.status['is_homing']=False
         try:
