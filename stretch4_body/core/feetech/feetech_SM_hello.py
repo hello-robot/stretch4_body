@@ -303,7 +303,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during enable_pos on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     def enable_pwm(self):
         if not self.hw_valid:
@@ -317,7 +317,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     def enable_velocity_ctrl(self):
         if not self.hw_valid:
@@ -332,7 +332,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during enable_vel on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     def enable_torque(self):
         if not self.hw_valid:
@@ -365,7 +365,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     # ############## Utility #####################################
 
@@ -499,7 +499,7 @@ class FeetechSMHello(Device):
                 # self.motor.port_handler.ser.reset_input_buffer()
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise e
                 return
         else:
             x = data['x']
@@ -588,11 +588,11 @@ class FeetechSMHello(Device):
         try:
             self.motor.disable_torque()
             self.motor.enable_torque()
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.logger.warning('FeetechSMHello communication error during quick_stop on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     def set_pwm(self, x):
         if self.was_runstopped:
@@ -601,11 +601,11 @@ class FeetechSMHello(Device):
             return
         try:
             self.motor.set_goal_pwm(x)
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.logger.warning('FeetechSMHello communication error during set_pwm on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     # ############## Safety and Sentry #####################################
 
@@ -721,11 +721,11 @@ class FeetechSMHello(Device):
                 self.motor.go_to_pos(t_des)
                 success = True
                 break
-            except (termios.error, FeetechCommError, IndexError):
+            except (termios.error, FeetechCommError, IndexError) as e:
                 self.logger.warning('FeetechSMHello communication error during move_to on %s: ' % self.name)
                 self.comm_errors.add_error(rx=False, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise e
 
     def move_by(self, x_des, v_des=None, a_des=None):
         if True in [self.check_nan_value(d) for d in (x_des, v_des, a_des)]:
@@ -770,11 +770,11 @@ class FeetechSMHello(Device):
                     self.move_to(cx + x_des, v_des, a_des)
                 else:
                     self.logger.error('Move_By comm failure on %s' % self.name)
-        except (termios.error, FeetechCommError):
+        except (termios.error, FeetechCommError) as e:
             self.logger.warning('FeetechSMHello communication error during move_by on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise FeetechCommError
+                raise e
 
     # #############Safe Velocity Control ########################
 
@@ -829,11 +829,11 @@ class FeetechSMHello(Device):
                     self._prev_set_vel_ts = time.time()
                 success = True
                 break
-            except(termios.error, FeetechCommError, IndexError):
+            except(termios.error, FeetechCommError, IndexError) as e:
                 self.logger.warning('FeetechSMHello communication error during set_velocity on %s: ' % self.name)
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise e
 
     def _step_vel_braking(self, v_des, a_des):
         """
