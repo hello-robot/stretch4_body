@@ -5,7 +5,6 @@
 import time
 import serial
 import sys
-import platform
 
 DEFAULT_BAUDRATE = 1000000
 LATENCY_TIMER = 10 # was 50 # ms
@@ -18,7 +17,7 @@ class PortHandler(object):
         self.packet_timeout = 0.0
         self.tx_time_per_byte = 0.0
 
-        self.is_using = False
+        self.is_writing_packet = False
         self.port_name = port_name
         self.ser = None
 
@@ -28,7 +27,6 @@ class PortHandler(object):
     def closePort(self):
         self.ser.close()
         self.is_open = False
-        self.is_using = False
 
     def clearPort(self):
         self.ser.flush()
@@ -106,7 +104,6 @@ class PortHandler(object):
         )
 
         self.is_open = True
-        self.is_using = False
 
         self.ser.reset_input_buffer()
 
