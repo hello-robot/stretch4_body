@@ -3,8 +3,8 @@ import cv2
 import cv2.aruco
 from enum import Enum, auto
 from dataclasses import dataclass, field
-
 import numpy as np
+from PIL import Image
 
 @dataclass
 class CharucoBoardConfig:
@@ -98,6 +98,7 @@ class CharucoBoards(Enum):
     BOARD_5x7_37mm_27mm_4x4_start_id_20 = auto()
     BOARD_5x7_37mm_27mm_4x4_start_id_40 = auto()
     BOARD_5x7_30mm_22mm_4x4_start_id_0 = auto()
+    
     def get_board_config(self, use_high_MP_corner_refinement: bool) -> CharucoBoardConfig:
         if self is CharucoBoards.BOARD_5x7_37mm_27mm_4x4_start_id_0: 
             return CharucoBoardConfig(
@@ -133,3 +134,66 @@ class CharucoBoards(Enum):
             ).set_charuco_detector(use_high_MP_corner_refinement)
             
         raise NotImplementedError(f"{self} does not have a board definition.")
+    
+
+    def generate_pdf(self, filename: str|None = None, page_width_mm: float|None = 279.4, page_height_mm: float|None = 215.9, dpi: int = 300):
+        """
+        Generates a 1:1 scale printable PDF of the ChArUco board.
+        Defaults to US Letter Landscape dimensions (279.4 x 215.9 mm).
+        """
+        if filename is None:
+            filename = self.name.lower() + ".pdf"
+
+        config = self.get_board_config(use_high_MP_corner_refinement=False)
+
+        # Convert class parameters (meters) to millimeters for rendering
+        square_length_mm = config.square_length * 1000.0
+        
+        # Calculate pixel dimensions based on target DPI
+        mm_to_inch = 25.4
+        pixels_per_mm = dpi / mm_to_inch
+
+        square_len_px = int(square_length_mm * pixels_per_mm)
+
+        cols, rows = config.size
+        board_img_width = cols * square_len_px
+        board_img_height = rows * square_len_px
+        
+        print(f"{square_length_mm*cols}mm x {square_length_mm*rows}mm ({square_length_mm*cols/mm_to_inch}in x {square_length_mm*rows/mm_to_inch}in ) ({board_img_width}px x {board_img_height}px)")
+
+        if page_width_mm is None:
+            page_width_px = board_img_width
+        else:
+            page_width_px = int(page_width_mm * pixels_per_mm)
+        
+        if page_height_mm is None:
+            page_height_px = board_img_height
+        else:
+            page_height_px = int(page_height_mm * pixels_per_mm)
+
+        # Validate that the board actually fits on the specified paper
+        if board_img_width > page_width_px or board_img_height > page_height_px:
+            raise ValueError(f"Board dimensions ({board_img_width}x{board_img_height} px) exceed paper dimensions ({page_width_px}x{page_height_px} px).")
+
+        # Generate board image using the existing get_board() method
+        board = config.get_board()
+        
+        board_img = board.generateImage((board_img_width, board_img_height))
+
+        # Create a blank white page
+        page_img = np.ones((page_height_px, page_width_px), dtype=np.uint8) * 255
+
+        # Center the board on the page
+        x_offset = (page_width_px - board_img_width) // 2
+        y_offset = (page_height_px - board_img_height) // 2
+        page_img[y_offset:y_offset+board_img_height, x_offset:x_offset+board_img_width] = board_img
+
+        # Convert to Pillow Image and save
+        pil_img = Image.fromarray(page_img)
+        pil_img.save(filename, "PDF", resolution=dpi)
+        print(f"Generated {filename} formatted for {page_width_mm}x{page_height_mm}mm paper.")
+
+    
+
+if __name__ == "__main__":
+    CharucoBoards.BOARD_5x7_37mm_27mm_4x4_start_id_0.generate_pdf(page_height_mm=None, page_width_mm=None)
