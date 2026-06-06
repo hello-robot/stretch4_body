@@ -193,8 +193,6 @@ class FeetechSMChain(Device):
         """
         After a comms error, attempt to recover the connection to the servos.
         """
-        # for mk in self.motors.keys():
-        #     self.motors[mk].startup()
         if self.port_handler:
             self.port_handler.is_using = False
             try:

@@ -494,9 +494,7 @@ class FeetechSMHello(Device):
                     return
                 ts = time.time()
             except(termios.error, FeetechCommError, IndexError) as e:
-                self.logger.warning(f"FeetechSMHello communication error during pull_status  on {self.name}: {e}")
-                # self.motor.port_handler.ser.reset_output_buffer()
-                # self.motor.port_handler.ser.reset_input_buffer()
+                self.logger.warning(f"FeetechSMHello communication error during pull_status on {self.name}: {e}")
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
                     raise e
@@ -940,19 +938,16 @@ class FeetechSMHello(Device):
         while self.status['vel'] < negative_vel and time.time() - t < timeout and not cancel_homing_event.is_set():
             time.sleep(0.001)
             
-        if cancel_homing_event.is_set():
-            self.set_pwm(0.0)
-            self.enable_pos()
-            self.status['is_homing'] = False
-            return False
-            
-        self.set_pwm(pwm_val)
-        time.sleep(0.2)
-        t = time.time()
-        while self.status['vel'] > positive_vel and time.time() - t < timeout and not cancel_homing_event.is_set(): 
-            time.sleep(0.001)
+        if not cancel_homing_event.is_set(): 
+            self.set_pwm(pwm_val)
+            time.sleep(0.2)
+            t = time.time()
+            while self.status['vel'] > positive_vel and time.time() - t < timeout and not cancel_homing_event.is_set(): 
+                time.sleep(0.001)
 
         self.set_pwm(0.0)
+        self.enable_pos()
+        self.status['is_homing'] = False
 
     def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0):
         """ 
