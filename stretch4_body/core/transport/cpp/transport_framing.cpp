@@ -69,11 +69,6 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
     int fs_sel;
     fd_set fs_read;
     struct timeval time;
-    FD_ZERO(&fs_read);
-    FD_SET(fd,&fs_read);
-
-    time.tv_sec = 0;
-    time.tv_usec = IOTimeOut*1000;
 
     nb_frame=0;
     int nrx=0;
@@ -83,13 +78,23 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
     crc_ok=true;
 	while(1)
     {
+        FD_ZERO(&fs_read);
+        FD_SET(fd,&fs_read);
+
+        time.tv_sec = 0;
+        time.tv_usec = IOTimeOut*1000;
+
 		fs_sel = select(fd+1, &fs_read, NULL, NULL, &time);
-		if(fs_sel)
+		if(fs_sel > 0)
         {
 			nrx= read(fd, tmp_buf, RPC_MAX_FRAME_SIZE);
             if (nrx>RPC_MAX_FRAME_SIZE)
             {
                 printf("receiveFramedData: Bad NRX: %d \n", nrx);
+                return false;
+            }
+            if (nrx <= 0)
+            {
                 return false;
             }
             for (int nn=0;nn<nrx;nn++)
@@ -119,6 +124,10 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
                     }
                 }
             }
+        }
+        else
+        {
+            return false;
         }
     }
 }
