@@ -303,7 +303,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during enable_pos on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     def enable_pwm(self):
         if not self.hw_valid:
@@ -317,7 +317,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     def enable_velocity_ctrl(self):
         if not self.hw_valid:
@@ -332,7 +332,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during enable_vel on %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     def enable_torque(self):
         if not self.hw_valid:
@@ -365,7 +365,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s: %s' % (self.name, e))
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     # ############## Utility #####################################
 
@@ -497,7 +497,7 @@ class FeetechSMHello(Device):
                 self.logger.warning(f"FeetechSMHello communication error during pull_status on {self.name}: {e}")
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise e
+                    raise FeetechCommError(f"{e}")
                 return
         else:
             x = data['x']
@@ -590,7 +590,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during quick_stop on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     def set_pwm(self, x):
         if self.was_runstopped:
@@ -603,7 +603,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during set_pwm on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     # ############## Safety and Sentry #####################################
 
@@ -723,7 +723,7 @@ class FeetechSMHello(Device):
                 self.logger.warning('FeetechSMHello communication error during move_to on %s: ' % self.name)
                 self.comm_errors.add_error(rx=False, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise e
+                    raise FeetechCommError(f"{e}")
 
     def move_by(self, x_des, v_des=None, a_des=None):
         if True in [self.check_nan_value(d) for d in (x_des, v_des, a_des)]:
@@ -772,7 +772,7 @@ class FeetechSMHello(Device):
             self.logger.warning('FeetechSMHello communication error during move_by on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
-                raise e
+                raise FeetechCommError(f"{e}")
 
     # #############Safe Velocity Control ########################
 
@@ -831,7 +831,7 @@ class FeetechSMHello(Device):
                 self.logger.warning('FeetechSMHello communication error during set_velocity on %s: ' % self.name)
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
-                    raise e
+                    raise FeetechCommError(f"{e}")
 
     def _step_vel_braking(self, v_des, a_des):
         """
