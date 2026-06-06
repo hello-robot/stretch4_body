@@ -105,6 +105,7 @@ public:
                 ack_overwrites++;
         ack_buf[cb_idx].has_been_written=false;
         ack_buf[cb_idx].has_been_read=false;
+        ack_buf[cb_idx].is_failed=false;
         ack_buf[cb_idx].rpc_id=rpc_id;
         ack_buf[cb_idx].cb_idx=cb_idx;
         ack_buf[cb_idx].is_push=is_push;
@@ -132,6 +133,7 @@ public:
                     memcpy(ack_buf[a.cb_idx].payload,a.payload,a.nb_payload);
                     ack_buf[a.cb_idx].nb_payload=a.nb_payload;
                     ack_buf[a.cb_idx].cb_time=a.cb_time;
+                    ack_buf[a.cb_idx].is_failed=a.is_failed;
                     ack_buf[a.cb_idx].has_been_read=false;
                     ack_buf[a.cb_idx].has_been_written=true;
                     ret=true;
@@ -139,6 +141,22 @@ public:
            }
            return ret;
         }
+
+    bool thread_rpc_failed_callback()
+    {
+        QueuedRPC ack_rpc;
+        ack_rpc.nb_payload=0;
+        ack_rpc.rpc_id=thread_send_rpc.rpc_id;
+        ack_rpc.cb_idx=thread_send_rpc.cb_idx;
+        ack_rpc.is_failed=true;
+        ack_rpc.cb_time=std::chrono::duration<double>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        
+        if (!ack_q.wait_enqueue_timed(ack_rpc,std::chrono::milliseconds(1)))
+        {
+            std::cout<<"Transport_cpp: ack_q overrun on failure. Dropping failure ack for rpc_id: "<<thread_send_rpc.rpc_id<<std::endl;
+        }
+        return true;
+    }
 
     //Thread method: Dequeue an RPC and send to uC
     bool thread_execute_queued_rpc()
@@ -151,10 +169,16 @@ public:
         if (transmit_q.wait_dequeue_timed(thread_send_rpc, std::chrono::milliseconds(5)))
         {
             //std::cout<<"dequeued "<<thread_send_rpc.rpc_id<<std::endl;
+            bool success = false;
             if (thread_send_rpc.is_push)
-                tframer.doPushTransactionV1(qid,thread_send_rpc.payload, thread_send_rpc.nb_payload,(RPCCallback)thread_rpc_callback);
+                success = tframer.doPushTransactionV1(qid,thread_send_rpc.payload, thread_send_rpc.nb_payload,(RPCCallback)thread_rpc_callback);
             else
-                tframer.doPullTransactionV1(qid,thread_send_rpc.payload, thread_send_rpc.nb_payload,(RPCCallback)thread_rpc_callback);
+                success = tframer.doPullTransactionV1(qid,thread_send_rpc.payload, thread_send_rpc.nb_payload,(RPCCallback)thread_rpc_callback);
+            
+            if (!success)
+            {
+                thread_rpc_failed_callback();
+            }
             return true;
         }
         return false;
@@ -191,8 +215,12 @@ public:
             }
         if ( ack_buf[idx].has_been_written)
         {
-            (*py_rpc_callback[idx])(ack_buf[idx].rpc_id, (uint8_t *)ack_buf[idx].payload, (uint16_t)ack_buf[idx].nb_payload);
             ack_buf[idx].has_been_read=true;//expired
+            if (ack_buf[idx].is_failed)
+            {
+                return 0;
+            }
+            (*py_rpc_callback[idx])(ack_buf[idx].rpc_id, (uint8_t *)ack_buf[idx].payload, (uint16_t)ack_buf[idx].nb_payload);
             return 1;
         }
         //std::cout<<"result not ready : rpc_id: "<<rpc_id<<std::endl;
@@ -267,6 +295,7 @@ bool thread_rpc_callback(int qid, uint8_t * rpc_reply, uint16_t nb_rpc_reply)
     ack_rpc.nb_payload=nb_rpc_reply;
     ack_rpc.rpc_id=rpc_id;
     ack_rpc.cb_idx=cb_idx;
+    ack_rpc.is_failed=false;
     ack_rpc.cb_time=std::chrono::duration<double>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     //TQ[qid].ack_q.enqueue(ack_rpc);
     if (!TQ[qid].ack_q.wait_enqueue_timed(ack_rpc,std::chrono::milliseconds(1)))

@@ -907,7 +907,13 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         return success
 
     def load_rpc_results(self,wait_on_result=True):
-        self.transport.load_rpc_results(wait_on_result)
+        if not self.hw_valid:
+            return []
+        res = self.transport.load_rpc_results(wait_on_result)
+        if 0 in res:
+            if check_usb_disconnection(self.transport.port_name, self.name, self.logger):
+                self.hw_valid = False
+        return res
 
     def board_reset(self):
         self._trigger = self._trigger | self.TRIGGER_BOARD_RESET
