@@ -123,6 +123,13 @@ class protocol_packet_handler(object):
 
         return ""
 
+    def _recover_port(self, ):
+        try:
+            self.port_handler.closePort()
+            self.port_handler.openPort()
+        except Exception:
+            pass
+
     def txPacket(self, txpacket):
         checksum = 0
         result = COMM_SUCCESS
@@ -136,7 +143,7 @@ class protocol_packet_handler(object):
 
         # check max packet length
         if total_packet_length > TXPACKET_MAX_LEN:
-                result = COMM_TX_ERROR
+            result = COMM_TX_ERROR
         else:
             # make packet header
             txpacket[PKT_HEADER0] = 0xFF
@@ -163,11 +170,7 @@ class protocol_packet_handler(object):
 
         # Reset port on hard hardware error (e.g. write timeout or disconnect)
         if result == COMM_TX_FAIL:
-            try:
-                self.port_handler.closePort()
-                self.port_handler.openPort()
-            except Exception:
-                pass
+            self._recover_port()
 
         self.port_handler.is_writing_packet = False
         
@@ -185,13 +188,9 @@ class protocol_packet_handler(object):
             try:
                 rxpacket.extend(self.port_handler.readPort(wait_length - rx_length))
             except Exception as e:
-                # Reset port on hard hardware error
-                try:
-                    self.port_handler.closePort()
-                    self.port_handler.openPort()
-                except Exception:
-                    pass
+                self._recover_port()
                 return rxpacket, COMM_RX_FAIL
+
             rx_length = len(rxpacket)
             if rx_length >= wait_length:
                 # find packet header
