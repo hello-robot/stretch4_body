@@ -59,9 +59,7 @@ class SentryUbuntuPowerManagement(Sentry):
         if self.watcher_process.is_alive():
             self.watcher_process.join()
             
-        self.q_admin.queue.cancel_join_thread()
-        self.q_cmd.queue.cancel_join_thread()
-        self.q_status.queue.cancel_join_thread()
+
         return super().stop()
 
     def unpause(self, *args):
