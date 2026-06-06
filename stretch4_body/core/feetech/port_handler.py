@@ -45,11 +45,11 @@ class PortHandler(object):
         if baud <= 0:
             # self.setupPort(38400)
             # self.baudrate = baudrate
-            raise ValueError("Invalid baudrate: %d" % baudrate)
-            return False  # TODO: setCustomBaudrate(baudrate)
-        else:
-            self.baudrate = baudrate
-            return self.setupPort(baud)
+            raise NotImplementedError("Invalid baudrate: %d" % baudrate)
+            # return False  # TODO: setCustomBaudrate(baudrate)
+        
+        self.baudrate = baudrate
+        return self.setupPort(baud)
 
     def getBaudRate(self):
         return self.baudrate

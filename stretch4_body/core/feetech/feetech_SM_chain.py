@@ -189,18 +189,6 @@ class FeetechSMChain(Device):
         [done_thread.join() for done_thread in threads]
         return all(at_setpoint)
 
-    def _recover_connection(self):
-        """
-        After a comms error, attempt to recover the connection to the servos.
-        """
-        if self.port_handler:
-            self.port_handler.is_using = False
-            try:
-                self.port_handler.closePort()
-                self.port_handler.openPort()
-            except Exception:
-                pass
-
     def pull_status(self):
         if not self.hw_valid:
             return
@@ -248,7 +236,6 @@ class FeetechSMChain(Device):
                 if error:
                     self.comm_errors.add_error(rx=True, gsr=True)
                     self.logger.warning('Feetech communication error (1) during pull_status on %s: ' % self.name)
-                    self._recover_connection()
 
                 idx = 0
                 # Build dictionary of status data and push to each motor status
@@ -284,7 +271,6 @@ class FeetechSMChain(Device):
         except(FeetechCommError, IOError):
             self.comm_errors.add_error(rx=True, gsr=True)
             self.logger.warning('Feetech communication error (2) during pull_status on %s: ' % self.name)
-            self._recover_connection()
 
     def pretty_print(self):
         print('--- FeetechSMChain Chain ---')
