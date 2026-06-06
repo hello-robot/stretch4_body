@@ -9,6 +9,7 @@ import sys
 import time
 import array as arr
 import math
+import os
 
 # ######################## STEPPER #################################
 class StepperDefn():
@@ -779,6 +780,9 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
             success=success and self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx],
                                                       rpc_callback=self._rpc_command_reply) is not None
             self._dirty_command = False
+        if not success:
+            if check_usb_disconnection(self.usb, self.name, self.logger):
+                self.hw_valid = False
         return success
 
 
@@ -797,7 +801,10 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
             self._dirty_read_gains_from_flash = False
         payload = arr.array('B', [self.RPC_GET_STATUS])
         success = success and self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
-                                                  rpc_callback=self._rpc_status_reply) is not None
+                                                   rpc_callback=self._rpc_status_reply) is not None
+        if not success:
+            if check_usb_disconnection(self.usb, self.name, self.logger):
+                self.hw_valid = False
         return success
 
     def set_gains(self,g=None):
@@ -846,7 +853,13 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         self._dirty_trigger = True
 
     def load_rpc_results(self, wait_on_result=True):
-        return self.transport.load_rpc_results(wait_on_result)
+        if not self.hw_valid:
+            return []
+        res = self.transport.load_rpc_results(wait_on_result)
+        if 0 in res:
+            if check_usb_disconnection(self.usb, self.name, self.logger):
+                self.hw_valid = False
+        return res
 
     def pretty_print(self): #P1
         print('-----------')

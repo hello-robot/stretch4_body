@@ -1,5 +1,7 @@
 
 from typing import TypedDict
+import os
+from stretch4_body.core.hello_utils import check_usb_disconnection
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.feetech.feetech_SM_servo import *
@@ -237,6 +239,11 @@ class FeetechSMChain(Device):
                 if error:
                     self.comm_errors.add_error(rx=True, gsr=True)
                     self.logger.warning('Feetech communication error (1) during pull_status on %s: ' % self.name)
+                    if check_usb_disconnection(self.usb, self.name, self.logger):
+                        self.hw_valid = False
+                        for m in self.motors.values():
+                            m.hw_valid = False
+                        return
                     #Todo: test if any of this helps
                     self.port_handler.closePort()
                     self.port_handler.openPort()
@@ -278,6 +285,10 @@ class FeetechSMChain(Device):
         except(FeetechCommError, IOError):
             self.comm_errors.add_error(rx=True, gsr=True)
             self.logger.warning('Feetech communication error (2) during pull_status on %s: ' % self.name)
+            if check_usb_disconnection(self.usb, self.name, self.logger):
+                self.hw_valid = False
+                for m in self.motors.values():
+                    m.hw_valid = False
 
     def pretty_print(self):
         print('--- FeetechSMChain Chain ---')

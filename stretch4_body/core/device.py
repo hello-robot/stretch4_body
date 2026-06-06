@@ -68,7 +68,11 @@ class Device:
         return True
 
     def load_rpc_results(self,wait_on_result=True):
-        pass
+        if not self.is_valid:
+            return []
+        if hasattr(self, 'hw_valid') and not self.hw_valid:
+            return []
+        return []
 
     def push_command(self,blocking=True):
         pass

@@ -1,4 +1,5 @@
 import threading
+import os
 from typing import TypedDict
 
 from stretch4_body.core.feetech.feetech_SM_servo import *
@@ -490,17 +491,19 @@ class FeetechSMHello(Device):
                 self.status_mux_id = (self.status_mux_id + 1) % 3
                 self.check_servo_errors()
                 if not pos_valid or not vel_valid or not i_mA_valid or not temp_valid or not err_valid:
-                    self.logger.warning('FeetechSMHello communication error during pull_status on %s: ' % self.name)
+                    self.logger.warning(f'FeetechSMHello communication error during pull_status on {self.name}')
                     self.comm_errors.add_error(rx=True, gsr=False)
+                    if check_usb_disconnection(self.usb, self.name, self.logger):
+                        self.hw_valid = False
                     return
                 ts = time.time()
-            except(termios.error, FeetechCommError, IndexError):
-                self.logger.warning('FeetechSMHello communication error during pull_status  on %s: ' % self.name)
-                # self.motor.port_handler.ser.reset_output_buffer()
-                # self.motor.port_handler.ser.reset_input_buffer()
+            except(termios.error, FeetechCommError, IndexError) as e:
+                self.logger.warning(f'FeetechSMHello communication error during pull_status on {self.name}. {e}')
                 self.comm_errors.add_error(rx=True, gsr=False)
+                if check_usb_disconnection(self.usb, self.name, self.logger):
+                    self.hw_valid = False
                 if self.bubble_up_comm_exception:
-                    raise FeetechCommError
+                    raise FeetechCommError(f"{e}")
                 return
         else:
             x = data['x']
