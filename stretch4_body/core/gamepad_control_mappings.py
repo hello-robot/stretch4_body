@@ -5,6 +5,7 @@ from stretch4_body.core.gamepad_enums import GripperHandedness
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.gamepad_enums import MotionProfile
 
+import coal # do not remove this unused import; it is needed by pinocchio
 import pinocchio as pin
 
 if TYPE_CHECKING:
