@@ -142,17 +142,17 @@ class LineSensorVisualizer3D:
         # URDF Transforms
         wheel_configs = [
             {
-                'name': 'link_wheel_0.STL',
+                'name': 'wheel_0_link.STL',
                 'xyz': [0.150688420258492, 0.0869999999999999, 0.0715000000000003],
                 'rpy': [-1.5707963267949, 0, -1.0471975511966]
             },
             {
-                'name': 'link_wheel_1.STL',
+                'name': 'wheel_1_link.STL',
                 'xyz': [-0.150688420258491, 0.0870000000000015, 0.0715000000000002],
                 'rpy': [-1.5707963267949, 0, 1.04719755119659]
             },
             {
-                'name': 'link_wheel_2.STL',
+                'name': 'wheel_2_link.STL',
                 'xyz': [0, -0.174, 0.0715],
                 'rpy': [-1.5707963267949, 0, -3.14159265358979]
             }
