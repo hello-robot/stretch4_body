@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from stretch4_body.subsystem.cameras.enums.charuco_dictionary import CharucoBoards
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import calibrate_extrinsics_camera_lidar
 import argparse
 
@@ -62,6 +63,11 @@ def main():
       action="store_true",
       help="Use the last recorded folder timestamp inside the provided recording dir. This will load existing images and 'append' new saves to this folder.",
    )
+   parser.add_argument(
+      "--generate_charuco_pdf",
+      action="store_true",
+      help="Generate ChArUco pdf for printing.",
+   )
 
    args, unknown = parser.parse_known_args()
 
@@ -78,7 +84,8 @@ def main():
    interactive = not args.not_interactive
    replay = args.replay_from_folder or args.replay_last
 
-
+   if args.generate_charuco_pdf:
+      return CharucoBoards.BOARD_5x7_37mm_27mm_4x4_start_id_0.generate_pdf(page_height_mm=None, page_width_mm=None)
    if args.verify or args.validate:
       return REx_validate_intrinsics(interactive=interactive)
    elif args.extrinsics_lidar:
