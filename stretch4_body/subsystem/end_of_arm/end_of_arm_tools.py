@@ -16,7 +16,7 @@ def home_dw4_joints(eoa: "EndOfArm"):
         return False
 
     time.sleep(0.5)
-    if not eoa.motors['wrist_yaw'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):
+    if eoa.cancel_homing_event.is_set() or not eoa.motors['wrist_yaw'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):
         eoa.logger.error("Wrist yaw homing failed")
         return False
     if eoa.cancel_homing_event.is_set() or not eoa.motors['wrist_roll'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):
