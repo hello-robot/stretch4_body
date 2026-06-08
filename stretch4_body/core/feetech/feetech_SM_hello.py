@@ -491,7 +491,7 @@ class FeetechSMHello(Device):
                 self.status_mux_id = (self.status_mux_id + 1) % 3
                 self.check_servo_errors()
                 if not pos_valid or not vel_valid or not i_mA_valid or not temp_valid or not err_valid:
-                    self.logger.warning(f'FeetechSMHello communication error during pull_status on {self.name}')
+                    self.logger.warning(f"FeetechSMHello communication error during pull_status on {self.name}: {pos_valid=}, {vel_valid=}, {i_mA_valid=}, {temp_valid=}, {err_valid=}")
                     self.comm_errors.add_error(rx=True, gsr=False)
                     if check_usb_disconnection(self.usb, self.name, self.logger):
                         self.hw_valid = False
