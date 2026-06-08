@@ -192,8 +192,3 @@ class CharucoBoards(Enum):
         pil_img = Image.fromarray(page_img)
         pil_img.save(filename, "PDF", resolution=dpi)
         print(f"Generated {filename} formatted for {page_width_mm}x{page_height_mm}mm paper.")
-
-    
-
-if __name__ == "__main__":
-    CharucoBoards.BOARD_5x7_37mm_27mm_4x4_start_id_0.generate_pdf(page_height_mm=None, page_width_mm=None)
