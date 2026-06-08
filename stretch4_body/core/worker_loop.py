@@ -86,9 +86,7 @@ def worker_loop(loop_name,rate_hz,worker_instance,
     logger.info('Exiting %s Loop'% loop_name.capitalize())
     
     # Critically prevent the child process from hanging on exit due to pending queue flushes
-    q_admin.queue.cancel_join_thread()
-    q_cmd.queue.cancel_join_thread()
-    q_status.queue.cancel_join_thread()
+
     
     if profile_enabled:
         try:

@@ -272,11 +272,13 @@ def force_kill_process(script_name):
     if not found:
         print(f"No processes matching '{script_name}' were found.")
 
-from multiprocessing import   Queue
+from multiprocessing import Manager
 import queue
 class CircularMultiprocessingQueue:
     def __init__(self, maxsize):
-        self.queue = Queue(maxsize=maxsize)
+        self.manager = Manager()
+        self.queue = self.manager.Queue(maxsize=maxsize)
+        
         self.maxsize = maxsize
 
     def put(self, item):

@@ -112,9 +112,7 @@ class SelfCollisionLoop(Device):
             self.solver_process.join()
             self.solver_process = None
             
-        self.q_admin.queue.cancel_join_thread()
-        self.q_cmd.queue.cancel_join_thread()
-        self.q_status.queue.cancel_join_thread()
+
             
         signal.signal(signal.SIGINT, original_sigint)
 
