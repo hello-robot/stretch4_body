@@ -49,10 +49,10 @@ import threading
 import time
 import math
 
-from stretch_animate.keyframes.record_keyframes import KeyframeRecorder
+from stretch4_body.tools.stretch_pose_record import KeyframeRecorder
 
-from stretch_animate.keyframes.play_keyframes import KeyframePlayer
-from stretch_animate.keyframes.models import RobotJoints
+from stretch4_body.tools.stretch_pose_play import KeyframePlayer
+from stretch4_body.utils.stretch_pose_models import RobotJoints
 
 
 

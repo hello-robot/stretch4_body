@@ -293,3 +293,15 @@ def stretch_change_param():
     sys.argv[0] = "stretch_change_param"
     runpy.run_module("stretch4_body.tools.stretch_change_param", run_name="__main__")
 
+def stretch_pose_play():
+    sys.argv[0] = "stretch_pose_play"
+    runpy.run_module("stretch4_body.tools.stretch_pose_play", run_name="__main__")
+
+def stretch_pose_edit():
+    sys.argv[0] = "stretch_pose_edit"
+    runpy.run_module("stretch4_body.tools.stretch_pose_edit", run_name="__main__")
+
+def stretch_pose_record():
+    sys.argv[0] = "stretch_pose_record"
+    runpy.run_module("stretch4_body.tools.stretch_pose_record", run_name="__main__")
+
