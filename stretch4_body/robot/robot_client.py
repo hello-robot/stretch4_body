@@ -459,6 +459,12 @@ class PowerPeriphClient(SubsystemClient):
     def trigger_runstop(self):
         self._queue_command(subsystem="power_periph", command="trigger_runstop")
 
+    def enable_event_diagnostics(self):
+        self._queue_command(subsystem="power_periph", command="enable_event_diagnostics")
+
+    def disable_event_diagnostics(self):
+        self._queue_command(subsystem="power_periph", command="disable_event_diagnostics")
+
     def set_fan_on(self):
         """
         Turn on the cooling fan.

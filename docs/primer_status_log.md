@@ -87,3 +87,21 @@ To import and view a saved ZIP run, showing only the lift and base joints:
 ```bash
 stretch_status_viz --import ~/Desktop/stretch_status_2026-05-31.zip --fields robot.lift robot.omnibase
 ```
+
+## Firmware Event Diagnostics
+
+Power-peripheral firmware has a separate RAM-only event log for bench debugging. This is not part of the normal Stretch Body status logger and is off by default except for rare critical events. To enable noisy diagnostic firmware events for the firmware's fixed auto-expiring window:
+
+```python
+robot.power_periph.enable_event_diagnostics()
+robot.push_command()
+```
+
+To disable the diagnostic window immediately:
+
+```python
+robot.power_periph.disable_event_diagnostics()
+robot.push_command()
+```
+
+Use this only while reproducing a firmware issue. It is intended for BMS, charger, rail, ESP pin, and shutdown-charge debugging and should not be left enabled during timing-sensitive control-loop tests.
