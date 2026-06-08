@@ -148,28 +148,29 @@ class CharucoBoards(Enum):
 
         # Convert class parameters (meters) to millimeters for rendering
         square_length_mm = config.square_length * 1000.0
+        cols, rows = config.size
         
-        # Calculate pixel dimensions based on target DPI
+        # Calculate pixel scale factors based on target DPI
         mm_to_inch = 25.4
         pixels_per_mm = dpi / mm_to_inch
 
-        square_len_px = int(square_length_mm * pixels_per_mm)
-
-        cols, rows = config.size
-        board_img_width = cols * square_len_px
-        board_img_height = rows * square_len_px
+        # Calculate total board pixels directly to eliminate per-square rounding drift
+        board_img_width = int(cols * square_length_mm * pixels_per_mm)
+        board_img_height = int(rows * square_length_mm * pixels_per_mm)
         
-        print(f"{square_length_mm*cols}mm x {square_length_mm*rows}mm ({square_length_mm*cols/mm_to_inch}in x {square_length_mm*rows/mm_to_inch}in ) ({board_img_width}px x {board_img_height}px)")
+        print(f"Board Physical Size: {square_length_mm*cols:.1f}mm x {square_length_mm*rows:.1f}mm")
+        print(f"                    ({square_length_mm*cols/mm_to_inch:.2f}in x {square_length_mm*rows/mm_to_inch:.2f}in)")
+        print(f"Board Pixel Size: {board_img_width}px x {board_img_height}px")
 
-        if page_width_mm is None:
-            page_width_px = board_img_width
-        else:
-            page_width_px = int(page_width_mm * pixels_per_mm)
-        
-        if page_height_mm is None:
-            page_height_px = board_img_height
-        else:
-            page_height_px = int(page_height_mm * pixels_per_mm)
+        # Handle None values safely together, falling back to a tight-fit board layout
+        if page_width_mm is None or page_height_mm is None:
+            print(f"Warning: page_width_mm or page_height_mm is None, defaulting to US letter paper tight-fit layout")
+            page_width_mm = cols * square_length_mm
+            page_height_mm = rows * square_length_mm
+
+        # Convert final page boundaries to pixels
+        page_width_px = int(page_width_mm * pixels_per_mm)
+        page_height_px = int(page_height_mm * pixels_per_mm)
 
         # Validate that the board actually fits on the specified paper
         if board_img_width > page_width_px or board_img_height > page_height_px:
@@ -177,7 +178,6 @@ class CharucoBoards(Enum):
 
         # Generate board image using the existing get_board() method
         board = config.get_board()
-        
         board_img = board.generateImage((board_img_width, board_img_height))
 
         # Create a blank white page
@@ -191,4 +191,4 @@ class CharucoBoards(Enum):
         # Convert to Pillow Image and save
         pil_img = Image.fromarray(page_img)
         pil_img.save(filename, "PDF", resolution=dpi)
-        print(f"Generated {filename} formatted for {page_width_mm}x{page_height_mm}mm paper.")
+        print(f"Generated {filename} formatted for {page_width_mm:.1f}x{page_height_mm:.1f}mm paper.")
