@@ -2,7 +2,7 @@
 
 import time
 import click
-import json
+import yaml
 import stretch4_body.robot.robot_client as rc
 
 from stretch4_body.utils.stretch_pose_models import RobotJoints, RobotPose, JointPose, BasePose
@@ -12,7 +12,7 @@ class KeyframeRecorder:
         self.robot = rc.RobotClient()
         self.robot.startup()
         self.saved_poses: list[RobotPose] = []
-        self.filename = filename or f"poses_{time.time()}.json"
+        self.filename = filename or f"poses_{time.time()}.yaml"
         
     def capture_pose(self, name: str|None=None) -> RobotPose:
         self.robot.pull_status()
@@ -73,7 +73,7 @@ class KeyframeRecorder:
     def save_to_file(self, filename: str):
         data = [p.to_dict() for p in self.saved_poses]
         with open(filename, 'w') as f:
-            json.dump(data, f, indent=4)
+            yaml.safe_dump(data, f, sort_keys=False)
         print(f"Saved {len(self.saved_poses)} poses to {filename}")
 
     def run(self):
@@ -102,7 +102,7 @@ Press 'q' to quit.
             print(f"Pose {i}: {pose.name}")
 
 @click.command(help="Record robot keyframes by saving the current pose when pressing 's'.\n\nSee also: stretch_pose_play, stretch_pose_edit")
-@click.option('--file', '-f', default=None, help='File to save poses to. Defaults to poses_<timestamp>.json')
+@click.option('--file', '-f', default=None, help='File to save poses to. Defaults to poses_<timestamp>.yaml')
 def main(file):
     recorder = KeyframeRecorder(filename=file)
     recorder.run()

@@ -144,7 +144,7 @@ class RobotMovementController:
 
         def save_calibration():
             if self.keyframe_recorder is not None:
-                poses_file = f"{get_fleet_directory()}poses_{time.time()}.json"
+                poses_file = f"{get_fleet_directory()}poses_{time.time()}.yaml"
                 self.keyframe_recorder.save_to_file(poses_file)
                 self.calibration.log_message(f"Saved to {poses_file}", LogLevels.INFO)
             try:
@@ -153,6 +153,8 @@ class RobotMovementController:
                 self.calibration.log_message(
                     f"Could not save calibration: {e}", LogLevels.ERROR
                 )
+        
+        self.calibration.register_callback_save_calibration(save_calibration)
 
         while not self._stop_event.is_set():
             if (
@@ -185,7 +187,7 @@ class RobotMovementController:
         )
 
         self.keyframe_player.load_from_file(
-            Path(__file__).parent.absolute() / "models/calibration_poses_intrinsics.json"
+            Path(__file__).parent.absolute() / "models/calibration_poses_intrinsics.yaml"
         )
 
         def double_beep():

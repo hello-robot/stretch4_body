@@ -765,7 +765,7 @@ class CalibrateLidarToCamera:
         )
         poses_file = (
             Path(__file__).parent.absolute()
-            / "models/calibration_poses_extrinsics.json"
+            / "models/calibration_poses_extrinsics.yaml"
         )
         if poses_file.exists():
             self.keyframe_player.load_from_file(poses_file)
@@ -1394,7 +1394,7 @@ class CalibrateLidarToCamera:
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             poses_file = str(
                 Path(__file__).parent.absolute()
-                / "models/calibration_poses_extrinsics.json"
+                / "models/calibration_poses_extrinsics.yaml"
             )
             self.keyframe_recorder.save_to_file(poses_file)
             print(f"Saved poses to {poses_file}")

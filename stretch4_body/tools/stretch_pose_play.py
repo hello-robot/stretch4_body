@@ -3,7 +3,7 @@
 import time
 import math
 import click
-import json
+import yaml
 import stretch4_body.robot.robot_client as rc
 from stretch4_body.core.gamepad_enums import MotionProfile
 
@@ -31,7 +31,7 @@ class KeyframePlayer:
     def load_from_file(self, filename: str):
         try:
             with open(filename, 'r') as f:
-                data = json.load(f)
+                data = yaml.safe_load(f)
             self.poses = [RobotPose.from_dict(p) for p in data]
             self.current_pose_index = 0
             print(f"Loaded {len(self.poses)} poses from {filename}")
@@ -114,7 +114,7 @@ class KeyframePlayer:
         self.current_pose_index += 1
         return True
 
-@click.command(help="Replay robot keyframes from a JSON file.\n\nSee also: stretch_pose_record, stretch_pose_edit")
+@click.command(help="Replay robot keyframes from a YAML file.\n\nSee also: stretch_pose_record, stretch_pose_edit")
 @click.option('--file', help='File to load poses from')
 @click.option('--speed', default=MotionProfile.MEDIUM.name, help=f'One of {[p.name for p in MotionProfile]}. Defaults to {MotionProfile.MEDIUM.name}.')
 @click.option('--joints_allowed_to_move', default=','.join([j.name for j in RobotJoints if j is not RobotJoints.base]), help=f'Comma separated values of {[p.name for p in RobotJoints]}. Defaults to {",".join([j.name for j in RobotJoints if j is not RobotJoints.base])}.')

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import json
+import yaml
 import click
 import argparse
 import copy
@@ -79,13 +79,13 @@ class KeyframeEditor:
 
     def save_poses(self, output_filename=None):
         if output_filename is None:
-            output_filename = self.filename.replace('.json', '_edited.json')
+            output_filename = self.filename.replace('.yaml', '_edited.yaml')
             if output_filename == self.filename:
                 output_filename = "edited_" + self.filename
                 
         data = [p.to_dict() for p in self.poses]
         with open(output_filename, 'w') as f:
-            json.dump(data, f, indent=4)
+            yaml.safe_dump(data, f, sort_keys=False)
         print(f"\nSaved {len(self.poses)} poses to {output_filename}")
 
     def display_status(self):
@@ -176,7 +176,7 @@ def main():
         description="Edit keyframes.\n\nSee also: stretch_pose_play, stretch_pose_record",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("filename", help="JSON file containing poses")
+    parser.add_argument("filename", help="YAML file containing poses")
     args = parser.parse_args()
     
     editor = KeyframeEditor(args.filename)
