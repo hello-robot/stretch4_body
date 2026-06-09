@@ -937,3 +937,21 @@ class LoggerThrottleFilter(logging.Filter):
             return True
 
         return False
+
+
+def check_usb_disconnection(usb_path, name=None, logger=None):
+    """
+    Checks if the USB device path exists. If it does not exist,
+    logs a warning (if logger is provided) and returns True (disconnected).
+    Otherwise returns False (connected).
+    """
+    if usb_path and not os.path.exists(usb_path):
+        msg = f"USB disconnected: {usb_path}"
+        if name:
+            msg = f"{name}: {msg}"
+        if logger:
+            logger.warning(msg)
+        else:
+            print(msg)
+        return True
+    return False

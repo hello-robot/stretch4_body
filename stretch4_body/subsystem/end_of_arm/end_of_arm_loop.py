@@ -33,16 +33,18 @@ def _cb_end_of_arm_loop_step(eoa, q_cmd_in, status_out):
     status_out.update(eoa.status)
     while q_cmd_in.qsize():
         try:
-            cmd=q_cmd_in.get(block=False)
+            cmd=q_cmd_in.get_nowait()
             subsystem, method, cmd_id,args, kwargs = cmd
-            try:
-                method_to_call = getattr(eoa, method)
-                method_to_call(*args, **kwargs)
-                #self.cmd_results[cmd_id] = {'ts': time.time(), 'result': method_to_call(*args, **kwargs)}
-            except AttributeError:
-                print('EndOfArmLoop _cb_end_of_arm_loop_step : invalid  cmd', cmd)
+            method_to_call = getattr(eoa, method)
+            method_to_call(*args, **kwargs)
+            #self.cmd_results[cmd_id] = {'ts': time.time(), 'result': method_to_call(*args, **kwargs)}
+        except AttributeError:
+            eoa.logger.error('EndOfArmLoop _cb_end_of_arm_loop_step : invalid  cmd', cmd)
         except queue.Empty:
             pass
+        except Exception as e:
+            eoa.logger.error('EndOfArmLoop _cb_end_of_arm_loop_step : Exception receiving from queue:', e)
+            break
     return True
 
 # ###########################################################################################
@@ -148,7 +150,7 @@ class EndOfArmLoop(Device):
         """
         while self.q_status.qsize():
             try:
-                self.status.update(self.q_status.get(block=False))
+                self.status.update(self.q_status.get_nowait())
                 if self.n_rate_log:
                     self.rate_log.append(self.status['loop']['stats']['curr_rate_hz'])
                     if len(self.rate_log)>self.n_rate_log:

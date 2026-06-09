@@ -21,6 +21,7 @@ struct QueuedRPC {
     bool is_push;
     bool has_been_written;
     bool has_been_read;
+    bool is_failed = false;
     double q_time;
     double cb_time;
     QueuedRPC() = default;
