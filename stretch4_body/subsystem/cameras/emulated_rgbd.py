@@ -20,7 +20,7 @@ from stretch4_body.subsystem.cameras import (
 from stretch4_body.subsystem.cameras.models.image_frame import (
     ImageFrame,
 )
-from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import (
+from stretch4_body.subsystem.cameras.models.dual_lidar_calibration import (
     DualLidarCalibration,
 )
 from stretch4_body.subsystem.cameras.cv_utils import project_points
