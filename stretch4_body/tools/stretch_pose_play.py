@@ -73,10 +73,9 @@ class KeyframePlayer:
 
     def _play_pose_wait_until_start_time(self, pose:RobotPose):
         """
-        Wait to start at the relative timestamps of when the poses were recorded.
-        For example, if 2 seconds passed between the first pose being recorded and the second pose being recorded, this would wait 2 seconds before playing the second pose.
+        Wait to start using the delay_before_start specified in the pose.
         """
-        diff = (pose.timestamp - self.last_pose.timestamp) if self.last_pose is not None else 0
+        diff = pose.delay_before_start
 
         if diff > 0.0:
             print(f"Waiting {diff:.2f}s")
@@ -115,7 +114,7 @@ class KeyframePlayer:
         return True
 
 @click.command(help="Replay robot keyframes from a YAML file.\n\nSee also: stretch_pose_record, stretch_pose_edit")
-@click.option('--file', help='File to load poses from')
+@click.argument('file')
 @click.option('--speed', default=MotionProfile.MEDIUM.name, help=f'One of {[p.name for p in MotionProfile]}. Defaults to {MotionProfile.MEDIUM.name}.')
 @click.option('--joints_allowed_to_move', default=','.join([j.name for j in RobotJoints if j is not RobotJoints.base]), help=f'Comma separated values of {[p.name for p in RobotJoints]}. Defaults to {",".join([j.name for j in RobotJoints if j is not RobotJoints.base])}.')
 @click.option('--delay_between_frames', help='Delay between frames. If not specified, poses will be played at the relative timestamps of when they were recorded.')
@@ -154,6 +153,8 @@ Please make sure the robot's surroundings are clear before proceeding.
     else:
         player.play_poses(player.poses, delay_between_frames=delay_between_frames)
     
+    time.sleep(0.5)
+    player.robot.wait_command()
     player.robot.stop()
 
 if __name__ == "__main__":

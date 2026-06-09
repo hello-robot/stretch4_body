@@ -26,6 +26,7 @@ class RobotPose:
     timestamp: float
     joints: Dict[str, JointPose] = field(default_factory=dict)
     base: Optional[BasePose] = None
+    delay_before_start: float = 0.0
 
     def to_dict(self):
         return asdict(self)
@@ -33,6 +34,8 @@ class RobotPose:
     @classmethod
     def from_dict(cls, data):
         pose = cls(name=data['name'], timestamp=data['timestamp'])
+        if 'delay_before_start' in data:
+            pose.delay_before_start = data['delay_before_start']
         if 'base' in data and data['base']:
             pose.base = BasePose(**data['base'])
         if 'joints' in data:

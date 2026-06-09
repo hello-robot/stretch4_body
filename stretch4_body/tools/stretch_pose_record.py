@@ -21,6 +21,10 @@ class KeyframeRecorder:
         pose_name = name or f"pose_{len(self.saved_poses)}"
         
         pose = RobotPose(name=pose_name, timestamp=time.time())
+        if self.saved_poses:
+            pose.delay_before_start = pose.timestamp - self.saved_poses[-1].timestamp
+        else:
+            pose.delay_before_start = 0.0
         
         # Arm
         if RobotJoints.arm.name in status:
