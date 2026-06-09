@@ -360,7 +360,7 @@ class CalibrateIntrinsics:
         valid_board_detected = False
 
         is_frame_settled = (
-            self.frame_settled_detector.check_stability_ema(color_image, threshold=3)
+            self.frame_settled_detector.check_stability_diff(color_image, threshold=3)
             if use_stable_frames_only
             else True
         )
