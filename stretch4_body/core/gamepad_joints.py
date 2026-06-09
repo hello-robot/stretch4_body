@@ -51,6 +51,12 @@ class CommandBase:
 
         self.precision_mode = 0.0
     
+    def _move(self, x, y, w, robot):
+        accel_w = self.accel_w_for_translation if w == 0 else self.accel_w_for_rotation_only
+
+        scale = 1.0 - 0.75 * self.precision_mode
+        robot.base.set_velocity(scale*x, scale*y, scale*w, self.accel_xy, accel_w)
+    
     def command_stick_to_motion(self, x, y, w,robot):
         """Convert a stick axis value to robot base's tank driving motion.
 
@@ -63,10 +69,7 @@ class CommandBase:
         v_y=self.vel_xy*(0 if abs(y)<self.dead_zone else y)
         v_w=self.vel_w_for_rotation_only*(0 if abs(w)<self.dead_zone else w)
 
-        accel_w = self.accel_w_for_translation if v_w == 0 else self.accel_w_for_rotation_only
-
-        scale = 1.0 - 0.75 * self.precision_mode
-        robot.base.set_velocity(scale*v_x, scale*v_y, scale*v_w, self.accel_xy, accel_w)
+        self._move(v_x, v_y, v_w, robot)
     
     def stop_motion(self, robot):
         """Stop the joint motion. To be used when ever the controller is idle/no-inputs
@@ -193,10 +196,12 @@ class CommandFeetechJoint:
         self.acc = self.params['motion'][acc_type]['accel']
         self.precision_mode = 0.0
 
-    def _move(self, dx_deg, robot):
+    def _move(self, dx_deg, robot, velocity:float|None = None):
         scale = 1.0 - (0.95 * self.precision_mode)
         dx_deg = dx_deg * scale
-        robot.end_of_arm.move_by(self.name, deg_to_rad(dx_deg),self.max_vel, self.acc)
+
+        capped_velocity = min(self.max_vel, velocity) if velocity is not None else self.max_vel
+        robot.end_of_arm.move_by(self.name, deg_to_rad(dx_deg),capped_velocity, self.acc)
 
     def command_button_to_motion(self, direction, robot):
         """Make servo move based on a button state.
