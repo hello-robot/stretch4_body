@@ -18,7 +18,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -50,7 +50,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0
+      position: 0.0
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -82,7 +82,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -114,7 +114,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -146,7 +146,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -178,7 +178,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -210,7 +210,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -242,7 +242,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -274,7 +274,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -306,7 +306,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -338,7 +338,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -370,7 +370,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -402,7 +402,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -434,7 +434,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -466,7 +466,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -498,7 +498,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -530,7 +530,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -562,7 +562,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -594,7 +594,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -626,7 +626,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -658,7 +658,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -690,7 +690,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -722,7 +722,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -754,7 +754,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4115732722576655
+      position: 3.4115732722576655
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -786,7 +786,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4123402626516084
+      position: 3.4123402626516084
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -818,7 +818,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4123402626516084
+      position: 3.4123402626516084
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -850,7 +850,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.410806281863723
+      position: 3.410806281863723
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -882,7 +882,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.410806281863723
+      position: 3.410806281863723
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -914,7 +914,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.410806281863723
+      position: 3.410806281863723
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -946,7 +946,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.9737772310177535
+      position: 3.9737772310177535
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -978,7 +978,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.9745442214116964
+      position: 3.9745442214116964
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1010,7 +1010,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.6887573737606528
+      position: -0.6887573737606528
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1042,7 +1042,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.6895243641545957
+      position: -0.6895243641545957
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1074,7 +1074,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1106,7 +1106,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1138,7 +1138,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1170,7 +1170,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4437868688032647
+      position: 3.4437868688032647
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1202,7 +1202,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -2.8762139772855773
+      position: 2.8762139772855773
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1234,7 +1234,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1266,7 +1266,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1298,7 +1298,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1330,7 +1330,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1362,7 +1362,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.33670878294089823
+      position: -0.33670878294089823
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1394,7 +1394,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1426,7 +1426,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1458,7 +1458,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1490,7 +1490,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1522,7 +1522,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1554,7 +1554,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1586,7 +1586,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1618,7 +1618,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.752117007168278
+      position: 3.752117007168278
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1650,7 +1650,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.752883997562221
+      position: 3.752883997562221
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1682,7 +1682,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.754417978350107
+      position: 3.754417978350107
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1714,7 +1714,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.754417978350107
+      position: 3.754417978350107
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1746,7 +1746,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.754417978350107
+      position: 3.754417978350107
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1778,7 +1778,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47553404424454876
+      position: -0.47553404424454876
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1810,7 +1810,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47553404424454876
+      position: -0.47553404424454876
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1842,7 +1842,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47553404424454876
+      position: -0.47553404424454876
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1874,7 +1874,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47553404424454876
+      position: -0.47553404424454876
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1906,7 +1906,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47553404424454876
+      position: -0.47553404424454876
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1938,7 +1938,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.059058260333597186
+      position: 0.059058260333597186
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -1970,7 +1970,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.059825250727540004
+      position: 0.059825250727540004
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2002,7 +2002,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.3712233506683252
+      position: -0.3712233506683252
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2034,7 +2034,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.37199034106226797
+      position: -0.37199034106226797
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2066,7 +2066,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.3712233506683252
+      position: -0.3712233506683252
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2098,7 +2098,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.37199034106226797
+      position: -0.37199034106226797
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2130,7 +2130,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.8636311835796159
+      position: -0.8636311835796159
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2162,7 +2162,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.8636311835796159
+      position: -0.8636311835796159
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2194,7 +2194,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2226,7 +2226,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2258,7 +2258,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2290,7 +2290,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2322,7 +2322,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2354,7 +2354,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.14082566319585
+      position: 3.14082566319585
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2386,7 +2386,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4437868688032647
+      position: 3.4437868688032647
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2418,7 +2418,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4437868688032647
+      position: 3.4437868688032647
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2450,7 +2450,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4437868688032647
+      position: 3.4437868688032647
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2482,7 +2482,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.4445538591972076
+      position: 3.4445538591972076
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2514,7 +2514,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.713000497077194
+      position: 3.713000497077194
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2546,7 +2546,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.713000497077194
+      position: 3.713000497077194
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2578,7 +2578,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -3.713000497077194
+      position: 3.713000497077194
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2610,7 +2610,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2642,7 +2642,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2674,7 +2674,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2706,7 +2706,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2738,7 +2738,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.5238544390629465
+      position: -0.5238544390629465
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2770,7 +2770,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.5238544390629465
+      position: -0.5238544390629465
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2802,7 +2802,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.5238544390629465
+      position: -0.5238544390629465
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2834,7 +2834,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.5238544390629465
+      position: -0.5238544390629465
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2866,7 +2866,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.5238544390629465
+      position: -0.5238544390629465
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2898,7 +2898,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.5238544390629465
+      position: -0.5238544390629465
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2930,7 +2930,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.3911651009108385
+      position: 0.3911651009108385
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2962,7 +2962,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.39269908169872414
+      position: 0.39269908169872414
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -2994,7 +2994,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.08743690490948154
+      position: 0.08743690490948154
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3026,7 +3026,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.08666991451553872
+      position: 0.08666991451553872
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3058,7 +3058,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.08666991451553872
+      position: 0.08666991451553872
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3090,7 +3090,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.08743690490948154
+      position: 0.08743690490948154
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3122,7 +3122,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47093210188089185
+      position: -0.47093210188089185
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3154,7 +3154,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.4716990922748347
+      position: -0.4716990922748347
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3186,7 +3186,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.47093210188089185
+      position: -0.47093210188089185
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -3218,7 +3218,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0007669903939428206
+      position: 0.0007669903939428206
       velocity: -0.0
       effort: 0.0
     wrist_yaw:

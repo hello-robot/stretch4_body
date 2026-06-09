@@ -18,7 +18,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.23853401251621723
+      position: 0.23853401251621723
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -50,7 +50,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.23853401251621723
+      position: 0.23853401251621723
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -82,7 +82,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.23853401251621723
+      position: 0.23853401251621723
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -114,7 +114,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.03451456772742693
+      position: -0.03451456772742693
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -146,7 +146,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.03451456772742693
+      position: -0.03451456772742693
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -178,7 +178,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.03604854851531257
+      position: -0.03604854851531257
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -210,7 +210,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.03451456772742693
+      position: -0.03451456772742693
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -242,7 +242,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: 0.11658253987930874
+      position: -0.11658253987930874
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -274,7 +274,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.17794177139473438
+      position: 0.17794177139473438
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -306,7 +306,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0
+      position: 0.0
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -338,7 +338,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0
+      position: 0.0
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
@@ -370,7 +370,7 @@
       effort: 0.0
     wrist_roll:
       name: wrist_roll
-      position: -0.0
+      position: 0.0
       velocity: -0.0
       effort: 0.0
     wrist_yaw:
