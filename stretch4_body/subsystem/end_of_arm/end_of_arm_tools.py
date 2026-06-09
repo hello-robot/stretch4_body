@@ -8,20 +8,13 @@ import time
 # ##########################################################3#
 
 def home_dw4_joints(eoa: "EndOfArm"):
-    eoa.cancel_homing_event.clear()
-    eoa.motors['wrist_pitch'].motor.set_overcurrent(10)
-    eoa.motors['wrist_pitch'].enable_pwm()
-    eoa.motors['wrist_pitch'].set_pwm(-175)
-    time.sleep(0.2)
-    t = time.time()
-    while eoa.motors['wrist_pitch'].status['vel'] < -0.66 and time.time() - t < 5:
-        pass
-    eoa.motors['wrist_pitch'].set_pwm(175)
-    time.sleep(0.2)
-    t = time.time()
-    while eoa.motors['wrist_pitch'].status['vel'] > 0.7 and time.time() - t < 5: 
-        pass
-    eoa.motors['wrist_pitch'].enable_pos()
+    
+    eoa.motors['wrist_pitch'].pre_home(cancel_homing_event=eoa.cancel_homing_event,pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+    
+    if eoa.cancel_homing_event.is_set():
+        eoa.logger.error("Wrist pitch pre-homing failed")
+        return False
+
     time.sleep(0.5)
     if eoa.cancel_homing_event.is_set() or not eoa.motors['wrist_yaw'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):
         eoa.logger.error("Wrist yaw homing failed")
