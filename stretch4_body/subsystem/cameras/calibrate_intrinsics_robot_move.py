@@ -506,17 +506,9 @@ Robot poses will also be captured using `stretch_animate` and saved to disk.
 
 Calibration is finished!
                                      
-You can verify your calibration by doing the following:
+You can validate your calibration by doing the following:
 1. Exit this script
-2. Run `stretch_camera_show --detect_aruco_marker_size 0.027 --left_right_center --opencv` 
-3. Use a tape measure to measure the distance from the lens of each camera to 
-    the center ArUco marker using the current pose of the board.
-    Please be careful not to scratch the camera lenses!
-
-Expected values:
-Left Camera: 0.67 +- 9mm
-Right Camera: 0.60 +- 9mm
-Center Camera: 0.65 +- 3mm
+2. Run `REx_camera_calibrate --validate`
 
 
 Changing mode to gamepad mode. You may control the robot using the gamepad until you exit this script.
