@@ -198,24 +198,22 @@ class RGBPipelineController:
         frame.image_raw = color_image.copy()
         
         if self.is_rectify:
-            return self._run_rectify(
-            color_image=frame.image,
-        )
+            color_image = self._run_rectify(
+                color_image=color_image,
+            )
         
         if self.is_rotate and self.camera_type.config.rotate_number_of_times:
             color_image = np.rot90(color_image, k=self.camera_type.config.rotate_number_of_times)
 
         # Note: Running crop after rotation would mean crop params are relative to the rotated image.
         if self.is_crop:
-            return self._run_crop(color_image=color_image)
-
+            color_image = self._run_crop(color_image=color_image)
 
         if self.detect_aruco_marker_size is not None:
-            return self._run_aruco_detection(color_image)
-        
+            color_image = self._run_aruco_detection(color_image)
 
         if self.ai_models_to_use:
-            return self._run_object_detection(color_image, frame)
+            color_image = self._run_object_detection(color_image, frame)
 
         self.save_frame(color_image=color_image, rgb_timestamp=frame.timestamp)
 
