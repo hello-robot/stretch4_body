@@ -117,7 +117,7 @@ class KeyframePlayer:
 @click.argument('file')
 @click.option('--speed', default=MotionProfile.MEDIUM.name, help=f'One of {[p.name for p in MotionProfile]}. Defaults to {MotionProfile.MEDIUM.name}.')
 @click.option('--joints_allowed_to_move', default=','.join([j.name for j in RobotJoints if j is not RobotJoints.base]), help=f'Comma separated values of {[p.name for p in RobotJoints]}. Defaults to {",".join([j.name for j in RobotJoints if j is not RobotJoints.base])}.')
-@click.option('--delay_between_frames', help='Delay between frames. If not specified, poses will be played at the relative timestamps of when they were recorded.')
+@click.option('--delay_between_frames', help='Delay between frames. If not specified, poses will be played using the delay_before_start field, which is by default the relative timestamps of when the poses were recorded.')
 @click.option('--loop', is_flag=True, help='Loop after reaching the last pose.')
 def main(file, speed:str, joints_allowed_to_move:str, delay_between_frames:float|None, loop):
     print(f"""

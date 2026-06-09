@@ -3,7 +3,7 @@
 from dataclasses import dataclass, asdict, field
 from enum import Enum, auto
 from functools import cache
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.gamepad_enums import MotionProfile
 

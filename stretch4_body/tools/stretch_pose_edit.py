@@ -19,37 +19,37 @@ class MujocoURDFCollisionVizAnimate(MujocoURDFCollisionViz):
         
         for joint_name, joint_pose in pose.joints.items():
             if joint_name == 'lift':
-                urdf_joint_state['joint_lift'] = joint_pose.position
+                urdf_joint_state['lift_joint'] = joint_pose.position
             elif joint_name == 'arm':
                 val = joint_pose.position / 4.0
-                urdf_joint_state['joint_arm_l0'] = val
-                urdf_joint_state['joint_arm_l1'] = val
-                urdf_joint_state['joint_arm_l2'] = val
-                urdf_joint_state['joint_arm_l3'] = val
+                urdf_joint_state['arm_l1_joint'] = val
+                urdf_joint_state['arm_l2_joint'] = val
+                urdf_joint_state['arm_l3_joint'] = val
+                urdf_joint_state['arm_l4_joint'] = val
             elif joint_name in ['wrist_yaw', 'wrist_pitch', 'wrist_roll']:
-                urdf_joint_state[f'joint_{joint_name}'] = joint_pose.position
+                urdf_joint_state[f'{joint_name}_joint'] = joint_pose.position
             elif joint_name == 'stretch_gripper':
                 # Gripper value typically controls both fingers in URDF
-                urdf_joint_state['joint_gripper_finger_left'] = joint_pose.position
-                urdf_joint_state['joint_gripper_finger_right'] = joint_pose.position
+                urdf_joint_state['gripper_finger_left_joint'] = joint_pose.position
+                urdf_joint_state['gripper_finger_right_joint'] = joint_pose.position
             else:
                 # Fallback for any other joints
-                urdf_joint_state[f'joint_{joint_name}'] = joint_pose.position
+                urdf_joint_state[f'{joint_name}_joint'] = joint_pose.position
 
         if contact_dict is None:
             contact_dict = {}
 
         if highlight_joint:
             if highlight_joint == 'lift':
-                contact_dict['link_lift'] = []
+                contact_dict['lift_link'] = []
             elif highlight_joint == 'arm':
-                for i in range(5):
-                    contact_dict[f'link_arm_l{i}'] = []
+                for i in range(1, 5):
+                    contact_dict[f'arm_l{i}_link'] = []
             elif highlight_joint in ['wrist_yaw', 'wrist_pitch', 'wrist_roll']:
-                contact_dict[f'link_{highlight_joint}'] = []
+                contact_dict[f'{highlight_joint}_link'] = []
             elif highlight_joint == 'stretch_gripper':
-                contact_dict['link_gripper_finger_left'] = []
-                contact_dict['link_gripper_finger_right'] = []
+                contact_dict['gripper_finger_left_link'] = []
+                contact_dict['gripper_finger_right_link'] = []
 
         self.update(urdf_joint_state, contact_dict if contact_dict else None)
 
