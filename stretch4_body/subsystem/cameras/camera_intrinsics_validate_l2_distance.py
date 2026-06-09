@@ -90,7 +90,20 @@ class CalibrationValidator:
             RGBCameras.right().name: DetectFrameSettled(),
             RGBCameras.center().name: DetectFrameSettled()
         }
-        
+
+    def cleanup(self):
+        print("Cleaning up CalibrationValidator...")
+        if hasattr(self, 'pipeline') and self.pipeline is not None:
+            try:
+                self.pipeline.stop()
+            except Exception as e:
+                print(f"Error stopping pipeline: {e}")
+        if hasattr(self, 'robot') and self.robot is not None:
+            try:
+                self.robot.stop()
+            except Exception as e:
+                print(f"Error stopping robot: {e}")
+
     def setup_rerun_blueprint(self):
         rr.spawn()
         # We define a simple side-by-side view
@@ -331,9 +344,13 @@ Press CTRL+C in the terminal to go to the next pose or abort.
 
 def REx_validate_intrinsics(interactive:bool):
     args = _parse_args()
-    validator = CalibrationValidator(args.charuco_board_name)
-    
-    return validator.run(skip_user_prompt=not interactive, interactive=interactive)
+    validator = None
+    try:
+        validator = CalibrationValidator(args.charuco_board_name)
+        return validator.run(skip_user_prompt=not interactive, interactive=interactive)
+    finally:
+        if validator is not None:
+            validator.cleanup()
 
 if __name__ == "__main__":
     REx_validate_intrinsics(interactive=True)

@@ -1329,16 +1329,26 @@ class CalibrateLidarToCamera:
 
 
         print("Quitting...")
+        self.cleanup()
 
+    def cleanup(self):
+        print("Cleaning up CalibrateLidarToCamera...")
         self.quit_requested.set()
-        
-        try:
-            self.lidar_stream.close()
-        except Exception:
-            pass
-
-        self.camera_adapter.stop()
-        self.robot.stop()
+        if hasattr(self, 'lidar_stream') and self.lidar_stream is not None:
+            try:
+                self.lidar_stream.close()
+            except Exception:
+                pass
+        if hasattr(self, 'camera_adapter') and self.camera_adapter is not None:
+            try:
+                self.camera_adapter.stop()
+            except Exception:
+                pass
+        if hasattr(self, 'robot') and self.robot is not None:
+            try:
+                self.robot.stop()
+            except Exception:
+                pass
 
     def save(self):
         if len(self.captured_transforms) == 0:
@@ -1515,7 +1525,10 @@ def calibrate_extrinsics_camera_lidar():
         replay_from_folder=args.replay_from_folder,
         replay_last=args.replay_last
     )
-    manager.run(is_interactive=not args.not_interactive)
+    try:
+        manager.run(is_interactive=not args.not_interactive)
+    finally:
+        manager.cleanup()
 
 
 def REx_calibrate_extrinsics_lidars(interactive: bool):

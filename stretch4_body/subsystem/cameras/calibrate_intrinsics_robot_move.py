@@ -381,9 +381,16 @@ You can rerun the calibration on those images by using the --not_interactive fla
     except KeyboardInterrupt:
         print("\nProcess interrupted by user. Stopping robot.")
         raise
-
-    print("Finished moving the robot and calibrating.")
-    rgb_pipeline_controller.stop()
+    finally:
+        print("Stopping robot and camera pipeline...")
+        try:
+            robot_controller.stop()
+        except Exception as e:
+            print(f"Error stopping robot controller: {e}")
+        try:
+            rgb_pipeline_controller.stop()
+        except Exception as e:
+            print(f"Error stopping camera pipeline: {e}")
 
 
 class MoveRobotMode(Enum):
