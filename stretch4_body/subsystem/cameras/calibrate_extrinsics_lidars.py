@@ -8,6 +8,12 @@ import sys
 import yaml
 import os
 
+from pathlib import Path
+import datetime
+import shutil
+from dataclasses import dataclass
+
+
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.enums.charuco_dictionary import (
@@ -22,10 +28,6 @@ from stretch4_body.subsystem.cameras.models.camera_calibration import (
 from stretch4_body.subsystem.cameras.detectors.detector_frame_settled import (
     DetectFrameSettled,
 )
-from dataclasses import dataclass
-import datetime
-import yaml
-
 
 from stretch4_body.core.gamepad_teleop import GamePadTeleop
 from stretch4_body.core.gamepad_controller import ButtonPressCounter
@@ -42,6 +44,10 @@ from stretch4_body.tools.stretch_pose_play import KeyframePlayer
 from stretch4_body.utils.stretch_pose_models import RobotJoints
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.robot.robot_client import RobotClient
+
+
+from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
+
 
 class DualLidarCalibration:
     """
@@ -1353,12 +1359,6 @@ class CalibrateLidarToCamera:
             ),
         )
 
-        from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
-        import yaml
-        import os
-        from pathlib import Path
-        import datetime
-        import shutil
 
         key = f"transform_{self.lidar_name}_lidar_to_{self.camera.name}"
         
