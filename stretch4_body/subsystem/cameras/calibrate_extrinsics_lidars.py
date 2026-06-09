@@ -496,7 +496,7 @@ class CalibrateLidarToCamera:
             self.replay_idx = 0
             
             class ReplayCameraAdapter:
-                def ReplayCameraAdapter(self, manager):
+                def __init__(self, manager):
                     self.manager = manager
                 def get_frames(self):
                     while True:
@@ -607,6 +607,7 @@ class CalibrateLidarToCamera:
             self.move_robot_mode = MoveRobotMode.ARM_POSES
 
         self.is_capture_requested = False
+        self.waiting_for_settled_printed = False
         self.save_requested = False
         self.quit_requested = threading.Event()
 
@@ -641,9 +642,19 @@ class CalibrateLidarToCamera:
         self.frame_settled_detector = DetectFrameSettled()
 
     def get_latest_camera_frame(self):
-        for frame in self.camera_adapter.get_frames():
-            return frame
-        return None
+        latest = None
+        if hasattr(self.camera_adapter, "output_queue") and self.camera_adapter.output_queue is not None:
+            while self.camera_adapter.output_queue.has():
+                message = self.camera_adapter.output_queue.tryGet()
+                if message is not None:
+                    from stretch4_body.subsystem.cameras.adapters.luxonis_camera_adapter import LuxonisCameraAdapter
+                    latest = LuxonisCameraAdapter.dai_message_to_image_frame(message)
+        
+        if latest is None:
+            for frame in self.camera_adapter.get_frames():
+                latest = frame
+                break
+        return latest
 
     def _process_camera_frame(self, frame) -> CameraDetection | None:
         """
@@ -904,6 +915,7 @@ class CalibrateLidarToCamera:
                 )
                 self.keyframe_recorder.capture_pose()
             self.is_capture_requested = True
+            self.waiting_for_settled_printed = False
 
         def request_save():
             self.save_requested = True
@@ -1032,6 +1044,55 @@ class CalibrateLidarToCamera:
             if latest_cam_frame is None or latest_lidar_frame is None:
                 print("lidar and camera frames are both None")
                 continue
+
+            if not self.is_replaying:
+                sync_attempts = 0
+                max_sync_attempts = 15
+                while (
+                    hasattr(latest_cam_frame, "timestamp_system")
+                    and hasattr(latest_lidar_frame, "timestamp_system")
+                    and abs(latest_cam_frame.timestamp_system - latest_lidar_frame.timestamp_system) > 0.15
+                    and sync_attempts < max_sync_attempts
+                ):
+                    sync_attempts += 1
+                    if latest_cam_frame.timestamp_system < latest_lidar_frame.timestamp_system:
+                        cam_frame_tmp = self.get_latest_camera_frame()
+                        if cam_frame_tmp is not None:
+                            latest_cam_frame = cam_frame_tmp
+                            is_frame_settled = self.frame_settled_detector.check_stability_diff(
+                                latest_cam_frame.image, threshold=5
+                            )
+                        else:
+                            break
+                    else:
+                        lidar_frame_tmp = next(self.lidar_stream)
+                        if lidar_frame_tmp is not None:
+                            latest_lidar_frame = lidar_frame_tmp
+                        else:
+                            break
+
+                if (
+                    hasattr(latest_cam_frame, "timestamp_system")
+                    and hasattr(latest_lidar_frame, "timestamp_system")
+                    and abs(latest_cam_frame.timestamp_system - latest_lidar_frame.timestamp_system) > 0.15
+                ):
+                    continue
+
+            if self.is_capture_requested:
+                if not self.waiting_for_settled_printed:
+                    print("Waiting for camera frame to settle...")
+                    rr.log(
+                        "Logs/action",
+                        rr.TextLog("Waiting for camera frame to settle...", level="INFO"),
+                    )
+                    self.waiting_for_settled_printed = True
+
+                if is_frame_settled:
+                    print("Frame settled!")
+                    rr.log(
+                        "Logs/action",
+                        rr.TextLog("Frame settled!", level="INFO"),
+                    )
 
             camera_detection = self._process_camera_frame(latest_cam_frame)
             display_img = (
