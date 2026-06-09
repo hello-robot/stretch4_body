@@ -1162,7 +1162,7 @@ class CalibrateLidarToCamera:
             if cam_frame_tmp is not None:
                 latest_cam_frame = cam_frame_tmp
                 is_frame_settled = self.frame_settled_detector.check_stability_diff(
-                    latest_cam_frame.image, threshold=3
+                    latest_cam_frame.image, threshold=5
                 )
 
             lidar_frame_tmp = next(self.lidar_stream)
