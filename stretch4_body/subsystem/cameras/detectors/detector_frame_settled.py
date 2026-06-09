@@ -17,12 +17,14 @@ class DetectFrameSettled:
         self.stable_frame_count = 0
         self.prev_gray = None
         self.prev_variance = None
+        self.prev_gray_ema = None
         
     def reset(self):
         """Resets the internal frame counters and anchors."""
         self.stable_frame_count = 0
         self.prev_gray = None
         self.prev_variance = None
+        self.prev_gray_ema = None
 
     def check_stability_diff(self, frame:np.ndarray|None, threshold=2.0, timeout_blocking: float | None = None):
         """
@@ -37,6 +39,13 @@ class DetectFrameSettled:
         If timeout_blocking is not None, this call will block.
         """
         return self._execute_check(frame, timeout_blocking, lambda f: self._compute_laplacian(f, threshold))
+
+    def check_stability_ema(self, frame:np.ndarray|None, threshold=3.0, alpha=0.1, timeout_blocking: float | None = None):
+        """
+        Gates based on 8x8 block-based maximum difference against an EMA running average.
+        If timeout_blocking is not None, this call will block.
+        """
+        return self._execute_check(frame, timeout_blocking, lambda f: self._compute_ema(f, threshold, alpha))
 
     def _execute_check(self, frame:np.ndarray|None, timeout_blocking: float | None, algorithm_func: Callable):
         """
@@ -95,3 +104,31 @@ class DetectFrameSettled:
 
         self.prev_variance = current_variance
         return False
+
+    def _compute_ema(self, frame:np.ndarray|None, threshold, alpha):
+        if frame is None: return False
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray_f = gray.astype(np.float32)
+
+        is_stable = False
+        if self.prev_gray_ema is not None:
+            diff = np.abs(self.prev_gray_ema - gray_f)
+            diff_blocks = cv2.resize(diff, (8, 8), interpolation=cv2.INTER_AREA)
+            max_block_diff = np.max(diff_blocks)
+
+            if max_block_diff < threshold:
+                self.stable_frame_count += 1
+            else:
+                self.stable_frame_count = 0
+
+            if self.has_frame_been_stable():
+                is_stable = True
+
+            # Update running average (EMA)
+            self.prev_gray_ema = alpha * gray_f + (1.0 - alpha) * self.prev_gray_ema
+        else:
+            self.prev_gray_ema = gray_f
+
+        return is_stable

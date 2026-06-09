@@ -48,7 +48,7 @@ def focus_assistant(frame:ImageFrame|None):
 
     color_image, timestamp  = frame.image, frame.timestamp
 
-    is_settled = frame_settled_detector.check_stability_diff(color_image)
+    is_settled = frame_settled_detector.check_stability_ema(color_image)
 
     cv2.namedWindow('Focus Assistant', cv2.WINDOW_NORMAL)
     
