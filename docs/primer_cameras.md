@@ -351,3 +351,15 @@ The calibration process does the following:
 These values are used to estimate the distance to ArUco markers of known size using [detector_aruco.py](../stretch4_body/subsystem/cameras/detectors/detector_aruco.py) that uses `cv2.solve_pnp` or `cv2.fisheye.solve_pnp` depending on the lens type.
 
 These values are also used by [emulated_rgbd.py](../stretch4_body/subsystem/cameras/emulated_rgbd.py) to create an colored point clouds and depth images using the left and right lidars, and each head camera using `cv2.projectPoints` or `cv2.fisheye.projectPoints` depending on the lens type. This also requires the lidar extrinsics to be calibrated using https://github.com/hello-robot/stretch_dual_lidar_calibration.
+
+### Calibration Controls & Offline Replay
+
+During execution of the calibration tools (`REx_camera_calibrate` for camera-lidar or camera intrinsics), progression and commands can be input using either the gamepad controller or terminal keyboard inputs:
+- **Gamepad Control**: Tap `X` to capture a frame / unpause automatic movement, and hold `X` (for 3-4 seconds) to save the calibration to disk.
+- **Keyboard Control**: Type `x` + Enter to capture/unpause, type `s` + Enter to save/exit, and type `q` + Enter to quit without saving. This allows running calibration without a gamepad connected.
+
+For camera-lidar calibration, you can also replay a previous session offline:
+```bash
+REx_camera_calibrate --extrinsics_lidar --replay_last
+```
+This offline replay automatically bypasses the gamepad pauses and runs through all poses automatically without requiring user input.

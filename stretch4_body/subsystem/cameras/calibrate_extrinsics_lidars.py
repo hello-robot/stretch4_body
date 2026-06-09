@@ -958,7 +958,7 @@ class CalibrateLidarToCamera:
             self.save_requested = True
 
         is_paused = threading.Event()
-        if not self.skip_user_prompt:
+        if not self.skip_user_prompt and not self.is_replaying:
             is_paused.set()
         def gamepad_poller():
             def trigger_pause(wait_for_x):
@@ -1001,7 +1001,7 @@ class CalibrateLidarToCamera:
                                 4, callback=request_save
                             )
 
-                if self.robot.power_periph.status["runstop_event"]:
+                if not self.is_replaying and self.robot.power_periph.status["runstop_event"]:
                     rr.log(
                         "Logs/error",
                         rr.TextLog("Runstop event triggered, pausing automatic movement.", level="ERROR"),
@@ -1011,12 +1011,50 @@ class CalibrateLidarToCamera:
 
                 time.sleep(1 / 30)
 
+        import select
+        def keyboard_poller():
+            print("\n" + "="*50)
+            print("Keyboard commands enabled:")
+            print("  Press 'x' + Enter to capture/unpause")
+            print("  Press 's' + Enter to save average and exit")
+            print("  Press 'q' + Enter to quit without saving")
+            print("="*50 + "\n")
+            
+            while not self.quit_requested.is_set():
+                try:
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if rlist:
+                        line = sys.stdin.readline().strip()
+                        if not line:
+                            continue
+                        for char in line:
+                            if char.lower() == 'x':
+                                if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
+                                    request_capture()
+                                else:
+                                    if is_paused.is_set():
+                                        rr.log("Logs/action", rr.TextLog("Keyboard 'x': Unpaused. Automatic movement will start!", level="INFO"))
+                                        print("Unpaused via keyboard 'x'!")
+                                        is_paused.clear()
+                                        move_to_next_pose()
+                                    else:
+                                        request_capture()
+                            elif char.lower() == 's':
+                                print("Save requested via keyboard 's'!")
+                                request_save()
+                            elif char.lower() == 'q':
+                                print("Quit requested via keyboard 'q'!")
+                                self.quit_requested.set()
+                except Exception as e:
+                    time.sleep(0.1)
+
         threading.Thread(target=gamepad_poller, daemon=True).start()
+        threading.Thread(target=keyboard_poller, daemon=True).start()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             rr.log(
                 "Logs/action",
-                rr.TextLog("Started manual gamepad mode. Use Gamepad to move. Tap X to capture. Hold X to save average.", level="INFO"),
+                rr.TextLog("Started manual gamepad mode. Use Gamepad or Keyboard to move/capture. Tap X (Gamepad) or type 'x' (Keyboard) to capture. Hold X (Gamepad) or type 's' (Keyboard) to save.", level="INFO"),
             )
         else:
             rr.log(
@@ -1046,6 +1084,8 @@ class CalibrateLidarToCamera:
         
         while True:
             time.sleep(0.01)
+            if self.quit_requested.is_set():
+                break
 
             if self.save_requested:
                 rr.log(
