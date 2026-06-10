@@ -1415,7 +1415,21 @@ class CalibrateLidarToCamera:
             )
 
 
-def calibrate_extrinsics_camera_lidar():
+def calibrate_extrinsics_camera_lidar(
+    camera: str | None = None,
+    lidar: str | None = None,
+    use_ros_for_lidars: bool | None = None,
+    charuco_board_name: str | None = None,
+    expected_width: float | None = None,
+    expected_height: float | None = None,
+    tolerance: float | None = None,
+    gamepad: bool | None = None,
+    calib_file: str | None = None,
+    skip_user_prompt: bool | None = None,
+    not_interactive: bool | None = None,
+    replay_from_folder: str | None = None,
+    replay_last: bool | None = None,
+):
     parser = argparse.ArgumentParser(
         "Interactive Extrinsics calibration using Gamepad."
     )
@@ -1510,40 +1524,30 @@ def calibrate_extrinsics_camera_lidar():
     args, _ = parser.parse_known_args()
 
     manager = CalibrateLidarToCamera(
-        camera=args.camera,
-        lidar=args.lidar,
-        use_ros_for_lidars=args.use_ros_for_lidars,
-        charuco_board_name=args.charuco_board_name,
-        expected_width=args.expected_width,
-        expected_height=args.expected_height,
-        tolerance=args.tolerance,
-        use_gamepad=args.gamepad,
-        calib_file=args.calib_file,
-        skip_user_prompt=args.skip_user_prompt,
-        replay_from_folder=args.replay_from_folder,
-        replay_last=args.replay_last
+        camera=args.camera if camera is None else camera,
+        lidar=args.lidar if lidar is None else lidar,
+        use_ros_for_lidars=args.use_ros_for_lidars if use_ros_for_lidars is None else use_ros_for_lidars,
+        charuco_board_name=args.charuco_board_name if charuco_board_name is None else charuco_board_name,
+        expected_width=args.expected_width if expected_width is None else expected_width,
+        expected_height=args.expected_height if expected_height is None else expected_height,
+        tolerance=args.tolerance if tolerance is None else tolerance,
+        use_gamepad=args.gamepad if gamepad is None else gamepad,
+        calib_file=args.calib_file if calib_file is None else calib_file,
+        skip_user_prompt=args.skip_user_prompt if skip_user_prompt is None else skip_user_prompt,
+        replay_from_folder=args.replay_from_folder if replay_from_folder is None else replay_from_folder,
+        replay_last=args.replay_last if replay_last is None else replay_last
     )
     try:
-        manager.run(is_interactive=not args.not_interactive)
+        manager.run(is_interactive=not (args.not_interactive if not_interactive is None else not_interactive))
     finally:
         manager.cleanup()
 
 
 def REx_calibrate_extrinsics_lidars(interactive: bool):
-    import sys
-
-    if not interactive:
-        if "--not_interactive" not in sys.argv:
-            sys.argv.append("--not_interactive")
-        if "--skip_user_prompt" not in sys.argv:
-            sys.argv.append("--skip_user_prompt")
-    else:
-        if "--not_interactive" in sys.argv:
-            sys.argv.remove("--not_interactive")
-        if "--skip_user_prompt" in sys.argv:
-            sys.argv.remove("--skip_user_prompt")
-
-    calibrate_extrinsics_camera_lidar()
+    calibrate_extrinsics_camera_lidar(
+        not_interactive=not interactive,
+        skip_user_prompt=not interactive
+    )
 
 
 if __name__ == "__main__":
