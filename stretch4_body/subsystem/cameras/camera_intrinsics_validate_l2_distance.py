@@ -253,7 +253,7 @@ Press CTRL+C in the terminal to go to the next pose or abort.
                 
             cen_s = True
             if RGBCameras.center().name in self.frame_settled_detectors_val.keys():
-                cen_s = self.frame_settled_detectors_val[RGBCameras.center().name].check_stability_diff(frame.center.image if frame.center else None)
+                cen_s = self.frame_settled_detectors_val[RGBCameras.center().name].check_stability_diff(frame.center.image if frame.center else None, threshold=5)
         
             if left_s and right_s and cen_s:
                 return frame
