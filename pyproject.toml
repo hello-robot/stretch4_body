@@ -45,11 +45,6 @@ dependencies = [
     "hello-robot-stretch4-flying-gripper",
 ]
 
-[project.optional-dependencies]
-calibration = [
-    "hello-robot-stretch4-animate",
-]
-
 [project.urls]
 Homepage = "https://github.com/hello-robot/stretch4_body"
 
@@ -127,4 +122,7 @@ REx_camera_list = "stretch4_body._cli_wrapper:REx_camera_list"
 stretch_runstop = "stretch4_body._cli_wrapper:stretch_runstop"
 stretch_puppet_teleop = "stretch4_body._cli_wrapper:stretch_puppet_teleop"
 stretch_eye_animations = "stretch4_body._cli_wrapper:stretch_eye_animations"
+stretch_pose_play = "stretch4_body._cli_wrapper:stretch_pose_play"
+stretch_pose_record = "stretch4_body._cli_wrapper:stretch_pose_record"
+stretch_pose_edit = "stretch4_body._cli_wrapper:stretch_pose_edit"
 
