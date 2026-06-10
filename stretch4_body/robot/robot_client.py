@@ -64,7 +64,8 @@ class RobotClient(SubsystemClient):
 
     def __enter__(self):
         if not self.startup():
-            raise RuntimeError("RobotClient startup failed.")
+            self.logger.error("RobotClient startup failed.")
+            return None
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -766,8 +767,10 @@ class PrismaticJointClient(SubsystemClient):
             Contact threshold in negative direction (0-1).
         """
         if req_calibration and not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.name} has not been homed.")
+            return False
         self._queue_command(self.name, "move_by",x_m, v_m=v_m, a_m=a_m, stiffness=stiffness, req_calibration=req_calibration,contact_sensitivity_pos=contact_sensitivity_pos, contact_sensitivity_neg=contact_sensitivity_neg)
+        return True
 
     def set_velocity(self, v_m, a_m=None, stiffness=None, req_calibration=True, contact_sensitivity_pos=None, contact_sensitivity_neg=None):
         """
@@ -789,8 +792,10 @@ class PrismaticJointClient(SubsystemClient):
             Contact threshold in negative direction (0-1).
         """
         if req_calibration and not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.name} has not been homed.")
+            return False
         self._queue_command(self.name, "set_velocity", v_m, a_m=a_m, stiffness=stiffness,req_calibration=req_calibration, contact_sensitivity_pos=contact_sensitivity_pos, contact_sensitivity_neg=contact_sensitivity_neg)
+        return True
 
     def move_to(self, x_m, v_m=None, a_m=None, stiffness=None, req_calibration=True, contact_sensitivity_pos=None, contact_sensitivity_neg=None):
         """
@@ -814,8 +819,10 @@ class PrismaticJointClient(SubsystemClient):
             Contact threshold in negative direction (0-1).
         """
         if req_calibration and not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.name} has not been homed.")
+            return False
         self._queue_command(self.name, "move_to",x_m, v_m=v_m, a_m=a_m, stiffness=stiffness, req_calibration=req_calibration,contact_sensitivity_pos=contact_sensitivity_pos, contact_sensitivity_neg=contact_sensitivity_neg)
+        return True
 
 
 # #####################################################################
@@ -861,8 +868,10 @@ class WristJointClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
         self._queue_command(f'{self.joint_name}.end_of_arm', "move_by",self.joint_name,x_r, v_r, a_r)
+        return True
     def move_to(self, x_r, v_r=None, a_r=None):
         """
         Move the joint to an absolute position.
@@ -877,8 +886,10 @@ class WristJointClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
         self._queue_command(f'{self.joint_name}.end_of_arm', "move_to", self.joint_name, x_r, v_r, a_r)
+        return True
     def set_velocity(self, v_r, a_r=None):
         """
         Set the joint velocity.
@@ -891,8 +902,10 @@ class WristJointClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
         self._queue_command(f'{self.joint_name}.end_of_arm', "set_velocity", self.joint_name, v_r, a_r)
+        return True
     def pose(self, p,v_r=None, a_r=None):
         """
         Move to a named pose.
@@ -907,8 +920,10 @@ class WristJointClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if not self.is_homed():
-            raise RuntimeError(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
         self._queue_command(f'{self.joint_name}.end_of_arm', "pose", self.joint_name, p, v_r, a_r)
+        return True
     def disable_torque(self):
         """
         Disable torque on the joint to make it backdrivable.
@@ -1038,8 +1053,10 @@ class EndOfArmClient(SubsystemClient):
             Name of the joint.
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "do_ping",joint)
+        return True
 
     def move_by(self, joint,x_r, v_r=None, a_r=None):
         """
@@ -1057,10 +1074,13 @@ class EndOfArmClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         if not self.is_homed(joint):
-            raise RuntimeError(f"Cannot send movement command. Joint {joint} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {joint} has not been homed.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "move_by",joint,x_r, v_r, a_r)
+        return True
 
     def move_to(self, joint,x_r, v_r=None, a_r=None):
         """
@@ -1078,21 +1098,28 @@ class EndOfArmClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         if not self.is_homed(joint):
-            raise RuntimeError(f"Cannot send movement command. Joint {joint} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {joint} has not been homed.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "move_to", joint, x_r, v_r, a_r)
+        return True
 
     def move_to_mm(self, joint, x_mm, v_r=None, a_r=None):
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "move_to_mm", joint, x_mm, v_r, a_r)
+        return True
 
     def move_by_mm(self, joint, x_mm, v_r=None, a_r=None):
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "move_by_mm", joint, x_mm, v_r, a_r)
-    
+        return True
+
     def set_velocity(self, joint, v_r, a_r=None):
         """
         Set the velocity of a specific joint.
@@ -1107,10 +1134,13 @@ class EndOfArmClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         if not self.is_homed(joint):
-            raise RuntimeError(f"Cannot send movement command. Joint {joint} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {joint} has not been homed.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "set_velocity", joint, v_r, a_r)
+        return True
 
     def pose(self,joint, p,v_r=None, a_r=None):
         """
@@ -1128,10 +1158,13 @@ class EndOfArmClient(SubsystemClient):
             Acceleration limit (rad/s^2).
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         if not self.is_homed(joint):
-            raise RuntimeError(f"Cannot send movement command. Joint {joint} has not been homed.")
+            self.logger.error(f"Cannot send movement command. Joint {joint} has not been homed.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "pose", joint, p,v_r, a_r)
+        return True
 
     def quick_stop(self,joint):
         """
@@ -1143,8 +1176,10 @@ class EndOfArmClient(SubsystemClient):
             Name of the joint.
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "quick_stop",joint)
+        return True
 
     def disable_torque(self, joint):
         """
@@ -1156,8 +1191,10 @@ class EndOfArmClient(SubsystemClient):
             Name of the joint.
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "disable_torque", joint)
+        return True
 
     def enable_torque(self, joint):
         """
@@ -1169,24 +1206,30 @@ class EndOfArmClient(SubsystemClient):
             Name of the joint.
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "enable_torque", joint)
+        return True
 
     def pause_sentry(self, joint):
         """
         Pause the safe_motion sentry on a specific joint.
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "pause_sentry", joint)
+        return True
 
     def unpause_sentry(self, joint):
         """
         Unpause the safe_motion sentry on a specific joint.
         """
         if joint not in self.joints:
-            raise ValueError(f"Joint {joint} not found in end of arm tool.")
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
         self._queue_command(f'{joint}.end_of_arm', "unpause_sentry", joint)
+        return True
 
     def home(self,wait_on_completion=True,timeout=45):
         """
