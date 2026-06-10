@@ -84,18 +84,22 @@ class KeyframePlayer:
         self.play_pose(pose)
         
 
-    def play_poses(self, poses: list[RobotPose], delay_between_frames:float|None):
+    def play_poses(self, poses: list[RobotPose], delay_between_frames:float|None, step:bool = False):
         for pose in poses:
-            if delay_between_frames is None:
+            if step:
+                input(f"Press Enter to move to pose: {pose.name}...")
+                self.play_pose(pose)
+            elif delay_between_frames is None:
                 self._play_pose_wait_until_start_time(pose)
             else:
                 time.sleep(delay_between_frames)
                 self.play_pose(pose)
 
-    def play_poses_loop(self, poses: list[RobotPose], delay_between_frames:float|None, delay_between_restart:float):
+    def play_poses_loop(self, poses: list[RobotPose], delay_between_frames:float|None, delay_between_restart:float, step:bool = False):
         while True:
-            self.play_poses(poses, delay_between_frames=delay_between_frames)
-            time.sleep(delay_between_restart)
+            self.play_poses(poses, delay_between_frames=delay_between_frames, step=step)
+            if not step:
+                time.sleep(delay_between_restart)
 
     def play_next(self, loop:bool = False, wait_until_frame_start_time:bool=False):
         if not self.poses:
@@ -119,7 +123,8 @@ class KeyframePlayer:
 @click.option('--joints_allowed_to_move', default=','.join([j.name for j in RobotJoints if j is not RobotJoints.base]), help=f'Comma separated values of {[p.name for p in RobotJoints]}. Defaults to {",".join([j.name for j in RobotJoints if j is not RobotJoints.base])}.')
 @click.option('--delay_between_frames', help='Delay between frames. If not specified, poses will be played using the delay_before_start field, which is by default the relative timestamps of when the poses were recorded.')
 @click.option('--loop', is_flag=True, help='Loop after reaching the last pose.')
-def main(file, speed:str, joints_allowed_to_move:str, delay_between_frames:float|None, loop):
+@click.option('--step', is_flag=True, help='Step through poses by pressing enter.')
+def main(file, speed:str, joints_allowed_to_move:str, delay_between_frames:float|None, loop, step):
     print(f"""
 WARNING: Please proceed carefully.
           
@@ -127,7 +132,7 @@ You are about to replay a set of pre-recorded robot poses.
           
 This keyframe player does not guarantee any safety or precautions.
           
-The robot joints will move in the same way they were recorded.
+The robot joints will move to the recorded poses.
           
 These joints will move: {joints_allowed_to_move}.
           
@@ -148,14 +153,22 @@ Please make sure the robot's surroundings are clear before proceeding.
     player = KeyframePlayer(joints_allowed_to_move=_joints_allowed_to_move, motion_profile=motion_profile)
     player.load_from_file(file)
     
-    if loop:
-        player.play_poses_loop(player.poses,delay_between_frames=delay_between_frames, delay_between_restart=1.0)
-    else:
-        player.play_poses(player.poses, delay_between_frames=delay_between_frames)
-    
-    time.sleep(0.5)
-    player.robot.wait_command()
-    player.robot.stop()
+    try:
+        if loop:
+            player.play_poses_loop(player.poses,delay_between_frames=delay_between_frames, delay_between_restart=1.0, step=step)
+        else:
+            player.play_poses(player.poses, delay_between_frames=delay_between_frames, step=step)
+        
+        time.sleep(0.5)
+        player.robot.wait_command()
+        
+        print("\nReplay complete. Press Ctrl+C to exit and stop the robot...")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        player.robot.stop()
 
 if __name__ == "__main__":
     main()
