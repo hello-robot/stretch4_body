@@ -474,10 +474,10 @@ def calibrate_extrinsics_camera_camera(
 
     if T_mean_l is not None:
         output_data["left_to_center"] = T_mean_l.tolist()
-        output_data["left_errors_m"] = np.mean(left_errors)
+        output_data["left_errors_m"] = np.mean(left_errors).tolist()
     if T_mean_r is not None:
         output_data["right_to_center"] = T_mean_r.tolist()
-        output_data["right_errors_m"] = np.mean(right_errors)
+        output_data["right_errors_m"] = np.mean(right_errors).tolist()
 
     if not output_data:
         print("No paired transforms could be computed. Exiting without saving.")

@@ -8,6 +8,12 @@ import sys
 import yaml
 import os
 
+from pathlib import Path
+import datetime
+import shutil
+from dataclasses import dataclass
+
+
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.enums.charuco_dictionary import (
@@ -22,10 +28,6 @@ from stretch4_body.subsystem.cameras.models.camera_calibration import (
 from stretch4_body.subsystem.cameras.detectors.detector_frame_settled import (
     DetectFrameSettled,
 )
-from dataclasses import dataclass
-import datetime
-import yaml
-
 
 from stretch4_body.core.gamepad_teleop import GamePadTeleop
 from stretch4_body.core.gamepad_controller import ButtonPressCounter
@@ -43,147 +45,11 @@ from stretch4_body.utils.stretch_pose_models import RobotJoints
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.robot.robot_client import RobotClient
 
-class DualLidarCalibration:
-    """
-    This is a helper class to read the dual lidar calibration file at 
-    HELLO_FLEET_PATH/HELLO_FLEET_ID/calibration_dual_lidar/dual_lidar_calibration.yaml
-    """
-    def __init__(self, filepath=None):
-        if not filepath:
-            fleet_path = os.environ.get("HELLO_FLEET_PATH", "")
-            fleet_id = os.environ.get("HELLO_FLEET_ID", "")
-            if not fleet_path or not fleet_id:
-                raise ValueError(
-                    "Calibration file not provided using --calib_file, and HELLO_FLEET_PATH/HELLO_FLEET_ID environment variables are missing."
-                )
-            self.filepath = os.path.join(
-                fleet_path,
-                fleet_id,
-                "calibration_dual_lidar",
-                "dual_lidar_calibration.yaml",
-            )
-        else:
-            self.filepath = filepath
 
-        self.data = {}
-        self.robot_id = os.environ.get("HELLO_FLEET_ID", "unknown")
-        self.load()
-        self._cached_lidar_transforms = {}
+from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
 
-    def load(self):
-        if os.path.exists(self.filepath):
-            with open(self.filepath, "r") as f:
-                self.data = yaml.safe_load(f) or {}
 
-    def save(self):
-        if os.path.exists(self.filepath):
-            import shutil
-            mod_time = int(os.path.getmtime(self.filepath))
-            p = Path(self.filepath)
-            backup_path = p.with_name(f"{p.stem}_backup_{mod_time}{p.suffix}")
-            shutil.copy2(self.filepath, backup_path)
-            print(f"Backed up {self.filepath} to {backup_path}")
-
-        with open(self.filepath, "w") as f:
-            yaml.dump(self.data, f, default_flow_style=None)
-
-    def get_transform(self, key):
-        return np.array(self.data.get(key, {}).get("data", np.eye(4)))
-
-    def set_transform(self, key, T: np.ndarray):
-        timestamp = datetime.datetime.now().isoformat()
-        self.data[key] = {
-            "data": T.tolist(),
-            "robot_id": self.robot_id,
-            "timestamp": timestamp,
-        }
-
-    @property
-    def right_to_left_transform(self):
-        if "right_to_left_transform" in self.data:
-            return self.get_transform("right_to_left_transform")
-        return None
-
-    def apply(self, points: np.ndarray, transform: np.ndarray = None) -> np.ndarray:
-        if transform is None:
-            transform = self.right_to_left_transform
-            if transform is None:
-                return points
-        ones = np.ones((points.shape[0], 1))
-        pts_new = (transform @ np.hstack([points[:, :3], ones]).T).T[:, :3]
-        if points.shape[1] > 3:  # carry over intensity/ring if present
-            return np.hstack([pts_new, points[:, 3:]])
-        return pts_new
-
-    def get_lidar_to_base_transform(self, is_right_lidar: bool):      
-        lidar_link = "lidar_right_link" if is_right_lidar else "lidar_left_link"
-
-        if lidar_link in self._cached_lidar_transforms:
-            return self._cached_lidar_transforms[lidar_link]
-            
-
-        from stretch4_urdf.utils.urdf_utils_generate_from_base_xacro import (
-            get_urdf_from_robot_params,
-        )
-        from yourdfpy import URDF
-        import io
-
-        try:
-            robot = URDF.load(io.StringIO(get_urdf_from_robot_params()))
-        except Exception as e:
-            print(f"Failed to load URDF: {e}")
-            return np.eye(4)
-
-        link_to_parent = {}
-        for joint in robot.robot.joints:
-            link_to_parent[joint.child] = (joint.parent, joint.origin)
-
-        current = lidar_link
-        chain = []
-        while current != "base_link":
-            if current not in link_to_parent:
-                print(f"Lidar link {lidar_link} not connected to base_link")
-                return np.eye(4)
-            parent, origin = link_to_parent[current]
-            chain.append(origin)
-            current = parent
-
-        T_base_to_lidar = np.eye(4)
-        for origin in reversed(chain):
-            T_j = np.eye(4) if origin is None else origin
-            T_base_to_lidar = T_base_to_lidar @ T_j
-
-        self._cached_lidar_transforms[lidar_link] = T_base_to_lidar
-        return T_base_to_lidar
-
-    def unify_clouds(
-        self, left_pts: np.ndarray, right_pts: np.ndarray
-    ) -> np.ndarray:
-        merged = []
-        if left_pts is not None and len(left_pts) > 0:
-            T_lidar_to_base = self.get_lidar_to_base_transform(is_right_lidar=False)
-            ones = np.ones((len(left_pts), 1))
-            left_base = (T_lidar_to_base @ np.hstack([left_pts[:, :3], ones]).T).T[
-                :, :3
-            ]
-            merged.append(left_base)
-
-        if right_pts is not None and len(right_pts) > 0:
-            T_lidar_to_base = self.get_lidar_to_base_transform(is_right_lidar=True)
-            ones = np.ones((len(right_pts), 1))
-            right_base = (T_lidar_to_base @ np.hstack([right_pts[:, :3], ones]).T).T[
-                :, :3
-            ]
-            merged.append(right_base)
-
-        if not merged:
-            return np.array([])
-        return np.vstack(merged)
-
-    def get_world_transform_for_lidar(self, is_right_lidar: bool):
-        T_floor_to_base = self.get_transform("floor_to_base_link_transform")
-        T_base_to_lidar = self.get_lidar_to_base_transform(is_right_lidar)
-        return T_floor_to_base @ T_base_to_lidar
+from stretch4_body.subsystem.cameras.models.dual_lidar_calibration import DualLidarCalibration
 
 
 @dataclass
@@ -520,13 +386,50 @@ def detect_lidar_rectangle(
 def average_transforms(T_list):
     if not T_list:
         return None
-    t_avg = np.mean([T[:3, 3] for T in T_list], axis=0)
-    quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in T_list]
+
+    if len(T_list) <= 2:
+        t_avg = np.mean([T[:3, 3] for T in T_list], axis=0)
+        quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in T_list]
+        mean_rot = Rotation.from_quat(quats).mean().as_matrix()
+        T_avg = np.eye(4)
+        T_avg[:3, :3] = mean_rot
+        T_avg[:3, 3] = t_avg
+        return T_avg
+
+    # 1. Compute median translation
+    translations = np.array([T[:3, 3] for T in T_list])
+    median_translation = np.median(translations, axis=0)
+
+    # 2. Filter out transforms that are outliers (> 0.15m translation distance from median)
+    valid_T_list = []
+    for T in T_list:
+        dist = np.linalg.norm(T[:3, 3] - median_translation)
+        if dist < 0.15:
+            valid_T_list.append(T)
+        else:
+            msg = f"Warning: Discarding outlier transform with translation distance {dist:.3f}m from median."
+            print(msg)
+            try:
+                import rerun as rr
+                rr.log(
+                    "Logs/error",
+                    rr.TextLog(msg, level="WARNING"),
+                )
+            except Exception:
+                pass
+
+    # Fallback if all transforms were discarded
+    if not valid_T_list:
+        valid_T_list = T_list
+
+    t_avg = np.mean([T[:3, 3] for T in valid_T_list], axis=0)
+    quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in valid_T_list]
     mean_rot = Rotation.from_quat(quats).mean().as_matrix()
     T_avg = np.eye(4)
     T_avg[:3, :3] = mean_rot
     T_avg[:3, 3] = t_avg
     return T_avg
+
 
 
 def log_to_rerun(
@@ -630,7 +533,7 @@ class CalibrateLidarToCamera:
             self.replay_idx = 0
             
             class ReplayCameraAdapter:
-                def ReplayCameraAdapter(self, manager):
+                def __init__(self, manager):
                     self.manager = manager
                 def get_frames(self):
                     while True:
@@ -741,6 +644,7 @@ class CalibrateLidarToCamera:
             self.move_robot_mode = MoveRobotMode.ARM_POSES
 
         self.is_capture_requested = False
+        self.waiting_for_settled_printed = False
         self.save_requested = False
         self.quit_requested = threading.Event()
 
@@ -775,9 +679,19 @@ class CalibrateLidarToCamera:
         self.frame_settled_detector = DetectFrameSettled()
 
     def get_latest_camera_frame(self):
-        for frame in self.camera_adapter.get_frames():
-            return frame
-        return None
+        latest = None
+        if hasattr(self.camera_adapter, "output_queue") and self.camera_adapter.output_queue is not None:
+            while self.camera_adapter.output_queue.has():
+                message = self.camera_adapter.output_queue.tryGet()
+                if message is not None:
+                    from stretch4_body.subsystem.cameras.adapters.luxonis_camera_adapter import LuxonisCameraAdapter
+                    latest = LuxonisCameraAdapter.dai_message_to_image_frame(message)
+        
+        if latest is None:
+            for frame in self.camera_adapter.get_frames():
+                latest = frame
+                break
+        return latest
 
     def _process_camera_frame(self, frame) -> CameraDetection | None:
         """
@@ -1038,12 +952,13 @@ class CalibrateLidarToCamera:
                 )
                 self.keyframe_recorder.capture_pose()
             self.is_capture_requested = True
+            self.waiting_for_settled_printed = False
 
         def request_save():
             self.save_requested = True
 
         is_paused = threading.Event()
-        if not self.skip_user_prompt:
+        if not self.skip_user_prompt and not self.is_replaying:
             is_paused.set()
         def gamepad_poller():
             def trigger_pause(wait_for_x):
@@ -1086,7 +1001,7 @@ class CalibrateLidarToCamera:
                                 4, callback=request_save
                             )
 
-                if self.robot.power_periph.status["runstop_event"]:
+                if not self.is_replaying and self.robot.power_periph.status["runstop_event"]:
                     rr.log(
                         "Logs/error",
                         rr.TextLog("Runstop event triggered, pausing automatic movement.", level="ERROR"),
@@ -1096,12 +1011,50 @@ class CalibrateLidarToCamera:
 
                 time.sleep(1 / 30)
 
+        import select
+        def keyboard_poller():
+            print("\n" + "="*50)
+            print("Keyboard commands enabled:")
+            print("  Press 'x' + Enter to capture/unpause")
+            print("  Press 's' + Enter to save average and exit")
+            print("  Press 'q' + Enter to quit without saving")
+            print("="*50 + "\n")
+            
+            while not self.quit_requested.is_set():
+                try:
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if rlist:
+                        line = sys.stdin.readline().strip()
+                        if not line:
+                            continue
+                        for char in line:
+                            if char.lower() == 'x':
+                                if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
+                                    request_capture()
+                                else:
+                                    if is_paused.is_set():
+                                        rr.log("Logs/action", rr.TextLog("Keyboard 'x': Unpaused. Automatic movement will start!", level="INFO"))
+                                        print("Unpaused via keyboard 'x'!")
+                                        is_paused.clear()
+                                        move_to_next_pose()
+                                    else:
+                                        request_capture()
+                            elif char.lower() == 's':
+                                print("Save requested via keyboard 's'!")
+                                request_save()
+                            elif char.lower() == 'q':
+                                print("Quit requested via keyboard 'q'!")
+                                self.quit_requested.set()
+                except Exception as e:
+                    time.sleep(0.1)
+
         threading.Thread(target=gamepad_poller, daemon=True).start()
+        threading.Thread(target=keyboard_poller, daemon=True).start()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             rr.log(
                 "Logs/action",
-                rr.TextLog("Started manual gamepad mode. Use Gamepad to move. Tap X to capture. Hold X to save average.", level="INFO"),
+                rr.TextLog("Started manual gamepad mode. Use Gamepad or Keyboard to move/capture. Tap X (Gamepad) or type 'x' (Keyboard) to capture. Hold X (Gamepad) or type 's' (Keyboard) to save.", level="INFO"),
             )
         else:
             rr.log(
@@ -1131,6 +1084,8 @@ class CalibrateLidarToCamera:
         
         while True:
             time.sleep(0.01)
+            if self.quit_requested.is_set():
+                break
 
             if self.save_requested:
                 rr.log(
@@ -1156,7 +1111,7 @@ class CalibrateLidarToCamera:
             if cam_frame_tmp is not None:
                 latest_cam_frame = cam_frame_tmp
                 is_frame_settled = self.frame_settled_detector.check_stability_diff(
-                    latest_cam_frame.image, threshold=3
+                    latest_cam_frame.image, threshold=5
                 )
 
             lidar_frame_tmp = next(self.lidar_stream)
@@ -1166,6 +1121,55 @@ class CalibrateLidarToCamera:
             if latest_cam_frame is None or latest_lidar_frame is None:
                 print("lidar and camera frames are both None")
                 continue
+
+            if not self.is_replaying:
+                sync_attempts = 0
+                max_sync_attempts = 15
+                while (
+                    hasattr(latest_cam_frame, "timestamp_system")
+                    and hasattr(latest_lidar_frame, "timestamp_system")
+                    and abs(latest_cam_frame.timestamp_system - latest_lidar_frame.timestamp_system) > 0.15
+                    and sync_attempts < max_sync_attempts
+                ):
+                    sync_attempts += 1
+                    if latest_cam_frame.timestamp_system < latest_lidar_frame.timestamp_system:
+                        cam_frame_tmp = self.get_latest_camera_frame()
+                        if cam_frame_tmp is not None:
+                            latest_cam_frame = cam_frame_tmp
+                            is_frame_settled = self.frame_settled_detector.check_stability_diff(
+                                latest_cam_frame.image, threshold=5
+                            )
+                        else:
+                            break
+                    else:
+                        lidar_frame_tmp = next(self.lidar_stream)
+                        if lidar_frame_tmp is not None:
+                            latest_lidar_frame = lidar_frame_tmp
+                        else:
+                            break
+
+                if (
+                    hasattr(latest_cam_frame, "timestamp_system")
+                    and hasattr(latest_lidar_frame, "timestamp_system")
+                    and abs(latest_cam_frame.timestamp_system - latest_lidar_frame.timestamp_system) > 0.15
+                ):
+                    continue
+
+            if self.is_capture_requested:
+                if not self.waiting_for_settled_printed:
+                    print("Waiting for camera frame to settle...")
+                    rr.log(
+                        "Logs/action",
+                        rr.TextLog("Waiting for camera frame to settle...", level="INFO"),
+                    )
+                    self.waiting_for_settled_printed = True
+
+                if is_frame_settled:
+                    print("Frame settled!")
+                    rr.log(
+                        "Logs/action",
+                        rr.TextLog("Frame settled!", level="INFO"),
+                    )
 
             camera_detection = self._process_camera_frame(latest_cam_frame)
             display_img = (
@@ -1323,16 +1327,26 @@ class CalibrateLidarToCamera:
 
 
         print("Quitting...")
+        self.cleanup()
 
+    def cleanup(self):
+        print("Cleaning up CalibrateLidarToCamera...")
         self.quit_requested.set()
-        
-        try:
-            self.lidar_stream.close()
-        except Exception:
-            pass
-
-        self.camera_adapter.stop()
-        self.robot.stop()
+        if hasattr(self, 'lidar_stream') and self.lidar_stream is not None:
+            try:
+                self.lidar_stream.close()
+            except Exception:
+                pass
+        if hasattr(self, 'camera_adapter') and self.camera_adapter is not None:
+            try:
+                self.camera_adapter.stop()
+            except Exception:
+                pass
+        if hasattr(self, 'robot') and self.robot is not None:
+            try:
+                self.robot.stop()
+            except Exception:
+                pass
 
     def save(self):
         if len(self.captured_transforms) == 0:
@@ -1353,12 +1367,6 @@ class CalibrateLidarToCamera:
             ),
         )
 
-        from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
-        import yaml
-        import os
-        from pathlib import Path
-        import datetime
-        import shutil
 
         key = f"transform_{self.lidar_name}_lidar_to_{self.camera.name}"
         
@@ -1515,7 +1523,10 @@ def calibrate_extrinsics_camera_lidar():
         replay_from_folder=args.replay_from_folder,
         replay_last=args.replay_last
     )
-    manager.run(is_interactive=not args.not_interactive)
+    try:
+        manager.run(is_interactive=not args.not_interactive)
+    finally:
+        manager.cleanup()
 
 
 def REx_calibrate_extrinsics_lidars(interactive: bool):

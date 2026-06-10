@@ -156,6 +156,37 @@ class RobotMovementController:
         
         self.calibration.register_callback_save_calibration(save_calibration)
 
+        import select
+        import sys
+        def keyboard_poller():
+            print("\n" + "="*50)
+            print("Keyboard commands enabled:")
+            print("  Press 'x' + Enter to capture a frame and pose")
+            print("  Press 's' + Enter to save calibration and exit")
+            print("  Press 'q' + Enter to quit")
+            print("="*50 + "\n")
+            while not self._stop_event.is_set():
+                try:
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if rlist:
+                        line = sys.stdin.readline().strip()
+                        if not line:
+                            continue
+                        for char in line:
+                            if char.lower() == 'x':
+                                request_capture()
+                            elif char.lower() == 's':
+                                print("Keyboard 's': saving calibration...")
+                                save_calibration()
+                                self._stop_event.set()
+                            elif char.lower() == 'q':
+                                print("Keyboard 'q': quitting...")
+                                self._stop_event.set()
+                except Exception:
+                    time.sleep(0.1)
+
+        threading.Thread(target=keyboard_poller, daemon=True).start()
+
         while not self._stop_event.is_set():
             if (
                 self.gamepad_teleop is not None
@@ -211,6 +242,33 @@ class RobotMovementController:
                     f"Pausing automatic movement.", LogLevels.INFO
                 )
                 wait_for_x.set()
+
+        import select
+        import sys
+        def keyboard_poller():
+            print("\n" + "="*50)
+            print("Keyboard commands enabled:")
+            print("  Press 'x' + Enter to unpause/proceed to next pose")
+            print("  Press 'q' + Enter to quit")
+            print("="*50 + "\n")
+            while not self._stop_event.is_set():
+                try:
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if rlist:
+                        line = sys.stdin.readline().strip()
+                        if not line:
+                            continue
+                        for char in line:
+                            if char.lower() == 'x':
+                                if is_paused.is_set():
+                                    trigger_pause(is_paused)
+                            elif char.lower() == 'q':
+                                print("Keyboard 'q': quitting...")
+                                self._stop_event.set()
+                except Exception:
+                    time.sleep(0.1)
+
+        threading.Thread(target=keyboard_poller, daemon=True).start()
 
         # Play through all the keyframe_player poses:
         while not self._stop_event.is_set():
@@ -381,9 +439,16 @@ You can rerun the calibration on those images by using the --not_interactive fla
     except KeyboardInterrupt:
         print("\nProcess interrupted by user. Stopping robot.")
         raise
-
-    print("Finished moving the robot and calibrating.")
-    rgb_pipeline_controller.stop()
+    finally:
+        print("Stopping robot and camera pipeline...")
+        try:
+            robot_controller.stop()
+        except Exception as e:
+            print(f"Error stopping robot controller: {e}")
+        try:
+            rgb_pipeline_controller.stop()
+        except Exception as e:
+            print(f"Error stopping camera pipeline: {e}")
 
 
 class MoveRobotMode(Enum):
@@ -441,17 +506,9 @@ Robot poses will also be captured using `stretch_animate` and saved to disk.
 
 Calibration is finished!
                                      
-You can verify your calibration by doing the following:
+You can validate your calibration by doing the following:
 1. Exit this script
-2. Run `stretch_camera_show --detect_aruco_marker_size 0.027 --left_right_center --opencv` 
-3. Use a tape measure to measure the distance from the lens of each camera to 
-    the center ArUco marker using the current pose of the board.
-    Please be careful not to scratch the camera lenses!
-
-Expected values:
-Left Camera: 0.67 +- 9mm
-Right Camera: 0.60 +- 9mm
-Center Camera: 0.65 +- 3mm
+2. Run `REx_camera_calibrate --validate`
 
 
 Changing mode to gamepad mode. You may control the robot using the gamepad until you exit this script.
