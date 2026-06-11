@@ -66,7 +66,7 @@ class CalibrationValidator:
             camera_type=self.camera_type,
             recording_directory=None,
             show_image_in=None, # We'll handle rerun ourselves
-            is_rotate=True,
+            is_rotate=False,
             is_rectify=False,
             is_crop=False,
             ai_models_to_use=[],
@@ -297,7 +297,12 @@ Press CTRL+C in the terminal to go to the next pose or abort.
             known_dists = pose['known_distance_m'] # [left, center, right]
             cam_order = [RGBCameras.left().name, RGBCameras.center().name, RGBCameras.right().name]
 
-            self.process_frame(settled_frame)
+            # Gather and average multiple frames for robustness
+            print("Capturing frames for measurement...")
+            frame_gen = self.pipeline.get_frame_synced(is_run_pipeline=False)
+            for _ in range(5):
+                f = next(frame_gen)
+                self.process_frame(f)
             
             print(f"--- Results for Pose {idx+1} ---")
             for c_idx, cam_name in enumerate(cam_order):
