@@ -38,14 +38,14 @@ class GripperCameraLuxonis(SyncedCamera):
             stereo = self.pipeline.create(dai.node.StereoDepth)
             stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ROBOTICS)
             stereo.setDepthAlign(dai.CameraBoardSocket.CAM_C)
-            stereo.initialConfig.postProcessing.thresholdFilter.maxRange = self.right.stereo_max_range_mm
+            stereo.initialConfig.postProcessing.thresholdFilter.maxRange = int(self.right.stereo_max_range_mm)
             
             node_left.link(stereo.left)
             node_right.link(stereo.right)
 
             import datetime
             sync = self.pipeline.create(dai.node.Sync)
-            sync.setSyncThreshold(datetime.timedelta(milliseconds=self.right.sync_threshold_ms))
+            sync.setSyncThreshold(datetime.timedelta(milliseconds=int(self.right.sync_threshold_ms)))
 
             node_right.link(sync.inputs["right"])
             stereo.depth.link(sync.inputs["depth"])
