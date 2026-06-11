@@ -30,6 +30,8 @@ class RGBCameraConfig:
     limit_max: int | None = None
     exposure_time: int | None = None
     iso: int | None = None
+    sync_threshold_ms: float | None = None
+    stereo_max_range_mm: float | None = None
 
 class CameraDevice(Device):
     """Sets up a Stretch Body camera device to pull params from robot params."""
@@ -45,7 +47,7 @@ class CameraDevice(Device):
 
         config = RGBCameraConfig(**config_dict)
         config.distortion_model = DistortionModels[config_dict["distortion_model"].replace("DistortionModels.", "")] if config_dict["distortion_model"] is not None else None
-
+        
         return config
 
 class RGBCameras(Enum):
