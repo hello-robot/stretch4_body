@@ -30,8 +30,8 @@ class RGBCameraConfig:
     limit_max: int | None = None
     exposure_time: int | None = None
     iso: int | None = None
-    sync_threshold_ms: float =  15.0
-    stereo_max_range_mm: float = 10000.0
+    sync_threshold_ms: int = 15
+    stereo_max_range_mm: int = 10000
 
 class CameraDevice(Device):
     """Sets up a Stretch Body camera device to pull params from robot params."""
