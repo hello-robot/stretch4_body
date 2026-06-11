@@ -52,10 +52,9 @@ class SyncedCameraLuxonis(SyncedCamera):
             sync.inputs["right"].setBlocking(False)
             node_right.link(sync.inputs["right"])
 
+            # CENTER is NOT in sync to keep it at its own 10fps while left/right are at 30fps
             if center is not None:
-                sync.inputs["center"].setMaxSize(1)
-                sync.inputs["center"].setBlocking(False)
-                node_center.link(sync.inputs["center"])
+                self.center_output = node_center.createOutputQueue(maxSize=1, blocking=False)
 
             self.q_sync = sync.out.createOutputQueue(maxSize=buffer_size, blocking=False)
         else:
@@ -90,9 +89,8 @@ class SyncedCameraLuxonis(SyncedCamera):
 
                 center_frame = None
                 if self.center is not None:
-                    center_msg = msg_group["center"]
-                    if center_msg is not None:
-                        center_frame = LuxonisCameraAdapter.dai_message_to_image_frame(center_msg)
+                    # Get the LATEST center frame, but don't block
+                    center_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
 
                 yield SyncedImageFrame(timestamp=time.time(), left=left_frame, right=right_frame, center=center_frame)
         else:
