@@ -23,6 +23,9 @@ from stretch4_body.subsystem.cameras.cv_utils import (
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.models.image_write_to_disk import RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
+from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
+
+
 
 
 class RecordRgbShowImageIn(Enum):
@@ -83,6 +86,8 @@ class RGBPipelineController:
             target=saver_thread, args=(self.stop_event, self.save_rgb_queue), daemon=True
         )
 
+        self.rerun_logger: RerunAsyncLogger | None = None
+
         self.save_directory = None
         if self.recording_directory:
              if not self.camera_type.is_synced_camera_type():
@@ -109,10 +114,10 @@ class RGBPipelineController:
         return self._camera
 
     def _show_rererun(self, color_image: np.ndarray):
-        rr.log(
-            f"{self.camera_type.name.upper()} Camera",
-            rr.Image(color_image, color_model="BGR").compress(),
-        )
+        if self.rerun_logger is None:
+             self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+        
+        self.rerun_logger.log_image(f"{self.camera_type.name.upper()} Camera", color_image)
 
     def _show_cvimshow(self, color_image: np.ndarray):
         cv2.namedWindow(self.camera_type.name, cv2.WINDOW_NORMAL)
@@ -479,6 +484,8 @@ class RGBPipelineController:
             self._camera.stop()
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
+        if self.rerun_logger is not None:
+            self.rerun_logger.stop()
 
 class RGBPipelineControllerROS(RGBPipelineController):
     """

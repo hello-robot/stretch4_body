@@ -15,6 +15,14 @@ from stretch4_body.subsystem.cameras.emulated_rgbd import (
     RGBDFrame,
     EmulatedRGBDStreamer,
 )
+from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
+
+rerun_loggers: dict[str, RerunAsyncLogger] = {}
+
+def get_rerun_logger(c_name: str) -> RerunAsyncLogger:
+    if c_name not in rerun_loggers:
+        rerun_loggers[c_name] = RerunAsyncLogger(camera_name=c_name)
+    return rerun_loggers[c_name]
 
 
 def _parse_args():
@@ -56,19 +64,21 @@ def _parse_args():
 
 
 def render_rgbd(c_name: str, frame: RGBDFrame):
-    rr.log(f"Cameras/{c_name}_rotated", rr.Image(frame.image_frame.image, color_model="BGR").compress())
-    rr.log(f"Cameras/{c_name}/rgb_raw", rr.Image(frame.image_frame.image_raw, color_model="BGR").compress())
+    logger = get_rerun_logger(c_name)
+    
+    logger.log_image(f"Cameras/{c_name}_rotated", frame.image_frame.image)
+    logger.log_image(f"Cameras/{c_name}/rgb_raw", frame.image_frame.image_raw)
     
     if frame.depth_image is not None and frame.depth_image.shape[0] > 0:
-        rr.log(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
+        logger.log_any(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
         
     if len(frame.pointcloud) > 0:
-        rr.log(
+        logger.log_any(
             f"Pointclouds/camera_frame/{c_name}",
             rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
         )
     if len(frame.pointcloud_base) > 0:
-        rr.log(
+        logger.log_any(
             f"Pointclouds/base_frame/{c_name}",
             rr.Points3D(frame.pointcloud_base, colors=frame.pointcloud_colors, radii=[0.0025]),
         )
@@ -217,6 +227,8 @@ def main():
         print(f"Stopping due to error: {e=}")
         raise e
     finally:
+        for logger in rerun_loggers.values():
+            logger.stop()
         EmulatedRGBDStreamer.get_instance().stop()
 
 
