@@ -1048,13 +1048,15 @@ class CalibrateLidarToCamera:
                 except Exception as e:
                     time.sleep(0.1)
 
-        threading.Thread(target=gamepad_poller, daemon=True).start()
-        threading.Thread(target=keyboard_poller, daemon=True).start()
+        self.gamepad_thread = threading.Thread(target=gamepad_poller, daemon=True)
+        self.keyboard_thread = threading.Thread(target=keyboard_poller, daemon=True)
+        self.gamepad_thread.start()
+        self.keyboard_thread.start()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             rr.log(
                 "Logs/action",
-                rr.TextLog("Started manual gamepad mode. Use Gamepad or Keyboard to move/capture. Tap X (Gamepad) or type 'x' (Keyboard) to capture. Hold X (Gamepad) or type 's' (Keyboard) to save.", level="INFO"),
+                rr.TextLog("Started manual gamepad mode. Use Gamepad or Keyboard to move/capture. Tap X (Gamepad) or type 'x + enter' (Keyboard) to capture. Hold X (Gamepad) or type 's' (Keyboard) to save.", level="INFO"),
             )
         else:
             rr.log(
@@ -1330,23 +1332,54 @@ class CalibrateLidarToCamera:
         self.cleanup()
 
     def cleanup(self):
+        if hasattr(self, '_cleanup_done') and self._cleanup_done:
+            return
+        self._cleanup_done = True
         print("Cleaning up CalibrateLidarToCamera...")
+
         self.quit_requested.set()
+
+        # 1. Stop poller threads
+        if hasattr(self, 'gamepad_thread'):
+            print("Stopping gamepad poller...")
+            self.gamepad_thread.join(timeout=0.2)
+        if hasattr(self, 'keyboard_thread'):
+            print("Stopping keyboard poller...")
+            self.keyboard_thread.join(timeout=0.2)
+
+        # 2. Stop gamepad teleop subsystem (and its secondary robot client)
+        if hasattr(self, 'gamepad_teleop') and self.gamepad_teleop is not None:
+            try:
+                print("Stopping GamePadTeleop...")
+                self.gamepad_teleop.stop()
+            except Exception as e:
+                print(f"Warning: error stopping gamepad_teleop: {e}")
+
+        # 3. Close lidar stream
         if hasattr(self, 'lidar_stream') and self.lidar_stream is not None:
             try:
+                print(f"Closing lidar stream for {self.lidar_name}...")
                 self.lidar_stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: error closing lidar_stream: {e}")
+
+        # 4. Stop camera adapter
         if hasattr(self, 'camera_adapter') and self.camera_adapter is not None:
             try:
+                print(f"Stopping camera adapter for {self.camera.name}...")
                 self.camera_adapter.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: error stopping camera_adapter: {e}")
+
+        # 5. Stop primary robot client
         if hasattr(self, 'robot') and self.robot is not None:
             try:
+                print("Stopping RobotClient...")
                 self.robot.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: error stopping robot: {e}")
+        
+        print("Cleanup complete.")
 
     def save(self):
         if len(self.captured_transforms) == 0:
