@@ -5,6 +5,7 @@ Adapter for connecting to and controlling the Luxonis head cameras using the Dep
 import time
 import threading
 import logging
+import collections
 import depthai as dai
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
@@ -39,6 +40,7 @@ class SyncedCameraLuxonis(SyncedCamera):
         
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
+        self.center_buffer = collections.deque(maxlen=10)
 
         if self.do_sync_frames:
             sync = self.pipeline.create(dai.node.Sync)
@@ -89,8 +91,37 @@ class SyncedCameraLuxonis(SyncedCamera):
 
                 center_frame = None
                 if self.center is not None:
-                    # Get the LATEST center frame, but don't block
-                    center_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
+                    # Drain center queue into buffer
+                    while True:
+                        c_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
+                        if c_frame is None:
+                            break
+                        self.center_buffer.append(c_frame)
+                    
+                    # Find best match in center_buffer to keep center synced with left/right frames
+                    if self.center_buffer:
+                        lr_timestamp = left_msg.getTimestamp().total_seconds()
+                        
+                        # Find the frame with the closest timestamp
+                        # We also discard frames that are significantly older than the current LR frame
+                        best_diff = float('inf')
+                        best_idx = -1
+                        for i, c_f in enumerate(self.center_buffer):
+                            diff = abs(c_f.timestamp - lr_timestamp)
+                            if diff < best_diff:
+                                best_diff = diff
+                                best_idx = i
+                        
+                        # If a match is found within a reasonable window
+                        if best_idx != -1 and best_diff < 1/self.center.fps:
+                            center_frame = self.center_buffer[best_idx]
+                            # Discard the used frame and all older ones
+                            for _ in range(best_idx + 1):
+                                self.center_buffer.popleft()
+                        elif best_idx != -1 and self.center_buffer[0].timestamp < lr_timestamp - 0.1:
+                            # Discard frames that are way too old
+                            while self.center_buffer and self.center_buffer[0].timestamp < lr_timestamp - 0.1:
+                                self.center_buffer.popleft()
 
                 yield SyncedImageFrame(timestamp=time.time(), left=left_frame, right=right_frame, center=center_frame)
         else:
