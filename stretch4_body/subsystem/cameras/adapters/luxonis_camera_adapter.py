@@ -2,6 +2,7 @@
 Adapter for connecting and controlling a single Luxonis camera.
 """
 import time
+import threading
 
 import numpy as np
 import depthai as dai
@@ -239,11 +240,16 @@ class LuxonisCameraAdapter(CameraAdapter):
 
     @staticmethod
     def get_frame_from_output_queue(
-        output_queue: dai.MessageQueue
+        output_queue: dai.MessageQueue,
+        stop_event: threading.Event|None = None
     ):
         while True:
+            if stop_event is not None and stop_event.is_set():
+                raise RuntimeError("Stop requested while waiting for Luxonis camera frame")
             try:
-                message: dai.ImgFrame = output_queue.get()
+                message: dai.ImgFrame = output_queue.get(timeout=0.1)
+                if message is None:
+                    continue
                 yield LuxonisCameraAdapter.dai_message_to_image_frame(message)
             except Exception as e:
                 logging.error(f"Error getting frame from output queue: {e}")
@@ -288,7 +294,8 @@ class LuxonisCameraAdapter(CameraAdapter):
             raise RuntimeError("Camera is not running.")
             
         return LuxonisCameraAdapter.get_frame_from_output_queue(
-            self.output_queue
+            self.output_queue,
+            stop_event=self.stop_event
         )
     
     def get_next(self):

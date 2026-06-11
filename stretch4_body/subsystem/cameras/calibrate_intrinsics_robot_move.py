@@ -100,6 +100,10 @@ class RobotMovementController:
         """Safely shuts down the background loops and robot base."""
         print("Stopping Robot Movement Controller")
         self._stop_event.set()
+        if self.movement_thread.is_alive():
+            self.movement_thread.join(timeout=10)
+        if self.teleop_thread.is_alive():
+            self.teleop_thread.join(timeout=10)
         self.robot.stop()
 
     def _teleop_loop(self):
@@ -268,7 +272,8 @@ class RobotMovementController:
                 except Exception:
                     time.sleep(0.1)
 
-        threading.Thread(target=keyboard_poller, daemon=True).start()
+        if not self.skip_user_prompt:
+            threading.Thread(target=keyboard_poller, daemon=True).start()
 
         # Play through all the keyframe_player poses:
         while not self._stop_event.is_set():

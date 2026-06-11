@@ -2,6 +2,7 @@ import time
 import cv2
 import numpy as np
 
+import threading
 from stretch4_body.core.hello_utils import LoopTimer
 from stretch4_body.subsystem.cameras.cv_utils import get_recify_maps
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
@@ -15,18 +16,19 @@ class SyncedCamera(CameraControlsMixin):
     A synced camera module with h-stack'd left and right camera frames.
     The Left camera is assumed to be the main device, and will be used for video capturing.
     """
-    def __init__(self, left: RGBCameraConfig, right:RGBCameraConfig, center:RGBCameraConfig|None, do_sync_frames:bool) -> None:
+    def __init__(self, left: RGBCameraConfig, right:RGBCameraConfig, center:RGBCameraConfig|None, do_sync_frames:bool, stop_event: threading.Event | None = None) -> None:
 
         self.left = left
         self.right = right
         self.center = center
 
         self.do_sync_frames = do_sync_frames
+        self.stop_event = stop_event
 
         self.left_rectify_maps: RectifyMaps | None = None
         self.right_rectify_maps: RectifyMaps | None = None
 
-        self.left_camera = left.camera_type.start()
+        self.left_camera = left.camera_type.start(stop_event=self.stop_event)
     
     def stop(self):
         self.left_camera.stop()

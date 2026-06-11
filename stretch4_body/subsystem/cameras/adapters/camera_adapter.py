@@ -1,5 +1,6 @@
 from collections.abc import Generator
 
+import threading
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
 from stretch4_body.subsystem.cameras.adapters.camera_controls_mixin import CameraControlsMixin
@@ -7,8 +8,9 @@ from stretch4_body.subsystem.cameras.adapters.camera_controls_mixin import Camer
 
 class CameraAdapter(CameraControlsMixin):
 
-    def __init__(self, camera_config: RGBCameraConfig):
+    def __init__(self, camera_config: RGBCameraConfig, stop_event: threading.Event | None = None):
         self.camera_config = camera_config
+        self.stop_event = stop_event
 
         self.open()
 
