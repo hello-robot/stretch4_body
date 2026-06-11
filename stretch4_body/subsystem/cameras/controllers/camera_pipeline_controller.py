@@ -117,7 +117,7 @@ class RGBPipelineController:
         if self.rerun_logger is None:
              self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
         
-        self.rerun_logger.log_image(f"{self.camera_type.name.upper()} Camera", color_image)
+        self.rerun_logger.log_image(f"Cameras/{self.camera_type.name}/image", color_image)
 
     def _show_cvimshow(self, color_image: np.ndarray):
         cv2.namedWindow(self.camera_type.name, cv2.WINDOW_NORMAL)
@@ -229,21 +229,38 @@ class RGBPipelineController:
     def _start_rerun(self):
         rr.init(self.camera_type.name, spawn=False)
         rr.spawn(memory_limit="4GB")
-
+        
         import rerun.blueprint as rrb
+        from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
-        if self.camera_type.is_synced_camera_type():
+        if self.camera_type == RGBCameras.gripper_rgbd:
+             blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial2DView(name="Gripper Depth", origin="Cameras/gripper_rgbd/depth"),
+                    rrb.Spatial2DView(name="Gripper Right", origin="Cameras/gripper_right/image"),
+                ),
+                collapse_panels=True
+            )
+        elif self.camera_type == RGBCameras.head_left_right:
             blueprint = rrb.Blueprint(
                 rrb.Horizontal(
-                    rrb.Spatial2DView(name="Left Camera", origin="HEAD_LEFT Camera"),
-                    rrb.Spatial2DView(name="Center Camera", origin="HEAD_CENTER Camera"),
-                    rrb.Spatial2DView(name="Right Camera", origin="HEAD_RIGHT Camera"),
+                    rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
+                    rrb.Spatial2DView(name="Head Right", origin="Cameras/head_right/image"),
+                ),
+                collapse_panels=True
+            )
+        elif self.camera_type == RGBCameras.head_left_right_center:
+            blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
+                    rrb.Spatial2DView(name="Head Center", origin="Cameras/head_center/image"),
+                    rrb.Spatial2DView(name="Head Right", origin="Cameras/head_right/image"),
                 ),
                 collapse_panels=True
             )
         else:
             blueprint = rrb.Blueprint(
-                rrb.Spatial2DView(name=f"{self.camera_type.name} Camera", origin=f"{self.camera_type.name.upper()} Camera"),
+                rrb.Spatial2DView(name=self.camera_type.name.upper(), origin=f"Cameras/{self.camera_type.name}/image"),
                 collapse_panels=True
             )
         rr.send_blueprint(blueprint)
@@ -316,19 +333,20 @@ class RGBPipelineController:
                 center_pipeline_controller.show_image(frame.center.image)
 
             if frame.depth is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
-                rr.log(
-                    f"{self.camera_type.name}/depth",
+                if self.rerun_logger is None:
+                    self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                self.rerun_logger.log_any(
+                    f"Cameras/{self.camera_type.name}/depth",
                     rr.DepthImage(frame.depth),
                 )
 
             if frame.pointcloud is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
-                rr.log(
-                    f"{self.camera_type.name}/pcl",
-                    rr.Transform3D(
-                        rotation=rr.RotationAxisAngle(axis=[0, 0, 1], angle=rr.Angle(rad=np.pi)),
-                    )
+                if self.rerun_logger is None:
+                    self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                self.rerun_logger.log_any(
+                    f"Pointclouds/{self.camera_type.name}",
+                    rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
                 )
-                rr.log(f"{self.camera_type.name}/pcl", rr.Points3D(frame.pointcloud, colors=frame.pointcloud_color, radii=[0.002]))
 
             yield frame
 
