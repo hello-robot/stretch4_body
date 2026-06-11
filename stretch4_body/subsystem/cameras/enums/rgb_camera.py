@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -105,7 +106,7 @@ class RGBCameras(Enum):
     def config(self):
         return CameraDevice().get_config(self)
 
-    def start(self) -> "CameraAdapter":
+    def start(self, stop_event: threading.Event | None = None) -> "CameraAdapter":
         """Use `start()` to capture from one camera device. Use `start_synced()` for synced or dual camera setups."""
         if self in [
             RGBCameras.head_left,
@@ -115,7 +116,7 @@ class RGBCameras(Enum):
             RGBCameras.gripper_right,
         ]:
             from stretch4_body.subsystem.cameras.adapters.luxonis_camera_adapter import LuxonisCameraAdapter # import here to avoid circular import
-            return LuxonisCameraAdapter(self.config)
+            return LuxonisCameraAdapter(self.config, stop_event=stop_event)
 
         # Handles for other camera types, no need to update or edit these:
         if "synced_left" in self.name or "synced_right" in self.name:
@@ -128,7 +129,7 @@ class RGBCameras(Enum):
 
         raise NotImplementedError(f"{self}'s start() method is not implemented.")
 
-    def start_synced(self) -> "SyncedCamera":
+    def start_synced(self, stop_event: "threading.Event | None" = None) -> "SyncedCamera":
         """Use `start_synced()` to start sync'd frame grabbing."""
         from stretch4_body.subsystem.cameras.adapters.luxonis_gripper_camera_adapter import (
             GripperCameraLuxonis # import here to avoid circular import
@@ -143,6 +144,7 @@ class RGBCameras(Enum):
                 RGBCameras.head_right.config,
                 center=None,
                 do_sync_frames=True,
+                stop_event=stop_event,
             )
 
         if self == RGBCameras.head_left_right_center:
@@ -151,6 +153,7 @@ class RGBCameras(Enum):
                 RGBCameras.head_right.config,
                 center=RGBCameras.head_center.config,
                 do_sync_frames=True,
+                stop_event=stop_event,
             )
         
         if self == RGBCameras.gripper_rgbd:

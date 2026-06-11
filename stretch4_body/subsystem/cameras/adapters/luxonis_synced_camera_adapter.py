@@ -3,6 +3,7 @@ Adapter for connecting to and controlling the Luxonis head cameras using the Dep
 """
 
 import time
+import threading
 import logging
 import depthai as dai
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
@@ -15,8 +16,9 @@ from stretch4_body.subsystem.cameras.models.image_frame import SyncedImageFrame
 class SyncedCameraLuxonis(SyncedCamera):
     """Starts a stream with the left and right cameras synced, and an option to use the center camera as well."""
 
-    def __init__(self, left: RGBCameraConfig, right:RGBCameraConfig, center:RGBCameraConfig|None, do_sync_frames:bool):
+    def __init__(self, left: RGBCameraConfig, right:RGBCameraConfig, center:RGBCameraConfig|None, do_sync_frames:bool, stop_event: threading.Event = None):
         self.do_sync_frames = do_sync_frames
+        self.stop_event = stop_event
 
         self.left = left
         self.right = right
@@ -56,9 +58,11 @@ class SyncedCameraLuxonis(SyncedCamera):
             raise RuntimeError("Camera is not running.")
 
         while True:
+            if self.stop_event is not None and self.stop_event.is_set():
+                return
 
-            left_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.left_output))
-            right_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.right_output))
+            left_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.left_output, stop_event=self.stop_event))
+            right_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.right_output, stop_event=self.stop_event))
 
             center_frame = None
             if self.center is not None:

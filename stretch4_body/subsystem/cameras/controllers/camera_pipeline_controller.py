@@ -96,9 +96,9 @@ class RGBPipelineController:
 
     def open_camera(self):
         if self.camera_type.is_synced_camera_type():
-            self._camera = self.camera_type.start_synced()
+            self._camera = self.camera_type.start_synced(stop_event=self.stop_event)
         else:
-            self._camera = self.camera_type.start()
+            self._camera = self.camera_type.start(stop_event=self.stop_event)
 
     @property
     def camera(self):

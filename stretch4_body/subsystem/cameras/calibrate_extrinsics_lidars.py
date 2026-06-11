@@ -1048,13 +1048,15 @@ class CalibrateLidarToCamera:
                 except Exception as e:
                     time.sleep(0.1)
 
-        threading.Thread(target=gamepad_poller, daemon=True).start()
-        threading.Thread(target=keyboard_poller, daemon=True).start()
+        self.gamepad_thread = threading.Thread(target=gamepad_poller, daemon=True)
+        self.keyboard_thread = threading.Thread(target=keyboard_poller, daemon=True)
+        self.gamepad_thread.start()
+        self.keyboard_thread.start()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             rr.log(
                 "Logs/action",
-                rr.TextLog("Started manual gamepad mode. Use Gamepad or Keyboard to move/capture. Tap X (Gamepad) or type 'x' (Keyboard) to capture. Hold X (Gamepad) or type 's' (Keyboard) to save.", level="INFO"),
+                rr.TextLog("Started manual gamepad mode. Use Gamepad or Keyboard to move/capture. Tap X (Gamepad) or type 'x + enter' (Keyboard) to capture. Hold X (Gamepad) or type 's' (Keyboard) to save.", level="INFO"),
             )
         else:
             rr.log(
@@ -1330,23 +1332,54 @@ class CalibrateLidarToCamera:
         self.cleanup()
 
     def cleanup(self):
+        if hasattr(self, '_cleanup_done') and self._cleanup_done:
+            return
+        self._cleanup_done = True
         print("Cleaning up CalibrateLidarToCamera...")
+
         self.quit_requested.set()
+
+        # 1. Stop poller threads
+        if hasattr(self, 'gamepad_thread'):
+            print("Stopping gamepad poller...")
+            self.gamepad_thread.join(timeout=0.2)
+        if hasattr(self, 'keyboard_thread'):
+            print("Stopping keyboard poller...")
+            self.keyboard_thread.join(timeout=0.2)
+
+        # 2. Stop gamepad teleop subsystem (and its secondary robot client)
+        if hasattr(self, 'gamepad_teleop') and self.gamepad_teleop is not None:
+            try:
+                print("Stopping GamePadTeleop...")
+                self.gamepad_teleop.stop()
+            except Exception as e:
+                print(f"Warning: error stopping gamepad_teleop: {e}")
+
+        # 3. Close lidar stream
         if hasattr(self, 'lidar_stream') and self.lidar_stream is not None:
             try:
+                print(f"Closing lidar stream for {self.lidar_name}...")
                 self.lidar_stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: error closing lidar_stream: {e}")
+
+        # 4. Stop camera adapter
         if hasattr(self, 'camera_adapter') and self.camera_adapter is not None:
             try:
+                print(f"Stopping camera adapter for {self.camera.name}...")
                 self.camera_adapter.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: error stopping camera_adapter: {e}")
+
+        # 5. Stop primary robot client
         if hasattr(self, 'robot') and self.robot is not None:
             try:
+                print("Stopping RobotClient...")
                 self.robot.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: error stopping robot: {e}")
+        
+        print("Cleanup complete.")
 
     def save(self):
         if len(self.captured_transforms) == 0:
@@ -1415,7 +1448,21 @@ class CalibrateLidarToCamera:
             )
 
 
-def calibrate_extrinsics_camera_lidar():
+def calibrate_extrinsics_camera_lidar(
+    camera: str | None = None,
+    lidar: str | None = None,
+    use_ros_for_lidars: bool | None = None,
+    charuco_board_name: str | None = None,
+    expected_width: float | None = None,
+    expected_height: float | None = None,
+    tolerance: float | None = None,
+    gamepad: bool | None = None,
+    calib_file: str | None = None,
+    skip_user_prompt: bool | None = None,
+    not_interactive: bool | None = None,
+    replay_from_folder: str | None = None,
+    replay_last: bool | None = None,
+):
     parser = argparse.ArgumentParser(
         "Interactive Extrinsics calibration using Gamepad."
     )
@@ -1510,40 +1557,30 @@ def calibrate_extrinsics_camera_lidar():
     args, _ = parser.parse_known_args()
 
     manager = CalibrateLidarToCamera(
-        camera=args.camera,
-        lidar=args.lidar,
-        use_ros_for_lidars=args.use_ros_for_lidars,
-        charuco_board_name=args.charuco_board_name,
-        expected_width=args.expected_width,
-        expected_height=args.expected_height,
-        tolerance=args.tolerance,
-        use_gamepad=args.gamepad,
-        calib_file=args.calib_file,
-        skip_user_prompt=args.skip_user_prompt,
-        replay_from_folder=args.replay_from_folder,
-        replay_last=args.replay_last
+        camera=args.camera if camera is None else camera,
+        lidar=args.lidar if lidar is None else lidar,
+        use_ros_for_lidars=args.use_ros_for_lidars if use_ros_for_lidars is None else use_ros_for_lidars,
+        charuco_board_name=args.charuco_board_name if charuco_board_name is None else charuco_board_name,
+        expected_width=args.expected_width if expected_width is None else expected_width,
+        expected_height=args.expected_height if expected_height is None else expected_height,
+        tolerance=args.tolerance if tolerance is None else tolerance,
+        use_gamepad=args.gamepad if gamepad is None else gamepad,
+        calib_file=args.calib_file if calib_file is None else calib_file,
+        skip_user_prompt=args.skip_user_prompt if skip_user_prompt is None else skip_user_prompt,
+        replay_from_folder=args.replay_from_folder if replay_from_folder is None else replay_from_folder,
+        replay_last=args.replay_last if replay_last is None else replay_last
     )
     try:
-        manager.run(is_interactive=not args.not_interactive)
+        manager.run(is_interactive=not (args.not_interactive if not_interactive is None else not_interactive))
     finally:
         manager.cleanup()
 
 
 def REx_calibrate_extrinsics_lidars(interactive: bool):
-    import sys
-
-    if not interactive:
-        if "--not_interactive" not in sys.argv:
-            sys.argv.append("--not_interactive")
-        if "--skip_user_prompt" not in sys.argv:
-            sys.argv.append("--skip_user_prompt")
-    else:
-        if "--not_interactive" in sys.argv:
-            sys.argv.remove("--not_interactive")
-        if "--skip_user_prompt" in sys.argv:
-            sys.argv.remove("--skip_user_prompt")
-
-    calibrate_extrinsics_camera_lidar()
+    calibrate_extrinsics_camera_lidar(
+        not_interactive=not interactive,
+        skip_user_prompt=not interactive
+    )
 
 
 if __name__ == "__main__":
