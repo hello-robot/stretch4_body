@@ -129,7 +129,7 @@ class RGBCameras(Enum):
 
         raise NotImplementedError(f"{self}'s start() method is not implemented.")
 
-    def start_synced(self, stop_event: "threading.Event | None" = None) -> "SyncedCamera":
+    def start_synced(self, stop_event: threading.Event | None = None, enable_pointcloud: bool = False) -> "SyncedCamera":
         """Use `start_synced()` to start sync'd frame grabbing."""
         from stretch4_body.subsystem.cameras.adapters.luxonis_gripper_camera_adapter import (
             GripperCameraLuxonis # import here to avoid circular import
@@ -160,6 +160,7 @@ class RGBCameras(Enum):
             return GripperCameraLuxonis(
                 RGBCameras.gripper_left.config,
                 RGBCameras.gripper_right.config,
+                enable_pointcloud=enable_pointcloud,
             )
 
         raise NotImplementedError(f"{self}'s start_synced() method is not implemented.")

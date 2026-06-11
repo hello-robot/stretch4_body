@@ -11,6 +11,7 @@ from stretch4_body.subsystem.cameras.emulated_rgbd import (
     stream_center_rgbd,
     stream_left_right_rgbd,
     stream_left_right_center_rgbd,
+    stream_gripper_rgbd,
     RGBDFrame,
     EmulatedRGBDStreamer,
 )
@@ -27,6 +28,7 @@ def _parse_args():
     parser.add_argument("-c", "--center", action="store_true", help="Display RGBD stream from center camera")
     parser.add_argument("-lr", "--left_right", action="store_true", help="Display RGBD streams from left and right cameras")
     parser.add_argument("-lrc", "--left_right_center", action="store_true", help="Display RGBD streams from all cameras")
+    parser.add_argument("-g", "--gripper", action="store_true", help="Display RGBD stream from gripper camera")
 
     # Lidar selection flags
     parser.add_argument("--lidar_left", action="store_true", help="Use left lidar")
@@ -83,11 +85,12 @@ def main():
     use_center = args.center
     use_left_right = args.left_right
     use_left_right_center = args.left_right_center
+    use_gripper = args.gripper
 
     use_ros_for_cameras = args.use_ros_for_cameras
     use_ros_for_lidars = args.use_ros_for_lidars
 
-    if not (use_left or use_right or use_center or use_left_right or use_left_right_center):
+    if not (use_left or use_right or use_center or use_left_right or use_left_right_center or use_gripper):
         use_left_right = True
 
     # Resolve lidar flags (both by default)
@@ -145,13 +148,15 @@ def main():
             camera_name = "center"
         elif use_right:
             camera_name = "right"
+        elif use_gripper:
+            camera_name = "gripper"
         blueprint = rrb.Blueprint(
             rrb.Horizontal(
                 rrb.Vertical(
                 rrb.Spatial2DView(name="Camera Rotated", origin=f"Cameras/{camera_name}_rotated"),
                 rrb.Spatial2DView(name="Depth Camera", origin=f"Cameras/{camera_name}"),
                 ),
-                rrb.Spatial3DView(name="Base Frame", origin="/", contents=["+ Pointclouds/base_frame/**"]),
+                rrb.Spatial3DView(name="Base Frame", origin="/", contents=["+ Pointclouds/base_frame/**", "+ Pointclouds/camera_frame/**"]),
             column_shares=[1,5]
             ),
             collapse_panels=True
@@ -198,6 +203,11 @@ def main():
                 # when logging is disabled, you should be able to get full 10hz rgbd
                 # but with logging, this may drop to 3hz-5hz
                 render_rgbd("center", frame)
+                print_loop_timer()
+
+        elif use_gripper:
+            for frame in stream_gripper_rgbd(use_ros_for_cameras=use_ros_for_cameras):
+                render_rgbd("gripper", frame)
                 print_loop_timer()
 
     except KeyboardInterrupt:

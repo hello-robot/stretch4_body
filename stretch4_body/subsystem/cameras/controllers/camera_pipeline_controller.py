@@ -45,7 +45,8 @@ class RGBPipelineController:
         is_crop: bool,
         ai_models_to_use: list[AIModelWrapper],
         detect_aruco_marker_size: float|None,
-        is_open_camera: bool = True
+        is_open_camera: bool = True,
+        enable_pointcloud: bool = False
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
@@ -59,6 +60,7 @@ class RGBPipelineController:
         self.detect_aruco_marker_size = detect_aruco_marker_size
         self.detect_aruco_dictionaries_to_detect = ArucoDictionary.all_1000()
         self.is_rotate = is_rotate
+        self.enable_pointcloud = enable_pointcloud
 
         self.ai_models: list[AIModelWrapper] = []
         self.rectify_maps: "RectifyMaps | None" = None
@@ -96,7 +98,7 @@ class RGBPipelineController:
 
     def open_camera(self):
         if self.camera_type.is_synced_camera_type():
-            self._camera = self.camera_type.start_synced(stop_event=self.stop_event)
+            self._camera = self.camera_type.start_synced(stop_event=self.stop_event,enable_pointcloud=self.enable_pointcloud)
         else:
             self._camera = self.camera_type.start(stop_event=self.stop_event)
 
@@ -293,13 +295,17 @@ class RGBPipelineController:
                 break
 
             if is_run_pipeline and frame is not None:
-                left_pipeline_controller.run_pipeline(frame.left)
-                right_pipeline_controller.run_pipeline(frame.right)
+                if frame.left is not None and frame.left.image is not None and frame.left.image.shape[:2] != (1, 1):
+                    left_pipeline_controller.run_pipeline(frame.left)
+                if frame.right is not None and frame.right.image is not None and frame.right.image.shape[:2] != (1, 1):
+                    right_pipeline_controller.run_pipeline(frame.right)
                 if frame.center is not None:
                     center_pipeline_controller.run_pipeline(frame.center)
 
-            left_pipeline_controller.show_image(frame.left.image)
-            right_pipeline_controller.show_image(frame.right.image)
+            if frame.left is not None and frame.left.image is not None and frame.left.image.shape[:2] != (1, 1):
+                left_pipeline_controller.show_image(frame.left.image)
+            if frame.right is not None and frame.right.image is not None and frame.right.image.shape[:2] != (1, 1):
+                right_pipeline_controller.show_image(frame.right.image)
 
             if frame.center is not None:
                 center_pipeline_controller.show_image(frame.center.image)
@@ -372,7 +378,8 @@ class RGBPipelineController:
             is_crop=self.is_crop,
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
-            is_open_camera=is_open_camera
+            is_open_camera=is_open_camera,
+            enable_pointcloud=self.enable_pointcloud
         )
         return copy
 
@@ -478,7 +485,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -488,7 +495,8 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_crop=is_crop,
             ai_models_to_use=ai_models_to_use,
             detect_aruco_marker_size=detect_aruco_marker_size,
-            is_open_camera=False
+            is_open_camera=False,
+            enable_pointcloud=enable_pointcloud
         )
         
         try:
@@ -510,7 +518,8 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_crop=self.is_crop,
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
-            is_open_camera=is_open_camera
+            is_open_camera=is_open_camera,
+            enable_pointcloud=self.enable_pointcloud
         )
         return copy
 
