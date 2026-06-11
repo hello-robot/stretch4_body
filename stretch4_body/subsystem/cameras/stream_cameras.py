@@ -21,7 +21,7 @@ def _start_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_cr
 
     return rgb_pipeline_controller.get_frame(is_run_pipeline=is_run_pipeline)
 
-def _start_synced_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[SyncedImageFrame, None, None]:
+def _start_synced_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False) -> Generator[SyncedImageFrame, None, None]:
     cls = RGBPipelineControllerROS if use_ros_for_cameras else RGBPipelineController
     rgb_pipeline_controller = cls(
         camera_type=camera_type,
@@ -32,6 +32,7 @@ def _start_synced_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool
         is_crop=is_crop,
         ai_models_to_use=ai_models_to_use or [],
         detect_aruco_marker_size=detect_aruco_marker_size,
+        enable_pointcloud=enable_pointcloud,
     )
 
     return rgb_pipeline_controller.get_frame_synced(is_run_pipeline=is_run_pipeline)
@@ -57,9 +58,9 @@ def stream_left_right_center_camera(*, is_rotate:bool=True, is_rectify:bool=Fals
     """Stream the center, left and right head cameras"""
     return _start_synced_camera(camera_type=RGBCameras.head_left_right_center, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline)
 
-def stream_gripper_camera(*, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[SyncedImageFrame, None, None]:
+def stream_gripper_camera(*, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False) -> Generator[SyncedImageFrame, None, None]:
     """Stream the gripper RGBD camera"""
-    return _start_synced_camera(camera_type=RGBCameras.gripper_rgbd, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline)
+    return _start_synced_camera(camera_type=RGBCameras.gripper_rgbd, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, enable_pointcloud=enable_pointcloud)
 
 
 if __name__ == "__main__":

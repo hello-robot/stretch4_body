@@ -16,6 +16,7 @@ from stretch4_body.subsystem.cameras import (
     stream_center_camera,
     stream_left_right_camera,
     stream_left_right_center_camera,
+    stream_gripper_camera,
 )
 from stretch4_body.subsystem.cameras.models.image_frame import (
     ImageFrame,
@@ -515,3 +516,26 @@ def stream_left_right_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_ri
             yield ret
     finally:
         streamer.stop()
+
+
+def stream_gripper_rgbd(*, is_rotate=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+    for synced_frame in stream_gripper_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=True):
+        if synced_frame is None:
+            continue
+        image_frame = synced_frame.right
+        if image_frame is None:
+            continue
+        
+        pointcloud = synced_frame.pointcloud if synced_frame.pointcloud is not None else np.zeros((0, 3))
+        pointcloud_colors = synced_frame.pointcloud_color if synced_frame.pointcloud_color is not None else np.zeros((0, 3))
+        depth_image = synced_frame.depth if synced_frame.depth is not None else np.zeros((0, 0))
+        
+        yield RGBDFrame(
+            timestamp=synced_frame.timestamp,
+            image_frame=image_frame,
+            camera_type=RGBCameras.gripper_rgbd,
+            pointcloud=pointcloud,
+            pointcloud_base=np.zeros((0, 3)),
+            pointcloud_colors=pointcloud_colors,
+            depth_image=depth_image
+        )
