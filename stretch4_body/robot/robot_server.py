@@ -298,7 +298,7 @@ class RobotServer(RobotCore):
 The Stretch Body Server Control Loop is running.
 
 Use `stretch_body_server --help` for available options.
-Use `stretch_status_viz --fields robot.server robot.routines --print` to view the status of the robot.
+Use `stretch_status --fields robot.server robot.routines` to view the status of the robot.
 
 ==================================
 """)
