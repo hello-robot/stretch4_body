@@ -54,9 +54,9 @@ class GripperCameraLuxonis(SyncedCamera):
         else:
             stereo, rgbd = LuxonisCameraAdapter.create_rgbd_node(self.pipeline, node_left, node_right)
             
-            self.right_output = node_right.createOutputQueue(maxSize=1)
-            self.depth_output = stereo.depth.createOutputQueue(maxSize=1)
-            self.pointcloud_output = rgbd.pcl.createOutputQueue(maxSize=1)
+            self.right_output = node_right.createOutputQueue(maxSize=1, blocking=False)
+            self.depth_output = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
+            self.pointcloud_output = rgbd.pcl.createOutputQueue(maxSize=1, blocking=False)
 
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
