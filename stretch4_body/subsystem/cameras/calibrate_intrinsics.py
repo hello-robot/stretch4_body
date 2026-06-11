@@ -493,6 +493,9 @@ class CalibrateIntrinsics:
     def is_capture_request_pending(self):
         return self.capture_requested
 
+    def reset_stability(self):
+        self.frame_settled_detector.reset()
+
     def show_dropped_frame(self):
         self.visualizer.show_dropped_frame()
 
@@ -627,6 +630,9 @@ class CalibrateIntrinsicsThreeHeadCameras(CalibrateIntrinsics):
 
     def is_capture_request_pending(self):
         return any([c.is_capture_request_pending() for c in self.calibration_instances])
+
+    def reset_stability(self):
+        [c.reset_stability() for c in self.calibration_instances]
 
     def show_dropped_frame(self):
         [c.show_dropped_frame() for c in self.calibration_instances]

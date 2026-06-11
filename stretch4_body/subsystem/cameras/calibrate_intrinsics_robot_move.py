@@ -100,9 +100,9 @@ class RobotMovementController:
         """Safely shuts down the background loops and robot base."""
         print("Stopping Robot Movement Controller")
         self._stop_event.set()
-        if self.movement_thread.is_alive():
+        if self.movement_thread.is_alive() and self.movement_thread != threading.current_thread():
             self.movement_thread.join(timeout=10)
-        if self.teleop_thread.is_alive():
+        if self.teleop_thread.is_alive() and self.teleop_thread != threading.current_thread():
             self.teleop_thread.join(timeout=10)
         self.robot.stop()
 
@@ -115,10 +115,11 @@ class RobotMovementController:
             time.sleep(1 / 30)
 
     def _wait_camera_to_stabilize(self):
+        self.calibration.reset_stability()
         self.calibration.log_message(
             "Waiting for the camera to stabilize.", LogLevels.INFO
         )
-        while not self.calibration.has_frame_been_stable():
+        while not self.calibration.has_frame_been_stable() and not self._stop_event.is_set():
             time.sleep(0.1)
 
     def _movement_loop(self):
@@ -310,6 +311,8 @@ class RobotMovementController:
                 LogLevels.INFO,
             )
 
+            # Ensure the robot has finished its movement and has had a moment to physically settle
+            self.robot.wait_command(timeout=60)
             time.sleep(self.delay)
 
             self._wait_camera_to_stabilize()

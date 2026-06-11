@@ -10,7 +10,7 @@ class DetectFrameSettled:
     2. Laplacian Variance: Detects changes in sharpness or vibration.
     """
 
-    def __init__(self, required_stable_frames: int = 3):
+    def __init__(self, required_stable_frames: int = 5):
         self.required_stable_frames = required_stable_frames
         
         # Internal State Management
@@ -26,7 +26,7 @@ class DetectFrameSettled:
         self.prev_variance = None
         self.prev_gray_ema = None
 
-    def check_stability_diff(self, frame:np.ndarray|None, threshold=2.0, timeout_blocking: float | None = None):
+    def check_stability_diff(self, frame:np.ndarray|None, threshold=3.0, timeout_blocking: float | None = None):
         """
         Gates based on the Mean Absolute Difference (MAD).
         If timeout_blocking is not None, this call will block.
