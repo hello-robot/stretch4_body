@@ -204,7 +204,7 @@ class LuxonisCameraAdapter(CameraAdapter):
             pipeline=self.pipeline, camera_config=self.camera_config
         )
 
-        self.output_queue = node_output.createOutputQueue(maxSize=1)
+        self.output_queue = node_output.createOutputQueue(maxSize=1, blocking=False)
         self.input_queue = self.camera_node.inputControl.createInputQueue()
 
         try:
