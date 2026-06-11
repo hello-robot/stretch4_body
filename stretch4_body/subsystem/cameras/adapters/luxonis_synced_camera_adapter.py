@@ -43,18 +43,17 @@ class SyncedCameraLuxonis(SyncedCamera):
         if self.do_sync_frames:
             sync = self.pipeline.create(dai.node.Sync)
             buffer_size = left.buffer_size
-            sync.setNumFramesPool(buffer_size)
 
-            sync.inputs["left"].setQueueSize(1)
+            sync.inputs["left"].setMaxSize(1)
             sync.inputs["left"].setBlocking(False)
             node_left.link(sync.inputs["left"])
 
-            sync.inputs["right"].setQueueSize(1)
+            sync.inputs["right"].setMaxSize(1)
             sync.inputs["right"].setBlocking(False)
             node_right.link(sync.inputs["right"])
 
             if center is not None:
-                sync.inputs["center"].setQueueSize(1)
+                sync.inputs["center"].setMaxSize(1)
                 sync.inputs["center"].setBlocking(False)
                 node_center.link(sync.inputs["center"])
 
