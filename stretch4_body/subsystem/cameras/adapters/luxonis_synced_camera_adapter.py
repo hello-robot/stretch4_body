@@ -57,7 +57,7 @@ class SyncedCameraLuxonis(SyncedCamera):
                 sync.inputs["center"].setBlocking(False)
                 node_center.link(sync.inputs["center"])
 
-            self.q_sync = sync.out.createOutputQueue(maxSize=1, blocking=False)
+            self.q_sync = sync.out.createOutputQueue(maxSize=buffer_size, blocking=False)
         else:
             if center is not None:
                 self.center_output = node_center.createOutputQueue(maxSize=1, blocking=False)

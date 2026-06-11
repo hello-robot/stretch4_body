@@ -1363,7 +1363,7 @@ nominal_params={
                 "image_size": (1200, 1920),
                 "fps": 30,
                 "rotate_number_of_times": 1,
-                "buffer_size": 2,
+                "buffer_size": 1,
                 "is_compressed": False,
                 "is_lossless": False, # Only used if is_compressed is true
                 "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
@@ -1381,7 +1381,7 @@ nominal_params={
                 "image_size": (1200, 1920),
                 "fps": 30,
                 "rotate_number_of_times": -1,
-                "buffer_size": 2,
+                "buffer_size": 1,
                 "is_compressed": False,
                 "is_lossless": False, # Only used if is_compressed is true
                 "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
@@ -1400,7 +1400,7 @@ nominal_params={
                 "image_size": (3040, 4032),  # Almost full 12MP resolution, 24 pixels subtracted to be divisible by 16 for compression
                 "fps": 10,
                 "rotate_number_of_times": -1,
-                "buffer_size": 2,
+                "buffer_size": 1,
                 "is_compressed": False,
                 "is_lossless": False, # Only used if is_compressed is true
                 "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
@@ -1420,7 +1420,7 @@ nominal_params={
                 # "image_size": (800, 1280),
                 "fps": 30,
                 "rotate_number_of_times": 0,
-                "buffer_size": 2,
+                "buffer_size": 1,
                 "is_compressed": False,
                 "is_lossless": False, # Only used if is_compressed is true
                 "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
@@ -1428,7 +1428,9 @@ nominal_params={
                 "use_auto_exposure": True,
                 "limit_max": None, # Only used if use_auto_exposure is True
                 "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
+                "iso": None, # Only used if use_auto_exposure is False
+                "sync_threshold_ms": 15.0,
+                "stereo_max_range_mm": 10000.0
             }
         },
         'gripper_right': {
@@ -1447,7 +1449,9 @@ nominal_params={
                 "use_auto_exposure": True,
                 "limit_max": None, # Only used if use_auto_exposure is True
                 "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
+                "iso": None, # Only used if use_auto_exposure is False
+                "sync_threshold_ms": 15.0,
+                "stereo_max_range_mm": 10000.0
             }
         },
     },

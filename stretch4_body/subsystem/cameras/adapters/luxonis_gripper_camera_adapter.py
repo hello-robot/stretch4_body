@@ -38,25 +38,25 @@ class GripperCameraLuxonis(SyncedCamera):
             stereo = self.pipeline.create(dai.node.StereoDepth)
             stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ROBOTICS)
             stereo.setDepthAlign(dai.CameraBoardSocket.CAM_C)
-            stereo.initialConfig.postProcessing.thresholdFilter.maxRange = 10000 
+            stereo.initialConfig.postProcessing.thresholdFilter.maxRange = self.right.stereo_max_range_mm or 10000.0
             
             node_left.link(stereo.left)
             node_right.link(stereo.right)
 
             import datetime
             sync = self.pipeline.create(dai.node.Sync)
-            sync.setSyncThreshold(datetime.timedelta(milliseconds=15))
+            sync.setSyncThreshold(datetime.timedelta(milliseconds=self.right.sync_threshold_ms or 15))
 
             node_right.link(sync.inputs["right"])
             stereo.depth.link(sync.inputs["depth"])
 
-            self.q_sync = sync.out.createOutputQueue(maxSize=1, blocking=False)
+            self.q_sync = sync.out.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
         else:
             stereo, rgbd = LuxonisCameraAdapter.create_rgbd_node(self.pipeline, node_left, node_right)
             
-            self.right_output = node_right.createOutputQueue(maxSize=1, blocking=False)
-            self.depth_output = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
-            self.pointcloud_output = rgbd.pcl.createOutputQueue(maxSize=1, blocking=False)
+            self.right_output = node_right.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
+            self.depth_output = stereo.depth.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
+            self.pointcloud_output = rgbd.pcl.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
 
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
