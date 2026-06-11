@@ -35,11 +35,11 @@ class SyncedCameraLuxonis(SyncedCamera):
    
         if center is not None:
             self.center_camera_node, node_center = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=center)
-            self.center_output = node_center.createOutputQueue(maxSize=1)
+            self.center_output = node_center.createOutputQueue(maxSize=1, blocking=False)
             self.center_input_queue = self.center_camera_node.inputControl.createInputQueue()
         
-        self.left_output = node_left.createOutputQueue(maxSize=1)
-        self.right_output = node_right.createOutputQueue(maxSize=1)
+        self.left_output = node_left.createOutputQueue(maxSize=1, blocking=False)
+        self.right_output = node_right.createOutputQueue(maxSize=1, blocking=False)
 
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
