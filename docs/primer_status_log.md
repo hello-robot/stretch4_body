@@ -31,21 +31,21 @@ By default, Stretch Body determines its log directories relative to the `HELLO_F
 
 ---
 
-## Telemetry Visualization Tool: `stretch_status_viz`
+## Telemetry Visualization Tool: `stretch_status`
 
-The `stretch_status_viz` tool is a command-line interface to visualize, replay, pretty-print, and export robot telemetry data. It integrates with **Rerun** to plot active joints, motor diagnostics, power states, and safety sentinels dynamically.
+The `stretch_status` tool is a command-line interface to visualize, replay, pretty-print, and export robot telemetry data. It integrates with **Rerun** to plot active joints, motor diagnostics, power states, and safety sentinels dynamically.
 
 ### Core Arguments and Usage Modes
 
 ```bash
-stretch_status_viz [OPTIONS]
+stretch_status [OPTIONS]
 ```
 
-* **Live Mode**: Continuously pulls current robot status and streams it.
+* **Live Mode**: Continuously pulls current robot status and streams it. Defaults to printing to console.
 * **History Mode (`--history <minutes>`)**: Reads saved telemetry JSON files and replays them.
-* **Console Pretty-print (`--print`)**: Outputs telemetry text formatted directly to the terminal instead of opening Rerun.
+* **Visualization Mode (`--rerun`)**: Opens Rerun to plot telemetry dynamically while also printing to console.
 * **Field Filtering (`--fields <prefixes>`)**: Limits the displayed or plotted telemetry to specific joints or components (e.g., `robot.lift` or `robot.power_periph.voltage`).
-* **Interactive Menu**: If `--fields` is omitted, the tool opens an interactive console menu allowing you to choose joints or subsystems to visualize.
+* **Interactive Menu**: If `--fields` is omitted, the tool opens an interactive console menu allowing you to choose joints or subsystems to visualize. Pressing Enter with no selection defaults to `robot.server`, `robot.routines`, and all joint positions.
 * **Export / Import (`--export <dir>`, `--import <zip_file>`)**: Packages history data into compressed ZIP files or loads exported ZIP runs.
 
 ---
@@ -61,29 +61,29 @@ stretch_body_server --print
 ### 2. Live Telemetry Visualization in Rerun
 To stream all live joint variables to Rerun at a frequency of 30 Hz:
 ```bash
-stretch_status_viz --rate 30
+stretch_status --rate 30 --rerun
 ```
 This will open the Rerun UI interface, showing active time-series graphs of scalar and boolean data.
 
 ### 3. Replaying Offline Telemetry History
 To graph the last 15 minutes of status history in Rerun:
 ```bash
-stretch_status_viz --history 15
+stretch_status --history 15 --rerun
 ```
 
 ### 4. Interactive Console Inspection (No GUI)
-To interactively view specific subsystem values directly in the console without spawning Rerun:
+To interactively view specific subsystem values directly in the console:
 ```bash
-stretch_status_viz --history 10 --print
+stretch_status --history 10
 ```
 *Select a subsystem number from the menu (e.g., `robot.lift` or `robot.power_periph`), and the terminal will print out all key-value states.*
 
 ### 5. Advanced Field Filtering and Exporting
 To export the last 30 minutes of telemetry to a ZIP archive:
 ```bash
-stretch_status_viz --history 30 --export ~/Desktop/
+stretch_status --history 30 --export ~/Desktop/
 ```
 To import and view a saved ZIP run, showing only the lift and base joints:
 ```bash
-stretch_status_viz --import ~/Desktop/stretch_status_2026-05-31.zip --fields robot.lift robot.omnibase
+stretch_status --import ~/Desktop/stretch_status_2026-05-31.zip --fields robot.lift robot.omnibase
 ```

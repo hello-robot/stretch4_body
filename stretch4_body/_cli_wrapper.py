@@ -121,9 +121,9 @@ def stretch_dex_wrist_home():
     sys.argv[0] = "stretch_dex_wrist_home"
     runpy.run_module("stretch4_body.tools.stretch_dex_wrist_home", run_name="__main__")
 
-def stretch_status_viz():
-    sys.argv[0] = "stretch_status_viz"
-    runpy.run_module("stretch4_body.tools.stretch_status_viz", run_name="__main__")
+def stretch_status():
+    sys.argv[0] = "stretch_status"
+    runpy.run_module("stretch4_body.tools.stretch_status", run_name="__main__")
 
 def stretch_body_server():
     sys.argv[0] = "stretch_body_server"

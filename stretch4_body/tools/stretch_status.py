@@ -206,7 +206,8 @@ def build_interactive_menu(sample_status):
         
     print("\nAvailable subsystems and joints to visualize:")
     
-    index_to_prefix = {}
+    index_to_prefix = {'0': 'all'}
+    print(f"  0: all (everything)")
     current_idx = 1
     
     group_names = sorted(list(groups.keys()))
@@ -219,15 +220,22 @@ def build_interactive_menu(sample_status):
             
     while True:
         print("\nEnter comma-separated indices to view (e.g., 1, 2, 5),")
-        print("or a prefix (e.g., robot.lift), or 'all' to select everything:")
+        print("or a prefix (e.g., robot.lift), or 'all' to select everything.")
+        print("Press Enter for default fields (robot.server, base odom (x,y,theta), and joint positions):")
         try:
             selection = input("> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")
             sys.exit(0)
         
-        if selection == 'all' or selection == '':
+        if selection == 'all':
             return ['all']
+        
+        def get_defaults():
+            return ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
+
+        if selection == '':
+            return get_defaults()
             
         selected_fields = []
         parts_entered = [x.strip() for x in selection.split(',')]
@@ -255,12 +263,12 @@ def build_interactive_menu(sample_status):
             continue
             
         if not selected_fields:
-            return ['all']
+             return get_defaults()
             
         return selected_fields
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize Stretch status in Rerun.")
+    parser = argparse.ArgumentParser(description="Visualize Stretch status.")
     parser.add_argument(
         "--history",
         type=float,
@@ -277,12 +285,12 @@ def main():
         "--fields",
         nargs="+",
         default=None,
-        help="List of field prefixes to plot (e.g. robot.power_periph.voltage robot.lift)",
+        help="List of field prefixes (e.g. robot.power_periph.voltage robot.lift)",
     )
     parser.add_argument(
-        "--print",
+        "--rerun",
         action="store_true",
-        help="Print the status in a pretty format to the console.",
+        help="Visualize the status in Rerun alongside console output.",
     )
     parser.add_argument(
         "--export",
@@ -300,7 +308,7 @@ def main():
     args = parser.parse_args()
 
     def _start_rerun():
-        rr.init("stretch_status_viz", spawn=False)
+        rr.init("stretch_status", spawn=False)
         rr.spawn(memory_limit="5GB")
 
     selected_fields = args.fields
@@ -327,21 +335,21 @@ def main():
                                 else:
                                     selected_fields = build_interactive_menu(rs)
 
-                                if not args.print:
+                                if args.rerun:
                                     _start_rerun()
                                     setup_rerun_blueprint(rs, selected_fields)
 
                                 menu_shown = True
                                 
-                            t = rs.get("timestamp", time.time())
-                            rr.set_time("log_time", timestamp=t)
-                            if args.print:
-                                print("\n=== Status ===")
-                                filtered_rs = filter_dict_by_fields(rs, selected_fields)
-                                print_status_pretty(filtered_rs)
+                            print("\n=== Status ===")
+                            filtered_rs = filter_dict_by_fields(rs, selected_fields)
+                            print_status_pretty(filtered_rs)
 
-                            flat_status = flatten_status(rs)
-                            log_selected_fields(flat_status, selected_fields)
+                            if args.rerun:
+                                t = rs.get("timestamp", time.time())
+                                rr.set_time("log_time", timestamp=t)
+                                flat_status = flatten_status(rs)
+                                log_selected_fields(flat_status, selected_fields)
                     except Exception as e:
                         print(f"Error reading {f_name} from zip: {e}")
         print("Finished reading imported history.")
@@ -407,21 +415,21 @@ def main():
                                 else:
                                     selected_fields = build_interactive_menu(rs)
 
-                                if not args.print:
+                                if args.rerun:
                                     _start_rerun()
                                     setup_rerun_blueprint(rs, selected_fields)
 
                                 menu_shown = True
                                 
-                            t = rs.get("timestamp", time.time())
-                            rr.set_time("log_time", timestamp=t)
-                            if args.print:
-                                print("\n=== Status ===")
-                                filtered_rs = filter_dict_by_fields(rs, selected_fields)
-                                print_status_pretty(filtered_rs)
+                            print("\n=== Status ===")
+                            filtered_rs = filter_dict_by_fields(rs, selected_fields)
+                            print_status_pretty(filtered_rs)
 
-                            flat_status = flatten_status(rs)
-                            log_selected_fields(flat_status, selected_fields)
+                            if args.rerun:
+                                t = rs.get("timestamp", time.time())
+                                rr.set_time("log_time", timestamp=t)
+                                flat_status = flatten_status(rs)
+                                log_selected_fields(flat_status, selected_fields)
                 except Exception as e:
                     print(f"Error reading {f}: {e}")
 
@@ -434,7 +442,6 @@ def main():
             print("Failed to start RobotClient")
             return
 
-        # rate_hz = r.robot_params.get("sentry_status_logger", {}).get("check_rate", 10)
         rate_hz = args.rate
         sleep_time = 1.0 / rate_hz
         print(f"Pulling status at {rate_hz} Hz...")
@@ -452,23 +459,21 @@ def main():
                     else:
                         selected_fields = build_interactive_menu(rs)
                     
-                    if not args.print:
+                    if args.rerun:
                         _start_rerun()
                         setup_rerun_blueprint(rs, selected_fields)
                         
                     menu_shown = True
 
-
-                if args.print:
-                    print("\n=== Status ===")
-                    filtered_rs = filter_dict_by_fields(rs, selected_fields)
-                    print_status_pretty(filtered_rs)
-                else:
+                print("\n=== Status ===")
+                filtered_rs = filter_dict_by_fields(rs, selected_fields)
+                print_status_pretty(filtered_rs)
+                
+                if args.rerun:
                     t = rs.get("timestamp", time.time())
                     rr.set_time("log_time", timestamp=t)
-
-                flat_status = flatten_status(rs)
-                log_selected_fields(flat_status, selected_fields)
+                    flat_status = flatten_status(rs)
+                    log_selected_fields(flat_status, selected_fields)
                 
                 time.sleep(sleep_time)
         except KeyboardInterrupt:
