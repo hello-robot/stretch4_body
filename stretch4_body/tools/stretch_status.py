@@ -232,7 +232,7 @@ def build_interactive_menu(sample_status):
             return ['all']
 
         if selection == '':
-            defaults = ['robot.server'] + [k for k in paths if k.endswith('.pos') and not isinstance(flat[k], bool) and 'in_collision_stop' not in k]
+            defaults = ['robot.server'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
             return defaults
             
         selected_fields = []
@@ -261,7 +261,7 @@ def build_interactive_menu(sample_status):
             continue
             
         if not selected_fields:
-             defaults = ['robot.server'] + [k for k in paths if k.endswith('.pos') and not isinstance(flat[k], bool) and 'in_collision_stop' not in k]
+             defaults = ['robot.server'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
              return defaults
             
         return selected_fields
