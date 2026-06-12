@@ -221,7 +221,7 @@ def build_interactive_menu(sample_status):
     while True:
         print("\nEnter comma-separated indices to view (e.g., 1, 2, 5),")
         print("or a prefix (e.g., robot.lift), or 'all' to select everything.")
-        print("Press Enter for default fields (robot.server, and joint positions):")
+        print("Press Enter for default fields (robot.server, base odom (x,y,theta), and joint positions):")
         try:
             selection = input("> ").strip().lower()
         except (EOFError, KeyboardInterrupt):
@@ -230,10 +230,12 @@ def build_interactive_menu(sample_status):
         
         if selection == 'all':
             return ['all']
+        
+        def get_defaults():
+            return ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
 
         if selection == '':
-            defaults = ['robot.server'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
-            return defaults
+            return get_defaults()
             
         selected_fields = []
         parts_entered = [x.strip() for x in selection.split(',')]
@@ -261,8 +263,7 @@ def build_interactive_menu(sample_status):
             continue
             
         if not selected_fields:
-             defaults = ['robot.server'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
-             return defaults
+             return get_defaults()
             
         return selected_fields
 
