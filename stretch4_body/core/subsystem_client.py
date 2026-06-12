@@ -58,7 +58,6 @@ class SubsystemClient(Device):
     def stop(self):
         if not self.is_valid:
             return
-        self.is_valid = False
         if self.push_lock.is_locked:
             self.push_lock.release()
         #A hard exit could happen in the middle of a command by the main loop, clear out socket recv
