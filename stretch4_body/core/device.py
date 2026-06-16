@@ -65,6 +65,7 @@ class Device:
     def stop(self):
         """Shuts down machinery started in `startup()`
         """
+        self.is_valid = False
         return True
 
     def load_rpc_results(self,wait_on_result=True):
