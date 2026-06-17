@@ -191,13 +191,17 @@ class EndOfArm(FeetechSMChain):
         #Naive version. Should override with tool specific safe motions.
         raise NotImplementedError('EndOfArm Homing not implemented at this level.')
 
-    def home_joint(self, joint_name=None,end_pos=0):
+    def home_joint(self, joint_name=None,end_pos=0,wait_on_completion:bool=True):
         """
         Home to hardstops
         """
         self.logger.info(f'--------- Homing {joint_name} ----')
         self.status['is_homing'] = True
-        self.motors[joint_name].home(end_pos=end_pos, cancel_homing_event=self.cancel_homing_event)
+        if wait_on_completion:
+            self.motors[joint_name].home(end_pos=end_pos, cancel_homing_event=self.cancel_homing_event)
+        else:
+            thread = threading.Thread(target=self.motors[joint_name].home, args=(self.cancel_homing_event, end_pos))
+            thread.start()
         self.status['is_homing'] = False
 
 

@@ -50,14 +50,14 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
         self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
         self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
 
-    def home(self, blocking=True):
+    def home(self, wait_on_completion=True):
         def _do_home():
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
             success = home_dw4_joints(self)
             self.status['is_homing'] = False
             return success
-        if blocking:
+        if wait_on_completion:
             return _do_home()
         
         thread = threading.Thread(target=_do_home)
@@ -95,7 +95,7 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
 
         self.move_to('stretch_gripper', self.params['stow']['stretch_gripper'])
 
-    def home(self, blocking=True):
+    def home(self, wait_on_completion=True):
         def _do_home():
             self.logger.debug(f'Homing {self.name} started.')
             start_time = time.time()
@@ -105,7 +105,7 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
             self.status['is_homing'] = False
             self.logger.debug(f'Homing {self.name} completed in {time.time() - start_time} seconds.')
             return success
-        if blocking:
+        if wait_on_completion:
             return _do_home()
         
         thread = threading.Thread(target=_do_home)
@@ -144,7 +144,7 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
 
         self.move_to('parallel_gripper', self.params['stow']['parallel_gripper'])
 
-    def home(self, blocking=True):
+    def home(self, wait_on_completion=True):
         def _do_home():
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
@@ -153,7 +153,7 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             self.status['is_homing'] = False
             return success
 
-        if blocking:
+        if wait_on_completion:
             return _do_home()
         
         thread = threading.Thread(target=_do_home)

@@ -935,6 +935,7 @@ class FeetechSMHello(Device):
         The pre_home function is called before the motor starts homing.
         It should be used to move the motor to the desired pre-home position.
         """
+        cancel_homing_event.clear()
         self.status['is_homing'] = True
         self.motor.set_overcurrent(10)
         self.enable_pwm()
@@ -985,6 +986,7 @@ class FeetechSMHello(Device):
         ,then when X=-=1622, Q=0
 
         """
+        cancel_homing_event.clear()
         self.bubble_up_comm_exception = True
         self.status['is_homing']=False
         try:
@@ -1022,17 +1024,11 @@ class FeetechSMHello(Device):
             self.set_pwm(0.0)
 
             if cancel_homing_event.is_set():
-                self.logger.error('Homing cancelled for: ' + self.name)
-                self.status['is_homing'] = False
-                return False
+                raise RuntimeError('Homing cancelled for: ' + self.name)
             if timeout:
-                self.logger.error('Timed out moving to first hardstop. Exiting.')
-                self.status['is_homing'] = False
-                return False
+                raise RuntimeError('Timed out moving to first hardstop. Exiting.')
             if not self.check_servo_errors():
-                self.logger.error('Hardware error, unable to home. Exiting')
-                self.status['is_homing'] = False
-                return False
+                raise RuntimeError('Hardware error, unable to home. Exiting')
 
             self.home_pos_offset = self.motor.get_pos()
             
@@ -1054,7 +1050,7 @@ class FeetechSMHello(Device):
             # print('MODE',self.motor.get_operating_mode())
             # print('RANGE', self.range_t)
             # print('Current position (ticks):', self.motor.get_pos())
-            if end_pos is not None:
+            if end_pos is not None and not cancel_homing_event.is_set():
                 self.logger.info(f'Moving to calibrated pos: (ticks) {self.world_rad_to_ticks(end_pos)}')
                 self.move_to(end_pos)
                 time.sleep(2.0)
@@ -1063,9 +1059,14 @@ class FeetechSMHello(Device):
             self.bubble_up_comm_exception = False
             self.logger.info(f"Done homing {self.name}")
             return True
+        except RuntimeError as e:
+            self.logger.error(f'Runtime error, during homing: {e}')
+            return False
         except Exception as e:
             self.logger.error(f'Communication error, unable to home. Exiting. {e=}')
             return False
+        finally:
+            self.status['is_homing'] = False
 
     # ############### Conversions ###########################
     def ticks_to_rad(self, t):  # target position * angular resolution * 360/4096
