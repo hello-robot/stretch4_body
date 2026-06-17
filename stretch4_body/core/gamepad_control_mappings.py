@@ -27,6 +27,93 @@ class ControlMapping(Enum):
     def _get_cycleable_options(self):
         # return list(type(self))
         return [ControlMapping.EASY_MODE,ControlMapping.FLYING_GRIPPER_IK]
+
+    def description(self) -> str:
+        """
+        Returns a helpful explanation of the controls for this mapping.
+        """
+        def format_table(title, description, rows):
+            s = f"\n{Fore.CYAN}{Style.BRIGHT}{'=' * 60}\n"
+            s += f" {title.center(58)}\n"
+            s += f"{'=' * 60}{Style.RESET_ALL}\n"
+            s += f"{Fore.CYAN}{description}\n"
+            s += f"{'=' * 60}{Style.RESET_ALL}\n"
+            s += f"{Fore.YELLOW}{'Control':<25} | {'Action':<30}{Style.RESET_ALL}\n"
+            s += f"{'-' * 25}-+-{'-' * 30}\n"
+            for control, action in rows:
+                s += f"{control:<25} | {action:<30}\n"
+            s += f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}\n"
+            return s
+
+        if self == ControlMapping.EASY_MODE:
+            title = "Joint Space Control"
+            description = "Control robot joints directly. The controls are summarized in the table below:"
+            rows = [
+                ("Left Stick", "Move Base (Translate)"),
+                ("Right Stick", "Wrist Pitch & Yaw"),
+                ("LB / RB", "Rotate Base"),
+                ("Hold LB + RB, Right Stick", "Rotate Base"),
+                ("D-Pad Up / Down", "Lift Up / Down"),
+                ("D-Pad Left / Right", "Arm In / Out"),
+                ("A / B Buttons", "Close / Open Gripper"),
+                ("RT + Left Stick", "Straight Line Base Move"),
+                ("RT + LB / RB", "Wrist Roll"),
+                ("LT", "Reduce Speed"),
+                ("Hold Start", "Change Handedness"),
+                ("RT + A", "Change Speed Profile"),
+                ("RT + B", "Change Strength Profile"),
+            ]
+            return format_table(title, description, rows)
+        
+        elif self == ControlMapping.FLYING_GRIPPER_IK:
+            title = "Flying Gripper IK Control"
+            description = "To move the robot, first point the gripper toward the object you wish to manipulate with the Right Stick\nand then move forward with the Left Stick to go toward it."
+            rows = [
+                ("Left Stick", "Move Gripper (X/Y)"),
+                ("Right Stick", "Gripper Pitch & Yaw"),
+                ("D-Pad Up / Down", "Lift Gripper (Z)"),
+                ("D-Pad Left / Right", "Wrist Roll"),
+                ("A / B Buttons", "Close / Open Gripper"),
+                ("LT", "Reduce Speed"),
+                ("Hold Start", "Change Handedness"),
+                ("RT + A", "Change Speed Profile"),
+                ("RT + B", "Change Strength Profile"),
+            ]
+            return format_table(title, description, rows)
+
+        elif self == ControlMapping.OMNIBASE:
+            title = "OMNIBASE: Standard Move + Manip"
+            description = "Control robot joints directly. The controls are summarized in the table below:"
+            rows = [
+                ("Left Stick", "Move Base (X/Y)"),
+                ("Right Stick", "Rotate Base"),
+                ("D-Pad", "Wrist Pitch & Roll"),
+                ("LB / RB", "Wrist Yaw"),
+                ("A / B Buttons", "Close / Open Gripper"),
+                ("LT", "Reduce Speed"),
+                ("Hold Start", "Change Handedness"),
+                ("RT + A", "Change Speed Profile"),
+                ("RT + B", "Change Strength Profile"),
+            ]
+            return format_table(title, rows)
+
+        elif self == ControlMapping.MANIPULATION:
+            description = "Separates base and arm control using the Right Trigger. The controls are summarized in the table below:"
+            rows = [
+                ("Default", "Standard Base/Arm/Lift"),
+                ("RT (Hold)", "Manipulation Mode"),
+                ("  + Right Stick", "Wrist Pitch & Yaw"),
+                ("  + D-Pad L/R", "Wrist Roll"),
+                ("A / B Buttons", "Close / Open Gripper"),
+                ("LT", "Reduce Speed"),
+                ("Hold Start", "Change Handedness"),
+                ("RT + A", "Change Speed Profile"),
+                ("RT + B", "Change Strength Profile"),
+            ]
+            return format_table(title, rows)
+        
+        return f"No description available for {self.name}"
+
         
     def cycle(self, is_forward:bool):
         """
