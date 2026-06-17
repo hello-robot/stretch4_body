@@ -1074,7 +1074,7 @@ class FeetechSMHello(Device):
             # print('MODE',self.motor.get_operating_mode())
             # print('RANGE', self.range_t)
             # print('Current position (ticks):', self.motor.get_pos())
-            if end_pos is not None and not cancel_homing_event.is_set():
+            if end_pos is not None and not self.cancel_homing_event.is_set():
                 self.logger.info(f'Moving to calibrated pos: (ticks) {self.world_rad_to_ticks(end_pos)}')
                 self.move_to(end_pos)
                 time.sleep(2.0)
