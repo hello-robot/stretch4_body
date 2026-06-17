@@ -198,9 +198,9 @@ class EndOfArm(FeetechSMChain):
         self.logger.info(f'--------- Homing {joint_name} ----')
         self.status['is_homing'] = True
         if wait_on_completion:
-            self.motors[joint_name].home(end_pos=end_pos, cancel_homing_event=self.cancel_homing_event)
+            self.motors[joint_name].home(end_pos=end_pos)
         else:
-            thread = threading.Thread(target=self.motors[joint_name].home, args=(self.cancel_homing_event, end_pos))
+            thread = threading.Thread(target=self.motors[joint_name].home, args=(end_pos,))
             thread.start()
         self.status['is_homing'] = False
 
