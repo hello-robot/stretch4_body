@@ -1,6 +1,5 @@
 
 from typing import TypedDict
-import os
 from stretch4_body.core.hello_utils import check_usb_disconnection
 
 from stretch4_body.core.device import Device
@@ -10,6 +9,7 @@ import time
 import importlib
 import struct
 import array as arr
+import threading
 
 SMS_END=0
 def SMS_MAKEWORD(a, b):
@@ -53,7 +53,7 @@ class FeetechSMChain(Device):
     It allows adding more than one servo at run time
     It allows manage group reading of status data from servos so as to not overload the control bus
     """
-    def __init__(self, usb, name,params=None):
+    def __init__(self, usb, name,params=None, cancel_homing_event: threading.Event|None=None):
         Device.__init__(self, name)
         if params is not None:
             self.params.update(params)
@@ -72,6 +72,8 @@ class FeetechSMChain(Device):
         self.comm_errors = FeetechCommErrorStats(name, logger=self.logger)
         self.status['comm_errors']=self.comm_errors.status
         self.status_mux_id = 0
+
+        self.cancel_homing_event = cancel_homing_event or threading.Event()
 
     def add_motor(self,m):
         self.motors[m.name]=m

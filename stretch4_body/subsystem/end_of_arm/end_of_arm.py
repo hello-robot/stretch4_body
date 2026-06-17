@@ -1,7 +1,5 @@
-import threading
 from stretch4_body.core.feetech.feetech_SM_chain import FeetechSMChain
 from stretch4_body.core.robot_params import RobotParams
-import time
 
 
 class EndOfArm(FeetechSMChain):
@@ -27,8 +25,6 @@ class EndOfArm(FeetechSMChain):
         #     self.add_motor(servo_device)
         self.urdf_map={} #Override
         self.status_aux = {}
-
-        self.cancel_homing_event = threading.Event()
 
     def startup(self):
         if FeetechSMChain.startup(self):
