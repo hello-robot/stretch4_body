@@ -19,7 +19,7 @@ class ControlMapping(Enum):
     FLYING_GRIPPER_IK = auto()
     """FLYING_GRIPPER_IK provides IK-based Cartesian control of the gripper."""
     JOINT_SPACE = auto()
-    """JOINT_SPACE provides simplified control of the gripper."""
+    """JOINT_SPACE provides control of the robot in joint space."""
 
     @staticmethod
     def _get_cycleable_options():
@@ -106,7 +106,7 @@ class ControlMapping(Enum):
         if self is ControlMapping.FLYING_GRIPPER_IK:
             file_name = "gamepad_teleop_mapping_flying_gripper_ik.wav"
         elif self is ControlMapping.JOINT_SPACE:
-            file_name = "gamepad_teleop_mapping_omnibase.wav"
+            file_name = "gamepad_teleop_mapping_joint_space.wav"
         else:
             raise NotImplementedError(f"No sound file for {self}")
         
