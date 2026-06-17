@@ -131,7 +131,7 @@
   joints:
     arm:
       name: arm
-      position: 0.03813407289214404
+      position: 0.02813407289214404
       velocity: 2.8829998496769494e-05
       effort: 0.0
     lift:
