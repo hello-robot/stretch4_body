@@ -288,6 +288,12 @@ class ControlMapping(Enum):
         state = gamepad_teleop.controller_state
         rt_pulled = state.get('right_trigger_pulled', 0.0) > 0.9 # TRIGGER_THRESHOLD
 
+
+        left_shoulder_pressed = state.get('left_shoulder_button_pressed')
+        right_shoulder_pressed = state.get('right_shoulder_button_pressed')
+
+        right_stick_for_base_rotate = left_shoulder_pressed and right_shoulder_pressed
+
         if gamepad_teleop.use_devices['gripper']:
             if rt_pulled:
                 gamepad_teleop.gripper.stop_gripper(robot)
@@ -304,7 +310,11 @@ class ControlMapping(Enum):
         if gamepad_teleop.use_devices['base']:
             ls_x = state.get('left_stick_x', 0.0)
             ls_y = state.get('left_stick_y', 0.0)
+            rs_x = state.get('right_stick_x', 0.0)
+            rs_y = state.get('right_stick_y', 0.0)
             if rt_pulled:
+                # If Right-Trigger is pulled, make the left-stick move the robot in straight lines.
+                # This is great for moving in tight corners! 
                 if abs(ls_x) > 0.1 or abs(ls_y) > 0.1:
                     if abs(ls_y) > abs(ls_x):
                         cmd_y = math.copysign(1.0, ls_y)
@@ -321,9 +331,12 @@ class ControlMapping(Enum):
             
             cmd_t = 0.0
             if not rt_pulled:
-                if state.get('left_shoulder_button_pressed'):
+                # If the left and right shoulder buttons are pressed, use the right stick for base rotation
+                if right_stick_for_base_rotate:
+                    cmd_t = -rs_x
+                elif left_shoulder_pressed:
                     cmd_t = 1.0
-                elif state.get('right_shoulder_button_pressed'):
+                elif right_shoulder_pressed:
                     cmd_t = -1.0
 
             gamepad_teleop.base_command.command_stick_to_motion(cmd_y, cmd_x, cmd_t, robot)
@@ -374,51 +387,57 @@ class ControlMapping(Enum):
                     gamepad_teleop.arm_command.stop_motion(robot)
                     
         if gamepad_teleop.use_devices['eoa']:
+            def _control_eoa():
+                # Use the right stick for controlling pitch and yaw as long as the right and left bumpers and not depressed
+                # Use the bumpers for roll as long as Right Trigger is held AND the right and left bumpers are not depressed 
+                if right_stick_for_base_rotate:
+                    return
 
-            if rt_pulled:
-                cmd_roll = 0.0
                 if rt_pulled:
-                    if state.get('left_shoulder_button_pressed'):
-                        cmd_roll = -1.0
-                    elif state.get('right_shoulder_button_pressed'):
-                        cmd_roll = 1.0
+                    cmd_roll = 0.0
+                    if rt_pulled:
+                        if state.get('left_shoulder_button_pressed'):
+                            cmd_roll = -1.0
+                        elif state.get('right_shoulder_button_pressed'):
+                            cmd_roll = 1.0
+                            
+                    if cmd_roll != 0:
+                        gamepad_teleop.wrist_roll_command.command_button_to_motion(cmd_roll, robot)
+                        actuated_joints['wrist_roll_joint'] = cmd_roll
+                    else:
+                        if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                            gamepad_teleop.wrist_roll_command.stop_motion(robot)
+                else:
+                    handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
+                    
+                    rs_y = state.get('right_stick_y', 0.0)
+                    cmd_pitch = 0.0
+                    if abs(rs_y) > 0.1:
+                        cmd_pitch = rs_y
+                    elif dpad_pitch != 0:
+                        cmd_pitch = dpad_pitch
                         
-                if cmd_roll != 0:
-                    gamepad_teleop.wrist_roll_command.command_button_to_motion(cmd_roll, robot)
-                    actuated_joints['wrist_roll_joint'] = cmd_roll
-                else:
-                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                        gamepad_teleop.wrist_roll_command.stop_motion(robot)
-            else:
-                handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
-                
-                rs_y = state.get('right_stick_y', 0.0)
-                cmd_pitch = 0.0
-                if abs(rs_y) > 0.1:
-                    cmd_pitch = rs_y
-                elif dpad_pitch != 0:
-                    cmd_pitch = dpad_pitch
-                    
-                if cmd_pitch != 0:
-                    gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd_pitch * handedness_inversion, robot)
-                    actuated_joints['wrist_pitch_joint'] = cmd_pitch
-                else:
-                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                        gamepad_teleop.wrist_pitch_command.stop_motion(robot)
+                    if cmd_pitch != 0:
+                        gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd_pitch * handedness_inversion, robot)
+                        actuated_joints['wrist_pitch_joint'] = cmd_pitch
+                    else:
+                        if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                            gamepad_teleop.wrist_pitch_command.stop_motion(robot)
 
-                rs_x = state.get('right_stick_x', 0.0)
-                cmd_yaw = 0.0
-                if abs(rs_x) > 0.1:
-                    cmd_yaw = -rs_x
-                elif dpad_yaw != 0:
-                    cmd_yaw = dpad_yaw
-                    
-                if cmd_yaw != 0:
-                    gamepad_teleop.wrist_yaw_command.command_stick_to_motion(cmd_yaw, robot)
-                    actuated_joints['wrist_yaw_joint'] = cmd_yaw
-                else:
-                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                        gamepad_teleop.wrist_yaw_command.stop_motion(robot)
+                    rs_x = state.get('right_stick_x', 0.0)
+                    cmd_yaw = 0.0
+                    if abs(rs_x) > 0.1:
+                        cmd_yaw = -rs_x
+                    elif dpad_yaw != 0:
+                        cmd_yaw = dpad_yaw
+                        
+                    if cmd_yaw != 0:
+                        gamepad_teleop.wrist_yaw_command.command_stick_to_motion(cmd_yaw, robot)
+                        actuated_joints['wrist_yaw_joint'] = cmd_yaw
+                    else:
+                        if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                            gamepad_teleop.wrist_yaw_command.stop_motion(robot)
+            _control_eoa()
          
         return actuated_joints
 
@@ -482,7 +501,8 @@ class ControlMapping(Enum):
 
         if not right_trigger_pulled and np.any(v != 0):
             
-            gamepad_teleop.base_command._move(v_vel[0], v_vel[1], v_vel[2], robot)
+            vel_xy, accel_xy, vel_w, accel_w = gamepad_teleop.base_command._get_motion_params(is_rotating=abs(v_vel[2])>=0.1)
+            gamepad_teleop.base_command._move(v_vel[0], v_vel[1], v_vel[2], accel_xy, accel_w, robot)
             gamepad_teleop.lift_command._move(v_vel[3], robot)
             gamepad_teleop.arm_command._move(v_vel[4], robot)
             
