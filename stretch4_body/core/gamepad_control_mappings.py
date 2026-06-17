@@ -47,19 +47,22 @@ class ControlMapping(Enum):
             title = "Joint Space Control"
             description = "Control robot joints directly. The controls are summarized in the table below:"
             rows = [
-                ("Left Stick", "Move Base (Translate)"),
-                ("Right Stick", "Wrist Pitch & Yaw"),
-                ("LB / RB", "Rotate Base"),
-                ("Hold LB + RB, Right Stick", "Rotate Base"),
-                ("D-Pad Up / Down", "Lift Up / Down"),
-                ("D-Pad Left / Right", "Arm In / Out"),
-                ("A / B Buttons", "Close / Open Gripper"),
-                ("RT + Left Stick", "Straight Line Base Move"),
-                ("RT + LB / RB", "Wrist Roll"),
-                ("LT", "Reduce Speed"),
-                ("Hold Start", "Change Handedness"),
-                ("RT + A", "Change Speed Profile"),
-                ("RT + B", "Change Strength Profile"),
+                ("Base Controls", ""),
+                ("  Left Stick", "Translate Base"),
+                ("  LB / RB", "Rotate Base"),
+                ("  Hold LB + RB, Right Stick", "Rotate Base"),
+                ("Arm Controls", ""),
+                ("  Right Stick", "Wrist Pitch & Yaw"),
+                ("  D-Pad Up / Down", "Lift Up / Down"),
+                ("  D-Pad Left / Right", "Arm In / Out"),
+                ("  A / B Buttons", "Close / Open Gripper"),
+                ("  RT + Left Stick", "Straight Line Base Move"),
+                ("  RT + LB / RB", "Wrist Roll"),
+                ("Modifiers", ""),
+                ("  LT", "Reduce Speed"),
+                ("  Hold Start", "Change Handedness"),
+                ("  RT + A", "Change Speed Profile"),
+                ("  RT + B", "Change Strength Profile"),
             ]
             return format_table(title, description, rows)
         
@@ -67,15 +70,16 @@ class ControlMapping(Enum):
             title = "Flying Gripper IK Control"
             description = "To move the robot, first point the gripper toward the object you wish to manipulate with the Right Stick\nand then move forward with the Left Stick to go toward it."
             rows = [
-                ("Left Stick", "Move Gripper (X/Y)"),
-                ("Right Stick", "Gripper Pitch & Yaw"),
-                ("D-Pad Up / Down", "Lift Gripper (Z)"),
+                ("Left Stick", "Move toward object"),
+                ("Right Stick", "Point to object"),
+                ("D-Pad Up / Down", "Lift"),
                 ("D-Pad Left / Right", "Wrist Roll"),
                 ("A / B Buttons", "Close / Open Gripper"),
-                ("LT", "Reduce Speed"),
-                ("Hold Start", "Change Handedness"),
-                ("RT + A", "Change Speed Profile"),
-                ("RT + B", "Change Strength Profile"),
+                ("Modifiers", ""),
+                ("  LT", "Reduce Speed"),
+                ("  Hold Start", "Change Handedness"),
+                ("  RT + A", "Change Speed Profile"),
+                ("  RT + B", "Change Strength Profile"),
             ]
             return format_table(title, description, rows)
 
