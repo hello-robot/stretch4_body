@@ -70,7 +70,7 @@ class GamePadTeleop(Device):
 
         self.motion_profile = MotionProfile.MEDIUM
         self.gripper_handedness = GripperHandedness.RIGHT
-        self.control_mapping = ControlMapping.EASY_MODE
+        self.control_mapping = ControlMapping.JOINT_SPACE
         self.contact_sensitivity_profile = GuardedContactSensitivity.MEDIUM
 
         self.gamepad_controller = gc.GamePadController(print_dongle_status=print_dongle_status)

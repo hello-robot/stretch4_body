@@ -1,4 +1,5 @@
 
+from enum import auto
 from enum import Enum
 from typing import TYPE_CHECKING
 from stretch4_body.core.gamepad_enums import GripperHandedness
@@ -15,18 +16,15 @@ class ControlMapping(Enum):
     """
     These mappings are defined as control callbacks in gamepad_teleop.
     """
-    OMNIBASE = 1
-    """Omnibase controller mapping that mixes both manipulation controls and omnibase movement."""
-    MANIPULATION = 2
-    """MANIPULATION separates base motion and arm/wrist motion with a manipulation mode (Holding down right trigger)"""
-    FLYING_GRIPPER_IK = 3
+    FLYING_GRIPPER_IK = auto()
     """FLYING_GRIPPER_IK provides IK-based Cartesian control of the gripper."""
-    EASY_MODE = 4
-    """EASY_MODE provides simplified control of the gripper."""
+    JOINT_SPACE = auto()
+    """JOINT_SPACE provides simplified control of the gripper."""
 
-    def _get_cycleable_options(self):
+    @staticmethod
+    def _get_cycleable_options():
         # return list(type(self))
-        return [ControlMapping.EASY_MODE,ControlMapping.FLYING_GRIPPER_IK]
+        return [ControlMapping.JOINT_SPACE,ControlMapping.FLYING_GRIPPER_IK]
 
     def description(self) -> str:
         """
@@ -45,7 +43,7 @@ class ControlMapping(Enum):
             s += f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}\n"
             return s
 
-        if self == ControlMapping.EASY_MODE:
+        if self == ControlMapping.JOINT_SPACE:
             title = "Joint Space Control"
             description = "Control robot joints directly. The controls are summarized in the table below:"
             rows = [
@@ -81,37 +79,6 @@ class ControlMapping(Enum):
             ]
             return format_table(title, description, rows)
 
-        elif self == ControlMapping.OMNIBASE:
-            title = "OMNIBASE: Standard Move + Manip"
-            description = "Control robot joints directly. The controls are summarized in the table below:"
-            rows = [
-                ("Left Stick", "Move Base (X/Y)"),
-                ("Right Stick", "Rotate Base"),
-                ("D-Pad", "Wrist Pitch & Roll"),
-                ("LB / RB", "Wrist Yaw"),
-                ("A / B Buttons", "Close / Open Gripper"),
-                ("LT", "Reduce Speed"),
-                ("Hold Start", "Change Handedness"),
-                ("RT + A", "Change Speed Profile"),
-                ("RT + B", "Change Strength Profile"),
-            ]
-            return format_table(title, rows)
-
-        elif self == ControlMapping.MANIPULATION:
-            description = "Separates base and arm control using the Right Trigger. The controls are summarized in the table below:"
-            rows = [
-                ("Default", "Standard Base/Arm/Lift"),
-                ("RT (Hold)", "Manipulation Mode"),
-                ("  + Right Stick", "Wrist Pitch & Yaw"),
-                ("  + D-Pad L/R", "Wrist Roll"),
-                ("A / B Buttons", "Close / Open Gripper"),
-                ("LT", "Reduce Speed"),
-                ("Hold Start", "Change Handedness"),
-                ("RT + A", "Change Speed Profile"),
-                ("RT + B", "Change Strength Profile"),
-            ]
-            return format_table(title, rows)
-        
         return f"No description available for {self.name}"
 
         
@@ -136,13 +103,9 @@ class ControlMapping(Enum):
         Play the sound file associated with the current control mapping.
         """
         file_name:str
-        if self is ControlMapping.OMNIBASE:
-            file_name = "gamepad_teleop_mapping_omnibase.wav"
-        elif self is ControlMapping.MANIPULATION:
-            file_name = "gamepad_teleop_mapping_manipulation.wav"
-        elif self is ControlMapping.FLYING_GRIPPER_IK:
+        if self is ControlMapping.FLYING_GRIPPER_IK:
             file_name = "gamepad_teleop_mapping_flying_gripper_ik.wav"
-        elif self is ControlMapping.EASY_MODE:
+        elif self is ControlMapping.JOINT_SPACE:
             file_name = "gamepad_teleop_mapping_omnibase.wav"
         else:
             raise NotImplementedError(f"No sound file for {self}")
@@ -157,203 +120,13 @@ class ControlMapping(Enum):
             robot (robot.Robot): Valid robot instance.
             gamepad_teleop (GamePadTeleop): The gamepad teleop instance containing controller state and command objects.
         """
-        if self == ControlMapping.OMNIBASE:
-            return self._map_omnibase(robot, gamepad_teleop)
-        elif self == ControlMapping.MANIPULATION:
-            return self._map_manipulation(robot, gamepad_teleop)
-        elif self == ControlMapping.FLYING_GRIPPER_IK:
+        if self == ControlMapping.FLYING_GRIPPER_IK:
             return self._map_flying_gripper_ik(robot, gamepad_teleop)
-        elif self == ControlMapping.EASY_MODE:
-            return self._map_easy_mode(robot, gamepad_teleop)
+        elif self == ControlMapping.JOINT_SPACE:
+            return self._map_joint_space(robot, gamepad_teleop)
         else: raise NotImplementedError(f"No controls callback for {self}")
 
-    def _map_omnibase(self, robot, gamepad_teleop: "GamePadTeleop"):
-        """
-        Default mapping:
-        - Wrist Yaw: Bumpers (LB/RB)
-        - Wrist Pitch: D-Pad Up/Down
-        - Wrist Roll: D-Pad Left/Right
-        - Arm/Lift/Base: Sticks
-        - Gripper: A/B (Bottom/Right) buttons
-        """
-
-        # Set control modes flags
-        dxl_zero_vel_set_division_factor = 3 
-        # Note: Coninuously commanding stop_motion()(set zero velocities) to chained Dxls above 15 Hz might cause thread blocking issues 
-        # while used in multithreaded executors (E.g. ROS2). So using a division factor to downscale the stop_motion() call rate.
-
-        actuated_joints = {}
-        if gamepad_teleop.use_devices['eoa']:
-            # Wrist Yaw Control
-            if gamepad_teleop.controller_state['right_shoulder_button_pressed']:
-                gamepad_teleop.wrist_yaw_command.command_button_to_motion(-1,robot)
-                actuated_joints['wrist_yaw_joint'] = -1
-
-            elif gamepad_teleop.controller_state['left_shoulder_button_pressed']:
-                gamepad_teleop.wrist_yaw_command.command_button_to_motion(1,robot)
-                actuated_joints['wrist_yaw_joint'] = 1
-            else:
-                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                    gamepad_teleop.wrist_yaw_command.stop_motion(robot)
-            if gamepad_teleop.controller_state['top_pad_pressed']:
-                cmd = 1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else -1
-                gamepad_teleop.wrist_pitch_command.command_button_to_motion(cmd,robot)
-                actuated_joints['wrist_pitch_joint'] = cmd
-            elif gamepad_teleop.controller_state['bottom_pad_pressed']:
-                cmd = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else 1
-                gamepad_teleop.wrist_pitch_command.command_button_to_motion(cmd, robot)
-                actuated_joints['wrist_pitch_joint'] = cmd
-            else:
-                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                    gamepad_teleop.wrist_pitch_command.stop_motion(robot)
-
-            if gamepad_teleop.controller_state['left_pad_pressed']:
-                gamepad_teleop.wrist_roll_command.command_button_to_motion(1,robot)
-                actuated_joints['wrist_roll_joint'] = 1
-            elif gamepad_teleop.controller_state['right_pad_pressed']:
-                gamepad_teleop.wrist_roll_command.command_button_to_motion(-1,robot)
-                actuated_joints['wrist_roll_joint'] = -1
-            else:
-                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                    gamepad_teleop.wrist_roll_command.stop_motion(robot)
-
-
-        if gamepad_teleop.use_devices['arm']:
-            cmd = gamepad_teleop.controller_state['right_stick_x'] if gamepad_teleop.use_arm_lift_mode else 0
-            gamepad_teleop.arm_command.command_stick_to_motion(cmd, robot)
-            if abs(cmd) > 0.1:
-                actuated_joints['arm'] = cmd
-        if gamepad_teleop.use_devices['lift']:
-            cmd = gamepad_teleop.controller_state['right_stick_y'] if gamepad_teleop.use_arm_lift_mode else 0
-            gamepad_teleop.lift_command.command_stick_to_motion(cmd, robot)
-            if abs(cmd) > 0.1:
-                actuated_joints['lift'] = cmd
-        if gamepad_teleop.use_devices['base']:
-            # Base frame | Joystick frame
-            #      X ^   |       Y ^
-            #        |   |         |
-            # Y <----*   | -X <----*
-            ## This is why (x,y,t) is mapped to (y,-lx,-rx) here
-            cmd_y = gamepad_teleop.controller_state['left_stick_y']
-            cmd_x = -gamepad_teleop.controller_state['left_stick_x']
-            cmd_t = -gamepad_teleop.controller_state['right_stick_x'] if not gamepad_teleop.use_arm_lift_mode else 0
-            gamepad_teleop.base_command.command_stick_to_motion(cmd_y, cmd_x, cmd_t, robot)
-            if abs(cmd_y) > 0.1 or abs(cmd_x) > 0.1 or abs(cmd_t) > 0.1:
-                actuated_joints['base'] = cmd_x + cmd_y + cmd_t
-
-        if gamepad_teleop.use_devices['gripper']:
-            if gamepad_teleop.controller_state['right_button_pressed']:
-                gamepad_teleop.gripper.open_gripper(robot)
-                actuated_joints[gamepad_teleop.gripper.name] = 1
-            elif gamepad_teleop.controller_state['bottom_button_pressed']:
-                gamepad_teleop.gripper.close_gripper(robot)
-                actuated_joints[gamepad_teleop.gripper.name] = -1
-            else:
-                gamepad_teleop.gripper.stop_gripper(robot)
-                
-        return actuated_joints
-            
-    def _map_manipulation(self, robot, gamepad_teleop: "GamePadTeleop"):
-        """
-        Analog Wrist mapping:
-        - When Trigger pulled (Manipulation Mode):
-            - Right Stick controls Wrist Yaw and Pitch
-            - D-Pad Left/Right controls Wrist Roll
-        - Otherwise standard arm/lift/base control.
-        """
-        # Set control modes flags
-        gamepad_teleop.precision_mode = gamepad_teleop.controller_state['left_trigger_pulled'] > 0.9
-        gamepad_teleop.use_arm_lift_mode = gamepad_teleop.controller_state['right_trigger_pulled'] > 0.9
-
-        dxl_zero_vel_set_division_factor = 3 
-
-        right_stick_x = gamepad_teleop.controller_state['right_stick_x']
-        right_stick_y = gamepad_teleop.controller_state['right_stick_y']
-
-        actuated_joints = {}
-        if gamepad_teleop.use_devices['lift']:
-            if gamepad_teleop.controller_state['top_pad_pressed']:
-                gamepad_teleop.lift_command.command_button_to_motion(0.5,robot)
-                actuated_joints['lift'] = 0.5
-            elif gamepad_teleop.controller_state['bottom_pad_pressed']:
-                gamepad_teleop.lift_command.command_button_to_motion(-0.5,robot)
-                actuated_joints['lift'] = -0.5
-            else:
-                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                    gamepad_teleop.lift_command.stop_motion(robot)
-
-
-        if gamepad_teleop.use_devices['eoa'] and gamepad_teleop.use_arm_lift_mode:
-            gamepad_teleop.base_command.stop_motion(robot)
-
-            # Wrist Yaw Control
-            if abs(right_stick_x) > 0.1:
-                gamepad_teleop.wrist_yaw_command.command_stick_to_motion(-right_stick_x, robot)
-                actuated_joints['wrist_yaw_joint'] = -right_stick_x
-
-            # Wrist Pitch Control
-            if abs(right_stick_y) > 0.1:
-                handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
-                cmd = handedness_inversion * right_stick_y
-                gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd, robot)
-                actuated_joints['wrist_pitch_joint'] = right_stick_y
-
-            # Wrist Roll Control
-            if gamepad_teleop.controller_state['left_pad_pressed']:
-                gamepad_teleop.wrist_roll_command.command_button_to_motion(-1,robot)
-                actuated_joints['wrist_roll_joint'] = -1
-            elif gamepad_teleop.controller_state['right_pad_pressed']:
-                gamepad_teleop.wrist_roll_command.command_button_to_motion(1,robot)
-                actuated_joints['wrist_roll_joint'] = 1
-            else:
-                if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                    gamepad_teleop.wrist_roll_command.stop_motion(robot)
-
-
-            if gamepad_teleop.use_devices['arm']:
-                cmd = gamepad_teleop.controller_state['left_stick_y'] if gamepad_teleop.use_arm_lift_mode else 0
-                gamepad_teleop.arm_command.command_stick_to_motion(cmd, robot)
-                if abs(cmd) > 0.1:
-                    actuated_joints['arm'] = cmd
-
-
-        else:
-            if gamepad_teleop.use_devices['arm']:
-                # Stop motion for the arm immediately if the manip button is released. This was added intentionally at some point, unsure if it's stil needed.
-                gamepad_teleop.arm_command.stop_motion(robot)
-            if gamepad_teleop.use_devices['eoa']:
-                # Stop motion for the wrist immediately if the manip button is released. This was added intentionally at some point, unsure if it's stil needed.
-                gamepad_teleop.wrist_yaw_command.stop_motion(robot)
-                gamepad_teleop.wrist_pitch_command.stop_motion(robot)
-                gamepad_teleop.wrist_roll_command.stop_motion(robot)
-
-            if gamepad_teleop.use_devices['base']:
-                # Base frame | Joystick frame
-                #      X ^   |       Y ^
-                #        |   |         |
-                # Y <----*   | -X <----*
-                ## This is why (x,y,t) is mapped to (y,-lx,-rx) here
-                cmd_y = gamepad_teleop.controller_state['left_stick_y'] if not gamepad_teleop.use_arm_lift_mode else 0
-                cmd_x = -gamepad_teleop.controller_state['left_stick_x'] if not gamepad_teleop.use_arm_lift_mode else 0
-                cmd_t = -gamepad_teleop.controller_state['right_stick_x'] if not gamepad_teleop.use_arm_lift_mode else 0
-                gamepad_teleop.base_command.command_stick_to_motion(cmd_y, cmd_x, cmd_t, robot)
-                if abs(cmd_y) > 0.1 or abs(cmd_x) > 0.1 or abs(cmd_t) > 0.1:
-                    actuated_joints['base'] = cmd_x + cmd_y + cmd_t
-
-
-        if gamepad_teleop.use_devices['gripper']:
-            if gamepad_teleop.controller_state['right_button_pressed']:
-                gamepad_teleop.gripper.open_gripper(robot)
-                actuated_joints[gamepad_teleop.gripper.name] = 1
-            elif gamepad_teleop.controller_state['bottom_button_pressed']:
-                gamepad_teleop.gripper.close_gripper(robot)
-                actuated_joints[gamepad_teleop.gripper.name] = -1
-            else:
-                gamepad_teleop.gripper.stop_gripper(robot)
-
-        return actuated_joints
-
-    def _map_easy_mode(self, robot, gamepad_teleop: "GamePadTeleop"):
+    def _map_joint_space(self, robot, gamepad_teleop: "GamePadTeleop"):
         """
         Direct Control Mapping:
         - Left Trigger for precision mode (handled externally)

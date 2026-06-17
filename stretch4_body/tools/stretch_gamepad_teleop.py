@@ -28,7 +28,7 @@ if __name__ == "__main__":
       exit(1)
    
    # Provide a helpful description of the controls for each mapping
-   mappings = ControlMapping.EASY_MODE._get_cycleable_options()
+   mappings = ControlMapping._get_cycleable_options()
    for mapping in mappings:
       print(mapping.description())
 
