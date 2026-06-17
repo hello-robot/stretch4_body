@@ -955,7 +955,7 @@ class FeetechSMHello(Device):
         self.enable_pos()
         self.status['is_homing'] = False
 
-    def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0):
+    def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0) -> bool:
         """ 
         Servo calibration works by:
 
