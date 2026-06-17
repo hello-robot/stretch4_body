@@ -53,7 +53,7 @@ class FeetechSMChain(Device):
     It allows adding more than one servo at run time
     It allows manage group reading of status data from servos so as to not overload the control bus
     """
-    def __init__(self, usb, name,params=None, cancel_homing_event: threading.Event|None=None):
+    def __init__(self, usb, name,params=None):
         Device.__init__(self, name)
         if params is not None:
             self.params.update(params)
