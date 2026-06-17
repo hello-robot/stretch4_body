@@ -36,7 +36,6 @@ def _cb_end_of_arm_loop_step(eoa, q_cmd_in, status_out):
             cmd=q_cmd_in.get_nowait()
             subsystem, method, cmd_id,args, kwargs = cmd
             if method == 'home':
-                eoa.logger.warning("Homing EOA")
                 eoa.home(*args, **kwargs, blocking=False)
                 continue
             method_to_call = getattr(eoa, method)
