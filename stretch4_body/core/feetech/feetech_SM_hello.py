@@ -57,7 +57,7 @@ class FeetechSMHello(Device):
     Abstract the Feetech SM-Series to handle calibration, radians, etc
     """
 
-    def __init__(self, name, chain=None, usb=None, params=None,is_direct=False):
+    def __init__(self, name, chain=None, usb=None, params=None,is_direct=False, cancel_homing_event: threading.Event|None=None):
         Device.__init__(self, name)
         if params is not None:
             self.params.update(params)
@@ -127,8 +127,16 @@ class FeetechSMHello(Device):
             self._prev_set_vel_ts = None
 
             self.ts_collision_stop = {'pos': 0.0, 'neg': 0.0}
+
+            self.cancel_homing_event = threading.Event()
+            if chain is not None:
+                self.cancel_homing_event = chain.cancel_homing_event
+            if cancel_homing_event is not None:
+                self.cancel_homing_event = cancel_homing_event
+
         except KeyError:
             self.motor = None
+
 
     def stop(self, close_port=True):
         Device.stop(self)
@@ -930,33 +938,47 @@ class FeetechSMHello(Device):
     def is_calibration_required(self):
         return self.params['req_calibration'] and not self.status['pos_calibrated']
 
-    def pre_home(self, cancel_homing_event:threading.Event, pwm_val:float, negative_vel:float, positive_vel:float, timeout:float=5):
+    def cancel_homing(self):
+        self.cancel_homing_event.set()
+
+    def _cancel_homing_clear(self):
+        self.cancel_homing_event.clear()
+
+    def pre_home(self, pwm_val:float, negative_vel:float, positive_vel:float, timeout:float=5):
         """
         The pre_home function is called before the motor starts homing.
         It should be used to move the motor to the desired pre-home position.
         """
-        cancel_homing_event.clear()
+        self._cancel_homing_clear()
         self.status['is_homing'] = True
         self.motor.set_overcurrent(10)
         self.enable_pwm()
         self.set_pwm(-pwm_val)
         time.sleep(0.2)
         t = time.time()
-        while self.status['vel'] < negative_vel and time.time() - t < timeout and not cancel_homing_event.is_set():
+        success = True
+        while self.status['vel'] < negative_vel:
+            if time.time() - t > timeout or self.cancel_homing_event.is_set():
+                success = False
+                break
             time.sleep(0.001)
             
-        if not cancel_homing_event.is_set(): 
+        if not self.cancel_homing_event.is_set(): 
             self.set_pwm(pwm_val)
             time.sleep(0.2)
             t = time.time()
-            while self.status['vel'] > positive_vel and time.time() - t < timeout and not cancel_homing_event.is_set(): 
+            while self.status['vel'] > positive_vel:
+                if time.time() - t > timeout or self.cancel_homing_event.is_set():
+                    success = False
+                    break
                 time.sleep(0.001)
 
         self.set_pwm(0.0)
         self.enable_pos()
         self.status['is_homing'] = False
+        return success
 
-    def home(self, cancel_homing_event:threading.Event, end_pos:float|None=None, delay_at_stop:float=0.0) -> bool:
+    def home(self, end_pos:float|None=None, delay_at_stop:float=0.0) -> bool:
         """ 
         Servo calibration works by:
 
@@ -986,7 +1008,7 @@ class FeetechSMHello(Device):
         ,then when X=-=1622, Q=0
 
         """
-        cancel_homing_event.clear()
+        self._cancel_homing_clear()
         self.bubble_up_comm_exception = True
         self.status['is_homing']=False
         try:
@@ -1015,7 +1037,7 @@ class FeetechSMHello(Device):
             time.sleep(1.0)
             timeout = False
             # Note, is_moving doesn't work in PWM mode. Hard coded vel for now.
-            while abs(self.motor.get_vel()) > 100 and not timeout and not cancel_homing_event.is_set():
+            while abs(self.motor.get_vel()) > 100 and not timeout and not self.cancel_homing_event.is_set():
                 timeout = time.time() - ts > 15.0
                 time.sleep(0.1) 
                 # print('Pos (ticks)', self.motor.get_pos())
@@ -1023,8 +1045,10 @@ class FeetechSMHello(Device):
 
             self.set_pwm(0.0)
 
-            if cancel_homing_event.is_set():
-                raise RuntimeError('Homing cancelled for: ' + self.name)
+            if self.cancel_homing_event.is_set():
+                self.logger.error('Homing cancelled for: ' + self.name)
+                self.status['is_homing'] = False
+                return False
             if timeout:
                 raise RuntimeError('Timed out moving to first hardstop. Exiting.')
             if not self.check_servo_errors():
@@ -1050,7 +1074,7 @@ class FeetechSMHello(Device):
             # print('MODE',self.motor.get_operating_mode())
             # print('RANGE', self.range_t)
             # print('Current position (ticks):', self.motor.get_pos())
-            if end_pos is not None and not cancel_homing_event.is_set():
+            if end_pos is not None and not self.cancel_homing_event.is_set():
                 self.logger.info(f'Moving to calibrated pos: (ticks) {self.world_rad_to_ticks(end_pos)}')
                 self.move_to(end_pos)
                 time.sleep(2.0)

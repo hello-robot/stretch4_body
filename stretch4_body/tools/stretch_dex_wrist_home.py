@@ -15,15 +15,10 @@ from stretch4_body.subsystem.end_of_arm.wrist_yaw import WristYaw
 from stretch4_body.subsystem.end_of_arm.wrist_pitch import WristPitch
 from stretch4_body.subsystem.end_of_arm.wrist_roll import WristRoll
 from stretch4_body.robot.robot import Robot
-from threading import Event
 
 def _home_joint(r:FeetechSMHello|WristJointClient):
-    cancel_homing_event = Event()
     if r.startup():
-        if isinstance(r, FeetechSMHello):
-            success =r.home(cancel_homing_event=cancel_homing_event)
-        else:
-            success = r.home()
+        success = r.home()
         r.stop()
         if success:
             print('Homing complete')

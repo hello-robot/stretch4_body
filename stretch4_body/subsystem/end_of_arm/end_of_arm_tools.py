@@ -7,24 +7,27 @@ import time
 
 # ##########################################################3#
 
+def _home_joint(eoa: "EndOfArm", joint_name: str):
+    success = eoa.motors[f"wrist_{joint_name}"].home(end_pos=0)
+    if not success or eoa.cancel_homing_event.is_set():
+        eoa.logger.error(f"{joint_name} homing failed")
+        return False
+    return True
+
 def home_dw4_joints(eoa: "EndOfArm"):
-    
-    eoa.motors['wrist_pitch'].pre_home(cancel_homing_event=eoa.cancel_homing_event,pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
-    
-    if eoa.cancel_homing_event.is_set():
+    success = eoa.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+
+    if not success or eoa.cancel_homing_event.is_set():
         eoa.logger.error("Wrist pitch pre-homing failed")
         return False
 
     time.sleep(0.5)
-    if eoa.cancel_homing_event.is_set() or not eoa.motors['wrist_yaw'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):
-        eoa.logger.error("Wrist yaw homing failed")
+    if not _home_joint(eoa, 'yaw'):
         return False
-    if eoa.cancel_homing_event.is_set() or not eoa.motors['wrist_roll'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):
-        eoa.logger.error("Wrist roll homing failed")
+    if not _home_joint(eoa, 'roll'):
         return False
     eoa.motors['wrist_pitch'].motor.set_overcurrent(eoa.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
-    if eoa.cancel_homing_event.is_set() or not eoa.motors['wrist_pitch'].home(end_pos=0, cancel_homing_event=eoa.cancel_homing_event):  # deg_to_rad(-90.0))
-        eoa.logger.error("Wrist pitch homing failed")
+    if not _home_joint(eoa, 'pitch'):
         return False
 
     return True
@@ -101,7 +104,7 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
             start_time = time.time()
             self.status['is_homing'] = True
             success = home_dw4_joints(self)
-            success = success and self.motors['stretch_gripper'].home(cancel_homing_event=self.cancel_homing_event,end_pos=0)
+            success = success and self.motors['stretch_gripper'].home(end_pos=0)
             self.status['is_homing'] = False
             self.logger.debug(f'Homing {self.name} completed in {time.time() - start_time} seconds.')
             return success
@@ -149,7 +152,7 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
             success = home_dw4_joints(self)
-            success = success and self.motors['parallel_gripper'].home(cancel_homing_event=self.cancel_homing_event,end_pos=0)
+            success = success and self.motors['parallel_gripper'].home(end_pos=0)
             self.status['is_homing'] = False
             return success
 
