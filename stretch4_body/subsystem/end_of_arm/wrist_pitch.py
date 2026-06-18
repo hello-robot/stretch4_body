@@ -21,7 +21,6 @@ class WristPitch(FeetechSMHello):
 
     def home(
         self,
-        cancel_homing_event: threading.Event,
         end_pos=0,
         delay_at_stop=0.25,
     ):
@@ -30,7 +29,6 @@ class WristPitch(FeetechSMHello):
         """
         return FeetechSMHello.home(
             self,
-            cancel_homing_event=cancel_homing_event,
             end_pos=end_pos,
             delay_at_stop=delay_at_stop,
         )

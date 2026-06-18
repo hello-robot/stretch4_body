@@ -21,7 +21,6 @@ else:
     else:
         from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
 
-cancel_homing_event = threading.Event()
 g=StretchGripper()
 if not g.startup():
     exit()

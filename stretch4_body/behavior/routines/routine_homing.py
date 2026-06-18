@@ -71,6 +71,8 @@ class RoutineEndOfArmHome(RoutineHome):
         def is_not_homing():
             return not self.robot.eoa_loop.status['is_homing']
 
+        kwargs['wait_on_completion'] = False
+
         cmd = ['end_of_arm', 'home', cmd_id,args,kwargs]
         
         self.robot.eoa_loop.q_cmd.put(cmd)
@@ -92,6 +94,10 @@ class RoutineWristJointHome(RoutineHome):
     def __init__(self,robot):
         RoutineHome.__init__(self,name='routine_wrist_joint_home',robot=robot)
 
+    def cancel(self, *args, **kwargs):
+        self.robot.eoa_loop.q_cmd.put(['end_of_arm', 'cancel_homing', f'cancel_homing_{self.name}', args, kwargs])
+        super().cancel()
+        
     def _run_homing(self,cmd_id,*args, **kwargs):
         if not hasattr(self.robot,'eoa_loop') or not self.robot.eoa_loop.is_valid:
             self.logger.warning('Not able to home %s. Hardware not present' % self.name.capitalize())
@@ -100,6 +106,8 @@ class RoutineWristJointHome(RoutineHome):
         def is_not_homing():
             return not self.robot.eoa_loop.status['is_homing']
 
+        kwargs['wait_on_completion'] = False
+        
         cmd = ['end_of_arm', 'home_joint',cmd_id, args,kwargs]
         
         self.robot.eoa_loop.q_cmd.put(cmd)
