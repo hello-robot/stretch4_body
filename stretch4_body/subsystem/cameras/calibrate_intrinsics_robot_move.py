@@ -98,8 +98,6 @@ class RobotMovementController:
 
     def stop(self):
         """Safely shuts down the background loops and robot base."""
-        if self._stop_event.is_set():
-            return
         print("Stopping Robot Movement Controller")
         self._stop_event.set()
         if self.movement_thread.is_alive() and self.movement_thread != threading.current_thread():
