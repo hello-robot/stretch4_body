@@ -28,21 +28,17 @@ def print_valid(text):
 def print_invalid(text):
     print(f"{Colors.RED}{text}{Colors.ENDC}")
 
-def calculate_hv_fov(calibration, width_px, height_px):
-    """Calculate Horizontal and Vertical FOV in degrees using calibration."""
+def calculate_hv_fov(calibration, x_min, x_max, y_min, y_max):
+    """Calculate Horizontal and Vertical FOV in degrees using calibration and visible bounds."""
     if calibration is None or not hasattr(calibration, 'camera_matrix'):
         return None, None
     
-    # Define points at the center of each edge relative to the principal point
-    cx = calibration.camera_matrix[0, 2]
-    cy = calibration.camera_matrix[1, 2]
-    
-    # Points in (x, y) format
+    # Points at the center of each edge of the visible region
     pts = np.array([
-        [cx - width_px / 2.0, cy], # Left
-        [cx + width_px / 2.0, cy], # Right
-        [cx, cy - height_px / 2.0], # Top
-        [cx, cy + height_px / 2.0]  # Bottom
+        [x_min, (y_min+y_max)/2.0], # Left
+        [x_max, (y_min+y_max)/2.0], # Right
+        [(x_min+x_max)/2.0, y_min], # Top
+        [(x_min+x_max)/2.0, y_max]  # Bottom
     ], dtype=np.float32).reshape(-1, 1, 2)
     
     try:
@@ -131,7 +127,7 @@ def measure_visible_region(image, visualize=False):
         cv2.rectangle(viz_img, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
         cv2.putText(viz_img, f"Measured: {rect_w}x{rect_h}", (x_min + 5, y_min + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-    return rect_w, rect_h, viz_img
+    return x_min, x_max, y_min, y_max, viz_img
 
 def perform_check(name, last_frame, expected_fov, camera_type, visualize=False):
     """Perform measurement and FOV calculation on a single stabilized frame."""
@@ -139,7 +135,9 @@ def perform_check(name, last_frame, expected_fov, camera_type, visualize=False):
         print_invalid(f"Failed to grab a frame from {name} camera.")
         return None, False
 
-    w, h, viz_img = measure_visible_region(last_frame, visualize=visualize)
+    x_min, x_max, y_min, y_max, viz_img = measure_visible_region(last_frame, visualize=visualize)
+    w = x_max - x_min
+    h = y_max - y_min
     exp_w, exp_h = expected_fov
     
     # Check calibration
@@ -148,7 +146,7 @@ def perform_check(name, last_frame, expected_fov, camera_type, visualize=False):
     try:
         calibration = camera_type.load_calibration()
         if calibration:
-            h_fov, v_fov = calculate_hv_fov(calibration, w, h)
+            h_fov, v_fov = calculate_hv_fov(calibration, x_min, x_max, y_min, y_max)
     except Exception:
         pass
 
@@ -171,7 +169,7 @@ def perform_check(name, last_frame, expected_fov, camera_type, visualize=False):
         status_text = "VALID" if is_valid else "INVALID"
         color = (0, 255, 0) if is_valid else (0, 0, 255)
         # Position text further down (100 instead of 80) to avoid clipping
-        cv2.putText(viz_img, f"{name.upper()}: {status_text}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 5)
+        cv2.putText(viz_img, f"{name.upper()}: {status_text}", (int(viz_img.shape[1] - 400), viz_img.shape[0] - 40), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 5)
         if h_fov and v_fov:
              cv2.putText(viz_img, f"FOV: H={h_fov:.1f}, V={v_fov:.1f}", (20, viz_img.shape[0] - 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
 
