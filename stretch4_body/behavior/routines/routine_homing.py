@@ -189,7 +189,6 @@ class RoutinePrismaticJointHome(RoutineHome):
         self.wait_duration(0.5)
         self.joint.motor.mark_position_on_contact(x)
         self.update_controller()
-
         if self.wait_until_contact(self.joint.motor, timeout=15.0, t_ignore=0.5):
             self.wait_duration(t=1.0)
             self.logger.info(f'Hardstop detected at motor position (rad) {self.joint.motor.status["pos"]}')
@@ -206,12 +205,6 @@ class RoutinePrismaticJointHome(RoutineHome):
                 self.logger.warning('%s homing failed. Failed to detect contact' % self.name.capitalize())
             success = False
         self.wait_duration(0.5)  # Allow time to settle
-        if success:
-            self.joint.move_to(x_m=end_pos, req_calibration=False)
-            if not self.wait_until_at_setpoint(self.joint.motor, timeout=10.0, t_ignore=0.5):
-                self.logger.warning('%s failed to reach final position' % self.joint.name.capitalize())
-                success = False
-
         # Restore previous modes
         self.joint.motor.gains['enable_guarded_mode'] = prev_enable_guarded_mode
         self.joint.motor.gains['enable_sync_mode'] = prev_enable_sync_mode
@@ -219,6 +212,13 @@ class RoutinePrismaticJointHome(RoutineHome):
         self.joint.motor.gains['safety_stiffness'] = prev_safety_stiffness
         self.joint.motor.set_gains()
         self.update_controller()
+        if success:
+            self.joint.move_to(x_m=end_pos, req_calibration=False)
+            if not self.wait_until_at_setpoint(self.joint.motor, timeout=10.0, t_ignore=0.5):
+                self.logger.warning('%s failed to reach final position' % self.joint.name.capitalize())
+                success = False
+
+
 
         if success:
             self.logger.info('%s homing successful' % self.joint.name.capitalize())

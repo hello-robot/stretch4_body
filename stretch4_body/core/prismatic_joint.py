@@ -511,6 +511,8 @@ class PrismaticJoint(Device):
             self.pull_status()
             if self.motor.status['in_guarded_event']:
                 return True
+            if self.motor.status['runstop_on']:
+                return False
             time.sleep(0.01)
         return False
 
@@ -675,6 +677,7 @@ class PrismaticJoint(Device):
         else:
             self.logger.warning('%s homing failed. Failed to detect contact' % self.name.capitalize())
             self.motor.reset_mark_position_on_contact()
+            self.motor.enable_safety()
             self.push_command()
             success = False
         # input('Enter to continue2')

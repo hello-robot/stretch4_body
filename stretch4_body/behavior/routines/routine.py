@@ -21,7 +21,7 @@ class Routine(Device):
         return Device.startup(self)
 
     def check_runstop(self):
-        if 'power_periph' in self.robot.status and self.robot.status['power_periph']['runstop_event']:
+        if not self.is_canceled and 'power_periph' in self.robot.status and self.robot.status['power_periph']['runstop_event']:
             self.logger.warning(f"Routine {self.name} canceled during `check_runstop`.")
             self.cancel()
             
@@ -33,10 +33,10 @@ class Routine(Device):
             return False
         self.check_runstop()
         if self.is_canceled:
-            self.logger.warning(f"Routine {self.name} canceled during `update_controller`.")
-            return False
+            self.logger.warning(f"Routine {self.name} exiting from `update_controller`.")
+            #return False
         do_continue= self.robot.cb_routine_update_controller()
-        return do_continue and not self.is_timed_out()
+        return do_continue and not self.is_timed_out() and not self.is_canceled
 
     def get_run_time(self):
         return time.time()-self.ts_start
