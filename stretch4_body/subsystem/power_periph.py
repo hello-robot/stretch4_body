@@ -324,6 +324,8 @@ class PowerPeriphDefn():
     TRIGGER_CPU_PWR_CYCLE = (1 << 21)
     TRIGGER_ESP32_STATUS_PRINT = (1 << 22)
     TRIGGER_SLEEP = (1 << 23)
+    TRIGGER_EVENT_DIAGNOSTICS_ENABLE = (1 << 24)
+    TRIGGER_EVENT_DIAGNOSTICS_DISABLE = (1 << 25)
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -620,6 +622,16 @@ class PowerPeriphTrace(PowerPeriphDefn):
 
     def disable_firmware_trace(self):
         self._trigger = self._trigger | self.TRIGGER_DISABLE_TRACE
+        self._dirty_trigger = True
+
+    def enable_event_diagnostics(self):
+        """Enable firmware event diagnostics for the firmware's fixed auto-expiring window."""
+        self._trigger = self._trigger | self.TRIGGER_EVENT_DIAGNOSTICS_ENABLE
+        self._dirty_trigger = True
+
+    def disable_event_diagnostics(self):
+        """Disable firmware event diagnostics immediately."""
+        self._trigger = self._trigger | self.TRIGGER_EVENT_DIAGNOSTICS_DISABLE
         self._dirty_trigger = True
         
     def read_firmware_trace(self):
