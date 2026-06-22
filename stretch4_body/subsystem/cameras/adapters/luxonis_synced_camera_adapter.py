@@ -1,11 +1,10 @@
 """
 Adapter for connecting to and controlling the Luxonis head cameras using the DepthAI API for the Luxonis OAK-FFC 3P board.
 """
-
+import datetime
 import time
 import threading
 import logging
-import collections
 import depthai as dai
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
@@ -31,39 +30,50 @@ class SyncedCameraLuxonis(SyncedCamera):
         self.pipeline, self.device = LuxonisCameraAdapter.create_pipeline(left.camera_device or right.camera_device)
         self.camera = self.pipeline
 
-        self.left_camera_node, node_left = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=left)
-        self.right_camera_node, node_right = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=right)
+        self.left_camera_node, node_left, node_left_compressed = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=left)
+        self.right_camera_node, node_right, node_right_compressed = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=right)
    
+        node_center = None
+        node_center_compressed = None
         if center is not None:
-            self.center_camera_node, node_center = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=center)
+            self.center_camera_node, node_center, node_center_compressed = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=center)
             self.center_input_queue = self.center_camera_node.inputControl.createInputQueue()
         
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
-        self.center_buffer = collections.deque(maxlen=10)
 
+        output_node_left = node_left_compressed if node_left_compressed is not None else node_left
+        output_node_right = node_right_compressed if node_right_compressed is not None else node_right
+        output_node_center = node_center_compressed if node_center_compressed is not None else node_center
+
+        self.center_output = None
         if self.do_sync_frames:
             sync = self.pipeline.create(dai.node.Sync)
-            buffer_size = left.buffer_size
+            sync.setSyncThreshold(datetime.timedelta(milliseconds=int(self.left.sync_threshold_ms)))
 
-            sync.inputs["left"].setMaxSize(1)
+            sync.inputs["left"].setMaxSize(self.left.buffer_size)
             sync.inputs["left"].setBlocking(False)
-            node_left.link(sync.inputs["left"])
+            output_node_left.link(sync.inputs["left"])
 
-            sync.inputs["right"].setMaxSize(1)
+            sync.inputs["right"].setMaxSize(self.right.buffer_size)
             sync.inputs["right"].setBlocking(False)
-            node_right.link(sync.inputs["right"])
+            output_node_right.link(sync.inputs["right"])
 
-            # CENTER is NOT in sync to keep it at its own 10fps while left/right are at 30fps
+            # sync.inputs["center"].setMaxSize(self.center.buffer_size)
+            # sync.inputs["center"].setBlocking(False)
+            
+            # output_node_center.link(sync.inputs["center"])
+
+            # CENTER is NOT in the sync pipeline to keep it at its own 10fps while left/right are at 30fps
             if center is not None:
-                self.center_output = node_center.createOutputQueue(maxSize=1, blocking=False)
+                self.center_output = output_node_center.createOutputQueue(maxSize=self.center.buffer_size, blocking=False)
 
-            self.q_sync = sync.out.createOutputQueue(maxSize=buffer_size, blocking=False)
+            self.q_sync = sync.out.createOutputQueue(maxSize= self.left.buffer_size, blocking=False)
         else:
             if center is not None:
-                self.center_output = node_center.createOutputQueue(maxSize=1, blocking=False)
-            self.left_output = node_left.createOutputQueue(maxSize=1, blocking=False)
-            self.right_output = node_right.createOutputQueue(maxSize=1, blocking=False)
+                self.center_output = output_node_center.createOutputQueue(maxSize=self.center.buffer_size, blocking=False)
+            self.left_output = output_node_left.createOutputQueue(maxSize=self.left.buffer_size, blocking=False)
+            self.right_output = output_node_right.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
 
         try:
             self.pipeline.start()
@@ -85,43 +95,21 @@ class SyncedCameraLuxonis(SyncedCamera):
                 msg_group = self.q_sync.get()
                 left_msg = msg_group["left"]
                 right_msg = msg_group["right"]
+                center_msg = msg_group["center"] if "center" in msg_group else None
 
                 left_frame = LuxonisCameraAdapter.dai_message_to_image_frame(left_msg)
                 right_frame = LuxonisCameraAdapter.dai_message_to_image_frame(right_msg)
 
                 center_frame = None
-                if self.center is not None:
-                    # Drain center queue into buffer
-                    while True:
-                        c_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
-                        if c_frame is None:
-                            break
-                        self.center_buffer.append(c_frame)
-                    
-                    # Find best match in center_buffer to keep center synced with left/right frames
-                    if self.center_buffer:
+                # if center_msg is not None:
+                #     c_frame = LuxonisCameraAdapter.dai_message_to_image_frame(center_msg)
+                if self.center_output:
+                    c_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
+                    if c_frame:
                         lr_timestamp = left_msg.getTimestamp().total_seconds()
-                        
-                        # Find the frame with the closest timestamp
-                        # We also discard frames that are significantly older than the current LR frame
-                        best_diff = float('inf')
-                        best_idx = -1
-                        for i, c_f in enumerate(self.center_buffer):
-                            diff = abs(c_f.timestamp - lr_timestamp)
-                            if diff < best_diff:
-                                best_diff = diff
-                                best_idx = i
-                        
-                        # If a match is found within a reasonable window
-                        if best_idx != -1 and best_diff < 1/self.center.fps:
-                            center_frame = self.center_buffer[best_idx]
-                            # Discard the used frame and all older ones
-                            for _ in range(best_idx + 1):
-                                self.center_buffer.popleft()
-                        elif best_idx != -1 and self.center_buffer[0].timestamp < lr_timestamp - 0.1:
-                            # Discard frames that are way too old
-                            while self.center_buffer and self.center_buffer[0].timestamp < lr_timestamp - 0.1:
-                                self.center_buffer.popleft()
+                        diff = abs(c_frame.timestamp - lr_timestamp)
+                        if diff < 1/self.center.fps:
+                            center_frame = c_frame
 
                 yield SyncedImageFrame(timestamp=time.time(), left=left_frame, right=right_frame, center=center_frame)
         else:

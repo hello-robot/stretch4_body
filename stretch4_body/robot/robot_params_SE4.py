@@ -1410,9 +1410,9 @@ nominal_params={
                 "fps": 30,
                 "rotate_number_of_times": 0,
                 "buffer_size": 1,
-                "is_compressed": False,
+                "is_compressed": True,
                 "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "jpeg_quality": 80, # Only used if is_compressed is true and is_lossless is False
                 "distortion_model": None,
                 "use_auto_exposure": True,
                 "limit_max": None, # Only used if use_auto_exposure is True
@@ -1430,10 +1430,10 @@ nominal_params={
                 # "image_size": (800, 1280),
                 "fps": 30,
                 "rotate_number_of_times": 0,
-                "buffer_size": 2,
-                "is_compressed": False,
+                "buffer_size": 1,
+                "is_compressed": True,
                 "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "jpeg_quality": 80, # Only used if is_compressed is true and is_lossless is False
                 "distortion_model": None,
                 "use_auto_exposure": True,
                 "limit_max": None, # Only used if use_auto_exposure is True
