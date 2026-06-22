@@ -317,17 +317,13 @@ class RGBPipelineController:
                 break
 
             if is_run_pipeline and frame is not None:
-                if frame.left is not None and frame.left.image is not None and frame.left.image.shape[:2] != (1, 1):
-                    left_pipeline_controller.run_pipeline(frame.left)
-                if frame.right is not None and frame.right.image is not None and frame.right.image.shape[:2] != (1, 1):
-                    right_pipeline_controller.run_pipeline(frame.right)
+                left_pipeline_controller.run_pipeline(frame.left)
+                right_pipeline_controller.run_pipeline(frame.right)
                 if frame.center is not None:
                     center_pipeline_controller.run_pipeline(frame.center)
 
-            if frame.left is not None and frame.left.image is not None and frame.left.image.shape[:2] != (1, 1):
-                left_pipeline_controller.show_image(frame.left.image)
-            if frame.right is not None and frame.right.image is not None and frame.right.image.shape[:2] != (1, 1):
-                right_pipeline_controller.show_image(frame.right.image)
+            left_pipeline_controller.show_image(frame.left.image)
+            right_pipeline_controller.show_image(frame.right.image)
 
             if frame.center is not None:
                 center_pipeline_controller.show_image(frame.center.image)
