@@ -297,6 +297,10 @@ def REx_discover_hello_devices():
     sys.argv[0] = "REx_discover_hello_devices"
     runpy.run_module("stretch4_body.tools.factory.REx_discover_hello_devices", run_name="__main__")
 
+def REx_camera_check_fov():
+    sys.argv[0] = "REx_camera_check_fov"
+    runpy.run_module("stretch4_body.tools.factory.REx_camera_check_fov", run_name="__main__")
+
 def stretch_runstop():
     sys.argv[0] = "stretch_runstop"
     runpy.run_module("stretch4_body.tools.stretch_runstop", run_name="__main__")
