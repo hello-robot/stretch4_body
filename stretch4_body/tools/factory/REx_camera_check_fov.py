@@ -117,8 +117,8 @@ def measure_visible_region(image, visualize=False):
                 break
     x_max = int(np.max(right_pts)) if right_pts else w - 1
 
-    rect_w = x_max - x_min
-    rect_h = y_max - y_min
+    rect_w = x_max - x_min + 1
+    rect_h = y_max - y_min + 1
     
     viz_img = None
     if visualize:
@@ -136,8 +136,8 @@ def perform_check(name, last_frame, expected_fov, camera_type, visualize=False):
         return None, False
 
     x_min, x_max, y_min, y_max, viz_img = measure_visible_region(last_frame, visualize=visualize)
-    w = x_max - x_min
-    h = y_max - y_min
+    w = x_max - x_min + 1
+    h = y_max - y_min + 1
     exp_w, exp_h = expected_fov
     
     # Check calibration
@@ -165,6 +165,16 @@ def perform_check(name, last_frame, expected_fov, camera_type, visualize=False):
         print_invalid("FOV is INVALID")
 
     if visualize and viz_img is not None:
+        # Draw the FOV calculation points (Left, Right, Top, Bottom)
+        points = [
+            (int(x_min), int((y_min + y_max) / 2)),
+            (int(x_max), int((y_min + y_max) / 2)),
+            (int((x_min + x_max) / 2), int(y_min)),
+            (int((x_min + x_max) / 2), int(y_max))
+        ]
+        for p in points:
+            cv2.circle(viz_img, p, 5, (255, 0, 255), -1)
+
         # Add validity text to image
         status_text = "VALID" if is_valid else "INVALID"
         color = (0, 255, 0) if is_valid else (0, 0, 255)
