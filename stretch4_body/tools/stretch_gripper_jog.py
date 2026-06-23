@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
 import threading
 import stretch4_body.core.robot_params
+from stretch4_body.utils.stretch_pose_models import RobotJoints
 stretch4_body.core.robot_params.RobotParams.set_logging_level("DEBUG")
 import sys
 import argparse
 import stretch4_body.core.hello_utils as hu
 hu.print_stretch_re_use()
 
-parser=argparse.ArgumentParser(description='Jog the griper from the keyboard')
+parser=argparse.ArgumentParser(description='Jog the gripper from the keyboard')
 parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
-parser.add_argument("-p","--use_parallel", help="Use the Parallel Gripper",action="store_true")
 parser.add_argument("-i","--ip", help="IP address to remote server", type=str, default=None)
 args=parser.parse_args()
 
 
+gripper_type = RobotJoints.gripper.value
+if gripper_type is None:
+    print("No gripper is configured on this robot.")
+    exit(1)
+
+
 if not args.direct:
-    if args.use_parallel:
-        from stretch4_body.robot.robot_client import ParallelGripperClient as StretchGripper
-        g = StretchGripper(ip_address=args.ip)
+    if gripper_type == 'parallel_gripper':
+        from stretch4_body.robot.robot_client import ParallelGripperClient as Gripper
     else:
-        from stretch4_body.robot.robot_client import StretchGripperClient as StretchGripper
-        g = StretchGripper(ip_address=args.ip)
+        from stretch4_body.robot.robot_client import StretchGripperClient as Gripper
+    g = Gripper(ip_address=args.ip)
 else:
-    if args.use_parallel:
-        from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper as StretchGripper
+    if gripper_type == 'parallel_gripper':
+        from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper as Gripper
     else:
-        from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
-    g = StretchGripper(is_direct=True)
+        from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper as Gripper
+    g = Gripper(is_direct=True)
 
 if not g.startup():
     exit()
@@ -39,14 +44,13 @@ def menu_top():
     print('------ MENU -------')
     print('m: menu')
     print('h: home')
-    print('x: close by 10')
-    print('y: open by 10')
-    if args.use_parallel:
-        print('w: close by 10mm')
-        print('z: open by 10mm')
-        print('p: go to position (rad)')
-        print('v: go to position (mm)')
+    if gripper_type == 'parallel_gripper':
+        print('x: close by 10mm')
+        print('y: open by 10mm')
+        print('p: go to position (mm)')
     else:
+        print('x: close by 10%')
+        print('y: open by 10%')
         print('p: go to position (%6.2f to -100)'%g.pct_max_open)
     print('r: reboot')
     print('-----')
@@ -64,36 +68,21 @@ def step_interaction():
     global v_des, a_des
     menu_top()
     x=sys.stdin.readline()
+    if not x:
+        exit()
     if len(x)>1:
         if x[0]=='m':
             menu_top()
         if x[0]=='h':
             g.home()
-        if args.use_parallel:
-            if x[0]=='x':
-                g.move_by(hu.deg_to_rad(-10.0), v_des, a_des)
-            if x[0]=='y':
-                g.move_by(hu.deg_to_rad(10.0), v_des, a_des)
-        else:
-            if x[0]=='x':
-                g.move_by(-10.0, v_des, a_des)
-            if x[0]=='y':
-                g.move_by(10.0, v_des, a_des)
-                
-        if args.use_parallel:
-            if x[0]=='w':
-                g.move_by_mm(-10.0, v_des, a_des)
-            if x[0]=='z':
-                g.move_by_mm(10.0, v_des, a_des)
-            if x[0]=='v':
-                print("Enter position (mm): ")
-                ff = float(sys.stdin.readline())
-                g.move_to_mm(ff, v_des, a_des)
-                
+        if x[0]=='x':
+            g.move_by(-10.0, v_des, a_des)
+        if x[0]=='y':
+            g.move_by(10.0, v_des, a_des)
         if x[0]=='p':
             print("Enter position: ")
             ff = float(sys.stdin.readline())
-            if not args.use_parallel:
+            if gripper_type != 'parallel_gripper':
                 ff=min(max(-100,ff),g.pct_max_open)
             g.move_to(ff, v_des, a_des)
         if x[0] == 'a':

@@ -2,6 +2,9 @@
 import math
 from stretch4_body.core.robot_params import RobotParams
 import importlib
+from stretch4_urdf import get_urdf, get_joint_limits
+from functools import lru_cache
+
 def map_range(value:float, in_min:float, in_max:float, out_min:float, out_max:float):
     """
     Linearly maps a value from one range to another.
@@ -114,6 +117,99 @@ class GripperConversion():
                'finger_vel':finger_vel}
         
         return sts
+
+
+def parallel_gripper_servo_rad_to_mm(servo_rad, params):
+    """
+    Convert parallel gripper servo angle (in radians) to gap width (in mm).
+    """
+    # L: Length of the connecting linkage rod (in mm)
+    L = params.get('kL', 30.25)
+    # r: Radius of rotation of the servo horn pivot (in mm)
+    r = params.get('kR', 22.0)
+    # finger_offset: Horizontal distance from slider pivot to the fingertip contact face (in mm)
+    finger_offset = params.get('kX0', 10.5)
+    # kT0: Angular offset aligning the servo zero coordinate with the kinematic reference frame (in degrees)
+    kT0 = params.get('kT0', 44.0)
+    
+    # q_eff: Effective angle of the servo arm relative to the vertical axis
+    q_eff = -1 * servo_rad + math.radians(kT0)
+    # term: The squared horizontal distance spanned by the connecting rod (derived via Pythagorean theorem)
+    term = L**2 - (r * math.cos(q_eff))**2
+    # x_pivot: Horizontal position of the slider pivot relative to the motor axis center (in mm)
+    x_pivot = r * math.sin(q_eff) - math.sqrt(term)
+    # x_mm: Combined gap width between both fingers (twice the distance from slider to contact face)
+    x_mm = 2 * (-x_pivot - finger_offset)
+    return round(x_mm, 3)
+
+
+def parallel_gripper_mm_to_servo_rad(x_mm, params):
+    """
+    Convert parallel gripper gap width (in mm) to servo angle (in radians).
+    """
+    # L: Length of the connecting linkage rod (in mm)
+    L = params.get('kL', 30.25)
+    # r: Radius of rotation of the servo horn pivot (in mm)
+    r = params.get('kR', 22.0)
+    # finger_offset: Horizontal distance from slider pivot to the fingertip contact face (in mm)
+    finger_offset = params.get('kX0', 10.5)
+    # kT0_rad: Angular offset in radians aligning the servo zero coordinate with the kinematic reference frame
+    kT0_rad = math.radians(params.get('kT0', 44.0))
+    
+    # A: The horizontal position of the slider pivot relative to the motor axis center (in mm)
+    A = -(x_mm / 2.0 + finger_offset)
+    # numerator: Derived from squaring the linkage geometry equation to isolate sin(q_eff)
+    numerator = A**2 + r**2 - L**2
+    # denominator: Twice the product of slider distance and crank radius
+    denominator = 2 * A * r
+    
+    # sin_q_eff: The sine of the effective servo arm angle
+    sin_q_eff = numerator / denominator
+    # Clamp to [-1.0, 1.0] to prevent floating point out-of-bounds domain errors in arcsin
+    sin_q_eff = max(-1.0, min(1.0, sin_q_eff))
+    # q_eff: Effective servo arm angle in radians
+    q_eff = math.asin(sin_q_eff)
+    # qr: Rescaled physical servo angle in radians
+    qr = kT0_rad - q_eff
+    return qr
+
+
+
+@lru_cache(maxsize=1)
+def get_finger_joint_limits():
+    """
+    Get the lower and upper limits of finger_left_joint from the URDF contents.
+    """    
+
+    rp = RobotParams().get_params()[1]
+    model_name = rp['robot']['model_name']
+    batch_name = rp['robot']['batch_name']
+    eoa_name = rp['robot']['tool']
+    
+    urdf_contents = get_urdf(model_name, batch_name, eoa_name, do_add_file_prefix_to_absolute_paths=False)
+    limits = get_joint_limits(urdf_contents)
+    return limits.get('finger_left_joint', (-0.04, 0.0))
+
+
+
+def parallel_gripper_pos_mm_to_urdf_m(pos_mm, params):
+    """
+    Convert parallel gripper finger aperture (in mm) to URDF finger slide joint value (in meters).
+    Slide joint limits are loaded dynamically from the URDF.
+    """
+    lower, upper = get_finger_joint_limits()
+    range_mm = params.get('range_mm', 80.0)
+    pct = pos_mm / range_mm
+    return upper + pct * (lower - upper)
+
+
+def parallel_gripper_rad_to_urdf_m(qr, params):
+    """
+    Convert parallel gripper servo angle (in radians) to URDF finger slide joint value (in meters).
+    """
+    x_mm = parallel_gripper_servo_rad_to_mm(qr, params)
+    return parallel_gripper_pos_mm_to_urdf_m(x_mm, params)
+
 
 if __name__ == "__main__":
     conversion = GripperConversion()

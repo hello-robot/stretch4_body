@@ -65,9 +65,13 @@ class MujocoJointStates:
         if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
             jgfl = state.get("gripper_finger_left_joint")
             jgfr = state.get("gripper_finger_right_joint")
+            if jgfl is None: jgfl = 0.0
+            if jgfr is None: jgfr = 0.0
         elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
             jfl = state.get("finger_left_joint")
             jfr = state.get("finger_right_joint")
+            if jfl is None: jfl = 0.0
+            if jfr is None: jfr = 0.0
 
         mujoco_state = MujocoJointStates(
             lift_joint=state.get("lift_joint", 0.0),

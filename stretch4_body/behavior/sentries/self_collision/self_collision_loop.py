@@ -6,6 +6,8 @@ from stretch4_body.core.device import Device
 from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
 from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_pos_mm_to_urdf_m
+
 # ###########################################################################################
 
 def _cb_solver_loop_exit(lsa):
@@ -139,20 +141,35 @@ class SelfCollisionLoop(Device):
         configuration['lift_joint'] = dl + s['lift']['pos']
 
         if 'end_of_arm' in s:
-            dwy = kbd['wrist_yaw'] * s['end_of_arm']['wrist_yaw']['braking_distance']
-            dwp = kbd['wrist_pitch'] * s['end_of_arm']['wrist_pitch']['braking_distance']
-            dwr = kbd['wrist_roll'] * s['end_of_arm']['wrist_roll']['braking_distance']
-            configuration['wrist_yaw_joint']=s['end_of_arm']['wrist_yaw']['pos']+dwy
-            configuration['wrist_pitch_joint'] = s['end_of_arm']['wrist_pitch']['pos']+dwp
-            configuration['wrist_roll_joint'] = s['end_of_arm']['wrist_roll']['pos']+dwr
-            if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
-                #print('SelfCollisionLoop Gripper Conversion',robot_status['end_of_arm']['stretch_gripper']['gripper_conversion'])
-                configuration['gripper_finger_left_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
-                configuration['gripper_finger_right_joint'] = robot_status['end_of_arm']['stretch_gripper']['gripper_conversion']['finger_rad']
-                #configuration['stretch_gripper_joint'] = self.robot.end_of_arm.status['stretch_gripper']['pos']
-            elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
-                configuration['finger_left_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
-                configuration['finger_right_joint'] = robot_status['end_of_arm']['parallel_gripper']['pos']
+            wrist_yaw = s['end_of_arm'].get('wrist_yaw', None)
+            wrist_pitch = s['end_of_arm'].get('wrist_pitch', None)
+            wrist_roll = s['end_of_arm'].get('wrist_roll', None)
+
+            if wrist_yaw is not None:
+                dwy = kbd['wrist_yaw'] * wrist_yaw.get('braking_distance', 0.0)
+                configuration['wrist_yaw_joint'] = wrist_yaw.get('pos', 0.0) + dwy
+            if wrist_pitch is not None:
+                dwp = kbd['wrist_pitch'] * wrist_pitch.get('braking_distance', 0.0)
+                configuration['wrist_pitch_joint'] = wrist_pitch.get('pos', 0.0) + dwp
+            if wrist_roll is not None:
+                dwr = kbd['wrist_roll'] * wrist_roll.get('braking_distance', 0.0)
+                configuration['wrist_roll_joint'] = wrist_roll.get('pos', 0.0) + dwr
+
+            if robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_sg4':
+                stretch_gripper = s['end_of_arm'].get('stretch_gripper', None)
+                if stretch_gripper is not None:
+                    gripper_conversion = stretch_gripper.get('gripper_conversion', None)
+                    if gripper_conversion is not None:
+                        configuration['gripper_finger_left_joint'] = gripper_conversion.get('finger_rad')
+                        configuration['gripper_finger_right_joint'] = gripper_conversion.get('finger_rad')
+            elif robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_pg4':
+                parallel_gripper = s['end_of_arm'].get('parallel_gripper', None)
+                if parallel_gripper is not None:
+                    pos_mm = parallel_gripper.get('pos_mm', 0.0)
+                    pg_params = robot_params.get('parallel_gripper', {})
+                    joint_val = parallel_gripper_pos_mm_to_urdf_m(pos_mm, pg_params)
+                    configuration['finger_left_joint'] = joint_val
+                    configuration['finger_right_joint'] = joint_val
 
         return configuration
 

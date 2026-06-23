@@ -354,10 +354,10 @@ class ControlMapping(Enum):
         if gamepad_teleop.use_devices['gripper']:
             if gamepad_teleop.controller_state['right_button_pressed']:
                 gamepad_teleop.gripper.open_gripper(robot)
-                actuated_joints['stretch_gripper'] = 1
+                actuated_joints[gamepad_teleop.gripper.name] = 1
             elif gamepad_teleop.controller_state['bottom_button_pressed']:
                 gamepad_teleop.gripper.close_gripper(robot)
-                actuated_joints['stretch_gripper'] = -1
+                actuated_joints[gamepad_teleop.gripper.name] = -1
             else:
                 gamepad_teleop.gripper.stop_gripper(robot)
 

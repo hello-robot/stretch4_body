@@ -10,6 +10,7 @@ from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechCommError
 from stretch4_body.core import gamepad_joints
+from stretch4_body.utils.stretch_pose_models import RobotJoints
 import os
 import time
 import threading
@@ -103,12 +104,12 @@ class GamePadTeleop(Device):
         self.is_gamepad_active = False
         self.gripper = None
 
-        self.gripper_name = 'parallel_gripper' if self.end_of_arm_tool == 'eoa_wrist_dw4_tool_pg4' else 'stretch_gripper'
+        self.gripper_name = RobotJoints.gripper.value
         self.use_devices={'arm':'arm' in self.robot.subsystems,
                           'eoa':'end_of_arm' in self.robot.subsystems,
                           'lift':'lift' in self.robot.subsystems,
                           'base':'omnibase' in self.robot.subsystems,
-                          'gripper':'end_of_arm' in self.robot.subsystems and self.end_of_arm_tool in ['eoa_wrist_dw4_tool_sg4', 'eoa_wrist_dw4_tool_pg4'] }
+                          'gripper':'end_of_arm' in self.robot.subsystems and self.gripper_name is not None }
 
 
         self.set_joint_command()
