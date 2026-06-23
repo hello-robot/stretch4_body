@@ -121,7 +121,7 @@ class LuxonisCameraAdapter(CameraAdapter):
         buffer_size = camera_config.buffer_size
         fps = camera_config.fps
         node = pipeline.create(dai.node.Camera)
-        node.setNumFramesPools(isp=buffer_size, raw=buffer_size, imgmanip=buffer_size)
+        # node.setNumFramesPools(isp=buffer_size, raw=buffer_size, imgmanip=buffer_size)
         node.setSensorType(dai.CameraSensorType.COLOR)
         node.build(boardSocket=board_socket, sensorFps=fps)
 
@@ -149,7 +149,7 @@ class LuxonisCameraAdapter(CameraAdapter):
         camera_output_compressed = None
         if camera_config.is_compressed:
             videoEncoder = pipeline.create(dai.node.VideoEncoder)
-            videoEncoder.setNumFramesPool(buffer_size)
+            # videoEncoder.setNumFramesPool(buffer_size)
             videoEncoder.build(
                 camera_output, 
                 frameRate=fps, 
@@ -168,6 +168,7 @@ class LuxonisCameraAdapter(CameraAdapter):
         pipeline = dai.Pipeline(defaultDevice=device)
 
         print("DeviceID:", device.getDeviceInfo().getDeviceId())
+        print("USB Port:", device_port)
         print("USB speed:", device.getUsbSpeed())
         print("Connected cameras:", device.getConnectedCameras())
 
@@ -246,33 +247,11 @@ class LuxonisCameraAdapter(CameraAdapter):
     ):
         while True:
             message: dai.ImgFrame | None = output_queue.tryGet()
-            if message:
+            if message is not None:
                 yield LuxonisCameraAdapter.dai_message_to_image_frame(message)
             else:
                 yield None
 
-
-    @staticmethod
-    def get_pointcloud_from_output_queue(
-        output_queue: dai.MessageQueue
-    ):
-        while True:
-            message = output_queue.get()
-            if message:
-                # time_stamp = time.monotonic()
-                # https://docs.luxonis.com/hardware/platform/deploy/frame-sync/
-                # time_stamp = message.getTimestamp().total_seconds() # Timestamp synced with the host computer clock
-                sequence_number = message.getSequenceNum()
-                points, colors = message.getPointsRGB()
-
-                # latencyMs = (dai.Clock.now() - message.getTimestamp()).total_seconds() * 1000
-                # diffs = np.append(diffs, latencyMs)
-                # print(f"Latency: {latencyMs} ms")
-
-                # yield color_image, time_stamp
-                yield points, colors, sequence_number
-
-            # print(f"Dropped frame {output_queue.getName()}")
 
     def get_frames(self):
         if not self.is_open():
