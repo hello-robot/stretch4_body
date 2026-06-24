@@ -4,6 +4,7 @@ from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 import importlib
 from stretch4_body.subsystem.end_of_arm.stretch_gripper import GripperConversion
+from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
 from stretch4_body.core.hello_utils import rad_to_deg, deg_to_rad
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
@@ -1023,9 +1024,10 @@ class ParallelGripperClient(WristJointClient):
     """ Client for the parallel gripper. """
     def __init__(self, parent=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
+        open_mm = parallel_gripper_servo_rad_to_mm(deg_to_rad(self.params['range_deg'][1]), self.params)
         self.poses = {'zero': 0,
-                      'open': deg_to_rad(self.params['range_deg'][1]),
-                      'mid': deg_to_rad(self.params['range_deg'][1]) / 2,
+                      'open': open_mm,
+                      'mid': open_mm / 2.0,
                       'close': 0}
 
     def move_to_mm(self, x_mm, v_r=None, a_r=None):

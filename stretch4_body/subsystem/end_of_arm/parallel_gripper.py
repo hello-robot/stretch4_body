@@ -14,9 +14,10 @@ class ParallelGripper(FeetechSMHello):
     def __init__(self, chain=None, usb=None, name='parallel_gripper',is_direct=False):
         FeetechSMHello.__init__(self, name, chain, usb,is_direct=is_direct)
         self.status['pos_mm'] = 0.0
+        open_mm = parallel_gripper_servo_rad_to_mm(hu.deg_to_rad(self.params['range_deg'][1]), self.params)
         self.poses = {
-            'open': self.params.get('range_mm', 80.0),
-            'mid': self.params.get('range_mm', 80.0) / 2.0,
+            'open': open_mm,
+            'mid': open_mm / 2.0,
             'close': 0.0,
             'zero': 0.0}
 
