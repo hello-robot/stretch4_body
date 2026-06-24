@@ -1512,6 +1512,7 @@ nominal_params={
 
                ]},
         'eoa_wrist_dw4_tool_pg4':{'k_brake_distance': {},
+               'ignore_links': ['aruco_fingertip_right_link','aruco_fingertip_left_link'],
                'exclusions':[
                    ["finger_left_link", "finger_right_link"],
                ]},

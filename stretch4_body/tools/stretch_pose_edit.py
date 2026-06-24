@@ -18,20 +18,26 @@ class MujocoURDFCollisionVizAnimate(MujocoURDFCollisionViz):
         urdf_joint_state = {}
         
         for joint_name, joint_pose in pose.joints.items():
-            if joint_name == 'lift':
+            joint = RobotJoints.get_joint_by_name(joint_name)
+            if joint is None:
+                continue
+            if joint is RobotJoints.lift:
                 urdf_joint_state['lift_joint'] = joint_pose.position
-            elif joint_name == 'arm':
+            elif joint is RobotJoints.arm:
                 val = joint_pose.position / 4.0
                 urdf_joint_state['arm_l1_joint'] = val
                 urdf_joint_state['arm_l2_joint'] = val
                 urdf_joint_state['arm_l3_joint'] = val
                 urdf_joint_state['arm_l4_joint'] = val
-            elif joint_name in ['wrist_yaw', 'wrist_pitch', 'wrist_roll']:
-                urdf_joint_state[f'{joint_name}_joint'] = joint_pose.position
-            elif joint_name == 'stretch_gripper':
-                # Gripper value typically controls both fingers in URDF
-                urdf_joint_state['gripper_finger_left_joint'] = joint_pose.position
-                urdf_joint_state['gripper_finger_right_joint'] = joint_pose.position
+            elif joint in (RobotJoints.wrist_yaw, RobotJoints.wrist_pitch, RobotJoints.wrist_roll):
+                urdf_joint_state[f'{joint.name}_joint'] = joint_pose.position
+            elif joint is RobotJoints.gripper:
+                if joint.value == 'parallel_gripper':
+                    joint_val = -joint_pose.position / 2.0
+                else:
+                    joint_val = joint_pose.position
+                for finger_joint in joint.finger_joints:
+                    urdf_joint_state[finger_joint] = joint_val
             else:
                 # Fallback for any other joints
                 urdf_joint_state[f'{joint_name}_joint'] = joint_pose.position
@@ -40,16 +46,17 @@ class MujocoURDFCollisionVizAnimate(MujocoURDFCollisionViz):
             contact_dict = {}
 
         if highlight_joint:
-            if highlight_joint == 'lift':
+            h_joint = RobotJoints.get_joint_by_name(highlight_joint)
+            if h_joint is RobotJoints.lift:
                 contact_dict['lift_link'] = []
-            elif highlight_joint == 'arm':
+            elif h_joint is RobotJoints.arm:
                 for i in range(1, 5):
                     contact_dict[f'arm_l{i}_link'] = []
-            elif highlight_joint in ['wrist_yaw', 'wrist_pitch', 'wrist_roll']:
-                contact_dict[f'{highlight_joint}_link'] = []
-            elif highlight_joint == 'stretch_gripper':
-                contact_dict['gripper_finger_left_link'] = []
-                contact_dict['gripper_finger_right_link'] = []
+            elif h_joint in (RobotJoints.wrist_yaw, RobotJoints.wrist_pitch, RobotJoints.wrist_roll):
+                contact_dict[f'{h_joint.name}_link'] = []
+            elif h_joint is RobotJoints.gripper:
+                for finger_link in h_joint.finger_links:
+                    contact_dict[finger_link] = []
 
         self.update(urdf_joint_state, contact_dict if contact_dict else None)
 
@@ -62,8 +69,10 @@ class KeyframeEditor:
         
         # Determine the order of joints we can edit
         self.editable_joints = [
-            'lift', 'arm', 'wrist_yaw', 'wrist_pitch', 'wrist_roll', 'stretch_gripper'
+            'lift', 'arm', 'wrist_yaw', 'wrist_pitch', 'wrist_roll'
         ]
+        if RobotJoints.gripper.value is not None:
+            self.editable_joints.append('gripper')
         self.current_joint_idx = 0
         
         self.viz = MujocoURDFCollisionVizAnimate()

@@ -42,27 +42,38 @@ class KeyframeRecorder:
                 position=status[RobotJoints.lift.name]['pos'],
                 velocity=status[RobotJoints.lift.name]['vel'],
                 effort=status[RobotJoints.lift.name]['force']
-            )
+                )
             
         # Wrist (EndOfArm)
         if 'end_of_arm' in status:
             eoa_status = status['end_of_arm']
             # Iterate through known joints in EndOfArm
             for joint in RobotJoints.get_end_of_arm_joints():
-                if joint.name in eoa_status:
-                    j_status = eoa_status[joint.name]
-                    pose.joints[joint.name] = JointPose(
-                        name=joint.name,
-                        position=j_status['pos'],
-                        velocity=j_status['vel'],
-                        effort=j_status.get('effort', 0.0)
-                    )
-                    if joint is RobotJoints.stretch_gripper:
+                status_joint_name = joint.value
+                
+                if status_joint_name in eoa_status:
+                    j_status = eoa_status[status_joint_name]
+                    if joint is RobotJoints.gripper:
+                        if status_joint_name == 'parallel_gripper':
+                            pose.joints[joint.name] = JointPose(
+                                name=joint.name,
+                                position=j_status['pos_mm'] / 1000.0,
+                                velocity=j_status['vel'],
+                                effort=j_status.get('effort', 0.0)
+                            )
+                        else:
+                            pose.joints[joint.name] = JointPose(
+                                name=joint.name,
+                                position=j_status['gripper_conversion']['finger_rad'],
+                                velocity=j_status['gripper_conversion']['finger_vel'],
+                                effort=j_status['gripper_conversion'].get('finger_effort', 0.0)
+                            )
+                    else:
                         pose.joints[joint.name] = JointPose(
                             name=joint.name,
-                            position=j_status['gripper_conversion']['finger_rad'],
-                            velocity=j_status['gripper_conversion']['finger_vel'],
-                            effort=j_status['gripper_conversion'].get('finger_effort', 0.0)
+                            position=j_status['pos'],
+                            velocity=j_status['vel'],
+                            effort=j_status.get('effort', 0.0)
                         )
 
         # Base

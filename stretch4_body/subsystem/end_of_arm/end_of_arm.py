@@ -92,7 +92,7 @@ class EndOfArm(FeetechSMChain):
         if joint in self.motors and hasattr(self.motors[joint], 'unpause_sentry'):
             self.motors[joint].unpause_sentry()
 
-    def move_to(self, joint,x_r, v_r=None, a_r=None):
+    def move_to(self, joint, x_r, v_r=None, a_r=None):
         """
         joint: name of joint (string)
         x_r: commanded absolute position (radians).
@@ -102,7 +102,7 @@ class EndOfArm(FeetechSMChain):
         if joint not in self.motors:
             print("EndOfArm: Ignoring move_to command for inactive or non-existent joint '%s'" % joint)
             return
-        with  self.pt_lock:
+        with self.pt_lock:
             self.motors[joint].move_to(x_r, v_r, a_r)
 
     def move_to_mm(self, joint, x_mm, v_r=None, a_r=None):

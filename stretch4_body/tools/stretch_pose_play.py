@@ -46,18 +46,20 @@ class KeyframePlayer:
         self.last_pose = pose
         
         for name, joint_pose in pose.joints.items():
-            joint = RobotJoints[name]
+            joint = RobotJoints.get_joint_by_name(name)
+            if joint is None or joint.value is None:
+                continue
 
             if not joint in self.joints_allowed_to_move:
                 continue
 
-            position = pose.joints[joint.name].position
+            position = joint.to_subsystem_units(joint_pose.position)
             if joint is RobotJoints.arm:
                 self.robot.arm.move_to(position, *joint.get_joint_params(self.motion_profile))
             elif joint is RobotJoints.lift:
                 self.robot.lift.move_to(position, *joint.get_joint_params(self.motion_profile))
             elif joint in RobotJoints.get_end_of_arm_joints():
-                self.robot.end_of_arm.move_to(name, joint_pose.position, *joint.get_joint_params(self.motion_profile))
+                self.robot.end_of_arm.move_to(joint.value, position, *joint.get_joint_params(self.motion_profile))
             else:
                 raise NotImplementedError(f"{joint.name} is not a supported joint to move.")
             
@@ -149,7 +151,11 @@ Please make sure the robot's surroundings are clear before proceeding.
     
     if input("Type y to continue. The robot will start moving. ").lower() != "y": return
 
-    _joints_allowed_to_move = [RobotJoints[j] for j in joints_allowed_to_move.split(",")]
+    _joints_allowed_to_move = [
+        RobotJoints.get_joint_by_name(j)
+        for j in joints_allowed_to_move.split(",")
+        if RobotJoints.get_joint_by_name(j) is not None
+    ]
     player = KeyframePlayer(joints_allowed_to_move=_joints_allowed_to_move, motion_profile=motion_profile)
     player.load_from_file(file)
     
