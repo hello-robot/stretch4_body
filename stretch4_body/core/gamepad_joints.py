@@ -292,26 +292,26 @@ class CommandParallelGripperPosition:
     def __init__(self, motion_profile:str = 'max'):
         self.name = 'parallel_gripper'
         self.params = RobotParams().get_params()[1][self.name]
-        self.gripper_rotate_deg = 15.0
+        self.gripper_step_mm = 10.0
         self.gripper_accel = self.params['motion'][motion_profile]['accel']
         self.gripper_vel = self.params['motion'][motion_profile]['vel']
         self.precision_mode = 0.0
         self.stop_reqd = False
 
-    def _move(self, dx_deg, robot):
+    def _move(self, dx_mm, robot):
         scale = 1.0 - 0.75 * self.precision_mode
-        dx_deg = dx_deg * scale
-        robot.end_of_arm.move_by(self.name, -deg_to_rad(dx_deg), self.gripper_vel, self.gripper_accel)
+        dx_mm = dx_mm * scale
+        robot.end_of_arm.move_by_mm(self.name, dx_mm, self.gripper_vel, self.gripper_accel)
         self.stop_reqd = True
     
     def open_gripper(self, robot):
-        self._move(self.gripper_rotate_deg, robot)
+        self._move(self.gripper_step_mm, robot)
         
     def close_gripper(self, robot):
-        self._move(-self.gripper_rotate_deg, robot)
+        self._move(-self.gripper_step_mm, robot)
 
     def stop_gripper(self, robot):
         if self.stop_reqd:
-            robot.end_of_arm.move_by(self.name, 0)
+            robot.end_of_arm.move_by_mm(self.name, 0)
             self.stop_reqd = False
 

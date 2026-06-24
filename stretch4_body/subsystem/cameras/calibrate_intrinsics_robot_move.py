@@ -214,7 +214,7 @@ class RobotMovementController:
         joints_allowed_to_move = [
             j
             for j in RobotJoints
-            if j not in [RobotJoints.base, RobotJoints.stretch_gripper] and j.name != "parallel_gripper"
+            if j not in (RobotJoints.base, RobotJoints.gripper)
         ]
         self.keyframe_player = KeyframePlayer(
             joints_allowed_to_move=joints_allowed_to_move,
