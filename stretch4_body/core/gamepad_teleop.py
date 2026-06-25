@@ -415,7 +415,7 @@ class GamePadTeleop(Device):
 
         def on_select_hold():
             self.stow_robot()
-        self.select_button_counter.trigger_on_hold(2.0, on_select_hold)
+        self.select_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, on_select_hold)
             
 
     def change_gripper_handedness(self, robot, *, do_motion:bool):
