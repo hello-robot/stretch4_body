@@ -32,7 +32,6 @@ dependencies = [
     "pyserial",
     "pyusb",
     "python-xlib",
-    "hello-robot-stretch4-urdf>=2026.5.27",
     "pygame",
     "fpdf2",
     "sshkeyboard",
@@ -42,7 +41,8 @@ dependencies = [
     "meson",
     "ninja",
     "pyzmq",
-    "hello-robot-stretch4-flying-gripper",
+    "hello-robot-stretch4-urdf>=2026.6.25",
+    "hello-robot-stretch4-flying-gripper>=2026.6.25",
 ]
 
 [project.urls]
