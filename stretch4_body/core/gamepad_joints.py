@@ -38,38 +38,45 @@ class CommandBase:
         self.motion_profile_angular = motion_profile_angular
         self.params = RobotParams().get_params()[1]['omnibase']
         self.dead_zone = 0.0001
-        self.accel_xy = self.params['motion'][self.motion_profile]['accel_xy_m']*0.25
-        self.vel_xy = self.params['motion'][self.motion_profile]['vel_xy_m']
-
-        self.accel_w_for_translation = self.params['motion'][self.motion_profile]['accel_w_r']
-        self.vel_w_for_translation = self.params['motion'][self.motion_profile]['vel_w_r']
-        self.accel_w_for_rotation_only = self.params['motion'][self.motion_profile_angular]['accel_w_r']
-        self.vel_w_for_rotation_only = self.params['motion'][self.motion_profile_angular]['vel_w_r']
 
         self.accel_xy_max = self.params['motion']['max']['accel_xy_m']
         self.accel_w_max = self.params['motion']['max']['accel_w_r']
 
         self.precision_mode = 0.0
     
-    def _move(self, x, y, w, robot):
-        accel_w = self.accel_w_for_translation if w == 0 else self.accel_w_for_rotation_only
+    def _get_motion_params(self, is_rotating:bool):
+        motion_profile = self.motion_profile
+        if is_rotating:
+            motion_profile = self.motion_profile_angular
 
+        vel_xy = self.params['motion'][motion_profile]['vel_xy_m']
+        accel_xy = self.params['motion'][motion_profile]['accel_xy_m']
+        vel_w = self.params['motion'][motion_profile]['vel_w_r']
+        accel_w = self.params['motion'][motion_profile]['accel_w_r']
+
+        return vel_xy, accel_xy, vel_w, accel_w
+
+    
+    def _move(self, x, y, w, accel_xy, accel_w, robot):
         scale = 1.0 - 0.75 * self.precision_mode
-        robot.base.set_velocity(scale*x, scale*y, scale*w, self.accel_xy, accel_w)
+        robot.base.set_velocity(scale*x, scale*y, scale*w, accel_xy, accel_w)
     
     def command_stick_to_motion(self, x, y, w,robot):
         """Convert a stick axis value to robot base's tank driving motion.
 
         Args:
-            x (float): Range [-1.0,+1.0], control rotation speed
-            y (float): Range [-1.0,+1.0], control linear speed
+            x (float): Range [-1.0,+1.0], control linear x speed
+            y (float): Range [-1.0,+1.0], control linear y speed
+            w (float): Range [-1.0,+1.0], control angular speed
             robot (robot.Robot): Valid robot instance
         """
-        v_x=self.vel_xy*(0 if abs(x)<self.dead_zone else x)
-        v_y=self.vel_xy*(0 if abs(y)<self.dead_zone else y)
-        v_w=self.vel_w_for_rotation_only*(0 if abs(w)<self.dead_zone else w)
+        vel_xy, accel_xy, vel_w, accel_w = self._get_motion_params(is_rotating=abs(w)>=0.1)
 
-        self._move(v_x, v_y, v_w, robot)
+        v_x=vel_xy*(0 if abs(x)<self.dead_zone else x)
+        v_y=vel_xy*(0 if abs(y)<self.dead_zone else y)
+        v_w=vel_w*(0 if abs(w)<self.dead_zone else w)
+
+        self._move(v_x, v_y, v_w, accel_xy, accel_w, robot)
     
     def stop_motion(self, robot):
         """Stop the joint motion. To be used when ever the controller is idle/no-inputs
