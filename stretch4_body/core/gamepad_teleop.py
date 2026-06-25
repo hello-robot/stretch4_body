@@ -414,8 +414,7 @@ class GamePadTeleop(Device):
         self.select_button_counter.trigger_on_tap(on_select_tap)
 
         def on_select_hold():
-            if rt_pulled:
-                self.stow_robot()
+            self.stow_robot()
         self.select_button_counter.trigger_on_hold(2.0, on_select_hold)
             
 
