@@ -136,6 +136,12 @@ class RobotJoints(Enum):
         return model.finger_joints if model else []
 
     @property
+    def arm_joints(self) -> List[str]:
+        if self.name == 'arm':
+            return ['arm_l1_joint', 'arm_l2_joint', 'arm_l3_joint', 'arm_l4_joint']
+        return []
+
+    @property
     def finger_links(self) -> List[str]:
         model = self.gripper_model
         return model.finger_links if model else []
