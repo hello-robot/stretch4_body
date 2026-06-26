@@ -154,8 +154,81 @@ class RobotJoints(Enum):
         return None
 
     def to_subsystem_units(self, position: float) -> float:
+        return self.urdf_to_subsystem(position)
+
+    def to_standard_units(self, position: float) -> float:
+        return self.subsystem_to_urdf(position)
+
+    def urdf_to_subsystem(self, urdf: float) -> float:
         model = self.gripper_model
-        return model.to_subsystem_units(position) if model else position
+        return model.urdf_to_subsystem(urdf) if model else urdf
+
+    def subsystem_to_urdf(self, subsystem: float) -> float:
+        model = self.gripper_model
+        return model.subsystem_to_urdf(subsystem) if model else subsystem
+
+    @property
+    def poses(self) -> Optional[Dict[str, float]]:
+        if self.name == 'gripper' and self.gripper_model:
+            client = self.gripper_client
+            if client and hasattr(client, 'poses'):
+                return {k: self.subsystem_to_urdf(v) for k, v in client.poses.items()}
+        return None
+
+    @property
+    def subsystem_range(self) -> Optional[tuple[float, float]]:
+        model = self.gripper_model
+        return model.subsystem_range if model else None
+
+    @property
+    def urdf_range(self) -> Optional[tuple[float, float]]:
+        model = self.gripper_model
+        return model.urdf_range if model else None
+
+    @property
+    def aperture_range_m(self) -> Optional[tuple[float, float]]:
+        model = self.gripper_model
+        return model.aperture_range_m if model else None
+
+    def normalized_to_subsystem(self, normalized: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.normalized_to_subsystem(normalized) if model else None
+
+    def subsystem_to_normalized(self, subsystem: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.subsystem_to_normalized(subsystem) if model else None
+
+    def urdf_to_normalized(self, urdf: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.urdf_to_normalized(urdf) if model else None
+
+    def normalized_to_urdf(self, normalized: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.normalized_to_urdf(normalized) if model else None
+
+    def aperture_to_normalized(self, aperture_m: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.aperture_to_normalized(aperture_m) if model else None
+
+    def normalized_to_aperture(self, normalized: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.normalized_to_aperture(normalized) if model else None
+
+    def aperture_to_subsystem(self, aperture_m: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.aperture_to_subsystem(aperture_m) if model else None
+
+    def subsystem_to_aperture(self, subsystem: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.subsystem_to_aperture(subsystem) if model else None
+
+    def urdf_to_aperture(self, urdf: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.urdf_to_aperture(urdf) if model else None
+
+    def aperture_to_urdf(self, aperture_m: float) -> Optional[float]:
+        model = self.gripper_model
+        return model.aperture_to_urdf(aperture_m) if model else None
 
     @cache
     def get_joint_params(self, profile: MotionProfile) -> tuple[float, float]:
