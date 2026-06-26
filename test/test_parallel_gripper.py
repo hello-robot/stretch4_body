@@ -56,14 +56,36 @@ def test_robot_joints_properties():
     assert math.isclose(sub_val, 0.08, abs_tol=0.005)
 
     # Test stretch_gripper conversion
-    from unittest.mock import patch
-    with patch.object(RobotJoints.gripper, 'get_gripper', return_value='stretch_gripper'):
+    from unittest.mock import patch, MagicMock, PropertyMock
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
         # For stretch_gripper, to_subsystem_units converts radians to percent.
         # -100 deg is -1.745329... rad.
         # If position is -1.745329... rad, expected percent is -100.0% (closed).
         val_pct = RobotJoints.gripper.to_subsystem_units(-1.7453292519943295)
         print("stretch_gripper rad to subsystem units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
+
+    # Test gripper_client property
+    client = RobotJoints.gripper.gripper_client
+    from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
+    assert isinstance(client, ParallelGripperClient)
+
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
+        with patch.dict('stretch4_body.utils.stretch_pose_models.GRIPPER_MODELS') as mock_models:
+            mock_meta = MagicMock()
+            mock_client = MagicMock()
+            mock_meta.client_class.return_value = mock_client
+            mock_models['stretch_gripper'] = mock_meta
+            client_sg = RobotJoints.gripper.gripper_client
+            assert client_sg == mock_client
+    # Test get_joint_by_name generic lookup
+    assert RobotJoints.get_joint_by_name('gripper') == RobotJoints.gripper
+    assert RobotJoints.get_joint_by_name('parallel_gripper') == RobotJoints.gripper
+    assert RobotJoints.get_joint_by_name('lift') == RobotJoints.lift
+    assert RobotJoints.get_joint_by_name('non_existent') is None
+
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
+        assert RobotJoints.get_joint_by_name('stretch_gripper') == RobotJoints.gripper
     
     print("RobotJoints properties test passed!")
 

@@ -48,8 +48,8 @@ def test_stretch_gripper_direct_commands():
     print("StretchGripper direct move_to test passed!")
 
 def test_robot_joints_properties_stretch():
-    from unittest.mock import patch
-    with patch.object(RobotJoints.gripper, 'get_gripper', return_value='stretch_gripper'):
+    from unittest.mock import patch, PropertyMock
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
         joints = RobotJoints.gripper.finger_joints
         links = RobotJoints.gripper.finger_links
         print("stretch_gripper finger_joints:", joints)

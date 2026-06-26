@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
-from functools import cache
-from typing import Dict, Optional
-from stretch4_body.core.robot_params import RobotParams
+from functools import cache, cached_property
+from typing import Dict, List, Optional
+
 from stretch4_body.core.gamepad_enums import MotionProfile
-from stretch4_body.core.hello_utils import deg_to_rad
+from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
+from stretch4_body.utils.gripper_metadata import GRIPPER_MODELS, GripperMetadata
+
 
 @dataclass
 class JointPose:
@@ -56,7 +59,9 @@ class RobotPose:
         Dynamically load pre-defined pose models from the custom tool directory.
         """
         import os
+
         import yaml
+
         from stretch4_body.core.robot_params import RobotParams
         
         if tool_name is None:
@@ -96,86 +101,73 @@ class RobotJoints(Enum):
     wrist_roll = auto()
     gripper = auto()
 
-    @property
-    def value(self):
-        if self.name == 'gripper':
-            return self.get_gripper()
-        return self.name
-
-    @property
-    def finger_joints(self):
-        if self.name == 'gripper':
-            if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
-                return ['finger_left_joint', 'finger_right_joint']
-            elif self.value == 'stretch_gripper':
-                return ['gripper_finger_left_joint', 'gripper_finger_right_joint']
-            else:
-                return []
-        return []
-
-    @property
-    def finger_links(self):
-        if self.name == 'gripper':
-            if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
-                return ['finger_left_link', 'finger_right_link']
-            elif self.value == 'stretch_gripper':
-                return ['gripper_finger_left_link', 'gripper_finger_right_link']
-            else:
-                return []
-        return []
-
-    def to_subsystem_units(self, position):
-        if self.name == 'gripper':
-            from stretch4_body.core.robot_params import RobotParams
-            _, robot_params = RobotParams.get_params()
-            tool_name = robot_params.get('robot', {}).get('tool')
-            if tool_name and RobotParams.is_user_defined_tool(tool_name):
-                try:
-                    import re
-                    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
-                    if sanitized and sanitized[0].isdigit():
-                        sanitized = "_" + sanitized
-                    mod = RobotParams.import_user_tool_module(tool_name, 'gripper_conversion', is_server=True)
-                    conv_func = getattr(mod, f"{sanitized}_urdf_to_subsystem", None)
-                    if conv_func:
-                        return conv_func(position, robot_params.get(tool_name, {}))
-                except Exception:
-                    pass
-
-            if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
-                return position
-            elif self.value == 'stretch_gripper':
-                sg_params = robot_params.get('stretch_gripper', {})
-                range_deg_0 = sg_params.get('range_deg', [-100.0, 0.0])[0]
-                return -100.0 * position / deg_to_rad(range_deg_0)
-        return position
-
     @classmethod
-    def get_joint_by_name(cls, name):
-        if name in ('stretch_gripper', 'parallel_gripper', 'gripper'):
-            return cls.gripper
+    def get_joint_by_name(cls, name: str) -> Optional['RobotJoints']:
         if name in cls.__members__:
             return cls[name]
+        for joint in cls:
+            if joint.value == name:
+                return joint
         return None
 
-    @staticmethod
-    def get_end_of_arm_joints():
-        joints = [RobotJoints.wrist_pitch, RobotJoints.wrist_roll, RobotJoints.wrist_yaw]
-        if RobotJoints.gripper.value is not None:
-            joints.append(RobotJoints.gripper)
+    @classmethod
+    def get_end_of_arm_joints(cls) -> List['RobotJoints']:
+        joints = [cls.wrist_pitch, cls.wrist_roll, cls.wrist_yaw]
+        if cls.gripper.value is not None:
+            joints.append(cls.gripper)
         return joints
-    
+
+    @property
+    def value(self) -> str:
+        if self.name == 'gripper':
+            return self.gripper_name
+        else:
+            return self.name
+
+    @property
+    def gripper_model(self) -> Optional[GripperMetadata]:
+        if self.name == 'gripper':
+            return GRIPPER_MODELS.get(self.value)
+        return None
+
+    @property
+    def finger_joints(self) -> List[str]:
+        model = self.gripper_model
+        return model.finger_joints if model else []
+
+    @property
+    def finger_links(self) -> List[str]:
+        model = self.gripper_model
+        return model.finger_links if model else []
+
+    @property
+    def gripper_client(self) -> Optional[ParallelGripperClient | StretchGripperClient]:
+        model = self.gripper_model
+        return model.client_class() if model else None
+
+    @cached_property
+    def gripper_name(self) -> Optional[str]:
+        _, robot_params = RobotParams.get_params()
+        for name in GRIPPER_MODELS:
+            if name in robot_params:
+                return name
+        return None
+
+    def to_subsystem_units(self, position: float) -> float:
+        model = self.gripper_model
+        return model.to_subsystem_units(position) if model else position
+
     @cache
-    def get_joint_params(self, profile: MotionProfile):
+    def get_joint_params(self, profile: MotionProfile) -> tuple[float, float]:
         _, robot_params = RobotParams.get_params()
         params = robot_params[self.value]
         joint_params = params['motion'][profile.get_name()]
         v = joint_params['vel'] if 'vel' in joint_params else joint_params['vel_m']
         a = joint_params['accel'] if 'accel' in joint_params else joint_params['accel_m']
         return v, a
-    
+
     @cache
-    def get_base_params(self, profile: MotionProfile):
+    def get_base_params(self, profile: MotionProfile) -> tuple[float, float, float, float]:
         params = RobotParams().get_params()[1]['omnibase']
         base_params = params['motion'][profile.get_name()]
         accel_w_r = base_params['accel_w_r']
@@ -183,21 +175,3 @@ class RobotJoints(Enum):
         accel_xy_m = base_params['accel_xy_m']
         vel_xy_m = base_params['vel_xy_m']
         return vel_xy_m, accel_xy_m, vel_w_r, accel_w_r
-
-    @cache
-    def get_gripper(self):
-        _, robot_params = RobotParams.get_params()
-        if 'stretch_gripper' in robot_params:
-            return 'stretch_gripper'
-        elif 'parallel_gripper' in robot_params:
-            return 'parallel_gripper'
-        
-        # Check if the active tool is a custom tool with a gripper device
-        tool_name = robot_params.get('robot', {}).get('tool')
-        if tool_name and tool_name in robot_params:
-            tool_params = robot_params[tool_name]
-            for d_name, d_params in tool_params.get('devices', {}).items():
-                py_class = d_params.get('py_class_name', '')
-                if 'gripper' in d_name.lower() or 'jaw' in d_name.lower() or 'gripper' in py_class.lower() or 'jaw' in py_class.lower():
-                    return d_name
-        return None
