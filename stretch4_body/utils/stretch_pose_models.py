@@ -6,7 +6,7 @@ from functools import cache
 from typing import Dict, Optional
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.gamepad_enums import MotionProfile
-
+from stretch4_body.core.hello_utils import deg_to_rad
 
 @dataclass
 class JointPose:
@@ -89,9 +89,8 @@ class RobotJoints(Enum):
     def to_subsystem_units(self, position):
         if self.name == 'gripper':
             if self.value == 'parallel_gripper':
-                return position * 1000.0
+                return position
             elif self.value == 'stretch_gripper':
-                from stretch4_body.core.hello_utils import deg_to_rad
                 _, robot_params = RobotParams.get_params()
                 sg_params = robot_params.get('stretch_gripper', {})
                 range_deg_0 = sg_params.get('range_deg', [-100.0, 0.0])[0]

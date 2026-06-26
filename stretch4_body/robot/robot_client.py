@@ -1024,17 +1024,23 @@ class ParallelGripperClient(WristJointClient):
     """ Client for the parallel gripper. """
     def __init__(self, parent=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
-        open_mm = parallel_gripper_servo_rad_to_mm(deg_to_rad(self.params['range_deg'][1]), self.params)
-        self.poses = {'zero': 0,
-                      'open': open_mm,
-                      'mid': open_mm / 2.0,
-                      'close': 0}
-
-    def move_to_mm(self, x_mm, v_r=None, a_r=None):
-        self._queue_command(f'{self.joint_name}.end_of_arm', "move_to_mm", self.joint_name, x_mm, v_r, a_r)
+        open_m = parallel_gripper_servo_rad_to_mm(deg_to_rad(self.params['range_deg'][1]), self.params) / 1000.0
+        self.poses = {'zero': 0.0,
+                      'open': open_m,
+                      'mid': open_m / 2.0,
+                      'close': 0.0}
 
     def move_by_mm(self, x_mm, v_r=None, a_r=None):
-        self._queue_command(f'{self.joint_name}.end_of_arm', "move_by_mm", self.joint_name, x_mm, v_r, a_r)
+        """
+        Move the parallel gripper by a relative amount in millimeters.
+        """
+        return self.move_by(x_mm / 1000.0, v_r, a_r)
+    
+    def move_to_mm(self, x_mm, v_r=None, a_r=None):
+        """
+        Move the parallel gripper to an absolute position in millimeters.
+        """
+        return self.move_to(x_mm / 1000.0, v_r, a_r)
 # #####################################################################
 class EndOfArmClient(SubsystemClient):
     """
@@ -1106,20 +1112,6 @@ class EndOfArmClient(SubsystemClient):
             self.logger.error(f"Cannot send movement command. Joint {joint} has not been homed.")
             return False
         self._queue_command(f'{joint}.end_of_arm', "move_to", joint, x_r, v_r, a_r)
-        return True
-
-    def move_to_mm(self, joint, x_mm, v_r=None, a_r=None):
-        if joint not in self.joints:
-            self.logger.error(f"Joint {joint} not found in end of arm tool.")
-            return False
-        self._queue_command(f'{joint}.end_of_arm', "move_to_mm", joint, x_mm, v_r, a_r)
-        return True
-
-    def move_by_mm(self, joint, x_mm, v_r=None, a_r=None):
-        if joint not in self.joints:
-            self.logger.error(f"Joint {joint} not found in end of arm tool.")
-            return False
-        self._queue_command(f'{joint}.end_of_arm', "move_by_mm", joint, x_mm, v_r, a_r)
         return True
 
     def set_velocity(self, joint, v_r, a_r=None):

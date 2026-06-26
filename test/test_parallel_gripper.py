@@ -53,7 +53,7 @@ def test_robot_joints_properties():
     # Test to_subsystem_units conversion
     sub_val = RobotJoints.gripper.to_subsystem_units(0.08)
     print("0.08m to subsystem units:", sub_val)
-    assert math.isclose(sub_val, 80.0, abs_tol=0.005)
+    assert math.isclose(sub_val, 0.08, abs_tol=0.005)
 
     # Test stretch_gripper conversion
     from unittest.mock import patch
@@ -101,10 +101,10 @@ def test_parallel_gripper_direct_commands():
     from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
     FeetechSMHello.move_to = mock_move_to
     
-    # Call move_to with 80.0 mm
-    gripper.move_to(80.0)
+    # Call move_to with 0.08 m
+    gripper.move_to(0.08)
     
-    # Ensure it translated 80.0 mm into servo radians using parallel_gripper_mm_to_servo_rad
+    # Ensure it translated 0.08 m into servo radians using parallel_gripper_mm_to_servo_rad
     from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_mm_to_servo_rad
     expected_rad = parallel_gripper_mm_to_servo_rad(80.0, gripper.params)
     mock_move_to.assert_called_once_with(gripper, x_des=expected_rad, v_des=None, a_des=None)

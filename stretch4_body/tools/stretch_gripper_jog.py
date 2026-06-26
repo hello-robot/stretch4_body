@@ -47,7 +47,7 @@ def menu_top():
     if gripper_type == 'parallel_gripper':
         print('x: close by 10mm')
         print('y: open by 10mm')
-        print('p: go to position (mm)')
+        print('p: go to position (m)')
     else:
         print('x: close by 10%')
         print('y: open by 10%')
@@ -76,13 +76,22 @@ def step_interaction():
         if x[0]=='h':
             g.home()
         if x[0]=='x':
-            g.move_by(-10.0, v_des, a_des)
+            if gripper_type == 'parallel_gripper':
+                g.move_by(-0.01, v_des, a_des)
+            else:
+                g.move_by(-10.0, v_des, a_des)
         if x[0]=='y':
-            g.move_by(10.0, v_des, a_des)
+            if gripper_type == 'parallel_gripper':
+                g.move_by(0.01, v_des, a_des)
+            else:
+                g.move_by(10.0, v_des, a_des)
         if x[0]=='p':
-            print("Enter position: ")
-            ff = float(sys.stdin.readline())
-            if gripper_type != 'parallel_gripper':
+            if gripper_type == 'parallel_gripper':
+                print("Enter position (m): ")
+                ff = float(sys.stdin.readline())
+            else:
+                print("Enter position (%): ")
+                ff = float(sys.stdin.readline())
                 ff=min(max(-100,ff),g.pct_max_open)
             g.move_to(ff, v_des, a_des)
         if x[0] == 'a':
