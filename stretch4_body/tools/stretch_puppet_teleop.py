@@ -267,9 +267,9 @@ def main():
                                 slider_min, slider_max = 0.1, 1.0
                                 denom = (slider_max - slider_min) if slider_max != slider_min else 1.0
                                 mapped_val = min(max((sl_val - slider_min) / denom, 0.0), 1.0)
-                                puppet.end_of_arm.move_to_mm('parallel_gripper', mapped_val * pg4_range)
+                                puppet.end_of_arm.move_to('parallel_gripper', (mapped_val * pg4_range) / 1000.0)
                             else:
-                                puppet.end_of_arm.move_to_mm('parallel_gripper', normalized_pct * pg4_range)
+                                puppet.end_of_arm.move_to('parallel_gripper', (normalized_pct * pg4_range) / 1000.0)
                         elif eoa_j in ['stretch_gripper', 'parallel_gripper']:
                             params = puppet.robot_params.get('stretch_gripper', {})
                             pct_max_open=100*abs(params['range_deg'][1]/params['range_deg'][0]) if 'range_deg' in params and params['range_deg'][0] != 0 else 100.0
@@ -392,7 +392,7 @@ def main():
                                         else:
                                             pg4_cmd_log_mm = normalized_pct * pg4_range
                                             
-                                        puppet.end_of_arm.move_to_mm('parallel_gripper', pg4_cmd_log_mm, v_r=eoa_vel_r, a_r=eoa_accel_r)
+                                        puppet.end_of_arm.move_to('parallel_gripper', pg4_cmd_log_mm / 1000.0, v_r=eoa_vel_r, a_r=eoa_accel_r)
                                     elif eoa_j in ['stretch_gripper', 'parallel_gripper']:
                                         params = puppet.robot_params.get('stretch_gripper', {})
                                         pct_max_open=100*abs(params['range_deg'][1]/params['range_deg'][0]) if 'range_deg' in params and params['range_deg'][0] != 0 else 100.0
@@ -482,7 +482,7 @@ def main():
                                     pass
                                 elif args.pg4c and eoa_j == 'parallel_gripper':
                                     pg4_range = controller.robot_params.get('parallel_gripper', {}).get('range_mm', 80.0)
-                                    controller.end_of_arm.move_to_mm('parallel_gripper', current_slider_val * pg4_range)
+                                    controller.end_of_arm.move_to('parallel_gripper', (current_slider_val * pg4_range) / 1000.0)
                                 else:
                                     params = controller.robot_params.get(eoa_j, {})
                                     pct_max_open=100*abs(params['range_deg'][1]/params['range_deg'][0]) if 'range_deg' in params and params['range_deg'][0] != 0 else 100.0
@@ -494,7 +494,7 @@ def main():
                             if args.pg4 and 'parallel_gripper' in puppet.end_of_arm.joints:
                                 pg4_range = puppet.robot_params.get('parallel_gripper', {}).get('range_mm', 80.0)
                                 pg4_cmd_log_mm = current_slider_val * pg4_range
-                                puppet.end_of_arm.move_to_mm('parallel_gripper', pg4_cmd_log_mm)
+                                puppet.end_of_arm.move_to('parallel_gripper', pg4_cmd_log_mm / 1000.0)
                             elif 'stretch_gripper' in puppet.end_of_arm.joints:
                                 params = puppet.robot_params.get('stretch_gripper', {})
                                 pct_max_open=100*abs(params['range_deg'][1]/params['range_deg'][0]) if 'range_deg' in params and params['range_deg'][0] != 0 else 100.0

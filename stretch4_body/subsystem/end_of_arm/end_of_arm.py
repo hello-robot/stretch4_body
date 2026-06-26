@@ -104,17 +104,6 @@ class EndOfArm(FeetechSMChain):
             return
         with self.pt_lock:
             self.motors[joint].move_to(x_r, v_r, a_r)
-
-    def move_to_mm(self, joint, x_mm, v_r=None, a_r=None):
-        if joint not in self.motors:
-            print("EndOfArm: Ignoring move_to_mm command for inactive or non-existent joint '%s'" % joint)
-            return
-        if not hasattr(self.motors[joint], 'move_to_mm'):
-            print("EndOfArm: Ignoring move_to_mm command for joint '%s' which doesn't support mm" % joint)
-            return
-        with self.pt_lock:
-            self.motors[joint].move_to_mm(x_mm, v_r, a_r)
-
     def move_by(self, joint, x_r, v_r=None, a_r=None):
         """
         joint: name of joint (string)
@@ -127,16 +116,6 @@ class EndOfArm(FeetechSMChain):
             return
         with self.pt_lock:
             self.motors[joint].move_by(x_r, v_r, a_r)
-
-    def move_by_mm(self, joint, x_mm, v_r=None, a_r=None):
-        if joint not in self.motors:
-            print("EndOfArm: Ignoring move_by_mm command for inactive or non-existent joint '%s'" % joint)
-            return
-        if not hasattr(self.motors[joint], 'move_by_mm'):
-            print("EndOfArm: Ignoring move_by_mm command for joint '%s' which doesn't support mm" % joint)
-            return
-        with self.pt_lock:
-            self.motors[joint].move_by_mm(x_mm, v_r, a_r)
     
     def set_velocity(self, joint, v_r, a_r=None):
         """
