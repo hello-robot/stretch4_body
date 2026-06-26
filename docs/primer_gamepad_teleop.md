@@ -1,12 +1,24 @@
 # Gamepad Teleop for Stretch
 
-This document explains the usage of the Gamepad Teleoperation interface for the Stretch robot.
+Stretch 4 ships with a gamepad controller for tele-operation.
 
-## Overview
+You can start the gamepad teleop script using `stretch_gamepad_teleop`. 
 
-The `GamePadTeleop` class maps gamepad inputs (Xbox controller) to robot motions. It supports multiple control mappings, mode switching, and custom user functions.
+> Note: `stretch_gamepad_teleop` uses a [RobotClient](./primer_robot_client.md). Make sure the Stretch Body Server is running using `stretch_body_server --status`.
 
-![Gamepad Mappings](../images/gamepad_cycling_mapping.png)
+When you boot Stretch 4, the joints need calibration. You may notice that the controller vibrates and does not allow you to move the robot. If this happens, make sure the robot's surroundings are clear, and press the `Start` button on the controller to Home (calibrate) the joints.
+
+By default, `stretch_gamepad_teleop` has two control mapping modes that you can switch between using `Y`. The first is Joint Control, which allows you to control each joint individually. The second is Flying Gripper Control, which allows you to use the `Right Stick` to move the wrist, and move towards where the gripper is pointing using the `Left Stick`. The latter is useful for manipulation and grasping objects.
+
+
+You can keep the `stretch_gamepad_teleop` application script running in the background while you run other RobotClient applications. The `stretch_gamepad_teleop` script will timeout and stop sending commands to the server after a few milliseconds of not receiving inputs. Note that `stretch_gamepad_teleop` has a higher priority on the RobotClient command queue, so commands from it will override other scripts by default.  
+
+## File Structure
+
+The [`GamePadTeleop`](../stretch4_body/core/gamepad_teleop.py) class holds the main loop for the gamepad teleop application. The loop listens to controller inputs,  to robot motions. 
+
+It supports multiple control mappings, mode switching, and custom user functions.
+
 
 ## Key Features
 
