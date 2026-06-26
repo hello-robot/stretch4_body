@@ -3,7 +3,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
 from functools import cache, cached_property
-from typing import Dict, List
+from typing import dict, list
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
@@ -30,7 +30,7 @@ class BasePose:
 class RobotPose:
     name: str
     timestamp: float
-    joints: Dict[str, JointPose] = field(default_factory=dict)
+    joints: dict[str, JointPose] = field(default_factory=dict)
     base: BasePose | None = None
     delay_before_start: float = 0.0
 
@@ -54,7 +54,7 @@ class RobotPose:
         return pose
 
     @classmethod
-    def load_tool_pose_models(cls, tool_name=None) -> Dict[str, 'RobotPose']:
+    def load_tool_pose_models(cls, tool_name=None) -> dict[str, 'RobotPose']:
         """
         Dynamically load pre-defined pose models from the custom tool directory.
         """
@@ -107,7 +107,7 @@ class RobotJoints(Enum):
         return None
 
     @classmethod
-    def get_end_of_arm_joints(cls) -> List['RobotJoints']:
+    def get_end_of_arm_joints(cls) -> list['RobotJoints']:
         joints = [cls.wrist_pitch, cls.wrist_roll, cls.wrist_yaw]
         if cls.gripper.value is not None:
             joints.append(cls.gripper)
@@ -127,12 +127,12 @@ class RobotJoints(Enum):
         return None
 
     @property
-    def finger_joints(self) -> List[str]:
+    def finger_joints(self) -> list[str]:
         model = self.gripper_model
         return model.finger_joints if model else []
 
     @property
-    def finger_links(self) -> List[str]:
+    def finger_links(self) -> list[str]:
         model = self.gripper_model
         return model.finger_links if model else []
 
@@ -150,7 +150,7 @@ class RobotJoints(Enum):
         return None
 
     @property
-    def poses(self) -> Dict[str, float] | None:
+    def poses(self) -> dict[str, float] | None:
         if self.name == 'gripper' and self.gripper_model:
             client = self.gripper_client
             if client and hasattr(client, 'poses'):
@@ -278,4 +278,3 @@ class RobotJoints(Enum):
         accel_xy_m = base_params['accel_xy_m']
         vel_xy_m = base_params['vel_xy_m']
         return vel_xy_m, accel_xy_m, vel_w_r, accel_w_r
-
