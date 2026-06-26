@@ -8,7 +8,7 @@ import sys
 import platform
 
 DEFAULT_BAUDRATE = 1000000
-LATENCY_TIMER = 10 # was 50 # ms
+LATENCY_TIMER = 50
 
 class PortHandler(object):
     def __init__(self, port_name):

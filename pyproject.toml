@@ -32,7 +32,6 @@ dependencies = [
     "pyserial",
     "pyusb",
     "python-xlib",
-    "hello-robot-stretch4-urdf>=2026.5.27",
     "pygame",
     "fpdf2",
     "sshkeyboard",
@@ -42,7 +41,8 @@ dependencies = [
     "meson",
     "ninja",
     "pyzmq",
-    "hello-robot-stretch4-flying-gripper",
+    "hello-robot-stretch4-urdf>=2026.6.25",
+    "hello-robot-stretch4-flying-gripper>=2026.6.25",
 ]
 
 [project.urls]
@@ -65,6 +65,7 @@ stretch_wrist_pitch_home = "stretch4_body._cli_wrapper:stretch_wrist_pitch_home"
 stretch_wrist_roll_home = "stretch4_body._cli_wrapper:stretch_wrist_roll_home"
 stretch_lift_jog = "stretch4_body._cli_wrapper:stretch_lift_jog"
 stretch_battery_check = "stretch4_body._cli_wrapper:stretch_battery_check"
+stretch_system_check = "stretch4_body._cli_wrapper:stretch_system_check"
 stretch_about = "stretch4_body._cli_wrapper:stretch_about"
 stretch_wrist_yaw_home = "stretch4_body._cli_wrapper:stretch_wrist_yaw_home"
 stretch_collision_viz = "stretch4_body._cli_wrapper:stretch_collision_viz"

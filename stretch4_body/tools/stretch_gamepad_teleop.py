@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse
 from stretch4_body.utils.file_access_utils import setup_shared_directory, acquire_lock_if_available
+from stretch4_body.core.gamepad_control_mappings import ControlMapping
 from stretch4_body.core.gamepad_teleop import GamePadTeleop
 from stretch4_body.core.hello_utils import print_stretch_re_use
 
@@ -26,6 +27,12 @@ if __name__ == "__main__":
       print("Gamepad teleop is already running!")
       exit(1)
    
+   # Provide a helpful description of the controls for each mapping
+   mappings = ControlMapping._get_cycleable_options()
+   for mapping in mappings:
+      print(mapping.description())
+
    gamepad_teleop = GamePadTeleop(use_server=not args.direct)
    gamepad_teleop.startup()
    gamepad_teleop.mainloop()
+
