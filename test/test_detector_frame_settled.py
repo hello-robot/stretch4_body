@@ -36,8 +36,8 @@ def test_sharpness_gating():
     assert not detector.check_stability_sharpness(frame2)
     assert detector.check_stability_sharpness(frame2)
 
-def test_slow_continuous_motion_original_diff():
-    # Verify that original check_stability_diff eventually detects slow drift/motion due to anchoring
+def test_slow_continuous_motion_previous_diff():
+    # Verify that check_stability_diff accepts slow drift/motion if per-frame change is below threshold
     detector = DetectFrameSettled(required_stable_frames=3)
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
     
@@ -46,13 +46,13 @@ def test_slow_continuous_motion_original_diff():
         detector.check_stability_diff(frame, threshold=2.0)
     assert detector.has_frame_been_stable()
     
-    # Increment slowly. After 2 increments of 1.0, the total difference from the anchor (0) is 2.0,
-    # which is not < threshold (2.0), so it should reset.
+    # Increment slowly. Each increment of 1.0 is < threshold 2.0.
+    # Since we compare to the previous frame, this should remain stable.
     frame = frame.copy() + 1
     assert detector.check_stability_diff(frame, threshold=2.0) # difference is 1.0 < 2.0 (stable)
     
     frame = frame.copy() + 1
-    assert not detector.check_stability_diff(frame, threshold=2.0) # difference is 2.0 >= 2.0 (unstable!)
+    assert detector.check_stability_diff(frame, threshold=2.0) # difference is 1.0 < 2.0 (still stable!)
 
 def test_blocking_timeout():
     detector = DetectFrameSettled(required_stable_frames=3)
@@ -62,6 +62,18 @@ def test_blocking_timeout():
     assert detector.check_stability_diff(frame1, timeout_blocking=0.5)
     end = time.time()
     assert (end - start) < 0.1, "Should have returned immediately due to passing the same frame"
+
+def test_continuous_instability():
+    detector = DetectFrameSettled(required_stable_frames=3)
+    
+    # Alternating frames with high difference should never be stable
+    black = np.zeros((480, 640, 3), dtype=np.uint8)
+    white = np.ones((480, 640, 3), dtype=np.uint8) * 255
+    
+    for _ in range(10):
+        # Every check should return False because the difference (255) is >> threshold (10)
+        assert not detector.check_stability_diff(black if _ % 2 == 0 else white, threshold=10.0)
+        assert not detector.has_frame_been_stable()
 
 def test_ema_gating_stability_and_local_motion():
     detector = DetectFrameSettled(required_stable_frames=3)
@@ -85,3 +97,6 @@ def test_ema_gating_stability_and_local_motion():
     motion_frame[200:250, 200:250, :] = 255
     assert not detector.check_stability_ema(motion_frame, threshold=3.0)
     assert not detector.has_frame_been_stable()
+
+if __name__ == "__main__":
+    pytest.main([__file__])

@@ -10,8 +10,9 @@ class DetectFrameSettled:
     2. Laplacian Variance: Detects changes in sharpness or vibration.
     """
 
-    def __init__(self, required_stable_frames: int = 5):
+    def __init__(self, required_stable_frames: int = 5, downsample_width: int | None = 640):
         self.required_stable_frames = required_stable_frames
+        self.downsample_width = downsample_width
         
         # Internal State Management
         self.stable_frame_count = 0
@@ -65,12 +66,23 @@ class DetectFrameSettled:
             
         return False
     
+    def _downsample_if_needed(self, frame: np.ndarray) -> np.ndarray:
+        if frame is None or self.downsample_width is None:
+            return frame
+        h, w = frame.shape[:2]
+        if w > self.downsample_width:
+            scale = self.downsample_width / w
+            target_height = int(h * scale)
+            return cv2.resize(frame, (self.downsample_width, target_height), interpolation=cv2.INTER_AREA)
+        return frame
+
     def has_frame_been_stable(self):
         return self.stable_frame_count >= self.required_stable_frames
 
     def _compute_diff(self, frame:np.ndarray|None, threshold):
         if frame is None: return False
         
+        frame = self._downsample_if_needed(frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
@@ -91,6 +103,7 @@ class DetectFrameSettled:
     def _compute_laplacian(self, frame:np.ndarray|None, threshold):
         if frame is None: return False
 
+        frame = self._downsample_if_needed(frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         current_variance = cv2.Laplacian(gray, cv2.CV_64F).var()
 
@@ -110,6 +123,7 @@ class DetectFrameSettled:
     def _compute_ema(self, frame:np.ndarray|None, threshold, alpha):
         if frame is None: return False
 
+        frame = self._downsample_if_needed(frame)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         gray_f = gray.astype(np.float32)
