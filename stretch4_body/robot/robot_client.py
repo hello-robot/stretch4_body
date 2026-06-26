@@ -1030,18 +1030,6 @@ class ParallelGripperClient(WristJointClient):
                       'mid': open_m / 2.0,
                       'close': 0.0}
 
-    def move_to(self, x_m, v_r=None, a_r=None):
-        """
-        Move the parallel gripper to an absolute position in meters.
-        """
-        return WristJointClient.move_to(self, x_m, v_r, a_r)
-
-    def move_by(self, x_m, v_r=None, a_r=None):
-        """
-        Move the parallel gripper by a relative amount in meters.
-        """
-        return WristJointClient.move_by(self, x_m, v_r, a_r)
-    
     def move_by_mm(self, x_mm, v_r=None, a_r=None):
         """
         Move the parallel gripper by a relative amount in millimeters.
