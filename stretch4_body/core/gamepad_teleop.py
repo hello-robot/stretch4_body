@@ -602,7 +602,7 @@ class GamePadTeleop(Device):
         if robot.is_homed() and not self.currently_stowing:
             """If the user holds the start button, it will do the automatic handedness change motion"""
             self.start_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, lambda:self.change_gripper_handedness(robot, do_motion=True))
-            self.start_button_counter.trigger_on_tap( lambda:self.change_gripper_handedness(robot, do_motion=False))
+            # self.start_button_counter.trigger_on_tap( lambda:self.change_gripper_handedness(robot, do_motion=False))
     
     def manage_select_button(self, robot):
         pass
