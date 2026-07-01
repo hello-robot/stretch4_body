@@ -419,7 +419,29 @@ def get_service_file_content(log_level: str) -> str:
     if log_level:
         exec_cmd += f" --log_level {log_level}"
         
-    path_env = f"{user_home}/.local/bin:{user_home}/bin:{python_path.parent}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    # Capture important environment variables for Python
+    env_vars = {
+        "HELLO_FLEET_PATH": hello_fleet_path,
+        "HELLO_FLEET_ID": hello_fleet_id,
+        "RMW_IMPLEMENTATION": os.environ.get("RMW_IMPLEMENTATION", "rmw_zenoh_cpp"),
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+        "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+        "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", ""),
+    }
+
+    # Build PATH: prioritize current PATH, then add common locations
+    current_path = os.environ.get("PATH", "")
+    path_env = f"{user_home}/.local/bin:{user_home}/bin:{python_path.parent}:{current_path}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    # Deduplicate path while preserving order
+    path_list = []
+    for p in path_env.split(':'):
+        if p and p not in path_list:
+            path_list.append(p)
+    path_env = ':'.join(path_list)
+
+    env_lines = [f'Environment="{k}={v}"' for k, v in env_vars.items() if v]
+    env_lines.append(f'Environment="PATH={path_env}"')
+    env_lines_str = "\n".join(env_lines)
 
     service_file_template = f"""\
 [Unit]
@@ -430,10 +452,7 @@ Wants=network.target
 [Service]
 Type=simple
 #Environment="PYTHONUNBUFFERED=1"
-Environment="HELLO_FLEET_PATH={hello_fleet_path}"
-Environment="HELLO_FLEET_ID={hello_fleet_id}"
-Environment="RMW_IMPLEMENTATION=rmw_zenoh_cpp"
-Environment="PATH={path_env}"
+{env_lines_str}
 WorkingDirectory={repo_root}
 ExecStart=/bin/bash -c "{exec_cmd}"
 ExecStopPost={python_path} -c "from stretch4_body.tools.stretch_body_server import archive_session_logs; print('Stopping daemon...'); archive_session_logs()"
