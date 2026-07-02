@@ -298,8 +298,8 @@ class GamePadTeleop(Device):
                         except Exception:
                             pass
                     
-                        if self.precision_mode:
-                            self._handle_vibration(actuated_joints)
+                        # if self.precision_mode:
+                        #     self._handle_vibration(actuated_joints)
 
                     self.manage_settings_buttons(robot)
 

@@ -648,7 +648,7 @@ class JointEffortTracker:
 
         is_exceeding = abs(self.current_effort) >= thresholds[0]
         
-        print(f"Joint {self.joint_name} effort: {self.current_effort:.2f}, direction: {direction}, thresholds: {thresholds}, hold_duration: {self.hold_duration}, is_exceeding: {is_exceeding}, is_below: {self.is_below}")
+        # print(f"Joint {self.joint_name} effort: {self.current_effort:.2f}, direction: {direction}, thresholds: {thresholds}, hold_duration: {self.hold_duration}, is_exceeding: {is_exceeding}, is_below: {self.is_below}")
 
         if is_exceeding:
             self.last_exceed_time = time.time()
