@@ -43,12 +43,17 @@ class RoutineRobotStow(routine.Routine):
 
         if 'arm' in self.robot.subsystems:
             pos_arm = cfg['arm']
+            threshold = 0.05
             # Bring in arm before bring down
             self.logger.info('--------- Stowing Arm ----')
             self.robot.arm.move_to(pos_arm)
-            if not self.wait_until_at_setpoint(self.robot.arm.motor, timeout=6.0):
-                self.logger.warning(f'Arm failed to reach final position when stowing. Expecting {pos_arm} but got {self.robot.arm.status["pos"]:.3f}')
-                return False
+            if not self.wait_until_at_setpoint(self.robot.arm.motor, timeout=4.0):
+                actual_pos = self.robot.arm.status['pos']
+                within_threshold = abs(actual_pos - pos_arm) < threshold
+                self.logger.warning(f'Arm failed to reach final position when stowing. Expecting {pos_arm} but got {actual_pos:.3f}. The arm is {"within" if within_threshold else "not within"} threshold, {"continuing" if within_threshold else "aborting"}.')
+
+                if not within_threshold:
+                    return False
 
         if 'end_of_arm' in self.robot.subsystems:
             cmd = ['end_of_arm', 'stow', cmd_id, args, kwargs]
