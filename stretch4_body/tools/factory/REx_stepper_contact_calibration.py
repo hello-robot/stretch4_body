@@ -26,6 +26,8 @@ if args.arm:
     skew_pos = 100
     skew_neg = -100
     print('Arm selected')
+    xtop = device.params['range_m'][1]
+    xbottom = device.params['range_m'][0]
 
 if args.lift:
     import stretch4_body.subsystem.lift as lift
@@ -36,14 +38,15 @@ if args.lift:
     skew_pos = 50
     skew_neg = -250
     print('Lift selected')
+    xtop = 0.9 * device.params['range_m'][1]
+    xbottom = 0.05 * device.params['range_m'][1]
 
 
 device.motor.disable_sync_mode()
 device.motor.disable_guarded_mode()
 device.pull_status()
 r.push_command()
-xtop = 0.9*device.params['range_m'][1]
-xbottom = 0.05*device.params['range_m'][1]
+
 device.set_soft_motion_limit_max(x=xtop)
 device.set_soft_motion_limit_min(x=xbottom)
 stiffness = 1.0
@@ -62,14 +65,14 @@ def switch_motion_params(mode):
         ades = device.params['motion']['default']['accel_m']
 
     elif mode == 2:
-        xdes = 1
+        xdes = 0.5 #1
         vdes = device.params['motion']['fast']['vel_m']
         ades = device.params['motion']['fast']['accel_m']
 
     elif mode == 3:
-        xdes = 1.5
-        vdes = device.params['motion']['max']['vel_m']
-        ades = device.params['motion']['max']['accel_m']
+        xdes = 0.5 #1.5
+        vdes = device.params['motion']['max']['vel_m'] *0.8
+        ades = device.params['motion']['max']['accel_m']*0.8
 
     else:
         xdes = 0.5
@@ -80,8 +83,7 @@ def switch_motion_params(mode):
 
 
 def collect_data(device, mode, r=device):
-    cnt = 0
-    goUp = True
+
     xdes,vdes,ades = switch_motion_params(mode)
     device.move_to(x_m=xbottom, v_m=vdes, a_m=ades, stiffness=stiffness, req_calibration=req_calibration)
     r.push_command()
@@ -91,27 +93,29 @@ def collect_data(device, mode, r=device):
     time.sleep(0.2)
     acc = []
     eff = []
-    while cnt < 2:
+
+    device.move_to(x_m=xtop, v_m=vdes, a_m=ades, stiffness=stiffness, req_calibration=req_calibration)
+    r.push_command()
+    while abs(device.status['pos']-xtop) > 0.005:
+        print('Current (mA)',device.status['motor']['current']*1000)
         eff.append(device.status['motor']['effort_ticks'])
         acc.append(ades*57.29577951308232)
         device.pull_status()
         eff.append(device.motor.status['effort_ticks'])
         acc.append(device.motor._command['a_des'])
-        if device.status['pos'] <= 1.1*xbottom and not goUp:
-            goUp = True
-            cnt = cnt + 1
 
-        if device.status['pos'] >= 0.9*xtop and goUp:
-            goUp = False
-            cnt = cnt + 1
-        
-        if goUp:
-            device.move_by(x_m=xdes, v_m=vdes, a_m=ades, stiffness=stiffness, req_calibration=req_calibration)
+    device.move_to(x_m=xbottom, v_m=vdes, a_m=ades, stiffness=stiffness, req_calibration=req_calibration)
+    r.push_command()
+    while abs(device.status['pos'] - xbottom) >0.005:
+        print('Current (mA)', device.status['motor']['current'] * 1000)
+        eff.append(device.status['motor']['effort_ticks'])
+        acc.append(ades * 57.29577951308232)
+        device.pull_status()
+        eff.append(device.motor.status['effort_ticks'])
+        acc.append(device.motor._command['a_des'])
 
-        if not goUp:
-            device.move_by(x_m=-xdes, v_m=vdes, a_m=ades, stiffness=stiffness, req_calibration=req_calibration)
 
-        r.push_command()
+
 
     device.move_to(x_m=xbottom, v_m=vdes, a_m=ades, stiffness=stiffness, req_calibration=req_calibration)
     r.push_command()
