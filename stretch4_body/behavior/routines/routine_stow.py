@@ -21,12 +21,12 @@ class RoutineRobotStow(routine.Routine):
         self.logger.info(f'Stowing robot for tool {tool}')
 
 
-
         #self.disable_collision_mgmt()
+
         if 'lift' in self.robot.subsystems:
-            pos_lift = 0.35 # Enough to clear the gripper from hitting the base
+            pos_lift = cfg. get('lift_prestow', 0.35) # Enough to clear the tool from hitting the base
             if self.robot.lift.status['pos'] < pos_lift:
-                # If the lift is below 0.35, raise it to avoid the gripper hitting the base
+                # If the lift is below pos_lift, raise it to avoid the tool hitting the base
                 self.logger.info('--------- Pre-Stowing Lift ----')
                 self.robot.lift.move_to(pos_lift)
                 if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=10.0):
