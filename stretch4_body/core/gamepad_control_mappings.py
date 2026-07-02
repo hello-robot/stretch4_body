@@ -335,8 +335,13 @@ class ControlMapping(Enum):
         if gamepad_teleop.controller_state.get('top_pad_pressed'): v_desired[2] = 1.0
         elif gamepad_teleop.controller_state.get('bottom_pad_pressed'): v_desired[2] = -1.0
 
-        if gamepad_teleop.controller_state.get('left_pad_pressed'): rot_change[2] = -1.0
-        elif gamepad_teleop.controller_state.get('right_pad_pressed'): rot_change[2] = 1.0
+        right_trigger_pulled = gamepad_teleop.controller_state['right_trigger_pulled'] > 0.9
+
+        if right_trigger_pulled:
+            if gamepad_teleop.controller_state.get('left_shoulder_button_pressed'):
+                rot_change[2] = -1.0
+            elif gamepad_teleop.controller_state.get('right_shoulder_button_pressed'):
+                rot_change[2] = 1.0
 
         control_mode = 1
 
@@ -361,8 +366,11 @@ class ControlMapping(Enum):
 
         actuated_joints = {}
 
-        right_trigger_pulled = gamepad_teleop.controller_state['right_trigger_pulled'] > 0.9
 
+        # Smoothing move_by control commands using a high lookahead targeting horizon
+        lookahead = 5.0
+        handedness_inversion = 1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else -1
+        
         if not right_trigger_pulled and np.any(v != 0):
             
             vel_xy, accel_xy, vel_w, accel_w = gamepad_teleop.base_command._get_motion_params(is_rotating=abs(v_vel[2])>=0.1)
@@ -370,19 +378,13 @@ class ControlMapping(Enum):
             gamepad_teleop.lift_command._move(v_vel[3], robot)
             gamepad_teleop.arm_command._move(v_vel[4], robot)
             
-            # Smoothing move_by control commands using a high lookahead targeting horizon
-            lookahead = 5.0
             
             # Yaw
             yaw_cmd_rad = v[5] * lookahead
             gamepad_teleop.wrist_yaw_command._move(np.degrees(yaw_cmd_rad), robot, velocity=abs(v_vel[5]))
             # Pitch
-            handedness_inversion = 1 if gamepad_teleop.gripper_handedness is GripperHandedness.LEFT else -1
             pitch_cmd_rad = v[6] * lookahead * handedness_inversion
             gamepad_teleop.wrist_pitch_command._move(np.degrees(pitch_cmd_rad), robot, velocity=abs(v_vel[6]))
-            # Roll
-            roll_cmd_rad = v[7] * lookahead * handedness_inversion * -1
-            gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot, velocity=abs(v_vel[7]))
 
             if abs(v_vel[0]) > 0 or abs(v_vel[1]) > 0 or abs(v_vel[2]) > 0:
                 actuated_joints['base'] = v_vel[0] + v_vel[1] + v_vel[2]
@@ -397,6 +399,10 @@ class ControlMapping(Enum):
             if abs(roll_cmd_rad) > 0:
                 actuated_joints['joint_wrist_roll'] = roll_cmd_rad
         else:
+            roll_cmd_rad = v[7] * lookahead * handedness_inversion * -1
+            if abs(roll_cmd_rad)> 0:
+                gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot, velocity=abs(v_vel[7]))
+
             dxl_zero_vel_set_division_factor = 3
             if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                 gamepad_teleop.wrist_yaw_command.stop_motion(robot)
