@@ -168,6 +168,7 @@ def build_recursive_menu(sample_status):
 
     selected_fields = set()
     current_path_parts = ['robot']
+    show_groups = True
     
     def get_node(path_parts):
         curr = tree
@@ -189,17 +190,30 @@ def build_recursive_menu(sample_status):
                 return True
         return False
 
+    def get_selection_info(path, node):
+        """Returns (total_fields_under, selected_fields_under)"""
+        total = 0
+        selected = 0
+        
+        def count_recursive(p, n):
+            nonlocal total, selected
+            if not n: # Leaf
+                total += 1
+                if is_selected(p):
+                    selected += 1
+            else:
+                for child_name, child_node in n.items():
+                    count_recursive(f"{p}.{child_name}", child_node)
+        
+        count_recursive(path, node)
+        return total, selected
+
     def toggle_recursive(path, node, state):
         if state:
             selected_fields.add(path)
         else:
             if path in selected_fields:
                 selected_fields.remove(path)
-            # Also need to handle cases where a parent was selected
-            # but we want to deselect this child only? 
-            # The prompt says "Recursively select all fields underneath".
-            # Usually this means if you select a group, everything under it is on.
-            # If you deselect a group, everything under it is off.
             
         # Recursive toggle for children
         if node:
@@ -223,25 +237,44 @@ def build_recursive_menu(sample_status):
             print(f"  {Fore.WHITE}0: .. (Go up){Style.RESET_ALL}")
             index_to_item[0] = '..'
 
-        for i, item in enumerate(items):
-            idx = i + 1
+        visible_idx = 1
+        for item in items:
             item_path = f"{curr_path_str}.{item}"
-            is_group = len(curr_node[item]) > 0
+            item_node = curr_node[item]
+            is_group = len(item_node) > 0
             
-            check = f"{Fore.GREEN}[x]{Style.RESET_ALL}" if is_selected(item_path) else "[ ]"
-            type_indicator = f"{Fore.BLUE}> {Style.RESET_ALL}" if is_group else "  "
+            if not show_groups and is_group:
+                continue
+                
+            idx = visible_idx
+            visible_idx += 1
             
-            color = Fore.WHITE if not is_group else Fore.CYAN
-            print(f" {idx:2d}: {check} {type_indicator}{color}{item}{Style.RESET_ALL}")
+            if is_group:
+                total, sel = get_selection_info(item_path, item_node)
+                if sel == total:
+                    check = f"{Fore.GREEN}[x]{Style.RESET_ALL}"
+                elif sel > 0:
+                    check = f"{Fore.YELLOW}[/]{Style.RESET_ALL}"
+                else:
+                    check = "[ ]"
+                
+                count_str = f" {Fore.BLACK}{Style.BRIGHT}({sel}/{total}){Style.RESET_ALL}" if sel > 0 else ""
+                type_indicator = f"{Fore.BLUE}> {Style.RESET_ALL}"
+                color = Fore.CYAN
+                print(f" {idx:2d}: {check} {type_indicator}{color}{item}{count_str}{Style.RESET_ALL}")
+            else:
+                check = f"{Fore.GREEN}[x]{Style.RESET_ALL}" if is_selected(item_path) else "[ ]"
+                print(f" {idx:2d}: {check}   {Fore.WHITE}{item}{Style.RESET_ALL}")
+            
             index_to_item[idx] = item
 
         print(f"\n{Fore.YELLOW}Commands:{Style.RESET_ALL}")
         print(f"  {Fore.WHITE}0{Style.RESET_ALL}         Go back")
         print(f"  {Fore.WHITE}[index]{Style.RESET_ALL}  Toggle field/Enter group")
         print(f"  {Fore.WHITE}t [index]{Style.RESET_ALL} Toggle group selection without entering")
-        print(f"  {Fore.WHITE}f{Style.RESET_ALL}         Finish and start playback")
+        print(f"  {Fore.WHITE}h{Style.RESET_ALL}         Toggle show/hide folders")
+        print(f"  {Fore.WHITE}f{Style.RESET_ALL}         Finish and start visualization")
         print(f"  {Fore.WHITE}q{Style.RESET_ALL}         Quit")
-        print(f"  {Fore.YELLOW}Press Enter after each command{Style.RESET_ALL}")
         
         try:
             choice = input(f"\n{Fore.CYAN}> {Style.RESET_ALL}").strip().lower()
@@ -254,6 +287,9 @@ def build_recursive_menu(sample_status):
             return list(selected_fields)
         if choice == 'q':
             sys.exit(0)
+        if choice == 'h':
+            show_groups = not show_groups
+            continue
             
         if not choice:
             continue
