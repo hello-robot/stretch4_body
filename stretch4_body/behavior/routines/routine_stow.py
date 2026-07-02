@@ -30,7 +30,7 @@ class RoutineRobotStow(routine.Routine):
                 self.logger.info('--------- Pre-Stowing Lift ----')
                 self.robot.lift.move_to(pos_lift)
                 if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=10.0):
-                    self.logger.warning(f'Lift failed to reach final position when stowing. Expecting {pos_lift} but got {self.robot.lift.status["pos"]}')
+                    self.logger.warning(f'Lift failed to reach final position when stowing. Expecting {pos_lift} but got {self.robot.lift.status["pos"]:.3f}')
                     return False
 
 
@@ -47,7 +47,7 @@ class RoutineRobotStow(routine.Routine):
             self.logger.info('--------- Stowing Arm ----')
             self.robot.arm.move_to(pos_arm)
             if not self.wait_until_at_setpoint(self.robot.arm.motor, timeout=6.0):
-                self.logger.warning(f'Arm failed to reach final position when stowing. Expecting {pos_arm} but got {self.robot.arm.status["pos"]}')
+                self.logger.warning(f'Arm failed to reach final position when stowing. Expecting {pos_arm} but got {self.robot.arm.status["pos"]:.3f}')
                 return False
 
         if 'end_of_arm' in self.robot.subsystems:
@@ -62,7 +62,7 @@ class RoutineRobotStow(routine.Routine):
             self.logger.info('--------- Stowing Lift ----')
             self.robot.lift.move_to(pos_lift)
             if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=12.0):
-                self.logger.warning('Lift failed to reach final position when stowing')
+                self.logger.warning(f'Lift failed to reach final position when stowing. Expecting {pos_lift} but got {self.robot.lift.status["pos"]:.3f}')
                 return False
         # if 'end_of_arm' in self.subsystems:
         #     # Make sure wrist yaw is done before exiting
