@@ -1,4 +1,3 @@
-
 import stretch4_body.behavior.routines.routine as routine
 import time
 
@@ -35,9 +34,12 @@ class RoutineRobotStow(routine.Routine):
                     return False
 
 
-        if 'end_of_arm' in self.subsystems:
-            # Run pre stow specific to each end of arm
-            self.end_of_arm.pre_stow(self)
+        # if 'end_of_arm' in self.robot.subsystems:
+        #     # Run pre stow specific to each end of arm
+        #     cmd = ['end_of_arm', 'pre_stow', cmd_id, args, kwargs]
+        #     # This will cause the EoA process to stop comms while stowing
+        #     self.robot.eoa_loop.q_cmd.put(cmd)
+        #     self.wait_duration(5.0)
 
         if 'arm' in self.robot.subsystems:
             pos_arm = cfg['arm']
