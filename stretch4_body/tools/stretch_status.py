@@ -236,10 +236,12 @@ def build_recursive_menu(sample_status):
             index_to_item[idx] = item
 
         print(f"\n{Fore.YELLOW}Commands:{Style.RESET_ALL}")
+        print(f"  {Fore.WHITE}0{Style.RESET_ALL}         Go back")
         print(f"  {Fore.WHITE}[index]{Style.RESET_ALL}  Toggle field/Enter group")
         print(f"  {Fore.WHITE}t [index]{Style.RESET_ALL} Toggle group selection without entering")
-        print(f"  {Fore.WHITE}f{Style.RESET_ALL}         Finish and start visualization")
+        print(f"  {Fore.WHITE}f{Style.RESET_ALL}         Finish and start playback")
         print(f"  {Fore.WHITE}q{Style.RESET_ALL}         Quit")
+        print(f"  {Fore.YELLOW}Press Enter after each command{Style.RESET_ALL}")
         
         try:
             choice = input(f"\n{Fore.CYAN}> {Style.RESET_ALL}").strip().lower()
