@@ -5,6 +5,9 @@ import time
 import argparse
 import sys
 import rerun as rr
+from colorama import Fore, Back, Style, init
+
+init(autoreset=True)
 
 from stretch4_body.robot.robot_client import RobotClient
 
@@ -127,6 +130,201 @@ def extract_all_groups(d, current_path="robot"):
     traverse(d, current_path)
     return groups
 
+def get_default_fields(sample_status):
+    """
+    Returns the default set of fields to visualize.
+    """
+    flat = flatten_status(sample_status, parent_key='robot')
+    paths = sorted(list(flat.keys()))
+    
+    # Defaults: server, base x/y/theta, and non-motor joint positions
+    defaults = ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta']
+    joint_positions = [
+        k for k in paths 
+        if (k.endswith('.pos') or k.endswith('.pos_pct')) 
+        and not isinstance(flat[k], bool) 
+        and 'motor' not in k 
+        and 'in_collision_stop' not in k
+    ]
+    return defaults + joint_positions
+
+def build_recursive_menu(sample_status):
+    """
+    Displays an interactive recursive menu grouped by subsystem.
+    Returns a list of selected field prefixes.
+    """
+    flat = flatten_status(sample_status, parent_key='robot')
+    all_paths = sorted(list(flat.keys()))
+    
+    # Build a tree structure for navigation
+    tree = {}
+    for path in all_paths:
+        parts = path.split('.')
+        curr = tree
+        for part in parts:
+            if part not in curr:
+                curr[part] = {}
+            curr = curr[part]
+
+    selected_fields = set()
+    current_path_parts = ['robot']
+    show_groups = True
+    
+    def get_node(path_parts):
+        curr = tree
+        for p in path_parts:
+            if p in curr:
+                curr = curr[p]
+            else:
+                return None
+        return curr
+
+    def is_selected(path):
+        if path in selected_fields:
+            return True
+        # If any parent is selected, it's implicitly selected (recursive)
+        parts = path.split('.')
+        for i in range(1, len(parts)):
+            parent = '.'.join(parts[:i])
+            if parent in selected_fields:
+                return True
+        return False
+
+    def get_selection_info(path, node):
+        """Returns (total_fields_under, selected_fields_under)"""
+        total = 0
+        selected = 0
+        
+        def count_recursive(p, n):
+            nonlocal total, selected
+            if not n: # Leaf
+                total += 1
+                if is_selected(p):
+                    selected += 1
+            else:
+                for child_name, child_node in n.items():
+                    count_recursive(f"{p}.{child_name}", child_node)
+        
+        count_recursive(path, node)
+        return total, selected
+
+    def toggle_recursive(path, node, state):
+        if state:
+            selected_fields.add(path)
+        else:
+            if path in selected_fields:
+                selected_fields.remove(path)
+            
+        # Recursive toggle for children
+        if node:
+            for child_name, child_node in node.items():
+                child_path = f"{path}.{child_name}"
+                toggle_recursive(child_path, child_node, state)
+
+    while True:
+        os.system('clear' if os.name == 'posix' else 'cls')
+        curr_path_str = '.'.join(current_path_parts)
+        curr_node = get_node(current_path_parts)
+        
+        print(f"{Fore.CYAN}{Style.BRIGHT}=== Stretch Status Selection ==={Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Path: {Fore.WHITE}{Style.BRIGHT}{curr_path_str}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Selected: {len(selected_fields)} fields/groups{Style.RESET_ALL}\n")
+        
+        items = sorted(curr_node.keys())
+        index_to_item = {}
+        
+        if len(current_path_parts) > 1:
+            print(f"  {Fore.WHITE}0: .. (Go up){Style.RESET_ALL}")
+            index_to_item[0] = '..'
+
+        visible_idx = 1
+        for item in items:
+            item_path = f"{curr_path_str}.{item}"
+            item_node = curr_node[item]
+            is_group = len(item_node) > 0
+            
+            if not show_groups and is_group:
+                continue
+                
+            idx = visible_idx
+            visible_idx += 1
+            
+            if is_group:
+                total, sel = get_selection_info(item_path, item_node)
+                if sel == total:
+                    check = f"{Fore.GREEN}[x]{Style.RESET_ALL}"
+                elif sel > 0:
+                    check = f"{Fore.YELLOW}[/]{Style.RESET_ALL}"
+                else:
+                    check = "[ ]"
+                
+                count_str = f" {Fore.BLACK}{Style.BRIGHT}({sel}/{total}){Style.RESET_ALL}" if sel > 0 else ""
+                type_indicator = f"{Fore.BLUE}> {Style.RESET_ALL}"
+                color = Fore.CYAN
+                print(f" {idx:2d}: {check} {type_indicator}{color}{item}{count_str}{Style.RESET_ALL}")
+            else:
+                check = f"{Fore.GREEN}[x]{Style.RESET_ALL}" if is_selected(item_path) else "[ ]"
+                print(f" {idx:2d}: {check}   {Fore.WHITE}{item}{Style.RESET_ALL}")
+            
+            index_to_item[idx] = item
+
+        print(f"\n{Fore.YELLOW}Commands:{Style.RESET_ALL}")
+        print(f"  {Fore.WHITE}0{Style.RESET_ALL}         Go back")
+        print(f"  {Fore.WHITE}[index]{Style.RESET_ALL}  Toggle field/Enter group")
+        print(f"  {Fore.WHITE}t [index]{Style.RESET_ALL} Toggle group selection without entering")
+        print(f"  {Fore.WHITE}h{Style.RESET_ALL}         Toggle show/hide folders")
+        print(f"  {Fore.WHITE}f{Style.RESET_ALL}         Finish and start visualization")
+        print(f"  {Fore.WHITE}q{Style.RESET_ALL}         Quit")
+        
+        try:
+            choice = input(f"\n{Fore.CYAN}> {Style.RESET_ALL}").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit(0)
+            
+        if choice == 'f':
+            if not selected_fields:
+                return get_default_fields(sample_status)
+            return list(selected_fields)
+        if choice == 'q':
+            sys.exit(0)
+        if choice == 'h':
+            show_groups = not show_groups
+            continue
+            
+        if not choice:
+            continue
+            
+        # Handle "t index"
+        toggle_only = False
+        if choice.startswith('t '):
+            toggle_only = True
+            choice = choice[2:].strip()
+            
+        try:
+            val = int(choice)
+            if val == 0 and 0 in index_to_item:
+                current_path_parts.pop()
+                continue
+            
+            if val in index_to_item:
+                item = index_to_item[val]
+                item_path = f"{curr_path_str}.{item}"
+                item_node = curr_node[item]
+                is_group = len(item_node) > 0
+                
+                if is_group and not toggle_only:
+                    current_path_parts.append(item)
+                else:
+                    # Toggle selection
+                    new_state = not is_selected(item_path)
+                    toggle_recursive(item_path, item_node, new_state)
+            else:
+                print(f"{Fore.RED}Invalid index{Style.RESET_ALL}")
+                time.sleep(1)
+        except ValueError:
+            print(f"{Fore.RED}Invalid input{Style.RESET_ALL}")
+            time.sleep(1)
+
 def setup_rerun_blueprint(rs, selected_fields):
     """
     Sets up a Rerun blueprint so that graphs are organized into fewer 
@@ -194,78 +392,6 @@ def validate_selected_fields_or_exit(rs, selected_fields):
         print(f"\n[!] Error: The following fields provided via --fields do not exist: {', '.join(invalid_parts)}")
         sys.exit(1)
 
-def build_interactive_menu(sample_status):
-    """
-    Displays an interactive menu grouped by subsystem.
-    Returns a list of selected field prefixes.
-    """
-    flat = flatten_status(sample_status, parent_key='robot')
-    paths = sorted(list(flat.keys()))
-    
-    groups = extract_all_groups(sample_status, current_path='robot')
-        
-    print("\nAvailable subsystems and joints to visualize:")
-    
-    index_to_prefix = {'0': 'all'}
-    print(f"  0: all (everything)")
-    current_idx = 1
-    
-    group_names = sorted(list(groups.keys()))
-    for g in group_names:
-        if g == 'robot':
-            continue
-        print(f" {current_idx:2d}: {g} ({len(groups[g])} fields)")
-        index_to_prefix[str(current_idx)] = g
-        current_idx += 1
-            
-    while True:
-        print("\nEnter comma-separated indices to view (e.g., 1, 2, 5),")
-        print("or a prefix (e.g., robot.lift), or 'all' to select everything.")
-        print("Press Enter for default fields (robot.server, base odom (x,y,theta), and joint positions):")
-        try:
-            selection = input("> ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting...")
-            sys.exit(0)
-        
-        if selection == 'all':
-            return ['all']
-        
-        def get_defaults():
-            return ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta'] + [k for k in paths if (k.endswith('.pos') or k.endswith('.pos_pct')) and not isinstance(flat[k], bool) and 'motor' not in k and 'in_collision_stop' not in k]
-
-        if selection == '':
-            return get_defaults()
-            
-        selected_fields = []
-        parts_entered = [x.strip() for x in selection.split(',')]
-        
-        invalid_parts = []
-        for part in parts_entered:
-            if not part:
-                continue
-            if part in index_to_prefix:
-                selected_fields.append(index_to_prefix[part])
-            else:
-                match = False
-                for p in paths:
-                    if part == p or p.startswith(part + '.'):
-                        match = True
-                        break
-                if match:
-                    selected_fields.append(part)
-                else:
-                    invalid_parts.append(part)
-                    
-        if invalid_parts:
-            print(f"\n[!] Error: The following fields or indices do not exist: {', '.join(invalid_parts)}")
-            print("Please try again.")
-            continue
-            
-        if not selected_fields:
-             return get_defaults()
-            
-        return selected_fields
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Stretch status.")
@@ -291,6 +417,11 @@ def main():
         "--rerun",
         action="store_true",
         help="Visualize the status in Rerun alongside console output.",
+    )
+    parser.add_argument(
+        "--interactive", "-i",
+        action="store_true",
+        help="Choose fields to visualize via an interactive menu.",
     )
     parser.add_argument(
         "--export",
@@ -332,8 +463,10 @@ def main():
                             if not menu_shown:
                                 if selected_fields:
                                     validate_selected_fields_or_exit(rs, selected_fields)
+                                elif args.interactive:
+                                    selected_fields = build_recursive_menu(rs)
                                 else:
-                                    selected_fields = build_interactive_menu(rs)
+                                    selected_fields = get_default_fields(rs)
 
                                 if args.rerun:
                                     _start_rerun()
@@ -412,8 +545,10 @@ def main():
                             if not menu_shown:
                                 if selected_fields:
                                     validate_selected_fields_or_exit(rs, selected_fields)
+                                elif args.interactive:
+                                    selected_fields = build_recursive_menu(rs)
                                 else:
-                                    selected_fields = build_interactive_menu(rs)
+                                    selected_fields = get_default_fields(rs)
 
                                 if args.rerun:
                                     _start_rerun()
@@ -456,8 +591,10 @@ def main():
                 if not menu_shown:
                     if selected_fields:
                         validate_selected_fields_or_exit(rs, selected_fields)
+                    elif args.interactive:
+                        selected_fields = build_recursive_menu(rs)
                     else:
-                        selected_fields = build_interactive_menu(rs)
+                        selected_fields = get_default_fields(rs)
                     
                     if args.rerun:
                         _start_rerun()
