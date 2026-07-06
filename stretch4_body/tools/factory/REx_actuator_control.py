@@ -17,9 +17,19 @@ parser.add_argument("--omni_1", help="Power cycle omni wheel 1", action="store_t
 parser.add_argument("--omni_2", help="Power cycle omni wheel 2", action="store_true")
 parser.add_argument("--eoa", help="Power cycle eoa servos", action="store_true")
 parser.add_argument("--all", help="Power cycle all actuators", action="store_true")
-parser.add_argument('--action', type=str, default='cycle', help='Action to take: on / off / [cycle]')
+parser.add_argument("--action", type=str, default='cycle', help='Action to take: on / off / [cycle]')
+parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
+
 args, _ = parser.parse_known_args()
 
+
+if not args.direct:
+    try:
+        from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
+    except ImportError:
+        from stretch4_body.subsystem.power_periph import PowerPeriph
+else:
+    from stretch4_body.subsystem.power_periph import PowerPeriph
 
 p=PowerPeriph()
 if not p.startup():
