@@ -104,7 +104,7 @@ def watcher_subprocess_step(instance:SentryUbuntuPowerManagement, cmd_in, status
 
     if output != instance.power_profile:
         instance.logger.warning(
-            f"Changing Ubuntu Power Management Mode from {output} to {self.power_profile}"
+            f"Changing Ubuntu Power Management Mode from {output} to {instance.power_profile}"
         )
         set_power_profile(instance.power_profile, logger=instance.logger)
 
