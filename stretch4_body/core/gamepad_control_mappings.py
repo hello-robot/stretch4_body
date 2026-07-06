@@ -396,8 +396,6 @@ class ControlMapping(Enum):
                 actuated_joints['joint_wrist_yaw'] = yaw_cmd_rad
             if abs(pitch_cmd_rad) > 0:
                 actuated_joints['joint_wrist_pitch'] = pitch_cmd_rad
-            if abs(roll_cmd_rad) > 0:
-                actuated_joints['joint_wrist_roll'] = roll_cmd_rad
         else:
             roll_cmd_rad = v[7] * lookahead * handedness_inversion * -1
             if abs(roll_cmd_rad)> 0:
