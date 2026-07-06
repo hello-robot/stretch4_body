@@ -5,7 +5,11 @@ import sys
 import yaml
 import click
 import importlib
+import time
+import subprocess
+import contextlib
 from colorama import Fore, Style
+from stretch4_body.core.feetech.feetech_SM_servo import FeetechSMServo
 
 def get_fleet_directory():
     return os.environ['HELLO_FLEET_PATH'] + '/' + os.environ['HELLO_FLEET_ID'] + '/'
@@ -37,8 +41,20 @@ def write_fleet_yaml(fn, rp, fleet_dir=None, header=None):
         yaml.dump(rp, yaml_file, default_flow_style=False)
 
 @click.command()
-def main():
-    print('--- Configuring End-Of-Arm Tool ---')
+@click.option('--quick', '-q', is_flag=True, help='Skip interactive steps.')
+@click.option('--auto-detect', is_flag=True, help='Automatically detect tool and set it.')
+def main(quick, auto_detect):
+    import stretch4_body.core.hello_utils as hu
+    hu.print_stretch_re_use()
+    
+    print('This script will guide you through swapping your end-of-arm tool.')
+    print('Steps:')
+    print('1. Power off the current tool.')
+    print('2. Swap the tool after power is off.')
+    print('3. Select the new tool (auto-detection will highlight it).')
+    print('4. Restart the server and home the new tool.')
+    print('---------------------------------------------------------')
+
     user_params_fn = 'stretch_user_params.yaml'
     config_params_fn = 'stretch_configuration_params.yaml'
     try:
@@ -54,7 +70,7 @@ def main():
     _user_params = read_fleet_yaml(user_params_fn, fleet_dir)
     _config_params = read_fleet_yaml(config_params_fn, fleet_dir)
 
-    #Get the name of the robot model
+    # Get the name of the robot model
     if 'robot' in _user_params and 'model_name' in _user_params['robot']:
         model_name = _user_params['robot']['model_name']
     elif 'robot' in _config_params and 'model_name' in _config_params['robot']:
@@ -65,9 +81,9 @@ def main():
 
     print(f"Detected Robot Model: {model_name}")
     param_module_name = 'stretch4_body.robot.robot_params_' + model_name
-
     try:
-        _nominal_params = getattr(importlib.import_module(param_module_name), 'nominal_params')
+        module = importlib.import_module(param_module_name)
+        _nominal_params = getattr(module, 'nominal_params')
     except Exception as e:
         print(f"ERROR: Could not load parameters for model {model_name} from {param_module_name}")
         print(e)
@@ -75,39 +91,132 @@ def main():
 
     supported_eoa = _nominal_params.get('supported_eoa', [])
     supported_eoa_metadata = _nominal_params.get('supported_eoa_metadata', {})
-    if not supported_eoa:
-        print("WARNING: No 'supported_eoa' found in nominal parameters.")
 
-    current_tool = None
-    if 'robot' in _user_params and 'tool' in _user_params['robot']:
-        current_tool = _user_params['robot']['tool']
-    elif 'robot' in _config_params and 'tool' in _config_params['robot']:
-        current_tool = _config_params['robot']['tool']
-    elif 'tool' in _nominal_params.get('robot', {}):
-        current_tool = _nominal_params['robot']['tool']
+    detected_tool = None
+    if not quick:
+        try:
+            try:
+                from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
+                is_client = True
+            except ImportError:
+                from stretch4_body.subsystem.power_periph import PowerPeriph
+                is_client = False
+            
+            p = PowerPeriph()
+            p.startup()
 
-    print(f"Current End-Of-Arm Tool: {current_tool}")
-    print("\nAvailable Tools:")
-    for i, tool in enumerate(supported_eoa):
-        print(f"""  {Fore.GREEN if tool == current_tool else ""}{i}) {supported_eoa_metadata[tool]['name']}: {tool} {"(current)" if tool == current_tool else ""}
-      {supported_eoa_metadata[tool]['description']}{Style.RESET_ALL}""")
+            if not auto_detect:
+                if click.confirm('Turn off power to the peripheral?', default=True):
+                    print('Powering off eoa...')
+                    p.actuator_control('eoa', enable=False)
+                    if is_client:
+                        p.push_command()
+                
+                try:
+                    click.pause('Connect the tool then press any key to continue...')
+                except (KeyboardInterrupt, click.Abort):
+                    print("\nAborting.")
+                    p.stop()
+                    sys.exit(0)
 
-    print(f"  {len(supported_eoa)}) Enter a custom tool name")
-    print(f"  {len(supported_eoa) + 1}) Quit without saving")
+                print('Powering on eoa...')
+                p.actuator_control('eoa', enable=True)
+                if is_client:
+                    p.push_command()
+                time.sleep(2.0) # Wait for motors to boot
 
-    choice = click.prompt(f"\nSelect a tool [0-{len(supported_eoa)+1}]", type=int)
+            # Auto-detect tool ID
+            print('Scanning for tool on Feetech bus...')
+            eoa_usb = _nominal_params.get('end_of_arm', {}).get('usb_name', '/dev/hello-feetech-wrist')
+            
+            # Suppress the spammy output from list_servos
+            with contextlib.redirect_stdout(None):
+                servos = FeetechSMServo.list_servos(eoa_usb, baudrate=1000000)
+            
+            servo_ids = set([s['id'] for s in servos])
+            
+            # Dynamically determine tool IDs from nominal params
+            module = importlib.import_module(param_module_name)
+            tool_to_ids = {}
+            for tool_name in supported_eoa:
+                tool_config = _nominal_params.get(tool_name)
+                if tool_config and 'devices' in tool_config:
+                    tool_ids = []
+                    for dev_name, dev_info in tool_config['devices'].items():
+                        dev_params_name = dev_info.get('device_params')
+                        if dev_params_name:
+                            dev_params = getattr(module, dev_params_name, {})
+                            if 'id' in dev_params:
+                                tool_ids.append(dev_params['id'])
+                    tool_to_ids[tool_name] = set(tool_ids)
+            
+            # Find the best matching tool (the one with all IDs present and most IDs)
+            best_match = None
+            max_ids = -1
+            for tool_name, tool_ids in tool_to_ids.items():
+                if tool_ids and tool_ids.issubset(servo_ids):
+                    if len(tool_ids) > max_ids:
+                        max_ids = len(tool_ids)
+                        best_match = tool_name
+            
+            detected_tool = best_match
+            
+            if detected_tool:
+                print(f'Detected tool: {detected_tool} ({supported_eoa_metadata.get(detected_tool, {}).get("name", "Unknown")})')
+            else:
+                print('No tool detected or unknown tool.')
+            
+            p.stop()
+        except KeyboardInterrupt:
+            print("\nAborted.")
+            sys.exit(0)
 
-    if choice == len(supported_eoa) + 1:
-        print("Quitting without saving.")
-        sys.exit(0)
-    
-    if choice == len(supported_eoa):
-        new_tool = click.prompt("Enter custom tool name", type=str)
-    elif 0 <= choice < len(supported_eoa):
-        new_tool = supported_eoa[choice]
+    if auto_detect:
+        if detected_tool:
+            new_tool = detected_tool
+        else:
+            print("Auto-detect failed to find a known tool. Quitting.")
+            sys.exit(1)
     else:
-        print("Invalid choice. Quitting without saving.")
-        sys.exit(1)
+        current_tool = None
+        if 'robot' in _user_params and 'tool' in _user_params['robot']:
+            current_tool = _user_params['robot']['tool']
+        elif 'robot' in _config_params and 'tool' in _config_params['robot']:
+            current_tool = _config_params['robot']['tool']
+        elif 'tool' in _nominal_params.get('robot', {}):
+            current_tool = _nominal_params['robot']['tool']
+
+        print(f"Current End-Of-Arm Tool: {current_tool}")
+        print("\nAvailable Tools:")
+        
+        default_choice = 0
+        for i, tool in enumerate(supported_eoa):
+            is_current = (tool == current_tool)
+            is_detected = (tool == detected_tool)
+            if is_detected:
+                default_choice = i
+            elif is_current and detected_tool is None:
+                default_choice = i
+                
+            print(f"""  {Fore.GREEN if is_current else Fore.YELLOW if is_detected else ""}{i}) {supported_eoa_metadata[tool]['name']}: {tool} {"(current)" if is_current else ""} {"(detected)" if is_detected else ""}{Style.RESET_ALL}
+      {supported_eoa_metadata[tool]['description']}""")
+
+        print(f"  {len(supported_eoa)}) Enter a custom tool name")
+        print(f"  {len(supported_eoa) + 1}) Quit without saving")
+
+        choice = click.prompt(f"\nSelect a tool [0-{len(supported_eoa)+1}]", type=int, default=default_choice)
+
+        if choice == len(supported_eoa) + 1:
+            print("Quitting without saving.")
+            sys.exit(0)
+        
+        if choice == len(supported_eoa):
+            new_tool = click.prompt("Enter custom tool name", type=str)
+        elif 0 <= choice < len(supported_eoa):
+            new_tool = supported_eoa[choice]
+        else:
+            print("Invalid choice. Quitting without saving.")
+            sys.exit(1)
 
     print(f"\nSetting End-Of-Arm Tool to: {new_tool}")
 
@@ -120,7 +229,36 @@ def main():
 
     write_fleet_yaml(user_params_fn, _user_params, fleet_dir, user_params_header)
     print(f"Saved to {fleet_dir}{user_params_fn}")
-    print("""Done! You may need to home the robot or restart services for the tool to be recognized.
+    
+    if click.confirm('\nWould you like to restart the stretch_body_server and home the end_of_arm?', default=True):
+        print('Restarting stretch_body_server...')
+        p_restart = subprocess.Popen(['stretch_body_server', '--restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        print('Waiting for stretch_body_server to come back online...')
+        from stretch4_body.robot.robot_client import RobotClient
+        r = RobotClient()
+        connected = False
+        for i in range(20): # try for 20 seconds
+            if r.startup():
+                connected = True
+                break
+            time.sleep(1.0)
+        
+        if connected:
+            time.sleep(2.0) # Extra wait for server to be fully ready
+            print('Homing end_of_arm...')
+            try:
+                r.end_of_arm.home()
+            except Exception as e:
+                print(f"Error during homing: {e}")
+            finally:
+                r.stop()
+            p_restart.terminate()
+        else:
+            print("Failed to connect to robot server after restart. Please try homing manually.")
+            p_restart.terminate()
+    else:
+        print("""Done! You may need to home the robot or restart services for the tool to be recognized.
 
 It is strongly recommended to run:
 
