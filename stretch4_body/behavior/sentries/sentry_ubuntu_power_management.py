@@ -25,6 +25,11 @@ class SentryUbuntuPowerManagement(Sentry):
         self.status = SentryUbuntuPowerManagementStatus(
             last_check=time.time(), last_known_mode=None
         )
+        self.valid_profiles = ['performance', 'balanced', 'power-saver']
+        self.power_profile = self.params["power_profile"]
+        if self.power_profile not in self.valid_profiles:
+            self.logger.warn(f"Cannot find power profile {self.power_profile}. Setting to 'performance'")
+            self.power_profile = 'performance'
 
         self.q_cmd = hello_utils.CircularMultiprocessingQueue(10)
         self.q_status = hello_utils.CircularMultiprocessingQueue(10)
@@ -72,14 +77,14 @@ class SentryUbuntuPowerManagement(Sentry):
     def do_startup_check(self):
         output = get_ubuntu_power_mode()
 
-        if output == "performance":
+        if output == self.power_profile:
             return 
 
         self.logger.warning(
-            f"WARNING: Ubuntu Power Management Mode is {output}. Stretch Body Server will automatically set it to `performance` mode to avoid performance issues."
+            f"Changing Ubuntu Power Management Mode from {output} to {self.power_profile}"
         )
-        if not set_performance_mode(logger=self.logger):
-            raise RuntimeError("Failed to set Ubuntu Power Management Mode to `performance`, please do this manually before starting Stretch Body Server.")
+        if not set_power_profile(self.power_profile, logger=self.logger):
+            raise RuntimeError(f"Failed to set Ubuntu Power Management Mode to {self.power_profile}, please do this manually before starting Stretch Body Server.")
 
     def startup(self):
         self.do_startup_check()
@@ -97,11 +102,11 @@ def watcher_subprocess_step(instance:SentryUbuntuPowerManagement, cmd_in, status
 
     output = get_ubuntu_power_mode()
 
-    if output != "performance":
+    if output != instance.power_profile:
         instance.logger.warning(
-            f"WARNING: Ubuntu Power Management Mode is {output}. Stretch Body Server will automatically set it to `performance` mode to avoid performance issues."
+            f"Changing Ubuntu Power Management Mode from {output} to {instance.power_profile}"
         )
-        set_performance_mode(logger=instance.logger)
+        set_power_profile(instance.power_profile, logger=instance.logger)
 
     status_out.update(
         SentryUbuntuPowerManagementStatus(
@@ -116,17 +121,18 @@ def get_ubuntu_power_mode():
     return output
 
 
-def set_performance_mode(logger:logging.Logger):
+def set_power_profile(power_profile, logger:logging.Logger):
     """Sets Ubuntu Power Management to `performance`.
 
-    Note: you will need `powerprofilesctl` configured in sudoers to avoid
-    having to enter a sudo password.
+    Note: this sentry calls `sudo`, so to avoid the interactive password
+    prompt, `powerprofilesctl` should be configured in /etc/sudoers.d/hello_sudoers.
+    Robots that have been set up via stretch4_install will have this configured.
     """
-    command = ["sudo", "-n", "powerprofilesctl", "set", "performance"]
+    command = ["sudo", "-n", "powerprofilesctl", "set", power_profile]
 
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True)
-        logger.info("Power profile successfully set to 'performance'.")
+        logger.info(f"Power profile successfully set to {power_profile}.")
         if result.stdout:
             logger.info(f"Output: {result.stdout.strip()}")
         return True
@@ -138,7 +144,7 @@ def set_performance_mode(logger:logging.Logger):
 [Error] Sudo password required to set performance power mode.
 To allow this script to run in the background, please run the following command in your terminal to enable passwordless access for powerprofilesctl:
                           
-    echo '%users ALL=(ALL) NOPASSWD: /usr/bin/powerprofilesctl' | sudo tee /etc/sudoers.d/sentry-powerprofiles > /dev/null && sudo chmod 0440 /etc/sudoers.d/sentry-powerprofiles           
+    echo '%users ALL=(ALL) NOPASSWD: /usr/bin/powerprofilesctl' | sudo tee -a /etc/sudoers.d/hello_sudoers > /dev/null && sudo chmod 0440 /etc/sudoers.d/hello_sudoers
                           
 """)
             return False
