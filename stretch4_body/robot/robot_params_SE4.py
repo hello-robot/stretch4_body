@@ -1251,7 +1251,8 @@ nominal_params={
         'py_class_name': 'SentryUbuntuPowerManagement',
         'required_subsystems': [],
         'enabled': 1,
-        'check_rate_seconds': 30
+        'check_rate_seconds': 30,
+        'power_profile': 'performance',
     },
     'sentry_status_logger': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_status_logger',
