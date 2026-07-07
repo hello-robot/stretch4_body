@@ -14,6 +14,7 @@ import rerun as rr
 
 
 from scipy.spatial.transform import Rotation
+from stretch4_urdf import record_joint_calibration, get_urdf_from_robot_params
 
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.models.image_write_to_disk import (
@@ -479,6 +480,8 @@ def calibrate_extrinsics_camera_camera(
         output_data["right_to_center"] = T_mean_r.tolist()
         output_data["right_errors_m"] = np.mean(right_errors).tolist()
 
+    record_to_centralized_yaml(fleet_id, T_mean_l, T_mean_r, left_errors, right_errors)
+
     if not output_data:
         print("No paired transforms could be computed. Exiting without saving.")
         return
@@ -509,6 +512,45 @@ def calibrate_extrinsics_camera_camera(
         yaml.dump(existing_data, f, default_flow_style=False)
     
     print(f"Saved camera extrinsics to {out_yaml}")
+
+
+def record_to_centralized_yaml(fleet_id, T_mean_l, T_mean_r, left_errors, right_errors):
+    """Write the calibrated camera transforms to the centralized stretch_calibration_values.yaml."""
+    try:
+        urdf_contents = get_urdf_from_robot_params(apply_calibration=False)
+        from yourdfpy import URDF
+        import io
+        urdf = URDF.load(io.StringIO(urdf_contents))
+        
+        def get_nominal_transform(joint_name):
+            for joint in urdf.robot.joints:
+                if joint.name == joint_name:
+                    return joint.origin
+            return np.eye(4)
+
+        T_head_center = get_nominal_transform('camera_center_joint')
+        
+        def T_to_strings(T):
+            xyz = " ".join([f"{x:.18f}" for x in T[:3, 3]])
+            rpy = " ".join([f"{x:.18f}" for x in Rotation.from_matrix(T[:3, :3]).as_euler('xyz')])
+            return xyz, rpy
+
+        # Center camera (usually not changed by this script, but for completeness)
+        # xyz_c, rpy_c = T_to_strings(T_head_center)
+        # record_joint_calibration("camera_center_joint", xyz_c, rpy_c, "head_link", "camera_center_link", fleet_id)
+
+        if T_mean_l is not None:
+            T_head_left = T_head_center @ T_mean_l
+            xyz_l, rpy_l = T_to_strings(T_head_left)
+            record_joint_calibration("camera_left_joint", xyz_l, rpy_l, "head_link", "camera_left_link", fleet_id, extra={'rmse': np.mean(left_errors).tolist()})
+        
+        if T_mean_r is not None:
+            T_head_right = T_head_center @ T_mean_r
+            xyz_r, rpy_r = T_to_strings(T_head_right)
+            record_joint_calibration("camera_right_joint", xyz_r, rpy_r, "head_link", "camera_right_link", fleet_id, extra={'rmse': np.mean(right_errors).tolist()})
+        
+    except Exception as e:
+        print(f"Warning: Failed to record joint calibration to centralized YAML: {e}")
 
 
 def main():
