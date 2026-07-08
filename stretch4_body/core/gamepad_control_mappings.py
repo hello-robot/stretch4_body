@@ -63,6 +63,7 @@ class ControlMapping(Enum):
                 ("  Hold Start", "Change Handedness"),
                 ("  RT + A", "Change Speed Profile"),
                 ("  RT + B", "Change Strength Profile"),
+                ("  Y", "Switch controller mode"),
             ]
             return format_table(title, description, rows)
         
@@ -80,6 +81,7 @@ class ControlMapping(Enum):
                 ("  Hold Start", "Change Handedness"),
                 ("  RT + A", "Change Speed Profile"),
                 ("  RT + B", "Change Strength Profile"),
+                ("  Y", "Switch controller mode"),
             ]
             return format_table(title, description, rows)
 
