@@ -570,56 +570,52 @@ def main(lift, arm, omni_0, omni_1, omni_2, power_periph, pixart, feetech, esp32
             click.secho("  No USB TTY devices found.", fg='yellow')
             sys.exit(0)
 
-        # Column widths
-        COL_PORT   = 18
-        COL_VENDOR = 18
-        COL_MODEL  = 24
-        COL_SERIAL = 28
-        COL_SYMLINK = 28
-
         import glob as _glob
         # Build a reverse map: serial → symlink name for /dev/hello-* devices
         serial_to_symlink = {}
         for symlink in _glob.glob('/dev/hello-*'):
             try:
                 real = os.path.realpath(symlink)
-                # Find which port this symlink resolves to
                 for port in all_tty:
                     if os.path.realpath(port) == real or port == real:
                         serial_to_symlink[all_tty[port].get('serial', '')] = os.path.basename(symlink)
             except Exception:
                 pass
 
-        header = (
-            f"{'Port':<{COL_PORT}}"
-            f"{'Vendor':<{COL_VENDOR}}"
-            f"{'Model':<{COL_MODEL}}"
-            f"{'Serial':<{COL_SERIAL}}"
-            f"{'Symlink':<{COL_SYMLINK}}"
-        )
-        divider = '-' * len(header)
-        click.secho(header, fg='white', bold=True)
-        click.echo(divider)
-
+        # Collect rows first so we can compute column widths from actual data
+        GAP = 2
+        rows = []
         for port in sorted(all_tty.keys()):
-            info   = all_tty[port]
-            vendor = info.get('vendor', info.get('vendor_id', '?'))
-            model  = info.get('model',  '?')
-            serial = info.get('serial', '?')
-            symlink = serial_to_symlink.get(serial, '')
+            info    = all_tty[port]
+            vendor  = info.get('vendor', info.get('vendor_id', '?'))
+            model   = info.get('model', '?')
+            serial  = info.get('serial', '?')
+            symlink = serial_to_symlink.get(serial, '-')
+            is_hello = info.get('vendor') == 'Hello-Robot'
+            rows.append((port, vendor, model, serial, symlink, is_hello))
 
-            # Colour Hello Robot devices cyan, others white
-            fg = 'cyan' if info.get('vendor') == 'Hello-Robot' else 'white'
-            line = (
-                f"{port:<{COL_PORT}}"
-                f"{vendor:<{COL_VENDOR}}"
-                f"{model:<{COL_MODEL}}"
-                f"{serial:<{COL_SERIAL}}"
-                f"{symlink:<{COL_SYMLINK}}"
-            )
-            click.secho(line, fg=fg)
+        # Dynamic column widths: max of header and longest value, plus gap
+        headers = ('Port', 'Vendor', 'Model', 'Serial', 'Symlink')
+        cols = list(zip(*[r[:5] for r in rows]))
+        widths = [
+            max(len(headers[i]), max(len(v) for v in cols[i])) + GAP
+            for i in range(5)
+        ]
 
-        click.echo(divider)
+        def _fmt(values):
+            return ''.join(v.ljust(widths[i]) for i, v in enumerate(values))
+
+        header_line = _fmt(headers)
+        divider = '─' * len(header_line)
+        click.echo()
+        click.secho(header_line, fg='white', bold=True)
+        click.secho(divider, fg='white')
+
+        for port, vendor, model, serial, symlink, is_hello in rows:
+            fg = 'cyan' if is_hello else 'white'
+            click.secho(_fmt((port, vendor, model, serial, symlink)), fg=fg)
+
+        click.secho(divider, fg='white')
         click.secho(f"\n  {len(all_tty)} device(s) found. Pass --help to see discovery flags.\n", fg='cyan')
         sys.exit(0)
 
