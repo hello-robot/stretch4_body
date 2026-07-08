@@ -1,3 +1,4 @@
+from stretch4_body.subsystem.cameras.cv_utils import average_transforms
 import argparse
 import time
 import cv2
@@ -241,7 +242,6 @@ def compute_lidar_rectangle_pose(
     centroids: np.ndarray,
     expected_width: float,
     expected_height: float,
-    transform_camera: np.ndarray | None = None,
 ):
     """
     Computes the 4x4 matrix transform_lidar tracking the lidar rectangle pose in lidar frame.
@@ -352,7 +352,6 @@ def detect_lidar_rectangle(
     expected_width: float,
     expected_height: float,
     tolerance: float,
-    transform_camera: np.ndarray | None = None,
 ):
     """
     Returns transform_lidar matrix and centroids.
@@ -379,57 +378,11 @@ def detect_lidar_rectangle(
         return None, None, msg
 
     transform_lidar = compute_lidar_rectangle_pose(
-        centroids, expected_width, expected_height, transform_camera
+        centroids, expected_width, expected_height
     )
     return transform_lidar, centroids, msg
 
 
-def average_transforms(T_list):
-    if not T_list:
-        return None
-
-    if len(T_list) <= 2:
-        t_avg = np.mean([T[:3, 3] for T in T_list], axis=0)
-        quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in T_list]
-        mean_rot = Rotation.from_quat(quats).mean().as_matrix()
-        T_avg = np.eye(4)
-        T_avg[:3, :3] = mean_rot
-        T_avg[:3, 3] = t_avg
-        return T_avg
-
-    # 1. Compute median translation
-    translations = np.array([T[:3, 3] for T in T_list])
-    median_translation = np.median(translations, axis=0)
-
-    # 2. Filter out transforms that are outliers (> 0.15m translation distance from median)
-    valid_T_list = []
-    for T in T_list:
-        dist = np.linalg.norm(T[:3, 3] - median_translation)
-        if dist < 0.15:
-            valid_T_list.append(T)
-        else:
-            msg = f"Warning: Discarding outlier transform with translation distance {dist:.3f}m from median."
-            print(msg)
-            try:
-                import rerun as rr
-                rr.log(
-                    "Logs/error",
-                    rr.TextLog(msg, level="WARNING"),
-                )
-            except Exception:
-                pass
-
-    # Fallback if all transforms were discarded
-    if not valid_T_list:
-        valid_T_list = T_list
-
-    t_avg = np.mean([T[:3, 3] for T in valid_T_list], axis=0)
-    quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in valid_T_list]
-    mean_rot = Rotation.from_quat(quats).mean().as_matrix()
-    T_avg = np.eye(4)
-    T_avg[:3, :3] = mean_rot
-    T_avg[:3, 3] = t_avg
-    return T_avg
 
 
 
@@ -803,7 +756,7 @@ class CalibrateLidarToCamera:
             )
 
     def _process_lidar_frame(
-        self, lidar_frame, transform_camera: np.ndarray | None
+        self, lidar_frame
     ) -> LidarDetection:
         """
         Process a lidar frame to detect the lidar rectangle and return the pose of that virtual rectangle.
@@ -830,7 +783,6 @@ class CalibrateLidarToCamera:
             expected_width=self.expected_width,
             expected_height=self.expected_height,
             tolerance=self.tolerance,
-            transform_camera=transform_camera,
         )
 
         if msg:
@@ -1227,7 +1179,7 @@ class CalibrateLidarToCamera:
             self.log_camera_detection(display_img, camera_detection)
 
             lidar_det = self._process_lidar_frame(
-                latest_lidar_frame, camera_detection.transform_camera
+                latest_lidar_frame
             )
 
             if not is_capture_frame:

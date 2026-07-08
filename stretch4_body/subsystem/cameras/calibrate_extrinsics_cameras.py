@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from stretch4_body.subsystem.cameras.cv_utils import average_transforms
 import argparse
 import glob
 import os
@@ -13,7 +14,6 @@ from pathlib import Path
 import rerun as rr
 
 
-from scipy.spatial.transform import Rotation
 from stretch4_urdf import record_joint_calibration, get_urdf_from_robot_params
 
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
@@ -47,42 +47,6 @@ class FrameCorrespondences:
     center: Optional[CameraDetection] = None
     left: Optional[CameraDetection] = None
     right: Optional[CameraDetection] = None
-
-
-def average_transforms(transforms):
-    """Average a list of 4x4 homogenous transformation matrices."""
-    if not transforms:
-        return None
-
-    t_vecs_all = [T[:3, 3] for T in transforms]
-    R_mats_all = [T[:3, :3] for T in transforms]
-
-    t_median = np.median(t_vecs_all, axis=0)
-
-    t_vecs = []
-    R_mats = []
-    for i, t in enumerate(t_vecs_all):
-        # Robust outlier rejection: solvePnP suffers from planar ambiguity (flipping).
-        # Discard any transforms whose translation is further than 10cm from median.
-        if np.linalg.norm(t - t_median) < 0.1:
-            t_vecs.append(t)
-            R_mats.append(R_mats_all[i])
-
-    if not t_vecs:
-        return None
-
-    # Simple mean for translation
-    t_mean = np.mean(t_vecs, axis=0)
-
-    # Robust averaging for rotation matrices on SO(3)
-    rotations = Rotation.from_matrix(R_mats)
-    R_mean = rotations.mean().as_matrix()
-
-    T_mean = np.eye(4)
-    T_mean[:3, :3] = R_mean
-    T_mean[:3, 3] = t_mean
-    return T_mean
-
 
 def process_camera_image(
     image_path: str, board: cv2.aruco.CharucoBoard, board_config: CharucoBoardConfig, calibration: RGBCameraCalibration

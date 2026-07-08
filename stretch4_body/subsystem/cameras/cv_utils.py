@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from dataclasses import dataclass
+from scipy.spatial.transform import Rotation
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
 
 
@@ -401,3 +402,41 @@ def camera_calibrate(all_object_points, all_image_points, width, height, distort
             criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-6),
         )
     return camera_matrix, distortion_coefficients, reprojection_error, rotation_vectors, translation_vectors
+
+
+
+def average_transforms(T_list):
+    if not T_list:
+        return None
+
+    if len(T_list) <= 2:
+        t_avg = np.mean([T[:3, 3] for T in T_list], axis=0)
+        quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in T_list]
+        mean_rot = Rotation.from_quat(quats).mean().as_matrix()
+        T_avg = np.eye(4)
+        T_avg[:3, :3] = mean_rot
+        T_avg[:3, 3] = t_avg
+        return T_avg
+
+    # 1. Compute median translation
+    translations = np.array([T[:3, 3] for T in T_list])
+    median_translation = np.median(translations, axis=0)
+
+    # 2. Filter out transforms that are outliers (> 0.15m translation distance from median)
+    valid_T_list = []
+    for T in T_list:
+        dist = np.linalg.norm(T[:3, 3] - median_translation)
+        if dist < 0.15:
+            valid_T_list.append(T)
+
+    # Fallback if all transforms were discarded
+    if not valid_T_list:
+        valid_T_list = T_list
+
+    t_avg = np.mean([T[:3, 3] for T in valid_T_list], axis=0)
+    quats = [Rotation.from_matrix(T[:3, :3]).as_quat() for T in valid_T_list]
+    mean_rot = Rotation.from_quat(quats).mean().as_matrix()
+    T_avg = np.eye(4)
+    T_avg[:3, :3] = mean_rot
+    T_avg[:3, 3] = t_avg
+    return T_avg
