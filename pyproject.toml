@@ -126,4 +126,8 @@ stretch_eye_animations = "stretch4_body._cli_wrapper:stretch_eye_animations"
 stretch_pose_play = "stretch4_body._cli_wrapper:stretch_pose_play"
 stretch_pose_record = "stretch4_body._cli_wrapper:stretch_pose_record"
 stretch_pose_edit = "stretch4_body._cli_wrapper:stretch_pose_edit"
+stretch_monitor_devices         = "stretch4_body._cli_wrapper:stretch_monitor_devices"
+stretch_discover_device         = "stretch4_body._cli_wrapper:stretch_discover_device"
+stretch_connect_jetson          = "stretch4_body._cli_wrapper:stretch_connect_jetson"
+stretch_fetch_lidar_calibration = "stretch4_body._cli_wrapper:stretch_fetch_lidar_calibration"
 

@@ -309,3 +309,18 @@ def stretch_pose_record():
     sys.argv[0] = "stretch_pose_record"
     runpy.run_module("stretch4_body.tools.stretch_pose_record", run_name="__main__")
 
+def stretch_monitor_devices():
+    sys.argv[0] = "stretch_monitor_devices"
+    runpy.run_module("stretch4_body.tools.stretch_monitor_devices", run_name="__main__")
+
+def stretch_discover_device():
+    sys.argv[0] = "stretch_discover_device"
+    runpy.run_module("stretch4_body.tools.stretch_discover_device", run_name="__main__")
+
+def stretch_connect_jetson():
+    sys.argv[0] = "stretch_connect_jetson"
+    runpy.run_module("stretch4_body.tools.stretch_connect_jetson", run_name="__main__")
+
+def stretch_fetch_lidar_calibration():
+    sys.argv[0] = "stretch_fetch_lidar_calibration"
+    runpy.run_module("stretch4_body.tools.stretch_fetch_lidar_calibration", run_name="__main__")
