@@ -560,7 +560,67 @@ def main(lift, arm, omni_0, omni_1, omni_2, power_periph, pixart, feetech, esp32
         lift = arm = omni_0 = omni_1 = omni_2 = True
 
     if not any([lift, arm, omni_0, omni_1, omni_2, power_periph, pixart, feetech, esp32]):
-        click.echo(click.get_current_context().get_help())
+        # No flags — show a pretty-printed table of all USB TTY devices present on the bus
+        click.secho("\n======================================", fg='cyan', bold=True)
+        click.secho("   USB TTY DEVICES ON BUS            ", fg='cyan', bold=True)
+        click.secho("======================================\n", fg='cyan', bold=True)
+        click.echo("Scanning USB bus...")
+        all_tty = find_tty_devices()
+        if not all_tty:
+            click.secho("  No USB TTY devices found.", fg='yellow')
+            sys.exit(0)
+
+        # Column widths
+        COL_PORT   = 18
+        COL_VENDOR = 18
+        COL_MODEL  = 24
+        COL_SERIAL = 28
+        COL_SYMLINK = 28
+
+        import glob as _glob
+        # Build a reverse map: serial → symlink name for /dev/hello-* devices
+        serial_to_symlink = {}
+        for symlink in _glob.glob('/dev/hello-*'):
+            try:
+                real = os.path.realpath(symlink)
+                # Find which port this symlink resolves to
+                for port in all_tty:
+                    if os.path.realpath(port) == real or port == real:
+                        serial_to_symlink[all_tty[port].get('serial', '')] = os.path.basename(symlink)
+            except Exception:
+                pass
+
+        header = (
+            f"{'Port':<{COL_PORT}}"
+            f"{'Vendor':<{COL_VENDOR}}"
+            f"{'Model':<{COL_MODEL}}"
+            f"{'Serial':<{COL_SERIAL}}"
+            f"{'Symlink':<{COL_SYMLINK}}"
+        )
+        divider = '-' * len(header)
+        click.secho(header, fg='white', bold=True)
+        click.echo(divider)
+
+        for port in sorted(all_tty.keys()):
+            info   = all_tty[port]
+            vendor = info.get('vendor', info.get('vendor_id', '?'))
+            model  = info.get('model',  '?')
+            serial = info.get('serial', '?')
+            symlink = serial_to_symlink.get(serial, '')
+
+            # Colour Hello Robot devices cyan, others white
+            fg = 'cyan' if info.get('vendor') == 'Hello-Robot' else 'white'
+            line = (
+                f"{port:<{COL_PORT}}"
+                f"{vendor:<{COL_VENDOR}}"
+                f"{model:<{COL_MODEL}}"
+                f"{serial:<{COL_SERIAL}}"
+                f"{symlink:<{COL_SYMLINK}}"
+            )
+            click.secho(line, fg=fg)
+
+        click.echo(divider)
+        click.secho(f"\n  {len(all_tty)} device(s) found. Pass --help to see discovery flags.\n", fg='cyan')
         sys.exit(0)
 
     click.secho("\n======================================", fg='cyan', bold=True)
