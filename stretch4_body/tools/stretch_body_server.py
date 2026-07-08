@@ -408,7 +408,6 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 def get_service_file_content(log_level: str) -> str:
     """Creates the linux service file that gets copied to ~/.config/systemd/user/"""
     user_home = Path.home()
-    repo_root = Path(__file__).resolve().parents[2]
     
     python_path = Path(sys.executable)
         
@@ -453,7 +452,6 @@ Wants=network.target
 Type=simple
 #Environment="PYTHONUNBUFFERED=1"
 {env_lines_str}
-WorkingDirectory={repo_root}
 ExecStart=/bin/bash -c "{exec_cmd}"
 ExecStopPost={python_path} -c "from stretch4_body.tools.stretch_body_server import archive_session_logs; print('Stopping daemon...'); archive_session_logs()"
 Restart=on-failure
