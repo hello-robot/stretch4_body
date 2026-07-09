@@ -15,6 +15,7 @@ from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
 import tempfile
 import json
 import os
+import glob
 
 CACHE_FILE_PATH = os.path.join(tempfile.gettempdir(), f"luxonis_device_cache_{os.getuid()}.json")
 CACHE_EXPIRY_SECONDS = 24 * 60 * 60  # Invalidate after 24 hours
@@ -46,6 +47,7 @@ def clear_device_cache():
 def get_device_port_by_product_name(product_name:str):
     """When multiple Luxonis cameras are connected, we should query their serial number to use them."""
     devices = dai.Device.getAllAvailableDevices()
+
 
     cache_data = _load_cache()
     current_time = time.time()
@@ -84,7 +86,7 @@ def get_device_port_by_product_name(product_name:str):
                 time.sleep(1) # Sleep is needed so that device goes back to ready state, it's quite slow. TODO: cache this value.
                 return info.name
             
-    raise RuntimeError(f"Could not find the {product_name} device. Is it connected?")
+    raise RuntimeError(_get_luxonis_diagnostics_message(product_name))
 
 
 class LuxonisCameraAdapter(CameraAdapter):
@@ -426,3 +428,95 @@ class LuxonisCameraAdapter(CameraAdapter):
         ctrl = dai.CameraControl()
         ctrl.setSharpness(value)
         self.input_queue.send(ctrl)
+
+
+def _get_luxonis_diagnostics_message(product_name: str) -> str:
+    luxonis_devices = []
+    # Scan all USB devices in sysfs
+    for dev_dir in glob.glob("/sys/bus/usb/devices/*"):
+        vendor_path = os.path.join(dev_dir, "idVendor")
+        product_path = os.path.join(dev_dir, "idProduct")
+        if os.path.exists(vendor_path) and os.path.exists(product_path):
+            try:
+                with open(vendor_path, 'r') as f:
+                    vendor_id = f.read().strip()
+                with open(product_path, 'r') as f:
+                    product_id = f.read().strip()
+                
+                # Luxonis Vendor ID is 03e7
+                if vendor_id == "03e7":
+                    busnum_path = os.path.join(dev_dir, "busnum")
+                    devnum_path = os.path.join(dev_dir, "devnum")
+                    with open(busnum_path, 'r') as f:
+                        bus = int(f.read().strip())
+                    with open(devnum_path, 'r') as f:
+                        dev = int(f.read().strip())
+                    
+                    usb_product_name = ""
+                    product_name_path = os.path.join(dev_dir, "product")
+                    if os.path.exists(product_name_path):
+                        with open(product_name_path, 'r') as f:
+                            usb_product_name = f.read().strip()
+                            
+                    dev_path = f"/dev/bus/usb/{bus:03d}/{dev:03d}"
+                    luxonis_devices.append({
+                        "vendor_id": vendor_id,
+                        "product_id": product_id,
+                        "bus": bus,
+                        "dev": dev,
+                        "dev_path": dev_path,
+                        "product_name": usb_product_name
+                    })
+            except Exception:
+                pass
+
+    if not luxonis_devices:
+        return f"Could not find the {product_name} device. Is it connected?"
+
+    # Find processes using those device paths
+    dev_paths = [d["dev_path"] for d in luxonis_devices]
+    pid_to_paths = {}
+    for pid_dir in glob.glob("/proc/[0-9]*"):
+        pid = os.path.basename(pid_dir)
+        fd_dir = os.path.join(pid_dir, "fd")
+        if not os.path.isdir(fd_dir):
+            continue
+        try:
+            for fd in os.listdir(fd_dir):
+                fd_path = os.path.join(fd_dir, fd)
+                try:
+                    target = os.readlink(fd_path)
+                    if target in dev_paths:
+                        if pid not in pid_to_paths:
+                            pid_to_paths[pid] = []
+                        pid_to_paths[pid].append(target)
+                except (OSError, ValueError):
+                    pass
+        except Exception:
+            pass
+
+    msg_lines = [f"Could not find the {product_name} device."]
+    
+    if pid_to_paths:
+        msg_lines.append(f"A Luxonis device was found on the USB bus, but it is currently in use by the following process(es):")
+        for pid, paths in pid_to_paths.items():
+            cmdline_path = f"/proc/{pid}/cmdline"
+            cmd = "unknown"
+            if os.path.exists(cmdline_path):
+                try:
+                    with open(cmdline_path, 'r') as f:
+                        cmd = f.read().replace('\x00', ' ').strip()
+                except Exception:
+                    pass
+            msg_lines.append(f"  - PID {pid}: {cmd}")
+        msg_lines.append("")
+        msg_lines.append("To bring it back, please close the script or processes using it.")
+        msg_lines.append("Alternatively, you can restart the robot.")
+    else:
+        msg_lines.append("A Luxonis device was found on the USB bus, but we could not identify the process using it.")
+        msg_lines.append("It might be in a locked/inactive state or used by an unreadable system/root process.")
+        msg_lines.append("")
+        msg_lines.append("To bring it back, please try restarting the robot.")
+        
+    return "\n".join(msg_lines)
+
