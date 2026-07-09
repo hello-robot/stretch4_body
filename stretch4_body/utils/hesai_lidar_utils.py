@@ -59,26 +59,52 @@ class HesaiJT128Decoder:
     # ── Calibration ──────────────────────────────────────────────────────────
 
     def _load_calibration(self, correction_file):
-        """Load per-channel elevation/azimuth offsets from a .dat CSV file."""
+        """Load per-channel elevation/azimuth offsets from a .dat CSV file.
+
+        Falls back to zero offsets if the file is missing, binary, or malformed.
+        """
+        n = 128
         if correction_file and os.path.exists(correction_file):
             elevations, azimuths = [], []
             try:
-                with open(correction_file, 'r') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        elevations.append(math.radians(float(row['Elevation'])))
-                        azimuths.append(math.radians(float(row['Azimuth'])))
-                self._el_rad          = np.array(elevations, dtype=np.float32)
-                self._az_offsets_rad  = np.array(azimuths,   dtype=np.float32)
-                click.secho(f"    Calibration loaded: {correction_file} ({len(elevations)} channels)", fg="cyan")
-                return
+                # Read with latin-1 so any byte value is valid (no UnicodeDecodeError)
+                with open(correction_file, 'r', encoding='latin-1') as f:
+                    first_line = f.readline()
+                    # Validate it looks like a CSV with the expected headers
+                    if 'Elevation' not in first_line or 'Azimuth' not in first_line:
+                        click.secho(
+                            f"    NOTE: Calibration file is not a CSV "
+                            f"(expected 'Elevation,Azimuth' header) — "
+                            f"using zero offsets. Run stretch_fetch_lidar_calibration to fetch it.",
+                            fg="yellow",
+                        )
+                    else:
+                        # Valid CSV — parse remaining rows
+                        reader = csv.DictReader(f, fieldnames=first_line.strip().split(','))
+                        for row in reader:
+                            elevations.append(math.radians(float(row['Elevation'])))
+                            azimuths.append(math.radians(float(row['Azimuth'])))
+                        if elevations:
+                            self._el_rad         = np.array(elevations, dtype=np.float32)
+                            self._az_offsets_rad = np.array(azimuths,   dtype=np.float32)
+                            click.secho(
+                                f"    Calibration loaded: {correction_file} ({len(elevations)} channels)",
+                                fg="cyan",
+                            )
+                            return
             except Exception as exc:
                 click.secho(f"    WARNING: Failed to parse calibration file: {exc}", fg="yellow")
 
-        click.secho("    WARNING: No calibration file — using zero azimuth/elevation offsets.", fg="yellow")
-        n = 128
+        elif correction_file:
+            click.secho(
+                f"    NOTE: Calibration file not found: {correction_file} — "
+                f"using zero offsets. Run stretch_fetch_lidar_calibration to fetch it.",
+                fg="yellow",
+            )
+
         self._el_rad         = np.zeros(n, dtype=np.float32)
         self._az_offsets_rad = np.zeros(n, dtype=np.float32)
+
 
     # ── Socket lifecycle ─────────────────────────────────────────────────────
 

@@ -21,6 +21,7 @@ import time
 import shutil
 import sys
 import os
+import signal
 import subprocess
 import threading
 import queue
@@ -233,6 +234,7 @@ class DeviceMonitor:
         # {name: {'points': np.ndarray or None, 'frame_count': int}}
         self.lidar_state = {}
         self.rerun_initialized = False
+        self._lidar_start_time = None  # time when lidar decoders first started
         
         # Feetech Servos (Active only)
         # {id: FeetechSMServo_Instance}
@@ -598,6 +600,9 @@ class DeviceMonitor:
                     self.log("INFO", f"Lidar decoder started for {cfg['name']} ({cfg['ip']}, port {cfg['udp_port']})")
                 except Exception as e:
                     self.log("ERROR", f"Failed to start lidar decoder for {cfg['name']}: {e}")
+            # Record when decoders first started for the NO DATA grace window
+            if self.lidar_decoders and self._lidar_start_time is None:
+                self._lidar_start_time = time.time()
         else:
             # Fallback: raw socket packet counting (original behavior)
             for port in LIDAR_PORTS:
@@ -882,7 +887,14 @@ class DeviceMonitor:
                         n_pts = len(pts) if pts is not None else 0
                         self.update_status(dev, f"STREAMING ({fps:.0f} FPS, {n_pts} pts)")
                     else:
-                        self.update_status(dev, "NO DATA")
+                        # Only report NO DATA after a 5s grace window — decoders
+                        # take a moment to start receiving packets after startup.
+                        grace = 5.0
+                        elapsed = current_time - (self._lidar_start_time or current_time)
+                        if elapsed >= grace:
+                            self.update_status(dev, "NO DATA")
+                        else:
+                            self.update_status(dev, f"STARTING... ({grace - elapsed:.0f}s)")
 
                 # Rerun visualization
                 if self.rerun_initialized and pts is not None and len(pts) > 0:
@@ -979,17 +991,36 @@ class DeviceMonitor:
                     self.update_status(dev, 'ERROR', error_msg=str(e))
                          
     def close(self):
+        # 1. Tear down DepthAI head pipeline — stop pipeline FIRST so node threads
+        #    finish cleanly, then close the device. Skipping stop() causes X_LINK_ERROR.
+        self.cam_queues.clear()
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except:
+                pass
+        self.pipeline = None
         if self.cam_device:
             try:
                 self.cam_device.close()
             except:
                 pass
-        
+        self.cam_device = None
+
+        # 2. Tear down DepthAI gripper pipeline
+        self.grip_cam_queues.clear()
+        if self.grip_pipeline:
+            try:
+                self.grip_pipeline.stop()
+            except:
+                pass
+        self.grip_pipeline = None
         if self.grip_cam_device:
             try:
                 self.grip_cam_device.close()
             except:
                 pass
+        self.grip_cam_device = None
         
         if self.feetech_port_handler:
             try:
@@ -1211,41 +1242,49 @@ def main():
     
     start_time = time.time()
     
+    _stop = threading.Event()
+
+    def _sigint_handler(sig, frame):
+        _stop.set()
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     try:
         with Live(generate_table(monitor), refresh_per_second=4) as live:
-            while True:
+            while not _stop.is_set():
                 # Update Watchdogs
                 monitor.check_devices()
-                
+
                 # Check Duration
                 if args.duration > 0 and (time.time() - start_time) > args.duration:
                     break
-                
+
                 # Layout Construction
                 layout = Layout()
                 layout.split_column(
                     Layout(name="upper", ratio=3),
                     Layout(name="lower", ratio=1, minimum_size=5)
                 )
-                
+
                 # Upper: Device Table
                 layout["upper"].update(generate_table(monitor))
-                
+
                 # Lower: Log Panel (compact — last 5 lines)
                 logs = dmesg.get_recent_logs()
                 log_text = Text("\n".join(logs[-5:]))
                 panel = Panel(log_text, title="dmesg / Kernel Log monitor", border_style="blue")
                 layout["lower"].update(panel)
-                
+
                 live.update(layout)
                 time.sleep(0.25)
-                
+
     except KeyboardInterrupt:
         pass
     finally:
         monitor.close()
         dmesg.stop()
         print(f"Log saved to {monitor.log_file}")
+
 
 if __name__ == "__main__":
     main()
