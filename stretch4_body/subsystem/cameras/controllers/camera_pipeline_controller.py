@@ -551,7 +551,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
                     print("ros_frame is None in get_frame")
                     continue
 
-                frame = ImageFrame(timestamp=ros_frame.timestamp, frame_number=self.frame_number, image=ros_frame.image, timestamp_system=ros_frame.timestamp_system)
+                frame = ImageFrame(timestamp=ros_frame.timestamp, frame_number=self.frame_number, image=ros_frame.image, timestamp_system=ros_frame.timestamp)
 
                 if is_run_pipeline:
                     self.run_pipeline(frame)
