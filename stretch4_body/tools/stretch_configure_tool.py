@@ -42,8 +42,9 @@ def write_fleet_yaml(fn, rp, fleet_dir=None, header=None):
 
 @click.command()
 @click.option('--quick', '-q', is_flag=True, help='Skip interactive steps.')
+@click.option('--direct', '-d', is_flag=True, help='Use without Stretch Body Server.')
 @click.option('--auto-detect', is_flag=True, help='Automatically detect tool and set it.')
-def main(quick, auto_detect):
+def main(quick, direct, auto_detect):
     import stretch4_body.core.hello_utils as hu
     hu.print_stretch_re_use()
     
@@ -95,22 +96,22 @@ def main(quick, auto_detect):
     detected_tool = None
     if not quick:
         try:
-            try:
-                from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
-                is_client = True
-            except ImportError:
+            if direct:
                 from stretch4_body.subsystem.power_periph import PowerPeriph
-                is_client = False
+            
+            else:
+                from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
             
             p = PowerPeriph()
-            p.startup()
+            
+            if not p.startup() and not direct:
+                return
 
             if not auto_detect:
                 if click.confirm('Turn off power to the peripheral?', default=True):
                     print('Powering off eoa...')
                     p.actuator_control('eoa', enable=False)
-                    if is_client:
-                        p.push_command()
+                    p.push_command()
                 
                 try:
                     click.pause('Connect the tool then press any key to continue...')
@@ -121,8 +122,7 @@ def main(quick, auto_detect):
 
                 print('Powering on eoa...')
                 p.actuator_control('eoa', enable=True)
-                if is_client:
-                    p.push_command()
+                p.push_command()
                 time.sleep(2.0) # Wait for motors to boot
 
             # Auto-detect tool ID
@@ -229,13 +229,24 @@ def main(quick, auto_detect):
 
     write_fleet_yaml(user_params_fn, _user_params, fleet_dir, user_params_header)
     print(f"Saved to {fleet_dir}{user_params_fn}")
-    
-    if click.confirm('\nWould you like to restart the stretch_body_server and home the end_of_arm?', default=True):
-        print('Restarting stretch_body_server...')
-        p_restart = subprocess.Popen(['stretch_body_server', '--restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        print('Waiting for stretch_body_server to come back online...')
-        from stretch4_body.robot.robot_client import RobotClient
+
+    is_do_home = False
+    if direct:
+        is_do_home = click.confirm("\nWould you like to home the end_of_arm?", default=True)
+    else:
+        is_do_home= click.confirm('\nWould you like to restart the stretch_body_server and home the end_of_arm?', default=True)
+
+    if not quick and is_do_home:
+        p_restart = None
+        if not direct:
+            print('Restarting stretch_body_server...')
+            p_restart = subprocess.Popen(['stretch_body_server', '--restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            print('Waiting for stretch_body_server to come back online...')
+        if direct:
+            from stretch4_body.robot.robot import Robot as RobotClient
+        else:
+            from stretch4_body.robot.robot_client import RobotClient
         r = RobotClient()
         connected = False
         for i in range(20): # try for 20 seconds
@@ -253,10 +264,13 @@ def main(quick, auto_detect):
                 print(f"Error during homing: {e}")
             finally:
                 r.stop()
-            p_restart.terminate()
+            if p_restart is not None:
+                p_restart.terminate()
+            print("Done! You are ready to use the tool.")
         else:
             print("Failed to connect to robot server after restart. Please try homing manually.")
-            p_restart.terminate()
+            if p_restart is not None:
+                p_restart.terminate()
     else:
         print("""Done! You may need to home the robot or restart services for the tool to be recognized.
 
