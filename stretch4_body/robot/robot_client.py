@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import time
+from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 import importlib
@@ -42,8 +44,8 @@ class RobotClient(SubsystemClient):
                 self.eoa_name = self.params['tool']
                 module_name = 'stretch4_body.robot.robot_client'
                 class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
-                self.subsystems[k] = getattr(importlib.import_module(module_name), class_name)(parent=self)
-                self.end_of_arm = self.subsystems[k]
+                self.end_of_arm:EndOfArmClient = getattr(importlib.import_module(module_name), class_name)(parent=self)
+                self.subsystems[k] = self.end_of_arm
 
         for k in self.params['server']['subsystems']:
             if k == 'line_sensor_loop':
@@ -841,9 +843,21 @@ class WristJointClient(SubsystemClient):
     """
     Client interface for wrist joints (Yaw, Pitch, Roll).
     """
-    def __init__(self, joint_name,parent=None, ip_address=None):
+    def __init__(self, joint_name:str,parent:EndOfArmClient|None=None, ip_address=None):
         self.joint_name=joint_name
+        self.parent = parent # keep this here for typing
         SubsystemClient.__init__(self, name=joint_name, parent=parent, ip_address=ip_address)
+
+    @property
+    def status(self) -> FeetechSMHelloStatus:
+        if self.parent is not None:
+            return self.parent.status.get(self.name, {})
+        return self.status
+    
+    @status.setter
+    def status(self, value):
+        self._status = value
+
     def do_ping(self):
         """
         Ping the motor to check connectivity.
@@ -993,17 +1007,17 @@ class WristJointClient(SubsystemClient):
 
 class WristYawClient(WristJointClient):
     """ Client for the wrist yaw joint. """
-    def __init__(self, parent=None, ip_address=None):
+    def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_yaw', parent=parent, ip_address=ip_address)
 
 class WristRollClient(WristJointClient):
     """ Client for the wrist roll joint. """
-    def __init__(self, parent=None, ip_address=None):
+    def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_roll', parent=parent, ip_address=ip_address)
 
 class WristPitchClient(WristJointClient):
     """ Client for the wrist pitch joint. """
-    def __init__(self, parent=None, ip_address=None):
+    def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_pitch', parent=parent, ip_address=ip_address)
 
 class StretchGripperClient(WristJointClient):
@@ -1050,6 +1064,21 @@ class EndOfArmClient(SubsystemClient):
     def __init__(self,name='end_of_arm',parent=None):
         SubsystemClient.__init__(self,name=name,parent=parent)
         self.joints = list(self.robot_params[self.name].get('devices', {}).keys())
+        # if 'wrist_pitch' in self.joints:
+        #     self.wrist_pitch = WristPitchClient(self)
+        # if 'wrist_roll' in self.joints:
+        #     self.wrist_roll = WristRollClient(self)
+        # if 'wrist_yaw' in self.joints:
+        #     self.wrist_yaw = WristYawClient(self)
+        for joint in self.joints:
+            py_class_name = self.robot_params[self.name].get('devices', {}).get(joint, {}).get('py_class_name')
+            if py_class_name is None:
+                continue
+            if py_class_name == "StretchGripper4":
+                py_class_name = "StretchGripper"
+            class_name = py_class_name+'Client'
+            module_name = 'stretch4_body.robot.robot_client'
+            setattr(self, joint, getattr(importlib.import_module(module_name), class_name)(self))
 
     def do_ping(self, joint):
         """
