@@ -104,8 +104,8 @@ def main(quick, direct, auto_detect):
             
             p = PowerPeriph()
             
-            if not p.startup() and not direct:
-                return
+            if not p.startup():
+                return print("Failed to connect to the robot's power management.")
 
             if not auto_detect:
                 if click.confirm('Turn off power to the peripheral?', default=True):
