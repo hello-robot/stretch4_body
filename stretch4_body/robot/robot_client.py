@@ -1064,13 +1064,16 @@ class EndOfArmClient(SubsystemClient):
     def __init__(self,name='end_of_arm',parent=None):
         SubsystemClient.__init__(self,name=name,parent=parent)
         self.joints = list(self.robot_params[self.name].get('devices', {}).keys())
-        # if 'wrist_pitch' in self.joints:
-        #     self.wrist_pitch = WristPitchClient(self)
-        # if 'wrist_roll' in self.joints:
-        #     self.wrist_roll = WristRollClient(self)
-        # if 'wrist_yaw' in self.joints:
-        #     self.wrist_yaw = WristYawClient(self)
+
+        # These are populated for python typing.
+        self.wrist_pitch:WristPitchClient
+        self.wrist_roll:WristRollClient
+        self.wrist_yaw:WristYawClient
+        self.stretch_gripper:StretchGripperClient
+        self.parallel_gripper:ParallelGripperClient
+
         for joint in self.joints:
+            # The attributes defined above are assigned in this forloop:
             py_class_name = self.robot_params[self.name].get('devices', {}).get(joint, {}).get('py_class_name')
             if py_class_name is None:
                 continue
