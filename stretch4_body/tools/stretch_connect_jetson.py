@@ -44,6 +44,37 @@ SSH_RETRY_S    = 5
 # Phase 1 — Power cycle
 # ---------------------------------------------------------------------------
 
+SHUTDOWN_WAIT_S  = 25    # seconds to wait for a graceful halt before giving up
+
+def _graceful_shutdown_jetson() -> bool:
+    """Halt the Jetson OS over SSH before its power is cut.
+    """
+    if not _ping(JETSON_HOST):
+        return False  # already unreachable, nothing to shut down
+
+    shutdown_cmd = "sync; echo " + JETSON_PASS + " | sudo -S shutdown -h now"
+    r = subprocess.run(
+        ["ssh", *SSH_OPTS, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+         JETSON_SSH, shutdown_cmd],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        # Passwordless SSH not set up yet — fall back to password auth.
+        r = subprocess.run(
+            ["sshpass", f"-p{JETSON_PASS}", "ssh", *SSH_OPTS,
+             "-o", "ConnectTimeout=5", JETSON_SSH, shutdown_cmd],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            return False
+
+    for _ in range(SHUTDOWN_WAIT_S // 2):
+        time.sleep(2)
+        if not _ping(JETSON_HOST):
+            return True
+    return False
+
+
 def power_cycle_jetson() -> None:
     """Power-cycle the Jetson via PowerPeriph aux-CPU control."""
     click.secho("\n[1/5] Power cycling Jetson via PowerPeriph…", fg="cyan", bold=True)
@@ -53,6 +84,12 @@ def power_cycle_jetson() -> None:
     if not pp.startup():
         click.secho("  ⚠  PowerPeriph startup failed — skipping power cycle.", fg="yellow")
         return
+
+    click.secho("  Requesting graceful shutdown over SSH…", fg="cyan")
+    if _graceful_shutdown_jetson():
+        click.secho("  ✓ Jetson halted cleanly.", fg="green")
+    else:
+        click.secho("  ⚠  Could not confirm a clean halt — cutting power anyway.", fg="yellow")
 
     click.secho("  Powering OFF aux CPU…", fg="cyan")
     pp.set_aux_cpu_off()
@@ -93,8 +130,21 @@ def _ssh_ok() -> bool:
     return r.returncode == 0 and r.stdout.strip() == "ok"
 
 
+def _ssh_service_up() -> bool:
+    """Check that the SSH daemon is listening, regardless of auth outcome.
+    """
+    r = subprocess.run(
+        ["ssh", *SSH_OPTS, "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+         JETSON_SSH, "echo ok"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0 and r.stdout.strip() == "ok":
+        return True
+    return "permission denied" in r.stderr.lower()
+
+
 def wait_for_ssh() -> None:
-    """Poll until SSH is available on the Jetson."""
+    """Poll until the SSH service is available on the Jetson."""
     click.secho("\n[2/5] Waiting for Jetson SSH…", fg="cyan", bold=True)
 
     for attempt in range(1, SSH_ATTEMPTS + 1):
@@ -102,9 +152,9 @@ def wait_for_ssh() -> None:
         if _ping(JETSON_HOST):
             click.secho("reachable", fg="green")
             click.echo(f"  Attempt {attempt}/{SSH_ATTEMPTS}: SSH… ", nl=False)
-            if _ssh_ok():
-                click.secho("connected", fg="green")
-                click.secho("  ✓ Jetson is up and accepting SSH.", fg="green")
+            if _ssh_service_up():
+                click.secho("up", fg="green")
+                click.secho("  ✓ Jetson is up and accepting SSH connections.", fg="green")
                 return
             else:
                 click.secho("not ready yet", fg="yellow")
