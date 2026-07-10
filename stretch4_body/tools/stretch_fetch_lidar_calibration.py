@@ -35,12 +35,14 @@ import sys
 import argparse
 
 # ── PTC protocol constants ───────────────────────────────────────────────────
+# Matches PTCHeader_1_0 in the Hesai SDK (stretch4_pyhesai_wrapper/HesaiLidar_SDK_2.0/
+# libhesai/PtcParser/include/ptc_1_0_parser.h): a fixed 8-byte header, no reserved field.
 PTC_PORT             = 9347
 PTC_MAGIC_1          = 0x47
 PTC_MAGIC_2          = 0x74
 PTC_COMMAND_GET_CAL  = 0x05   # PTC_COMMAND_GET_LIDAR_CALIBRATION
-PTC_HEADER_FMT       = '>BBBBII'   # magic1 magic2 cmd ver payloadLen(BE) reserved(BE)
-PTC_HEADER_SIZE      = struct.calcsize(PTC_HEADER_FMT)  # 12 bytes
+PTC_HEADER_FMT       = '>BBBBI'    # magic1 magic2 cmd return_code payloadLen(BE)
+PTC_HEADER_SIZE      = struct.calcsize(PTC_HEADER_FMT)  # 8 bytes
 
 LEFT_IP  = '192.168.1.202'
 RIGHT_IP = '192.168.1.201'
@@ -56,13 +58,12 @@ def _default_out_path(lidar_side: str) -> str:
 
 
 def build_request(cmd: int) -> bytes:
-    """Build a PTC request packet (12-byte header, zero payload)."""
+    """Build a PTC request packet (8-byte header, zero payload)."""
     return struct.pack(PTC_HEADER_FMT,
                        PTC_MAGIC_1, PTC_MAGIC_2,  # magic
                        cmd,                         # command id
-                       0x00,                        # protocol version
-                       0,                           # payload length
-                       0)                           # reserved
+                       0x00,                        # return_code (0 for requests)
+                       0)                           # payload length
 
 
 def parse_response(data: bytes) -> bytes:
@@ -73,7 +74,7 @@ def parse_response(data: bytes) -> bytes:
     if len(data) < PTC_HEADER_SIZE:
         raise ValueError(f'Response too short: {len(data)} bytes')
 
-    magic1, magic2, cmd, ver, payload_len, _ = struct.unpack_from(PTC_HEADER_FMT, data, 0)
+    magic1, magic2, _cmd, _return_code, payload_len = struct.unpack_from(PTC_HEADER_FMT, data, 0)
     if magic1 != PTC_MAGIC_1 or magic2 != PTC_MAGIC_2:
         raise ValueError(f'Bad magic bytes: 0x{magic1:02X} 0x{magic2:02X} (expected 0x74 0x47)')
 
