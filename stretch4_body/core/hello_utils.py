@@ -10,7 +10,6 @@ import signal
 import pathlib
 import numbers
 import subprocess
-import cv2
 import sys, tty, termios
 import math
 from statistics import mean
@@ -735,6 +734,8 @@ def setup_uvc_camera(device_index, size=None, fps=None, format = None):
     """
     Returns Opencv capture object of the UVC video divice
     """
+    import cv2
+
     cap = cv2.VideoCapture(device_index)
     if format:
         fourcc_value = cv2.VideoWriter_fourcc(*f'{format}')
