@@ -146,18 +146,14 @@ class DmesgMonitor:
         self.stop_event.set()
 
     def _monitor_loop(self):
-        # Clear buffer first? sudo dmesg -c? No, just follow from now.
-        # We use Popen to follow dmesg
         try:
-            # We use -w (follow) if available, or just tail?
-            # 'dmesg -w' follows.
             proc = subprocess.Popen(['dmesg', '-w'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            
+
             poll_obj = select.poll()
             poll_obj.register(proc.stdout, select.POLLIN)
-            
+
             while not self.stop_event.is_set():
-                if poll_obj.poll(500): # 0.5s timeout
+                if poll_obj.poll(500):
                     line = proc.stdout.readline()
                     if line:
                         self._process_line(line)
@@ -165,19 +161,15 @@ class DmesgMonitor:
             self.q.put(f"[Monitor Error] {e}")
 
     def _process_line(self, line):
-        # Filter for relevant keywords
         keywords = ['usb', 'tty', 'disconnect', 'error', 'failed', 'device']
         if any(k in line.lower() for k in keywords):
-            # Clean timestamp if possible, but raw is fine
             msg = line.strip()
             self.q.put(msg)
-            # Keep defined buffer
             if len(self.log_lines) > 50:
                 self.log_lines.pop(0)
             self.log_lines.append(msg)
 
     def get_recent_logs(self):
-        # Empty queue to local list
         while not self.q.empty():
             try:
                 line = self.q.get_nowait()
@@ -196,7 +188,6 @@ class DeviceMonitor:
     def __init__(self, passive=False, visualize=False):
         self.passive = passive
         self.visualize = visualize
-        self.devices = {}  # {name: {'type': str, 'status': str, 'details': str, 'errors': int}}
         self.devices = {}  # {name: {'type': str, 'status': str, 'details': str, 'errors': int, 'prev_status': str}}
         self.start_time = time.time()
         
@@ -430,13 +421,7 @@ class DeviceMonitor:
                                 # Manual setup as per stretch_feetech_monitor.py
                                 m.packet_handler = sms_sts(m.port_handler)
                                 m.hw_valid = True # Assume valid if port is open, verification happens on read
-                                
-                                # Try a ping or read to verify?
-                                # stretch_feetech_monitor just appends and reads later.
-                                # Let's try to ping to be sure it's there?
-                                # stretch_feetech_monitor does ping in main but not in the loop.
-                                # Let's just add it on faith and let the loop check it.
-                                
+
                                 self.feetech_servos[fid] = m
                                 if f"Feetech_ID{fid}" in self.devices:
                                      self.devices[f"Feetech_ID{fid}"]['status'] = 'ALIVE'
@@ -497,8 +482,6 @@ class DeviceMonitor:
                         # Use build() as per visualize_head_cameras.py
                         cam_node.build(boardSocket=conf['socket'], sensorFps=10)
                         
-                        # Request logic matching visualize_head_cameras.py but requesting smaller size directly
-                        # We use the resize_target as the output size to keep bandwidth low
                         cam_out = cam_node.requestOutput(
                             size=conf['resize_target'],
                             fps=10,
@@ -568,8 +551,51 @@ class DeviceMonitor:
                         self.devices[dev_key]['status'] = 'ERROR'
                         self.devices[dev_key]['details'] = str(e)
 
-        # Start Lidar Decoders (for proper point cloud decoding + visualization)
-        if HesaiJT128Decoder:
+        # Start Lidar Decoders
+        try:
+            from pyhesai_wrapper.hesai_lidar import HesaiLidar
+            import queue as _queue
+            PYHESAI_AVAILABLE = True
+        except ImportError:
+            PYHESAI_AVAILABLE = False
+
+        if PYHESAI_AVAILABLE and any(d['type'] == 'LIDAR' for d in self.devices.values()):
+            for cfg in LIDAR_CONFIGS:
+                if any(d['type'] == 'LIDAR' and d['details'] == cfg['ip'] for d in self.devices.values()):
+                    is_right = 'right' in cfg['name'].lower()
+                    try:
+                        dec = HesaiLidar(use_right_lidar=is_right)
+                        dec.start()
+                        self.lidar_decoders.append(dec)
+                        self.lidar_state[cfg['name']] = {'points': None, 'frame_count': 0}
+
+                        def recv_worker(decoder, config, state, mutex, stop_event):
+                            while not stop_event.is_set():
+                                try:
+                                    frame = decoder.frame_queue.get(timeout=0.1)
+                                    with mutex:
+                                        state[config['name']]['points'] = len(frame.points) if frame.points is not None else 0
+                                        state[config['name']]['frame_count'] += 1
+                                except _queue.Empty:
+                                    continue
+                                except Exception:
+                                    pass
+
+                        t = threading.Thread(
+                            target=recv_worker,
+                            args=(dec, cfg, self.lidar_state, self.lidar_mutex, self.lidar_stop_event),
+                            daemon=True,
+                        )
+                        t.start()
+                        self.lidar_threads.append(t)
+                        self.log("INFO", f"HesaiLidar started for {cfg['name']}")
+                    except Exception as e:
+                        self.log("ERROR", f"Failed to start HesaiLidar for {cfg['name']}: {e}")
+            
+            if self.lidar_decoders and self._lidar_start_time is None:
+                self._lidar_start_time = time.time()
+
+        elif HesaiJT128Decoder and any(d['type'] == 'LIDAR' for d in self.devices.values()):
             for cfg in LIDAR_CONFIGS:
                 try:
                     dec = HesaiJT128Decoder(
@@ -616,7 +642,7 @@ class DeviceMonitor:
                     self.log("ERROR", f"Failed to bind Lidar port {port}: {e}")
 
         # Init Rerun for lidar visualization
-        if self.visualize and RERUN_AVAILABLE and self.lidar_decoders:
+        if self.visualize and RERUN_AVAILABLE and self.lidar_decoders and not PYHESAI_AVAILABLE:
             try:
                 rr.init('stretch_monitor_lidars', spawn=True)
                 rr.log('world', rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
@@ -681,18 +707,14 @@ class DeviceMonitor:
                 self.log("ERROR", f"Line Sensor init failed: {e}")
                 self.line_sensor_reader = None
 
-    print("Starting Main Loop Check")
+        print("Starting Main Loop Check")
 
     def update_status(self, dev, new_status, error_msg=None):
         """Helper to update status and log transitions."""
         old_status = dev.get('prev_status', 'UNKNOWN')
         
-        # Determine if we should log
         # 1. Status Changed
         if new_status != old_status:
-            # Filter somewhat noisy "STREAMING (X FPS)" updates if they are just value changes
-            # But here we want to see if it STOPS streaming
-            
             is_streaming_update = "STREAMING" in new_status and "STREAMING" in old_status
             
             if not is_streaming_update:
@@ -884,7 +906,7 @@ class DeviceMonitor:
                     dev['last_packet_time'] = current_time
 
                     if fps > 0:
-                        n_pts = len(pts) if pts is not None else 0
+                        n_pts = pts if isinstance(pts, int) else (len(pts) if pts is not None else 0)
                         self.update_status(dev, f"STREAMING ({fps:.0f} FPS, {n_pts} pts)")
                     else:
                         # Only report NO DATA after a 5s grace window — decoders
@@ -897,7 +919,7 @@ class DeviceMonitor:
                             self.update_status(dev, f"STARTING... ({grace - elapsed:.0f}s)")
 
                 # Rerun visualization
-                if self.rerun_initialized and pts is not None and len(pts) > 0:
+                if self.rerun_initialized and pts is not None and not isinstance(pts, int) and len(pts) > 0:
                     try:
                         cfg = next((c for c in LIDAR_CONFIGS if c['name'] == lidar_name), None)
                         if cfg:
@@ -1034,16 +1056,11 @@ class DeviceMonitor:
             except:
                 pass
         
-        # Stop lidar decoder threads and close decoders
+        # Stop lidar decoder threads
         self.lidar_stop_event.set()
         for t in self.lidar_threads:
-            t.join(timeout=1.0)
-        for dec in self.lidar_decoders:
-            try:
-                dec.close()
-            except:
-                pass
-        
+            t.join(timeout=0.5)
+    
         try:
             self.csv_file.close()
         except:
@@ -1093,6 +1110,34 @@ def generate_table(monitor):
         )
     return table
 
+def _release_leaked_zmq_resources(robot_client) -> None:
+    """Work around a leak in StretchBodyClient.startup(): when it fails to
+    connect (no server running, or a different user owns the server) it
+    returns False without closing the zmq socket/context it already created.
+    Left alone, that orphaned zmq.Context hangs forever in __del__ -> term()
+    whenever the garbage collector eventually finalizes it, since term()
+    blocks until every socket on the context has been explicitly closed.
+    We reach into the inner client here and force-close anything it left
+    open so nothing is left for the GC to trip over later in the run.
+    """
+    inner = getattr(robot_client, 'client', None)
+    if inner is None:
+        return
+    for sock_attr in ('socket_admin', 'socket_cmd', 'socket_status'):
+        sock = getattr(inner, sock_attr, None)
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+    ctx = getattr(inner, 'context', None)
+    if ctx is not None:
+        try:
+            ctx.term()
+        except Exception:
+            pass
+
+
 def _is_server_active() -> bool:
     """Return True if stretch_body_server is currently running.
 
@@ -1106,6 +1151,7 @@ def _is_server_active() -> bool:
         client = RobotClient()
         active = client.startup(verbose=False, allow_different_user_connection=True) and client.is_server_active()
         client.stop()
+        _release_leaked_zmq_resources(client)
         return active
     except Exception:
         pass
@@ -1213,7 +1259,6 @@ def main():
     # Check dependencies
     if not args.passive and dai is None:
         print("WARNING: DepthAI not installed. Cameras will be skipped in Active mode.")
-        # return  <-- Removed to allow testing other components
 
     # ── Server pre-flight check ────────────────────────────────────────────────
     # In Active mode (default) this tool claims serial ports, cameras, and the
@@ -1245,38 +1290,53 @@ def main():
     _stop = threading.Event()
 
     def _sigint_handler(sig, frame):
+        if _stop.is_set():
+            # If Ctrl-C is pressed twice, forcefully terminate to avoid hangs
+            import os
+            os._exit(1)
         _stop.set()
+        print("\nStopping monitor... (Press Ctrl-C again to force exit)")
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
     try:
-        with Live(generate_table(monitor), refresh_per_second=4) as live:
-            while not _stop.is_set():
-                # Update Watchdogs
-                monitor.check_devices()
+        from rich.console import Console
+        from rich.layout import Layout
+        from rich.panel import Panel
+        from rich.text import Text
+        console = Console()
+        
+        while not _stop.is_set():
+            # Update Watchdogs
+            monitor.check_devices()
 
-                # Check Duration
-                if args.duration > 0 and (time.time() - start_time) > args.duration:
-                    break
+            # Check Duration
+            if args.duration > 0 and (time.time() - start_time) > args.duration:
+                break
 
-                # Layout Construction
-                layout = Layout()
-                layout.split_column(
-                    Layout(name="upper", ratio=3),
-                    Layout(name="lower", ratio=1, minimum_size=5)
-                )
+            # Layout Construction
+            layout = Layout()
+            layout.split_column(
+                Layout(name="upper", ratio=3),
+                Layout(name="lower", ratio=1, minimum_size=5),
+                Layout(name="footer", size=1)
+            )
 
-                # Upper: Device Table
-                layout["upper"].update(generate_table(monitor))
+            # Upper: Device Table
+            layout["upper"].update(generate_table(monitor))
 
-                # Lower: Log Panel (compact — last 5 lines)
-                logs = dmesg.get_recent_logs()
-                log_text = Text("\n".join(logs[-5:]))
-                panel = Panel(log_text, title="dmesg / Kernel Log monitor", border_style="blue")
-                layout["lower"].update(panel)
+            # Lower: Log Panel (compact — last 5 lines)
+            logs = dmesg.get_recent_logs()
+            log_text = Text("\n".join(logs[-5:]))
+            panel = Panel(log_text, title="dmesg / Kernel Log monitor", border_style="blue")
+            layout["lower"].update(panel)
 
-                live.update(layout)
-                time.sleep(0.25)
+            # Footer: Exit Prompt
+            layout["footer"].update(Text("Press Ctrl+C to exit", style="bold yellow", justify="center"))
+
+            console.clear()
+            console.print(layout)
+            time.sleep(0.25)
 
     except KeyboardInterrupt:
         pass
@@ -1284,7 +1344,11 @@ def main():
         monitor.close()
         dmesg.stop()
         print(f"Log saved to {monitor.log_file}")
-
+        
+        # The Hesai SDK creates non-daemon C++ threads that prevent Python from 
+        # exiting normally. Since we can't cleanly stop them without deadlocking,
+        # we forcefully terminate the process here. (The OS will clean up sockets).
+        os._exit(0)
 
 if __name__ == "__main__":
     main()
