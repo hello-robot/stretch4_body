@@ -29,7 +29,7 @@ import click
 JETSON_HOST    = "192.168.1.101"
 JETSON_USER    = "jetson1"
 JETSON_SSH     = f"{JETSON_USER}@{JETSON_HOST}"
-JETSON_PASS    = "hello123"          # default factory password
+JETSON_PASS    = "hello2020"          # default factory password
 SSH_OPTS       = [
     "-o", "StrictHostKeyChecking=no",
     "-o", "UserKnownHostsFile=/dev/null",
