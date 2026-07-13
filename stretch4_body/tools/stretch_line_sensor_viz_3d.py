@@ -14,6 +14,43 @@ except ImportError:
 
 from stretch4_body.subsystem.line_sensor.line_sensor_loop import LineSensorLoop
 from stretch4_body.subsystem.line_sensor.line_sensor_utils import LineSensorGeometry, LineSensorCalibration, LineSensorClusterTracker, LineSensorCostMap
+from stretch4_body.robot.robot_client import RobotClient
+
+
+class RobotClientLineSensorLoop:
+    """LineSensorLoop-compatible wrapper around stretch_body_server status."""
+
+    def __init__(self, robot_client):
+        self.robot_client = robot_client
+        self.line_sensor_loop = robot_client.line_sensor_loop
+        self.params = self.line_sensor_loop.params
+        self.status = self.line_sensor_loop.status
+        self.frame_id_last = {}
+        for sensor_name in self.params.get('sensor_names', []):
+            self.frame_id_last[sensor_name] = self.status.get(sensor_name, {}).get('frame_id', 0)
+
+    def pull_status(self, blocking=False):
+        for sensor_name in self.params.get('sensor_names', []):
+            self.frame_id_last[sensor_name] = self.status.get(sensor_name, {}).get('frame_id', 0)
+        got_status = self.robot_client.pull_status(blocking=blocking)
+        self.status = self.line_sensor_loop.status
+        return got_status
+
+    def stop(self):
+        pass
+
+    def is_sensor_updated(self, sensor_name):
+        return self.frame_id_last.get(sensor_name, 0) != self.status.get(sensor_name, {}).get('frame_id', 0)
+
+    def wait_on_sensor_updated(self, sensor_name, timeout=1.0):
+        ts = time.time()
+        while time.time() - ts < timeout:
+            self.pull_status()
+            if self.is_sensor_updated(sensor_name):
+                return True
+            time.sleep(.001)
+        return False
+
 
 class LineSensorVisualizer3D:
     def __init__(self, show_annotations=False, sensors=None, show_clusters=False, show_cost_map=False, use_calibration=True,
@@ -30,19 +67,13 @@ class LineSensorVisualizer3D:
         self.sensor_color = sensor_color
         self.thickness = thickness
 
-        if self.use_odom and self.nice_viz:
-            from stretch4_body.robot.robot_client import RobotClient
-            self.robot_client = RobotClient()
-            if not self.robot_client.startup():
-                print("Failed to start RobotClient for odometry")
-                sys.exit(1)
+        self.robot_client = None
+        self._owns_robot_client = False
+        self._using_server_line_sensor_loop = False
+        self._direct_line_sensor_loop = False
 
-        # Start LineSensorLoop
-        self.lsl = LineSensorLoop()
-        if not self.lsl.startup():
-            print("Failed to start LineSensorLoop")
-            sys.exit(1)
-            
+        self.lsl = self._create_line_sensor_source()
+
         # Update Params
         p = self.lsl.params
         ls_geom = p.get('line_sensor_geometry', {})
@@ -109,6 +140,37 @@ class LineSensorVisualizer3D:
         
         # Add Robot to Scene
         self.add_robot_to_scene()
+
+    def _get_robot_client(self):
+        if self.robot_client is not None:
+            return self.robot_client
+        client = RobotClient()
+        if not client.startup(verbose=False):
+            return None
+        self.robot_client = client
+        self._owns_robot_client = True
+        return self.robot_client
+
+    def _create_line_sensor_source(self):
+        client = self._get_robot_client()
+        if client is not None and hasattr(client, 'line_sensor_loop'):
+            client.pull_status(blocking=True)
+            print("Using line_sensor_loop status from stretch_body_server.")
+            self._using_server_line_sensor_loop = True
+            return RobotClientLineSensorLoop(client)
+
+        if client is not None and not (self.use_odom and self.nice_viz):
+            client.stop()
+            self.robot_client = None
+            self._owns_robot_client = False
+
+        print("Starting local LineSensorLoop.")
+        lsl = LineSensorLoop()
+        if not lsl.startup():
+            print("Failed to start LineSensorLoop")
+            sys.exit(1)
+        self._direct_line_sensor_loop = True
+        return lsl
 
     def add_robot_to_scene(self):
         p = self.lsl.params
@@ -1013,8 +1075,9 @@ class LineSensorVisualizer3D:
         except KeyboardInterrupt:
             pass
         finally:
-            self.lsl.stop()
-            if self.use_odom and self.nice_viz and hasattr(self, 'robot_client'):
+            if self._direct_line_sensor_loop:
+                self.lsl.stop()
+            if self._owns_robot_client and self.robot_client is not None:
                 self.robot_client.stop()
             self.vis.destroy_window()
 
