@@ -477,7 +477,7 @@ class PowerPeriphClient(SubsystemClient):
         """ Legacy function. No longer needed."""
         pass
 
-    def set_eye_animation(self, left_idx=None, right_idx=None):
+    def set_eye_animation(self, left_idx=None, right_idx=None, intensity=255, r=255, g=255, b=255):
         """
         Set the eye animations for the left and right eyes.
         
@@ -488,7 +488,7 @@ class PowerPeriphClient(SubsystemClient):
         right_idx : int, optional
             Animation index for the right eye.
         """
-        self._queue_command(subsystem="power_periph", command="set_eye_animation", left_idx=left_idx, right_idx=right_idx)
+        self._queue_command(subsystem="power_periph", command="set_eye_animation", left_idx=left_idx, right_idx=right_idx, intensity=intensity, r=r, g=g, b=b)
 
     def actuator_control(self, motor_type, enable):
         """
