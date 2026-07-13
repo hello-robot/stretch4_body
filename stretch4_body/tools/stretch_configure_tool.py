@@ -42,9 +42,8 @@ def write_fleet_yaml(fn, rp, fleet_dir=None, header=None):
 
 @click.command()
 @click.option('--quick', '-q', is_flag=True, help='Skip interactive steps.')
-@click.option('--direct', '-d', is_flag=True, help='Use without Stretch Body Server.')
 @click.option('--auto-detect', is_flag=True, help='Automatically detect tool and set it.')
-def main(quick, direct, auto_detect):
+def main(quick, auto_detect):
     import stretch4_body.core.hello_utils as hu
     hu.print_stretch_re_use()
     
@@ -96,16 +95,21 @@ def main(quick, direct, auto_detect):
     detected_tool = None
     if not quick:
         try:
-            if direct:
-                from stretch4_body.subsystem.power_periph import PowerPeriph
-            
-            else:
-                from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
+            direct = False
+            from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
             
             p = PowerPeriph()
             
             if not p.startup():
-                return print("Failed to connect to the robot's power management.")
+                # If the client can't connect, try without the client:
+                direct = True
+
+                from stretch4_body.subsystem.power_periph import PowerPeriph
+            
+                p = PowerPeriph()
+
+                if not p.startup():
+                    return print("Failed to connect to the robot's power management. Please run `stretch_system_check`.")
 
             if not auto_detect:
                 if click.confirm('Turn off power to the peripheral?', default=True):
