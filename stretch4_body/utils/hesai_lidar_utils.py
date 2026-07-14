@@ -75,7 +75,7 @@ class HesaiJT128Decoder:
                         click.secho(
                             f"    NOTE: Calibration file is not a CSV "
                             f"(expected 'Elevation,Azimuth' header) — "
-                            f"using zero offsets. Run stretch_fetch_lidar_calibration to fetch it.",
+                            f"using zero offsets.",
                             fg="yellow",
                         )
                     else:
@@ -98,7 +98,7 @@ class HesaiJT128Decoder:
         elif correction_file:
             click.secho(
                 f"    NOTE: Calibration file not found: {correction_file} — "
-                f"using zero offsets. Run stretch_fetch_lidar_calibration to fetch it.",
+                f"using zero offsets.",
                 fg="yellow",
             )
 

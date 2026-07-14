@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stretch_discover_device.py
+REx_discover_device.py
 
 Standalone utility to discover Hello Robot device serial numbers and push
 the corresponding udev symlink rules, one component at a time.
@@ -18,10 +18,10 @@ Supported flags:
   --all           Discover all devices
 
 Usage examples:
-  ./stretch_discover_device.py --lift
-  ./stretch_discover_device.py --arm --omni-0 --omni-1 --omni-2
-  ./stretch_discover_device.py --power-periph --pixart
-  ./stretch_discover_device.py --feetech
+  ./REx_discover_device.py --lift
+  ./REx_discover_device.py --arm --omni-0 --omni-1 --omni-2
+  ./REx_discover_device.py --power-periph --pixart
+  ./REx_discover_device.py --feetech
 """
 
 import os
@@ -550,10 +550,10 @@ def main(lift, arm, omni_0, omni_1, omni_2, power_periph, pixart, feetech, esp32
 
     \b
     Examples:
-      ./stretch_discover_device.py --lift
-      ./stretch_discover_device.py --arm --omni-0
-      ./stretch_discover_device.py --power-periph --pixart --feetech --esp32
-      ./stretch_discover_device.py --all
+      ./REx_discover_device.py --lift
+      ./REx_discover_device.py --arm --omni-0
+      ./REx_discover_device.py --power-periph --pixart --feetech --esp32
+      ./REx_discover_device.py --all
     """
     if all_devices:
         power_periph = pixart = feetech = esp32 = True
