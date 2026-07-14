@@ -64,7 +64,8 @@ class SubsystemClient(Device):
         for k in self.subsystems:
             self.subsystems[k].stop()
         if self.parent is None:
-            self.push_command(ignore_control_lock=True) #Push out clean shutdown commands to the subsystems
+            if self.connected:
+                self.push_command(ignore_control_lock=True) #Push out clean shutdown commands to the subsystems
             self.client.stop() #Close the sockets
         Device.stop(self)
 

@@ -42,6 +42,11 @@ class StretchBodyServer:
         self.last_cmd_seq = None
         self.logger = logging.getLogger(name='stretch_body_server')
 
+        self.context=None
+        self.socket_cmd=None
+        self.socket_admin=None
+        self.socket_status=None
+
     def startup(self):
         if not is_user_in_group('users'):
             self.logger.error("Cannot start Stretch Body Server: User is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
@@ -88,13 +93,14 @@ class StretchBodyServer:
             return False
 
     def stop(self):
-        if hasattr(self, 'socket_status'):
-            self.socket_status.close(linger=0)
-        if hasattr(self, 'socket_admin'):
-            self.socket_admin.close(linger=0)
-        if hasattr(self, 'socket_cmd'):
+        time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
+        if self.socket_cmd is not None:
             self.socket_cmd.close(linger=0)
-        if hasattr(self, 'context'):
+        if self.socket_status is not None:
+            self.socket_status.close(linger=0)
+        if self.socket_admin is not None:
+            self.socket_admin.close(linger=0)
+        if self.context is not None:
             self.context.term()
 
     def dispatch_command_messages(self,cb_dispatch, is_routine_active):
@@ -180,6 +186,7 @@ class StretchBodyClient:
     def __init__(self, name=None, ip_address=None):
         self.server_connected=False
         self.admin_poller=None
+        self.context=None
         self.socket_cmd=None
         self.socket_admin=None
         self.socket_status=None
@@ -226,7 +233,7 @@ StretchBodyClient: Try running the server with stretch_body_server --launch
 ===============================================
                   
 """)
-            self.is_valid=False
+            self.stop()
             return False
         
         if not allow_different_user_connection and not StretchBodyServer.is_server_owned_by_current_user():
@@ -240,6 +247,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 ===============================================
                 
 """)
+            self.stop()
             return False
 
         # Start command PUB connection
@@ -271,10 +279,14 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
     def stop(self):
         if self.is_valid:
             time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
-            self.socket_cmd.close()
-            self.socket_status.close()
-            self.socket_admin.close()
-            self.context.term()
+            if self.socket_cmd is not None:
+                self.socket_cmd.close()
+            if self.socket_status is not None:
+                self.socket_status.close()
+            if self.socket_admin is not None:
+                self.socket_admin.close()
+            if self.context is not None:
+                self.context.term()
             self.is_valid=False
 
     @require_connection
