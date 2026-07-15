@@ -184,7 +184,7 @@ class StretchBodyServer:
 
 class StretchBodyClient:
     def __init__(self, name=None, ip_address=None):
-        self.server_connected=False
+        self._server_connected=False
         self.admin_poller=None
         self.context=None
         self.socket_cmd=None
@@ -193,11 +193,30 @@ class StretchBodyClient:
         self.client_id= name if name is not None else self.client_id()
         self.ip_address=ip_address
         self.cmd_seq = 0
-        self.is_valid = False
 
     @property
     def connected(self):
-        return self.is_valid
+        """Warning: server_connected may become stale; it's not a computed property. Call `check_connection()` to refresh it."""
+        return self._server_connected
+    
+    def check_connection(self):
+        """
+        Warning: mutation of `self._server_connected` happens here.
+
+        Updates `self._server_connected` with whether the server responds to a ping.
+        """
+        if self.socket_admin is None:
+            self._server_connected = False
+            return self._server_connected
+        
+        ack = self._do_send_recv_admin_str(b"ping")
+        self._server_connected = ack is not None
+
+        return self._server_connected
+
+    def free_up_control(self):
+        ack = self._do_send_recv_admin_str(b"free_up_control", timeout=3.0)
+        self._server_connected = (ack == b"free_up_control")
     
     def client_id(self): 
         pid = os.getpid()
@@ -218,12 +237,13 @@ class StretchBodyClient:
             self.socket_admin.connect(f"tcp://{self.ip_address}:23114")
         else:
             self.socket_admin.connect(f"ipc://{PORT_ADMIN}")
+
         self.admin_poller = zmq.Poller()
         self.admin_poller.register(self.socket_admin, zmq.POLLIN)
-        self.is_valid=True
-        ack = self._do_send_recv_admin_str(b"ping")
-        self.server_connected = (ack is not None)
-        if ack is None:
+
+        self.check_connection()
+
+        if not self.connected:
             if verbose:
                 print("""
 ===============================================
@@ -271,10 +291,6 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         else:
             self.socket_status.connect(f"ipc://{PORT_STATUS}")
 
-        # self.status_poller = zmq.Poller()
-        # self.status_poller.register(self.socket_status, zmq.POLLIN)
-
-        self.is_valid=True
         return True
 
     def stop(self):
@@ -284,19 +300,15 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         if self.socket_status is not None:
             self.socket_status.close()
         if self.socket_admin is not None:
+            if self.admin_poller is not None:
+                self.admin_poller.unregister(self.socket_admin)
             self.socket_admin.close()
         if self.context is not None:
             self.context.term()
-        self.is_valid=False
-        self.server_connected=False
+        self._server_connected=False
 
     @require_connection
-    def _do_recv_status(self, timeout_ms=None):
-        # Check if messages available
-        if timeout_ms is not None:
-            if not self.status_poller.poll(int(timeout_ms)):
-                return None
-        
+    def _do_recv_status(self):        
         try:
             message = self.socket_status.recv_pyobj(flags=zmq.NOBLOCK)
             return message
@@ -314,10 +326,16 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         self.socket_cmd.send_pyobj(message)
 
     @require_connection
-    def _do_send_recv_admin_str(self,send,timeout=1.0):
-        self.socket_admin.send(send)
+    def do_send_recv_admin_str(self, send, timeout=1.0):
+        return self._do_send_recv_admin_str(send, timeout)
+        
+    def _do_send_recv_admin_str(self, send, timeout=1.0):
+        try:
+            self.socket_admin.send(send)
 
-        # Poll to check if a status message is available within the timeout period
-        if self.admin_poller.poll(int(timeout * 1000)):
-            message = self.socket_admin.recv(flags=zmq.NOBLOCK)
-            return message
+            # Poll to check if a status message is available within the timeout period
+            if self.admin_poller.poll(int(timeout * 1000)):
+                message = self.socket_admin.recv(flags=zmq.NOBLOCK)
+                return message
+        except zmq.ZMQError as e:
+            return None

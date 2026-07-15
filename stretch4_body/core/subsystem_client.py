@@ -37,7 +37,7 @@ class SubsystemClient(Device):
 
     @property
     def connected(self):
-        return self.is_valid and self.client.server_connected
+        return self.is_valid and self.client.connected
 
     def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False):
         """
@@ -85,10 +85,6 @@ class SubsystemClient(Device):
             return self.parent.pull_status(blocking=blocking)
 
         status_server = self.client._do_recv_status()
-        # if blocking:
-        #     t_sleep_ms = (1 / self.robot_params['robot']['server']['control_loop_rate_Hz']) * 1000
-        #     while status_server is None:
-        #         status_server = self.client._do_recv_status(timeout_ms=t_sleep_ms/10) #poll 10x faster than control loop
         if blocking:
             while status_server is None:
                 time.sleep(0.005)
@@ -174,32 +170,29 @@ class SubsystemClient(Device):
 
     # ########## Server Admin #############
     def is_server_active(self):
-        return self.client.server_connected
+        return self.client.connected
 
     def ping_server(self):
-        ack = self.client._do_send_recv_admin_str(b"ping")
-        self.client.server_connected = (ack == b"ping")
-        return self.client.server_connected
+        return self.client.check_connection()
 
     @require_connection
     def kill_server(self):
-        ack = self.client._do_send_recv_admin_str(b"kill")
-        self.client.server_connected = False
+        ack = self.client.do_send_recv_admin_str(b"kill")
+        self.client.stop()
 
     # @require_connection
     # def pause_control_loop(self):
-    #     ack = self.client._do_send_recv_admin_str(b"pause")
+    #     ack = self.client.do_send_recv_admin_str(b"pause")
     #     self.client.server_connected = (ack ==b"pause")
     #
     # @require_connection
     # def unpause_control_loop(self):
-    #     ack = self.client._do_send_recv_admin_str(b"unpause")
+    #     ack = self.client.do_send_recv_admin_str(b"unpause")
     #     self.client.server_connected = (ack ==b"unpause")
 
     @require_connection
     def free_up_control(self):
-        ack = self.client._do_send_recv_admin_str(b"free_up_control", timeout=3.0)
-        self.client.server_connected = (ack == b"free_up_control")
+        self.client.free_up_control()
 
     # ########## Utility #############3
 

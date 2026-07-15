@@ -125,7 +125,7 @@ def test_basic_connect_disconnect(running_server):
     assert client.connected is True
 
     # Test admin ping command
-    assert client._do_send_recv_admin_str(b"ping") == b"ping"
+    assert client.do_send_recv_admin_str(b"ping") == b"ping"
 
     # Test basic command sending
     test_cmd = {"device": "arm", "val": 42}
@@ -173,8 +173,8 @@ def test_multiple_clients(running_server):
     assert c1.startup(verbose=False) is True
     assert c2.startup(verbose=False) is True
 
-    assert c1._do_send_recv_admin_str(b"ping") == b"ping"
-    assert c2._do_send_recv_admin_str(b"ping") == b"ping"
+    assert c1.do_send_recv_admin_str(b"ping") == b"ping"
+    assert c2.do_send_recv_admin_str(b"ping") == b"ping"
 
     c1.stop()
     c2.stop()
