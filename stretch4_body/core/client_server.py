@@ -193,6 +193,7 @@ class StretchBodyClient:
         self.client_id= name if name is not None else self.client_id()
         self.ip_address=ip_address
         self.cmd_seq = 0
+        self.is_valid = False
 
     @property
     def connected(self):
@@ -277,17 +278,17 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         return True
 
     def stop(self):
-        if self.is_valid:
-            time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
-            if self.socket_cmd is not None:
-                self.socket_cmd.close()
-            if self.socket_status is not None:
-                self.socket_status.close()
-            if self.socket_admin is not None:
-                self.socket_admin.close()
-            if self.context is not None:
-                self.context.term()
-            self.is_valid=False
+        time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
+        if self.socket_cmd is not None:
+            self.socket_cmd.close()
+        if self.socket_status is not None:
+            self.socket_status.close()
+        if self.socket_admin is not None:
+            self.socket_admin.close()
+        if self.context is not None:
+            self.context.term()
+        self.is_valid=False
+        self.server_connected=False
 
     @require_connection
     def _do_recv_status(self, timeout_ms=None):
