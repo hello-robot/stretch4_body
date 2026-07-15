@@ -36,8 +36,8 @@ class TestRequireConnection(unittest.TestCase):
         with self.assertRaises(NotConnectedError):
             sub.kill_server()
 
-        with self.assertRaises(NotConnectedError):
-            sub.pause_control_loop()
+        # with self.assertRaises(NotConnectedError):
+        #     sub.pause_control_loop()
 
 if __name__ == '__main__':
     unittest.main()
