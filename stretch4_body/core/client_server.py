@@ -101,7 +101,10 @@ class StretchBodyServer:
         if self.socket_admin is not None:
             self.socket_admin.close(linger=0)
         if self.context is not None:
-            self.context.term()
+            try:
+                self.context.destroy(linger=0)
+            except Exception:
+                pass
 
     def dispatch_command_messages(self,cb_dispatch, is_routine_active):
         # Check if messages available
@@ -298,16 +301,28 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
     def stop(self):
         time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
         if self.socket_cmd is not None:
-            self.socket_cmd.close()
+            self.socket_cmd.close(linger=0)
         if self.socket_status is not None:
-            self.socket_status.close()
+            self.socket_status.close(linger=0)
         if self.socket_admin is not None:
             if self.admin_poller is not None:
-                self.admin_poller.unregister(self.socket_admin)
-            self.socket_admin.close()
+                try:
+                    self.admin_poller.unregister(self.socket_admin)
+                except Exception:
+                    pass
+            self.socket_admin.close(linger=0)
         if self.context is not None:
-            self.context.term()
-        self._server_connected=False
+            try:
+                self.context.destroy(linger=0)
+            except Exception:
+                pass
+        self._server_connected = False
+
+    def __del__(self):
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     @require_connection
     def _do_recv_status(self):        

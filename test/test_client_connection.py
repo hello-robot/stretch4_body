@@ -256,6 +256,168 @@ def test_robot_client_command_queuing(running_robot_server, monkeypatch):
         # Verify the format of sent command dictionary
         cmd_sent = last_cmds[-1]
         assert "omnibase" in cmd_sent or "power_periph" in cmd_sent
+def test_robot_client_hang_on_server_disconnect(running_robot_server):
+    """
+    Test that if a RobotClient is running and the server suddenly disappears/stops publishing,
+    a blocking pull_status() loop would block. We verify this thread-safety scenario
+    by running pull_status in a background thread and verifying it doesn't return
+    once the server is stopped, and we can handle it safely.
+    """
+    server, mock_status, last_cmds = running_robot_server
+
+    r = RobotClient()
+    assert r.startup(verbose=False) is True
+
+    # 1. First pull_status succeeds when server is active
+    assert r.pull_status(blocking=True) is True
+
+    # 2. Stop the server (simulating a crash or disconnect)
+    server.stop()
+
+    # Drain any queued status messages remaining in the client's ZMQ buffer
+    for _ in range(100):
+        if not r.pull_status(blocking=False):
+            break
+
+    # 3. Try to pull status in a thread
+    status_received = []
+    def pull_worker():
+        try:
+            res = r.pull_status(blocking=True)
+            status_received.append(res)
+        except Exception as e:
+            status_received.append(e)
+
+    t = threading.Thread(target=pull_worker, daemon=True)
+    t.start()
+
+    # Wait to see if it finishes or hangs
+    t.join(timeout=0.5)
+
+    # Since the server is offline, pull_status(blocking=True) should be stuck waiting/hanging,
+    # so the thread should still be alive, and status_received should be empty!
+    print(f"\n--- DEBUG: status_received = {status_received} ---")
+    assert t.is_alive() is True
+    assert len(status_received) == 0
+
+    # Stop the client cleanly
+    r.stop()
+
+
+def test_robot_client_multithreaded_gamepad_teleop_simulation(running_robot_server, monkeypatch):
+    """
+    Simulates calibrate_intrinsics_robot_move.py scenario:
+    - Main thread starts RobotClient() -> `r_main`
+    - Background thread starts GamePadTeleop-like client -> `r_teleop`
+    - Both pull status and send commands concurrently.
+    - Test that they operate correctly concurrently, and stop gracefully without hangs.
+    """
+    server, mock_status, last_cmds = running_robot_server
+
+    # Bypass pusher lock file to allow clean pushing in concurrent threads without lock file issues
+    monkeypatch.setattr("stretch4_body.utils.freeable_file_lock.FreeableFileLock.acquire", lambda self: True)
+
+    r_main = RobotClient(client_id="main_client")
+    r_teleop = RobotClient(client_id="teleop_client")
+
+    assert r_main.startup(verbose=False) is True
+    assert r_teleop.startup(verbose=False) is True
+
+    stop_event = threading.Event()
+    teleop_errors = []
+
+    def teleop_loop():
+        while not stop_event.is_set():
+            try:
+                # Teleop thread pulls status and pushes a command periodically
+                r_teleop.pull_status(blocking=True)
+                if hasattr(r_teleop, 'omnibase'):
+                    r_teleop.omnibase.set_velocity(0.1, 0.0, 0.1)
+                r_teleop.push_command(ignore_control_lock=True)
+                time.sleep(0.01)
+            except Exception as e:
+                teleop_errors.append(e)
+                break
+
+    t_teleop = threading.Thread(target=teleop_loop, daemon=True)
+    t_teleop.start()
+
+    # Main thread also does operations concurrently
+    for _ in range(5):
+        assert r_main.pull_status(blocking=True) is True
+        time.sleep(0.02)
+
+    # Clean stop
+    stop_event.set()
+    t_teleop.join(timeout=1.0)
+
+    r_main.stop()
+    r_teleop.stop()
+
+    assert len(teleop_errors) == 0
+
+
+def test_client_stop_no_hang_on_offline_server_with_pending_messages(running_robot_server):
+    """
+    Verifies that calling stop() on a client with pending messages (e.g., when the
+    server is offline and cannot receive them) does not hang.
+    Previously, without linger=0 and context.destroy(linger=0), this would hang indefinitely.
+    """
+    server, mock_status, last_cmds = running_robot_server
+
+    r = RobotClient(client_id="hang_test_client")
+    assert r.startup(verbose=False) is True
+
+    # Stop the server so it is offline
+    server.stop()
+
+    # Wait a bit for the server ports to close
+    time.sleep(0.1)
+
+    # Queue some commands. This places them in the socket's outbound buffer.
+    # Because the server is offline, they cannot be delivered.
+    if hasattr(r, 'omnibase'):
+        r.omnibase.set_velocity(0.1, 0.0, 0.1)
+    r.push_command(ignore_control_lock=True)
+
+    # Calling stop() must complete instantly (within 1.5 seconds).
+    # If there was a linger, this would block indefinitely.
+    start_time = time.monotonic()
+    r.stop()
+    duration = time.monotonic() - start_time
+
+    assert duration < 1.5, f"stop() took {duration:.3f}s, which indicates a linger/hang!"
+
+
+def test_client_gc_no_hang_on_offline_server_with_pending_messages(running_robot_server):
+    """
+    Verifies that garbage collection/destruction of a RobotClient with pending
+    messages (when the server is offline) does not hang.
+    Previously, GC of the context during __del__ would block indefinitely inside Context.term().
+    """
+    server, mock_status, last_cmds = running_robot_server
+
+    r = RobotClient(client_id="gc_test_client")
+    assert r.startup(verbose=False) is True
+
+    # Stop the server so it is offline
+    server.stop()
+    time.sleep(0.1)
+
+    # Send a command to queue message in outbound buffer
+    if hasattr(r, 'omnibase'):
+        r.omnibase.set_velocity(0.1, 0.0, 0.1)
+    r.push_command(ignore_control_lock=True)
+
+    # Trigger deletion/garbage collection of the client.
+    # It must complete instantly.
+    start_time = time.monotonic()
+    del r
+    import gc
+    gc.collect()
+    duration = time.monotonic() - start_time
+
+    assert duration < 1.5, f"Garbage collection took {duration:.3f}s, indicating a destructor/Context.term() hang!"
 
 
 if __name__ == '__main__':

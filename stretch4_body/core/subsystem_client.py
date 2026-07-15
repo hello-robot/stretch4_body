@@ -69,6 +69,12 @@ class SubsystemClient(Device):
             self.client.stop() #Close the sockets
         Device.stop(self)
 
+    def __del__(self):
+        try:
+            self.stop()
+        except Exception:
+            pass
+
     # ########## Control loop #############3
 
     @require_connection
