@@ -44,6 +44,18 @@ def clear_device_cache():
     except Exception as e:
         print(f"Warning: Failed to clear device cache: {e}")
 
+def _open_luxonis_device(name_or_device_id, product_name=None):
+    try:
+        return dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=name_or_device_id)
+    except RuntimeError as e:
+        device_label = product_name if product_name is not None else name_or_device_id
+        logging.warning(
+            "Failed to open Luxonis device %s at SUPER_PLUS. Retrying at HIGH. Error: %s",
+            device_label,
+            e,
+        )
+        return dai.Device(maxUsbSpeed=dai.UsbSpeed.HIGH, nameOrDeviceId=name_or_device_id)
+
 def get_device_port_by_product_name(product_name:str):
     """When multiple Luxonis cameras are connected, we should query their serial number to use them."""
     devices = dai.Device.getAllAvailableDevices()
@@ -69,7 +81,7 @@ def get_device_port_by_product_name(product_name:str):
         if cached_device and current_time - cached_device.get("timestamp", 0) <= CACHE_EXPIRY_SECONDS:
             continue
 
-        with dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=info.deviceId) as device:
+        with _open_luxonis_device(info.deviceId) as device:
             actual_product_name = device.getProductName()
             print(f"Found device {actual_product_name}. Looking for {product_name=}")
             
@@ -163,7 +175,7 @@ class LuxonisCameraAdapter(CameraAdapter):
     @staticmethod
     def create_pipeline(luxonis_device_product_name:str) -> tuple[dai.Pipeline, dai.Device]:
         device_port = get_device_port_by_product_name(luxonis_device_product_name)
-        device = dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=device_port)
+        device = _open_luxonis_device(device_port, luxonis_device_product_name)
         pipeline = dai.Pipeline(defaultDevice=device)
 
         print("DeviceID:", device.getDeviceInfo().getDeviceId())
@@ -519,4 +531,3 @@ def _get_luxonis_diagnostics_message(product_name: str) -> str:
         msg_lines.append("To bring it back, please try restarting the robot.")
         
     return "\n".join(msg_lines)
-
