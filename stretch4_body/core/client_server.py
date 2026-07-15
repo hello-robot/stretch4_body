@@ -194,6 +194,8 @@ class StretchBodyClient:
         self.ip_address=ip_address
         self.cmd_seq = 0
 
+        self.logger = logging.getLogger(name='stretch_body_client')
+
     @property
     def connected(self):
         """Warning: server_connected may become stale; it's not a computed property. Call `check_connection()` to refresh it."""
@@ -226,7 +228,7 @@ class StretchBodyClient:
     def startup(self, *, verbose:bool = True, allow_different_user_connection:bool = False):
         if not is_user_in_group('users'):
             if verbose:
-                print("StretchBodyClient: Cannot connect to the server because the current user is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
+                self.logger.error("StretchBodyClient: Cannot connect to the server because the current user is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
             return False
 
         # Start admin REQ-REP connection       
@@ -245,7 +247,7 @@ class StretchBodyClient:
 
         if not self.connected:
             if verbose:
-                print("""
+                self.logger.error("""
 ===============================================
                   
 StretchBodyClient: Not able to connect to Stretch Body Server. Check that server is running
@@ -259,7 +261,7 @@ StretchBodyClient: Try running the server with stretch_body_server --launch
         
         if not allow_different_user_connection and not StretchBodyServer.is_server_owned_by_current_user():
             if verbose:
-                print(f"""
+                self.logger.error(f"""
 ===============================================
                 
 StretchBodyClient: A server is already running, but it was started by a different user ({StretchBodyServer.get_server_owning_user()}).

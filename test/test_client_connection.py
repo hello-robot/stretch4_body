@@ -238,6 +238,7 @@ def test_robot_client_command_queuing(running_robot_server, monkeypatch):
     monkeypatch.setattr("stretch4_body.utils.freeable_file_lock.FreeableFileLock.acquire", lambda self: True)
 
     with RobotClient() as r:
+        assert r is not None
         # Check that we can command subsystems
         if hasattr(r, 'power_periph'):
             r.power_periph.trigger_beep()
