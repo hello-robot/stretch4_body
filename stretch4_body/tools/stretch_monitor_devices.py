@@ -60,20 +60,6 @@ except ImportError:
     if os.geteuid() == 0:
         print("WARNING: 'depthai' module not found. If installed as user, try running with 'sudo -E'.")
 
-# Try importing Hesai lidar decoder
-try:
-    from stretch4_body.utils.hesai_lidar_utils import HesaiJT128Decoder
-except ImportError:
-    HesaiJT128Decoder = None
-
-# Try importing rerun for lidar visualization
-try:
-    import rerun as rr
-    RERUN_AVAILABLE = True
-except ImportError:
-    rr = None
-    RERUN_AVAILABLE = False
-
 # Try importing Line Sensor reader
 try:
     from stretch4_body.subsystem.line_sensor.pixart_j3_reader import PixartJ3Reader
@@ -91,27 +77,10 @@ LIDAR_PORTS = [2368, 2378]
 FEETECH_IDS = [20, 21, 22, 23]
 FEETECH_BAUD = 1000000
 
-# Lidar decoder configs (matches test_BRI_head_lidars.py)
-_fleet_dir = os.environ.get('HELLO_FLEET_PATH', '')
-_fleet_id  = os.environ.get('HELLO_FLEET_ID', '')
-_cal_dir   = os.path.join(_fleet_dir, _fleet_id, 'calibration_hesais')
+# Lidar decoder configs (calibration is handled internally by pyhesai_wrapper)
 LIDAR_CONFIGS = [
-    {
-        'name':             'Left Lidar',
-        'ip':               '192.168.1.202',
-        'udp_port':         2378,
-        'correction_file':  os.path.join(_cal_dir, 'left_lidar_calibration.dat'),
-        'rr_label':         'world/left_lidar',
-        'color':            [0, 180, 255],
-    },
-    {
-        'name':             'Right Lidar',
-        'ip':               '192.168.1.201',
-        'udp_port':         2368,
-        'correction_file':  os.path.join(_cal_dir, 'right_lidar_calibration.dat'),
-        'rr_label':         'world/right_lidar',
-        'color':            [255, 120, 0],
-    },
+    {'name': 'Left Lidar', 'ip': '192.168.1.202'},
+    {'name': 'Right Lidar', 'ip': '192.168.1.201'},
 ]
 
 # Gripper Camera Configuration (2-sensor OAK-D, matches test_FAB_gripper_cameras.py)
@@ -217,14 +186,13 @@ class DeviceMonitor:
         # Lidar Sockets (Active only)
         self.lidar_sockets = []
         
-        # Lidar Decoders + Visualization (Active only)
-        self.lidar_decoders = []       # list of HesaiJT128Decoder instances
+        # Lidar Decoders (Active only)
+        self.lidar_decoders = []       # list of HesaiLidar instances
         self.lidar_threads = []        # background receive threads
         self.lidar_stop_event = threading.Event()
         self.lidar_mutex = threading.Lock()
         # {name: {'points': np.ndarray or None, 'frame_count': int}}
         self.lidar_state = {}
-        self.rerun_initialized = False
         self._lidar_start_time = None  # time when lidar decoders first started
         
         # Feetech Servos (Active only)
@@ -595,40 +563,6 @@ class DeviceMonitor:
             if self.lidar_decoders and self._lidar_start_time is None:
                 self._lidar_start_time = time.time()
 
-        elif HesaiJT128Decoder and any(d['type'] == 'LIDAR' for d in self.devices.values()):
-            for cfg in LIDAR_CONFIGS:
-                try:
-                    dec = HesaiJT128Decoder(
-                        udp_port=cfg['udp_port'],
-                        lidar_ip=cfg['ip'],
-                        correction_file=cfg['correction_file'],
-                    )
-                    dec.open()
-                    self.lidar_decoders.append(dec)
-                    self.lidar_state[cfg['name']] = {'points': None, 'frame_count': 0}
-
-                    # Background receive thread (same pattern as hesai_lidar_utils)
-                    def recv_worker(decoder, config, state, mutex, stop_event):
-                        while not stop_event.is_set():
-                            xyz = decoder.recv_frame(timeout=0.1)
-                            if xyz is not None and len(xyz) > 0:
-                                with mutex:
-                                    state[config['name']]['points'] = xyz
-                                    state[config['name']]['frame_count'] += 1
-
-                    t = threading.Thread(
-                        target=recv_worker,
-                        args=(dec, cfg, self.lidar_state, self.lidar_mutex, self.lidar_stop_event),
-                        daemon=True,
-                    )
-                    t.start()
-                    self.lidar_threads.append(t)
-                    self.log("INFO", f"Lidar decoder started for {cfg['name']} ({cfg['ip']}, port {cfg['udp_port']})")
-                except Exception as e:
-                    self.log("ERROR", f"Failed to start lidar decoder for {cfg['name']}: {e}")
-            # Record when decoders first started for the NO DATA grace window
-            if self.lidar_decoders and self._lidar_start_time is None:
-                self._lidar_start_time = time.time()
         else:
             # Fallback: raw socket packet counting (original behavior)
             for port in LIDAR_PORTS:
@@ -640,24 +574,6 @@ class DeviceMonitor:
                     self.lidar_sockets.append(s)
                 except Exception as e:
                     self.log("ERROR", f"Failed to bind Lidar port {port}: {e}")
-
-        # Init Rerun for lidar visualization
-        if self.visualize and RERUN_AVAILABLE and self.lidar_decoders and not PYHESAI_AVAILABLE:
-            try:
-                rr.init('stretch_monitor_lidars', spawn=True)
-                rr.log('world', rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-                rr.log(
-                    'world/xyz',
-                    rr.Arrows3D(
-                        vectors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-                        colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
-                    ),
-                    static=True,
-                )
-                self.rerun_initialized = True
-                self.log("INFO", "Rerun lidar viewer launched")
-            except Exception as e:
-                self.log("WARN", f"Failed to initialize rerun: {e}")
 
         # Start Line Sensor reader with background polling thread
         if PixartJ3Reader and any(d['type'] == 'LINE_SENSOR' for d in self.devices.values()):
@@ -917,27 +833,6 @@ class DeviceMonitor:
                             self.update_status(dev, "NO DATA")
                         else:
                             self.update_status(dev, f"STARTING... ({grace - elapsed:.0f}s)")
-
-                # Rerun visualization
-                if self.rerun_initialized and pts is not None and not isinstance(pts, int) and len(pts) > 0:
-                    try:
-                        cfg = next((c for c in LIDAR_CONFIGS if c['name'] == lidar_name), None)
-                        if cfg:
-                            show_pts = pts
-                            max_points = 8000
-                            if len(show_pts) > max_points:
-                                stride = len(show_pts) // max_points
-                                show_pts = show_pts[::stride]
-                            rr.log(
-                                cfg['rr_label'],
-                                rr.Points3D(
-                                    positions=show_pts,
-                                    colors=[cfg['color']] * len(show_pts),
-                                    radii=0.01,
-                                ),
-                            )
-                    except Exception:
-                        pass
 
         elif not self.passive and self.lidar_sockets:
             # Fallback: raw socket packet counting (no decoder available)
@@ -1247,7 +1142,7 @@ def _check_server_and_prompt() -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Stretch Monitor")
     parser.add_argument("--passive", action="store_true", help="Passive checking only (no stream claims)")
-    parser.add_argument("--visualize", action="store_true", help="Show camera feeds + lidar point clouds in rerun (Active mode only)")
+    parser.add_argument("--visualize", action="store_true", help="Show camera feeds (Active mode only)")
     parser.add_argument("--duration", type=float, default=0.0, help="Test duration in seconds (0=infinite)")
     args = parser.parse_args()
 
