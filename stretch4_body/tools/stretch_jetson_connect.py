@@ -314,7 +314,7 @@ def open_terminal() -> None:
 # CLI entry-point
 # ---------------------------------------------------------------------------
 
-@click.command()
+@click.command(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.option("--skip-power-cycle", is_flag=True,
               help="Skip power cycle (Jetson already on).")
 @click.option("--skip-wifi",        is_flag=True,
