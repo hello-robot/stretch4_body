@@ -224,6 +224,29 @@ class GamePadTeleop(Device):
                 )
             tracker.trigger_on_hold(0.25, trigger_vibrate)
 
+    def extract_urdf_joints(self, ccd):
+        joints = set()
+        if isinstance(ccd, dict):
+            for k, v in ccd.items():
+                if 'joint' in k:
+                    joints.add(k)
+                else:
+                    joints.update(self.extract_urdf_joints(v))
+        return joints
+
+    def get_actuated_joint_keys(self, urdf_joint_name):
+        if urdf_joint_name == 'lift_joint':
+            return ['lift']
+        elif urdf_joint_name in ['arm_l1_joint', 'arm_l2_joint', 'arm_l3_joint', 'arm_l4_joint']:
+            return ['arm']
+        elif urdf_joint_name == 'wrist_yaw_joint':
+            return ['wrist_yaw_joint', 'joint_wrist_yaw']
+        elif urdf_joint_name == 'wrist_pitch_joint':
+            return ['wrist_pitch_joint', 'joint_wrist_pitch']
+        elif urdf_joint_name == 'wrist_roll_joint':
+            return ['wrist_roll_joint']
+        return []
+
     def do_motion(self, state = None, robot = None):
         """
         This method should called in the control loop (mainloop())
@@ -294,7 +317,20 @@ class GamePadTeleop(Device):
                         try:
                             collisions = robot.status['safety_layer']['sentry_manager']['sentry_self_collision']['collisions']
                             if collisions:
-                                self.gamepad_controller.vibrate_sequence(sequence_ms=[150, 100, 200], strong_magnitude=1.0, weak_magnitude=1.0, tag="collision", cooldown=1.0)
+                                # Check if any of the joints in collision is being actuated
+                                sentry_status = robot.status['safety_layer']['sentry_manager']['sentry_self_collision']
+                                collision_directions = sentry_status.get('collision_directions', {})
+                                colliding_urdf_joints = self.extract_urdf_joints(collision_directions)
+                                
+                                is_any_colliding_joint_actuated = False
+                                for urdf_j in colliding_urdf_joints:
+                                    actuated_keys = self.get_actuated_joint_keys(urdf_j)
+                                    if any(k in actuated_joints for k in actuated_keys):
+                                        is_any_colliding_joint_actuated = True
+                                        break
+                                
+                                if is_any_colliding_joint_actuated:
+                                    self.gamepad_controller.vibrate_sequence(sequence_ms=[150, 100, 200], strong_magnitude=1.0, weak_magnitude=1.0, tag="collision", cooldown=1.0)
                         except Exception:
                             pass
                     

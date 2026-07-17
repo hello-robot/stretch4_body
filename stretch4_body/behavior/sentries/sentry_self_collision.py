@@ -66,6 +66,26 @@ class SentrySelfCollision(Sentry):
                 ecd.update(SentrySelfCollision.extract_collision_dirs(ccd[l],ecd))
         return ecd
 
+    def is_joint_moving(self, joint_name):
+        try:
+            if joint_name == 'lift':
+                subsystem = self.robot.get_subsystem('lift')
+                if subsystem is not None:
+                    return abs(subsystem.status.get('vel', 0.0)) > 0.005
+            elif joint_name == 'arm':
+                subsystem = self.robot.get_subsystem('arm')
+                if subsystem is not None:
+                    return abs(subsystem.status.get('vel', 0.0)) > 0.005
+            elif joint_name in ['wrist_yaw', 'wrist_pitch', 'wrist_roll']:
+                subsystem = self.robot.get_subsystem('end_of_arm')
+                if subsystem is not None:
+                    joint_status = subsystem.status.get(joint_name)
+                    if joint_status is not None:
+                        return abs(joint_status.get('vel', 0.0)) > 0.005
+        except Exception as e:
+            self.logger.error(f"Error checking if joint {joint_name} is moving: {e}")
+        return False
+
     def step(self):
         if not self.is_valid :
             return
@@ -78,13 +98,18 @@ class SentrySelfCollision(Sentry):
         self.status.update(self.self_collision_loop.status)
         ecd=SentrySelfCollision.extract_collision_dirs(self.status['collision_directions'])
 
-        #Play sound if new collision
-        if not self.in_collision and len(self.status['collisions'])>0:# and time.time()-self.ts_last_sound > 2.0:
+        #Play sound if new collision and colliding joint is moving
+        colliding_joints = {self.urdf_joint_map[uj] for uj in ecd if uj in self.urdf_joint_map}
+        any_colliding_joint_moving = any(self.is_joint_moving(j) for j in colliding_joints)
 
-            self.logger.info(f'New collision {self.status["collisions"]}')
-            hu.play_sound(hu.get_sounds_dir()+'/water_drop.wav')
-            self.ts_last_sound=time.time()
-        self.in_collision=len(self.status['collisions'])>0
+        if not self.in_collision and len(self.status['collisions'])>0:
+            if any_colliding_joint_moving:
+                self.logger.info(f'New collision {self.status["collisions"]}')
+                hu.play_sound(hu.get_sounds_dir()+'/water_drop.wav')
+                self.ts_last_sound=time.time()
+                self.in_collision=True
+        else:
+            self.in_collision=len(self.status['collisions'])>0
 
         for uj in self.params['urdf_joints_to_sentry']:
             joint_name=self.urdf_joint_map[uj]
