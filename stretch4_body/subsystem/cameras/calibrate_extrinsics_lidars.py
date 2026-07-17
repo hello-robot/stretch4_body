@@ -1466,13 +1466,16 @@ class CalibrateLidarToCamera:
                         return joint.origin
                 return np.eye(4)
 
-            camera_joint_name = f"camera_{self.camera.name}_joint"
-            child_link_name = f"camera_{self.camera.name}_link"
+            camera_joint_name = f"camera_{self.camera_name}_joint"
+            child_link_name = f"camera_{self.camera_name}_link"
+            camera_optical_joint_name = f"camera_{self.camera_name}_optical_joint"
 
-            # T_head_camera = T_head_lidar * T_camera_to_lidar
-            # T_head_camera = T_head_lidar * inv(T_lidar_to_camera)
+            # T_head_camera_optical = T_head_lidar * T_camera_optical_to_lidar
+            # T_head_camera_optical = T_head_lidar * inv(T_lidar_to_camera_optical)
             T_head_lidar = get_nominal_transform(f"lidar_{self.lidar_name}_joint")
-            T_head_camera = T_head_lidar @ np.linalg.inv(self.current_average_transform)
+            T_camera_link_to_optical = get_nominal_transform(camera_optical_joint_name)
+            T_head_camera_optical = T_head_lidar @ np.linalg.inv(self.current_average_transform)
+            T_head_camera = T_head_camera_optical @ np.linalg.inv(T_camera_link_to_optical)
             
             xyz = " ".join([f"{x:.18f}" for x in T_head_camera[:3, 3]])
             rpy = " ".join([f"{x:.18f}" for x in Rotation.from_matrix(T_head_camera[:3, :3]).as_euler('xyz')])

@@ -529,6 +529,9 @@ def record_to_centralized_yaml(fleet_id, T_mean_l, T_mean_r, left_errors, right_
             return np.eye(4)
 
         T_head_center = get_nominal_transform('camera_center_joint')
+        T_center_link_to_optical = get_nominal_transform('camera_center_optical_joint')
+        T_left_link_to_optical = get_nominal_transform('camera_left_optical_joint')
+        T_right_link_to_optical = get_nominal_transform('camera_right_optical_joint')
         
         def T_to_strings(T):
             xyz = " ".join([f"{x:.18f}" for x in T[:3, 3]])
@@ -540,12 +543,14 @@ def record_to_centralized_yaml(fleet_id, T_mean_l, T_mean_r, left_errors, right_
         # record_joint_calibration("camera_center_joint", xyz_c, rpy_c, "head_link", "camera_center_link", fleet_id)
 
         if T_mean_l is not None:
-            T_head_left = T_head_center @ T_mean_l
+            T_head_left_optical = T_head_center @ T_center_link_to_optical @ T_mean_l
+            T_head_left = T_head_left_optical @ np.linalg.inv(T_left_link_to_optical)
             xyz_l, rpy_l = T_to_strings(T_head_left)
             record_joint_calibration("camera_left_joint", xyz_l, rpy_l, "head_link", "camera_left_link", fleet_id, extra={'rmse': np.mean(left_errors).tolist()})
         
         if T_mean_r is not None:
-            T_head_right = T_head_center @ T_mean_r
+            T_head_right_optical = T_head_center @ T_center_link_to_optical @ T_mean_r
+            T_head_right = T_head_right_optical @ np.linalg.inv(T_right_link_to_optical)
             xyz_r, rpy_r = T_to_strings(T_head_right)
             record_joint_calibration("camera_right_joint", xyz_r, rpy_r, "head_link", "camera_right_link", fleet_id, extra={'rmse': np.mean(right_errors).tolist()})
         
