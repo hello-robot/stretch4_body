@@ -1455,7 +1455,7 @@ class CalibrateLidarToCamera:
     def record_to_centralized_yaml(self):
         """Write the calibrated camera transform to the centralized stretch_calibration_values.yaml."""
         try:
-            urdf_contents = get_urdf_from_robot_params(apply_calibration=False)
+            urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
             from yourdfpy import URDF
             import io
             urdf = URDF.load(io.StringIO(urdf_contents))
@@ -1470,12 +1470,17 @@ class CalibrateLidarToCamera:
             child_link_name = f"camera_{self.camera_name}_link"
             camera_optical_joint_name = f"camera_{self.camera_name}_optical_joint"
 
+            T_head_lidar = get_nominal_transform(f"lidar_{self.lidar_name}_joint")
+
             # T_head_camera_optical = T_head_lidar * T_camera_optical_to_lidar
             # T_head_camera_optical = T_head_lidar * inv(T_lidar_to_camera_optical)
-            T_head_lidar = get_nominal_transform(f"lidar_{self.lidar_name}_joint")
             T_camera_link_to_optical = get_nominal_transform(camera_optical_joint_name)
             T_head_camera_optical = T_head_lidar @ np.linalg.inv(self.current_average_transform)
             T_head_camera = T_head_camera_optical @ np.linalg.inv(T_camera_link_to_optical)
+
+            # T_head_camera = T_head_lidar * T_camera_to_lidar
+            # T_head_camera = T_head_lidar * inv(T_lidar_to_camera)
+            # T_head_camera = T_head_lidar @ np.linalg.inv(self.current_average_transform)
             
             xyz = " ".join([f"{x:.18f}" for x in T_head_camera[:3, 3]])
             rpy = " ".join([f"{x:.18f}" for x in Rotation.from_matrix(T_head_camera[:3, :3]).as_euler('xyz')])
@@ -1586,6 +1591,7 @@ def calibrate_extrinsics_camera_lidar(
         help="Replay from a specific timestamp folder inside calibration_lidar_points",
     )
     parser.add_argument(
+        "-last",
         "--replay_last",
         action="store_true",
         help="Replay from the last recorded timestamp folder inside calibration_lidar_points",
