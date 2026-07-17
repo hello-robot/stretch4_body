@@ -55,18 +55,29 @@ class SubsystemClient(Device):
             self.pull_status(blocking=True) #must populate initial dict
         return self.is_valid
 
-    def stop(self):
+    def connect(self, *args, **kwargs):
+        """Connect to the subsystem server. Alias for startup().
+        """
+        return self.startup(*args, **kwargs)
+
+    def disconnect(self):
+        """Disconnect from the subsystem server.
+        """
         if not self.is_valid:
             return
         if self.push_lock.is_locked:
             self.push_lock.release()
         #A hard exit could happen in the middle of a command by the main loop, clear out socket recv
         for k in self.subsystems:
-            self.subsystems[k].stop()
+            self.subsystems[k].disconnect()
         if self.parent is None:
             self.push_command(ignore_control_lock=True) #Push out clean shutdown commands to the subsystems
-            self.client.stop() #Close the sockets
-        Device.stop(self)
+            self.client.disconnect() #Close the sockets
+        Device.disconnect(self)
+
+    def stop(self):
+        """Deprecated. Use disconnect() instead. If you are trying to stop robot motion, use hard_stop() or set_velocity(0)."""
+        raise DeprecationWarning("stop() is deprecated. Please use disconnect() instead. If you are trying to stop robot motion, use hard_stop() or set_velocity(0).")
 
     # ########## Control loop #############3
 

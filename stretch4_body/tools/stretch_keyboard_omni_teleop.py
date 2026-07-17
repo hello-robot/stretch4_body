@@ -113,7 +113,7 @@ def keyboard_teleop_loop(robot, is_stop_robot_on_quit:bool):
     )
 
     if is_stop_robot_on_quit:
-        robot.stop()
+        robot.disconnect()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Control Stretch Omnibase from a Keyboard')
@@ -126,6 +126,6 @@ if __name__ == "__main__":
         from stretch4_body.robot.robot import Robot
 
     robot = Robot()
-    robot.startup()
+    robot.connect()
 
     keyboard_teleop_loop(robot, True)

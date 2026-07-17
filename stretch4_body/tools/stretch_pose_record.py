@@ -10,7 +10,7 @@ from stretch4_body.utils.stretch_pose_models import RobotJoints, RobotPose, Join
 class KeyframeRecorder:
     def __init__(self, filename=None):
         self.robot = rc.RobotClient()
-        self.robot.startup()
+        self.robot.connect()
         self.saved_poses: list[RobotPose] = []
         self.filename = filename or f"poses_{time.time()}.yaml"
         
@@ -108,7 +108,7 @@ Press 'q' to quit.
                 break
         
         self.save_to_file(self.filename)
-        self.robot.stop()
+        self.robot.disconnect()
         self.print_poses()
 
     def print_poses(self):

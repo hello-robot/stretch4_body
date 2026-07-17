@@ -40,6 +40,14 @@ class Robot(RobotCore):
         self.GLOBAL_EXCEPTIONS_LIST = []
         threading.excepthook = self.custom_excepthook
 
+    def connect(self, *args, **kwargs):
+        """Connect to the robot. Alias for startup()."""
+        return self.startup(*args, **kwargs)
+
+    def disconnect(self):
+        """Disconnect from the robot. Alias for stop()."""
+        return self.stop()
+
     def startup(self):
         if RobotCore.startup(self):
             # Register the signal handlers

@@ -5,7 +5,7 @@ from stretch4_body.robot.robot_client import RobotClient
 def main():
     try:
         r = RobotClient()
-        if not r.startup():
+        if not r.connect():
             print("Failed to start RobotClient")
             sys.exit(1)
             
@@ -26,10 +26,10 @@ def main():
         time.sleep(3)
         
         print("Done. Client shutting down.")
-        r.stop()
+        r.disconnect()
     except KeyboardInterrupt:
         if 'r' in locals():
-            r.stop()
+            r.disconnect()
 
 if __name__ == '__main__':
     main()

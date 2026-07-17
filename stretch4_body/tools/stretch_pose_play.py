@@ -17,7 +17,7 @@ class KeyframePlayer:
             self.robot = robot
         else:
             self.robot = rc.RobotClient()
-            self.robot.startup()
+            self.robot.connect()
             
         self.poses: list[RobotPose] = []
         self.current_pose_index = 0
@@ -174,7 +174,7 @@ Please make sure the robot's surroundings are clear before proceeding.
     except KeyboardInterrupt:
         print("\nExiting...")
     finally:
-        player.robot.stop()
+        player.robot.disconnect()
 
 if __name__ == "__main__":
     main()

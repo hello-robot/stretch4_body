@@ -16,12 +16,12 @@ def main():
     print("Initializing RobotClient...")
     try:
         r = RobotClient()
-        success = r.startup()
+        success = r.connect()
         if not success:
-            print("WARNING: RobotClient.startup() returned False. Is stretch_body_server running?")
+            print("WARNING: RobotClient.connect() returned False. Is stretch_body_server running?")
             print("Continuing to test APIs to ensure they handle the state gracefully or raise expected errors.")
     except Exception as e:
-        print(f"CRITICAL: Failed to instantiate or startup RobotClient: {e}")
+        print(f"CRITICAL: Failed to instantiate or connect RobotClient: {e}")
         return
 
     # --- RobotClient APIs ---
@@ -122,11 +122,17 @@ def main():
         print("FAIL: RobotClient has no 'end_of_arm' attribute")
 
 
+    print("\n--- Testing connect and disconnect aliases ---")
+    test_api("robot.startup alias", getattr(r, 'startup'))
+    test_api("robot.stop alias", getattr(r, 'stop'))
+    test_api("robot.connect", getattr(r, 'connect'))
+    test_api("robot.disconnect", getattr(r, 'disconnect'))
+
     print("\n[TEST COMPLETED]")
     try:
-        r.stop()
+        r.disconnect()
     except Exception as e:
-        print(f"WARNING: r.stop() failed (expected if startup failed): {e}")
+        print(f"WARNING: r.disconnect() failed (expected if connect failed): {e}")
 
 if __name__ == "__main__":
     main()

@@ -39,7 +39,7 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
 
     # Set up client to communicate with RobotServer asynchronously without blocking its loops
     r = RobotClient()
-    if not r.startup():
+    if not r.connect():
         logger.error("SentryStatusLogger daemon failed to start RobotClient")
         return
 
@@ -88,7 +88,7 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
                 logger.error(f"Error writing final status batch: {e}")
             manage_directory_size()
             
-        r.stop()
+        r.disconnect()
 
 
 class SentryStatusLogger(Sentry):

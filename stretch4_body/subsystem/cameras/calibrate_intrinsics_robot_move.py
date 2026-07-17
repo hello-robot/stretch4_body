@@ -70,7 +70,8 @@ class RobotMovementController:
         self.calibration = calibration
 
         self.robot = RobotClient()
-        self.robot.startup()
+        self.robot.connect()
+        self.robot.pull_status()
         self.skip_user_prompt = skip_user_prompt
 
         self.delay = 0.5
@@ -106,7 +107,7 @@ class RobotMovementController:
             self.movement_thread.join(timeout=10)
         if self.teleop_thread.is_alive() and self.teleop_thread != threading.current_thread():
             self.teleop_thread.join(timeout=10)
-        self.robot.stop()
+        self.robot.disconnect()
 
     def _teleop_loop(self):
         """Replaces the need to step the gamepad inside the camera's image callback."""

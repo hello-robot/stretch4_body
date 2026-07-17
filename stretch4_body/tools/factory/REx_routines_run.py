@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser(
 args = parser.parse_args()
 
 r = rc.RobotClient()
-if not r.startup():
+if not r.connect():
     exit()
 try:
     while True:
@@ -29,4 +29,4 @@ try:
             print('Invalid entry')
 except (KeyboardInterrupt, SystemExit):
     pass
-r.stop()
+r.disconnect()

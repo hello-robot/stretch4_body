@@ -55,9 +55,9 @@ if __name__ == "__main__":
     elif args.all:
         print("Homing Wrist Joints")
         r = Robot() if args.direct else RobotClient()
-        if r.startup():
+        if r.connect():
             success = r.end_of_arm.home()
-            r.stop()
+            r.disconnect()
             if success:
                 print('Homing complete')
             else:

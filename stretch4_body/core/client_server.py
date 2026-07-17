@@ -268,7 +268,11 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         self.is_valid=True
         return True
 
-    def stop(self):
+    def connect(self, *args, **kwargs):
+        """Connect to the robot server. Alias for startup()."""
+        return self.startup(*args, **kwargs)
+
+    def disconnect(self):
         if self.is_valid:
             time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
             self.socket_cmd.close()

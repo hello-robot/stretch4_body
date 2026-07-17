@@ -656,7 +656,7 @@ class CalibrateLidarToCamera:
         self.keyframe_recorder = KeyframeRecorder()
 
         self.robot = RobotClient()
-        self.robot.startup()
+        self.robot.connect()
         joints_allowed_to_move = [
             j
             for j in RobotJoints
@@ -1375,7 +1375,7 @@ class CalibrateLidarToCamera:
         if hasattr(self, 'robot') and self.robot is not None:
             try:
                 print("Stopping RobotClient...")
-                self.robot.stop()
+                self.robot.disconnect()
             except Exception as e:
                 print(f"Warning: error stopping robot: {e}")
         

@@ -153,7 +153,7 @@ It is recommended to put a ChArUco board with marker size 27mm at 20in away from
           """)
 
     robot = RobotClient()
-    if robot.startup():
+    if robot.connect():
         if robot.params.get('tool') == 'eoa_wrist_dw4_tool_calibration':
             ans = input(f"You are using the calibration board tool. Do you want to move arm to calibration pose? {Fore.RED} WARNING: the robot arm and wrist will move. {Style.RESET_ALL} [y/N]: ")
             if ans.lower() == 'y':

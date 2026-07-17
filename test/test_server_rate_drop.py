@@ -8,7 +8,7 @@ from stretch4_body.core.hello_utils import LoopStats
 
 def main():
     robot = RobotClient()
-    if not robot.startup():
+    if not robot.connect():
         print("Failed to start RobotClient")
         sys.exit(1)
         
@@ -103,7 +103,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
     finally:
-        robot.stop()
+        robot.disconnect()
         print("Robot Client stopped.")
 
 if __name__ == '__main__':

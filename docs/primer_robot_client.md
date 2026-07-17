@@ -4,7 +4,7 @@ The `stretch4_body/robot/robot_client.py` file defines the `RobotClient`, which 
 
 ## 1. Typical Usage: The `RobotClient`
 
-The typical usage involves instantiating the `RobotClient`, calling `startup()` to establish connections to the robot server, executing your behavior, and finally calling `stop()` to cleanly close the connections.
+The typical usage involves instantiating the `RobotClient`, calling `connect()` to establish connections to the robot server, executing your behavior, and finally calling `disconnect()` to cleanly close the connections. (For backwards compatibility, `startup()` and `stop()` are also available as aliases).
 
 Alternatively, you can use it as a context manager to handle the cleanup automatically:
 
@@ -12,7 +12,7 @@ Alternatively, you can use it as a context manager to handle the cleanup automat
 import time
 from stretch4_body.robot.robot_client import RobotClient
 
-# Using a context manager ensures stop() is called automatically
+# Using a context manager ensures disconnect() is called automatically
 with RobotClient() as robot:
     # Check if the robot needs to be homed
     if not robot.is_homed():
@@ -224,4 +224,4 @@ When writing code to control the Stretch robot via `RobotClient`:
 2. **Commands are Queued:** Calling `robot.arm.move_to()` simply queues the command locally. It does nothing until you call `robot.push_command()`.
 3. **Execution is Asynchronous:** `robot.push_command()` returns immediately. If you need to wait for a motion to finish before executing the next step (e.g. a simple sequence script), you must use `robot.wait_on_motion_finish(['subsystem_name'])`.
 4. **End of Arm (EOA) Dynamism:** Be aware that `robot.end_of_arm` and `robot.status['end_of_arm']` are dynamic based on the tool attached. Do not hardcode a specific gripper key without checking if it exists (e.g. check for `'stretch_gripper'`).
-5. **Always Cleanup:** Use `with RobotClient() as robot:` or explicitly call `robot.stop()` to ensure the connection to the server is terminated cleanly.
+5. **Always Cleanup:** Use `with RobotClient() as robot:` or explicitly call `robot.disconnect()` to ensure the connection to the server is terminated cleanly.

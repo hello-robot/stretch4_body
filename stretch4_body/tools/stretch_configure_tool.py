@@ -239,7 +239,7 @@ def main(quick, auto_detect):
         r = RobotClient()
         connected = False
         for i in range(20): # try for 20 seconds
-            if r.startup():
+            if r.connect():
                 connected = True
                 break
             time.sleep(1.0)
@@ -252,7 +252,7 @@ def main(quick, auto_detect):
             except Exception as e:
                 print(f"Error during homing: {e}")
             finally:
-                r.stop()
+                r.disconnect()
             p_restart.terminate()
         else:
             print("Failed to connect to robot server after restart. Please try homing manually.")

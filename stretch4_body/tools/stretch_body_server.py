@@ -242,8 +242,8 @@ def _parse_args():
     return args
 
 def is_server_active(robot_client:RobotClient, verbose:bool=False) -> bool:
-    is_active = robot_client.startup(verbose=verbose, allow_different_user_connection=True) and robot_client.is_server_active()
-    robot_client.stop()
+    is_active = robot_client.connect(verbose=verbose, allow_different_user_connection=True) and robot_client.is_server_active()
+    robot_client.disconnect()
     return is_active
 
 
@@ -303,7 +303,7 @@ def main():
                 print("\nTailing logs, press Ctrl+C to exit (server will keep running in the background):")
                 tail_log_file(log_file)
                 return
-            if not robot_client.startup():
+            if not robot_client.connect():
                 print("Stopping existing server...")
                 robot_client.kill_server()
                 time.sleep(2.0)  # Wait for shutdown
@@ -353,7 +353,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         if daemon_is_running():
             stop_daemon()
 
-        if not robot_client.startup(verbose=False, allow_different_user_connection=True):
+        if not robot_client.connect(verbose=False, allow_different_user_connection=True):
             print("Kill Stretch Body Server Daemon: SUCCESS")
             archive_session_logs()
             return
@@ -380,7 +380,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
             print_status(robot_client)
         
         try: 
-            robot_client.startup(verbose=False, allow_different_user_connection=True)
+            robot_client.connect(verbose=False, allow_different_user_connection=True)
 
             if args.ping:
                 for i in range(5):
@@ -396,7 +396,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         except Exception as e:
             logger.error(Fore.RED + f"Error connecting to stretch body server: {e}" + Style.RESET_ALL)
         finally:
-            robot_client.stop()
+            robot_client.disconnect()
 
     else:
         print("No active server found. Printing tail of archived logs:\n")

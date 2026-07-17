@@ -51,8 +51,8 @@ class CalibrationValidator:
         ]
 
         self.robot = RobotClient()
-        if not self.robot.startup():
-            print("Failed to start robot client.")
+        if not self.robot.connect():
+            print("Failed to start RobotClient")
             sys.exit(1)
 
         if self.robot.params.get('tool') != 'eoa_wrist_dw4_tool_calibration':
@@ -100,7 +100,7 @@ class CalibrationValidator:
                 print(f"Error stopping pipeline: {e}")
         if hasattr(self, 'robot') and self.robot is not None:
             try:
-                self.robot.stop()
+                self.robot.disconnect()
             except Exception as e:
                 print(f"Error stopping robot: {e}")
 

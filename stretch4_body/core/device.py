@@ -68,6 +68,16 @@ class Device:
         self.is_valid = False
         return True
 
+    def connect(self, *args, **kwargs):
+        """Connect to the device or establish its interfaces. Alias for startup().
+        """
+        return self.startup(*args, **kwargs)
+
+    def disconnect(self):
+        """Disconnect or shut down interface to the device. Alias for stop().
+        """
+        return self.stop()
+
     def load_rpc_results(self,wait_on_result=True):
         if not self.is_valid:
             return []

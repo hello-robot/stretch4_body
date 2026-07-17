@@ -573,7 +573,7 @@ def main():
         # Live mode
         print("Starting live mode...")
         r = RobotClient()
-        if not r.startup():
+        if not r.connect():
             print("Failed to start RobotClient")
             return
 
@@ -614,7 +614,7 @@ def main():
                 
                 time.sleep(sleep_time)
         except KeyboardInterrupt:
-            r.stop()
+            r.disconnect()
             print("Stopped live mode.")
 
 if __name__ == "__main__":

@@ -323,7 +323,7 @@ class GamePadTeleop(Device):
             robot = self.robot
         self.gamepad_controller.startup()
         if self.robot:
-            if self.robot.startup():
+            if self.robot.connect():
                 pass #self.do_double_beep()
             else:
                 print('Exiting...')
@@ -573,7 +573,7 @@ class GamePadTeleop(Device):
         """
         Stop the gamepad controller and the robot.
         """
-        self.robot.stop()
+        self.robot.disconnect()
         self.gamepad_controller.stop()
 
     
@@ -650,7 +650,7 @@ class GamePadTeleop(Device):
                 self.step_mainloop()
         except (ThreadServiceExit, KeyboardInterrupt, SystemExit, FeetechCommError):
             self.gamepad_controller.stop()
-            self.robot.stop()
+            self.robot.disconnect()
 
 def signal_handler(signal_received, frame):
     time.sleep(0.5)

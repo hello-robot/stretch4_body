@@ -63,15 +63,31 @@ class RobotClient(SubsystemClient):
         if self.get_subsystem('power_periph') is not None:
             self.status['pimu'] = self.subsystems['power_periph'].status
 
+    def connect(self, *args, **kwargs):
+        """
+        Connect to the robot server. Alias for startup().
+        """
+        return self.startup(*args, **kwargs)
+
+
+    def disconnect(self):
+        """
+        Disconnect from the robot server.
+        """
+        if self.push_lock.is_locked:
+            self.push_lock.release()
+        self.push_command(ignore_control_lock=True)
+        super().disconnect()
+
     def __enter__(self):
-        if not self.startup():
-            self.logger.error("RobotClient startup failed.")
+        if not self.connect():
+            self.logger.error("RobotClient connection failed.")
             return None
         return self
 
     def __exit__(self, exc_type, exc, tb):
         if self.is_server_active():
-            self.stop()
+            self.disconnect()
 
     def home(self, do_push=True,wait_on_completion=True,timeout=60, do_pull=True):
         """
@@ -634,12 +650,9 @@ class OmniBaseClient(SubsystemClient):
         """
         return list(self.robot_params['hello-motor-omni-0']['guarded_contact'].keys()) #Todo: move to server RPC for this, hack for now
 
-    def stop(self):
-        """
-        Stop the base and put it in freewheel mode.
-        """
+    def disconnect(self):
         self.enable_freewheel_mode()
-        SubsystemClient.stop(self)
+        return super().disconnect()
 
 
 # #####################################################################
@@ -682,12 +695,13 @@ class PrismaticJointClient(SubsystemClient):
         else:
             self.logger.error('Failed to home joint %s.'%self.name)
 
-    def stop(self):
+    def disconnect(self):
         """
-        Stop the joint and enable safety mode.
+        Disconnect the joint and enable safety mode.
         """
         self.enable_safety()
-        SubsystemClient.stop(self)
+        return super().disconnect()
+
 
     # ####################### Utility ##########################
 
@@ -957,11 +971,7 @@ class WristJointClient(SubsystemClient):
                 self.logger.error(f'Failed to home wrist joint {self.joint_name}.')
             return success
         return False
-    def stop(self):
-        """
-        Stop the joint.
-        """
-        SubsystemClient.stop(self)
+
     def pretty_print(self):
         """
         Print the status of the joint.
@@ -1303,11 +1313,7 @@ class EndOfArmClient(SubsystemClient):
                 return True
         return False
     
-    def stop(self):
-        """
-        Stop the end of arm tool.
-        """
-        SubsystemClient.stop(self)
+
 
 # #####################################################################
 class EOA_Wrist_DW4_Tool_NIL_Client(EndOfArmClient):
@@ -1350,7 +1356,7 @@ class EOA_Wrist_DW4_Tool_Tablet_Client(EndOfArmClient):
 if __name__ == '__main__':
     if 1:
         r = RobotClient()
-        if r.startup():
+        if r.connect():
             ts=time.time()
             for i in range(1000):
                 r.pull_status()
@@ -1359,7 +1365,7 @@ if __name__ == '__main__':
                 # print(r.status['server'])
                 #time.sleep(0.1)
             print('RATE',1000/(time.time()-ts))
-            r.stop()
+            r.disconnect()
     if 0:
         r = RobotClient()
         if r.startup():

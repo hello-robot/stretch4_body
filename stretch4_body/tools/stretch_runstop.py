@@ -3,13 +3,13 @@ import argparse
 
 def clear_runstop():
     robot = rc.RobotClient()
-    robot.startup()
+    robot.connect()
     robot.power_periph.clear_runstop()
     return robot.push_command()
 
 def trigger_runstop():
     robot = rc.RobotClient()
-    robot.startup()
+    robot.connect()
     robot.power_periph.trigger_runstop()
     return robot.push_command()
 
