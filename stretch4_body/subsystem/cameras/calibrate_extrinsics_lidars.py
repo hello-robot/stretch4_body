@@ -242,6 +242,9 @@ def compute_lidar_rectangle_pose(
     expected_width: float,
     expected_height: float,
     transform_camera: np.ndarray | None = None,
+    T_lidar_to_camera_optical_nominal: np.ndarray | None = None,
+    camera_name: str | None = None,
+    lidar_name: str | None = None,
 ):
     """
     Computes the 4x4 matrix transform_lidar tracking the lidar rectangle pose in lidar frame.
@@ -272,6 +275,72 @@ def compute_lidar_rectangle_pose(
 
     x_ax = e_width
     y_ax = e_height
+
+    # Resolve sign/direction ambiguity of x_ax and y_ax
+    resolved_signs = False
+    if transform_camera is not None and T_lidar_to_camera_optical_nominal is not None and camera_name is not None and lidar_name is not None:
+        try:
+            from stretch4_urdf import get_urdf_from_robot_params
+            from yourdfpy import URDF
+            import io
+            urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+            urdf = URDF.load(io.StringIO(urdf_contents))
+            
+            def get_nominal_transform(joint_name):
+                for joint in urdf.robot.joints:
+                    if joint.name == joint_name:
+                        return joint.origin
+                return np.eye(4)
+                
+            T_head_lidar = get_nominal_transform(f"lidar_{lidar_name}_joint")
+            T_head_camera_nominal = get_nominal_transform(f"camera_{camera_name}_joint")
+            T_camera_link_to_optical = get_nominal_transform(f"camera_{camera_name}_optical_joint")
+            t_nominal = T_head_camera_nominal[:3, 3]
+            
+            best_signs = (1, 1)
+            min_dist = float('inf')
+            
+            for sx in [1, -1]:
+                for sy in [1, -1]:
+                    x_ax_test = sx * e_width
+                    y_ax_test = sy * e_height
+                    z_ax_test = np.cross(x_ax_test, y_ax_test)
+                    
+                    transform_lidar_test = np.eye(4)
+                    transform_lidar_test[:3, :3] = np.column_stack((x_ax_test, y_ax_test, z_ax_test))
+                    transform_lidar_test[:3, 3] = center
+                    
+                    T_rel_test = transform_camera @ np.linalg.inv(transform_lidar_test)
+                    T_head_opt_test = T_head_lidar @ np.linalg.inv(T_rel_test)
+                    T_joint_test = T_head_opt_test @ np.linalg.inv(T_camera_link_to_optical)
+                    
+                    dist = np.linalg.norm(T_joint_test[:3, 3] - t_nominal)
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_signs = (sx, sy)
+            
+            x_ax = best_signs[0] * e_width
+            y_ax = best_signs[1] * e_height
+            resolved_signs = True
+            print(f"[compute_lidar_rectangle_pose] Resolved SVD signs using translation closeness: sx={best_signs[0]}, sy={best_signs[1]} with dist={min_dist:.4f}m")
+        except Exception as e:
+            print(f"[compute_lidar_rectangle_pose] Warning: Failed to resolve SVD axes signs with translation closeness: {e}")
+
+    # Fallback to nominal axes dot products if translation closeness resolver wasn't used or failed
+    if not resolved_signs and transform_camera is not None and T_lidar_to_camera_optical_nominal is not None:
+        try:
+            T_camera_optical_to_lidar_nominal = np.linalg.inv(T_lidar_to_camera_optical_nominal)
+            T_lidar_to_board_nominal = T_camera_optical_to_lidar_nominal @ transform_camera
+            x_ax_nominal = T_lidar_to_board_nominal[:3, 0]
+            y_ax_nominal = T_lidar_to_board_nominal[:3, 1]
+
+            if np.dot(x_ax, x_ax_nominal) < 0:
+                x_ax = -x_ax
+            if np.dot(y_ax, y_ax_nominal) < 0:
+                y_ax = -y_ax
+            print(f"[compute_lidar_rectangle_pose] Resolved SVD signs using original nominal axes dot products.")
+        except Exception as e:
+            print(f"[compute_lidar_rectangle_pose] Warning: Failed to resolve SVD axes signs with nominal transform dot products: {e}")
 
     z_ax = np.cross(x_ax, y_ax)
 
@@ -353,6 +422,9 @@ def detect_lidar_rectangle(
     expected_height: float,
     tolerance: float,
     transform_camera: np.ndarray | None = None,
+    T_lidar_to_camera_optical_nominal: np.ndarray | None = None,
+    camera_name: str | None = None,
+    lidar_name: str | None = None,
 ):
     """
     Returns transform_lidar matrix and centroids.
@@ -379,7 +451,13 @@ def detect_lidar_rectangle(
         return None, None, msg
 
     transform_lidar = compute_lidar_rectangle_pose(
-        centroids, expected_width, expected_height, transform_camera
+        centroids,
+        expected_width,
+        expected_height,
+        transform_camera,
+        T_lidar_to_camera_optical_nominal,
+        camera_name,
+        lidar_name,
     )
     return transform_lidar, centroids, msg
 
@@ -511,6 +589,31 @@ class CalibrateLidarToCamera:
             self.camera = RGBCameras.center()
 
         self.camera_calibration = self.camera.load_calibration()
+
+        # Get nominal lidar to camera optical transform to resolve SVD sign ambiguity
+        try:
+            from stretch4_urdf import get_urdf_from_robot_params
+            from yourdfpy import URDF
+            import io
+            urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+            urdf = URDF.load(io.StringIO(urdf_contents))
+            
+            def get_nominal_transform(joint_name):
+                for joint in urdf.robot.joints:
+                    if joint.name == joint_name:
+                        return joint.origin
+                return np.eye(4)
+                
+            T_head_lidar = get_nominal_transform(f"lidar_{self.lidar_name}_joint")
+            T_head_camera = get_nominal_transform(f"camera_{self.camera_name}_joint")
+            camera_optical_joint_name = f"camera_{self.camera_name}_optical_joint"
+            T_camera_link_to_optical = get_nominal_transform(camera_optical_joint_name)
+            
+            T_head_camera_optical = T_head_camera @ T_camera_link_to_optical
+            self.T_lidar_to_camera_optical_nominal = np.linalg.inv(T_head_camera_optical) @ T_head_lidar
+        except Exception as e:
+            print(f"Warning: could not compute nominal lidar to camera transform: {e}")
+            self.T_lidar_to_camera_optical_nominal = None
 
         self.replay_folder = None
         base_dir = os.path.join(DEFAULT_CALIBRATION_FOLDER_PATH, "calibration_lidar_points")
@@ -831,6 +934,9 @@ class CalibrateLidarToCamera:
             expected_height=self.expected_height,
             tolerance=self.tolerance,
             transform_camera=transform_camera,
+            T_lidar_to_camera_optical_nominal=getattr(self, "T_lidar_to_camera_optical_nominal", None),
+            camera_name=self.camera_name,
+            lidar_name=self.lidar_name,
         )
 
         if msg:
