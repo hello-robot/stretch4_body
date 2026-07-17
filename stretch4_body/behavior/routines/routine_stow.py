@@ -43,7 +43,7 @@ class RoutineRobotStow(routine.Routine):
 
         if 'arm' in self.robot.subsystems:
             pos_arm = cfg['arm']
-            threshold = 0.05
+            threshold = 0.025
             # Bring in arm before bring down
             self.logger.info('--------- Stowing Arm ----')
             self.robot.arm.move_to(pos_arm)
