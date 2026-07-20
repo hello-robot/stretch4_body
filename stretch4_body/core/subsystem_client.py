@@ -56,6 +56,7 @@ class SubsystemClient(Device):
         return self.is_valid
 
     def stop(self):
+        """`stop()` disconnects the client from the Stretch Body Server. If you are trying to stop robot motion, use `hard_stop()` or `set_velocity(0)`, instead of `stop()`. """
         if not self.is_valid:
             return
         if self.push_lock.is_locked:

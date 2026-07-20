@@ -21,7 +21,7 @@ LEASE_TIMEOUT = 1.1 # Writers at >=1hz (0.909hz actually) keep control
 class NotConnectedError(Exception):
     """Exception raised when an operation is attempted without a connection."""
     def __init__(self, class_name):
-        self.message = f"{class_name} object is not connected. Call .startup() first."
+        self.message = f"{class_name} object is not connected to the Stretch Body Server. Call `.startup()` first. If you used `robot_client.stop()`, you need to call `.startup()` again. If you are trying to stop robot motion, use `hard_stop()` or `set_velocity(0)`, instead of `stop()`. `stop()` disconnects the client from the Stretch Body Server."
         super().__init__(self.message)
 
 def require_connection(function):
