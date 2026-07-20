@@ -1,4 +1,3 @@
-
 import stretch4_body.behavior.routines.routine as routine
 import time
 
@@ -22,20 +21,25 @@ class RoutineRobotStow(routine.Routine):
         self.logger.info(f'Stowing robot for tool {tool}')
 
 
-
         #self.disable_collision_mgmt()
-        lift_stowed = False
+
         if 'lift' in self.robot.subsystems:
-            self.logger.info('--------- Pre-Stowing Lift ----')
-            self.robot.lift.move_to(0.35)
-            if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=10.0):
-                self.logger.warning('Lift failed to reach final position when stowing')
-                return False
+            pos_lift = cfg. get('lift_prestow', 0.35) # Enough to clear the tool from hitting the base
+            if self.robot.lift.status['pos'] < pos_lift:
+                # If the lift is below pos_lift, raise it to avoid the tool hitting the base
+                self.logger.info('--------- Pre-Stowing Lift ----')
+                self.robot.lift.move_to(pos_lift)
+                if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=10.0):
+                    self.logger.warning(f'Lift failed to reach final position when stowing. Expecting {pos_lift} but got {self.robot.lift.status["pos"]:.3f}')
+                    return False
 
 
-        # if 'end_of_arm' in self.subsystems:
+        # if 'end_of_arm' in self.robot.subsystems:
         #     # Run pre stow specific to each end of arm
-        #     self.end_of_arm.pre_stow(self)
+        #     cmd = ['end_of_arm', 'pre_stow', cmd_id, args, kwargs]
+        #     # This will cause the EoA process to stop comms while stowing
+        #     self.robot.eoa_loop.q_cmd.put(cmd)
+        #     self.wait_duration(5.0)
 
         if 'arm' in self.robot.subsystems:
             pos_arm = cfg['arm']
@@ -43,7 +47,7 @@ class RoutineRobotStow(routine.Routine):
             self.logger.info('--------- Stowing Arm ----')
             self.robot.arm.move_to(pos_arm)
             if not self.wait_until_at_setpoint(self.robot.arm.motor, timeout=6.0):
-                self.logger.warning('Arm failed to reach final position when stowing')
+                self.logger.warning(f'Arm failed to reach final position when stowing. Expecting {pos_arm} but got {self.robot.arm.status["pos"]:.3f}')
                 return False
 
         if 'end_of_arm' in self.robot.subsystems:
@@ -55,12 +59,11 @@ class RoutineRobotStow(routine.Routine):
         if 'lift' in self.robot.subsystems:
             # Now bring lift down
             pos_lift = cfg['lift']
-            if not lift_stowed:
-                self.logger.info('--------- Stowing Lift ----')
-                self.robot.lift.move_to(pos_lift)
-                if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=12.0):
-                    self.logger.warning('Lift failed to reach final position when stowing')
-                    return False
+            self.logger.info('--------- Stowing Lift ----')
+            self.robot.lift.move_to(pos_lift)
+            if not self.wait_until_at_setpoint(self.robot.lift.motor, timeout=12.0):
+                self.logger.warning(f'Lift failed to reach final position when stowing. Expecting {pos_lift} but got {self.robot.lift.status["pos"]:.3f}')
+                return False
         # if 'end_of_arm' in self.subsystems:
         #     # Make sure wrist yaw is done before exiting
         #     while self.end_of_arm.motors['wrist_yaw'].motor.is_moving():
