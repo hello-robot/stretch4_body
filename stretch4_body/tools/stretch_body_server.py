@@ -303,9 +303,10 @@ def main():
                 print("\nTailing logs, press Ctrl+C to exit (server will keep running in the background):")
                 tail_log_file(log_file)
                 return
-            if not robot_client.startup():
+            if is_server_active(robot_client):
                 print("Stopping existing server...")
-                robot_client.kill_server()
+                with robot_client:
+                    robot_client.kill_server()
                 time.sleep(2.0)  # Wait for shutdown
             else: print("No instances of the server was found. Launching a new instance.")
         else: # args.launch is true

@@ -42,6 +42,11 @@ class StretchBodyServer:
         self.last_cmd_seq = None
         self.logger = logging.getLogger(name='stretch_body_server')
 
+        self.context=None
+        self.socket_cmd=None
+        self.socket_admin=None
+        self.socket_status=None
+
     def startup(self):
         if not is_user_in_group('users'):
             self.logger.error("Cannot start Stretch Body Server: User is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
@@ -88,14 +93,18 @@ class StretchBodyServer:
             return False
 
     def stop(self):
-        if hasattr(self, 'socket_status'):
-            self.socket_status.close(linger=0)
-        if hasattr(self, 'socket_admin'):
-            self.socket_admin.close(linger=0)
-        if hasattr(self, 'socket_cmd'):
+        time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
+        if self.socket_cmd is not None:
             self.socket_cmd.close(linger=0)
-        if hasattr(self, 'context'):
-            self.context.term()
+        if self.socket_status is not None:
+            self.socket_status.close(linger=0)
+        if self.socket_admin is not None:
+            self.socket_admin.close(linger=0)
+        if self.context is not None:
+            try:
+                self.context.destroy(linger=0)
+            except Exception:
+                pass
 
     def dispatch_command_messages(self,cb_dispatch, is_routine_active):
         # Check if messages available
@@ -178,8 +187,9 @@ class StretchBodyServer:
 
 class StretchBodyClient:
     def __init__(self, name=None, ip_address=None):
-        self.server_connected=False
+        self._server_connected=False
         self.admin_poller=None
+        self.context=None
         self.socket_cmd=None
         self.socket_admin=None
         self.socket_status=None
@@ -187,9 +197,31 @@ class StretchBodyClient:
         self.ip_address=ip_address
         self.cmd_seq = 0
 
+        self.logger = logging.getLogger(name='stretch_body_client')
+
     @property
     def connected(self):
-        return self.is_valid
+        """Warning: server_connected may become stale; it's not a computed property. Call `check_connection()` to refresh it."""
+        return self._server_connected
+    
+    def check_connection(self):
+        """
+        Warning: mutation of `self._server_connected` happens here.
+
+        Updates `self._server_connected` with whether the server responds to a ping.
+        """
+        if self.socket_admin is None:
+            self._server_connected = False
+            return self._server_connected
+        
+        ack = self._do_send_recv_admin_str(b"ping")
+        self._server_connected = ack is not None
+
+        return self._server_connected
+
+    def free_up_control(self):
+        ack = self._do_send_recv_admin_str(b"free_up_control", timeout=3.0)
+        self._server_connected = (ack == b"free_up_control")
     
     def client_id(self): 
         pid = os.getpid()
@@ -199,7 +231,7 @@ class StretchBodyClient:
     def startup(self, *, verbose:bool = True, allow_different_user_connection:bool = False):
         if not is_user_in_group('users'):
             if verbose:
-                print("StretchBodyClient: Cannot connect to the server because the current user is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
+                self.logger.error("StretchBodyClient: Cannot connect to the server because the current user is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
             return False
 
         # Start admin REQ-REP connection       
@@ -210,14 +242,15 @@ class StretchBodyClient:
             self.socket_admin.connect(f"tcp://{self.ip_address}:23114")
         else:
             self.socket_admin.connect(f"ipc://{PORT_ADMIN}")
+
         self.admin_poller = zmq.Poller()
         self.admin_poller.register(self.socket_admin, zmq.POLLIN)
-        self.is_valid=True
-        ack = self._do_send_recv_admin_str(b"ping")
-        self.server_connected = (ack is not None)
-        if ack is None:
+
+        self.check_connection()
+
+        if not self.connected:
             if verbose:
-                print("""
+                self.logger.error("""
 ===============================================
                   
 StretchBodyClient: Not able to connect to Stretch Body Server. Check that server is running
@@ -226,12 +259,12 @@ StretchBodyClient: Try running the server with stretch_body_server --launch
 ===============================================
                   
 """)
-            self.is_valid=False
+            self.stop()
             return False
         
         if not allow_different_user_connection and not StretchBodyServer.is_server_owned_by_current_user():
             if verbose:
-                print(f"""
+                self.logger.error(f"""
 ===============================================
                 
 StretchBodyClient: A server is already running, but it was started by a different user ({StretchBodyServer.get_server_owning_user()}).
@@ -240,6 +273,7 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 ===============================================
                 
 """)
+            self.stop()
             return False
 
         # Start command PUB connection
@@ -262,28 +296,36 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         else:
             self.socket_status.connect(f"ipc://{PORT_STATUS}")
 
-        # self.status_poller = zmq.Poller()
-        # self.status_poller.register(self.socket_status, zmq.POLLIN)
-
-        self.is_valid=True
         return True
 
     def stop(self):
-        if self.is_valid:
-            time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
-            self.socket_cmd.close()
-            self.socket_status.close()
-            self.socket_admin.close()
-            self.context.term()
-            self.is_valid=False
+        time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
+        if self.socket_cmd is not None:
+            self.socket_cmd.close(linger=0)
+        if self.socket_status is not None:
+            self.socket_status.close(linger=0)
+        if self.socket_admin is not None:
+            if self.admin_poller is not None:
+                try:
+                    self.admin_poller.unregister(self.socket_admin)
+                except Exception:
+                    pass
+            self.socket_admin.close(linger=0)
+        if self.context is not None:
+            try:
+                self.context.destroy(linger=0)
+            except Exception:
+                pass
+        self._server_connected = False
+
+    def __del__(self):
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     @require_connection
-    def _do_recv_status(self, timeout_ms=None):
-        # Check if messages available
-        if timeout_ms is not None:
-            if not self.status_poller.poll(int(timeout_ms)):
-                return None
-        
+    def _do_recv_status(self):        
         try:
             message = self.socket_status.recv_pyobj(flags=zmq.NOBLOCK)
             return message
@@ -301,10 +343,16 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         self.socket_cmd.send_pyobj(message)
 
     @require_connection
-    def _do_send_recv_admin_str(self,send,timeout=1.0):
-        self.socket_admin.send(send)
+    def do_send_recv_admin_str(self, send, timeout=1.0):
+        return self._do_send_recv_admin_str(send, timeout)
+        
+    def _do_send_recv_admin_str(self, send, timeout=1.0):
+        try:
+            self.socket_admin.send(send)
 
-        # Poll to check if a status message is available within the timeout period
-        if self.admin_poller.poll(int(timeout * 1000)):
-            message = self.socket_admin.recv(flags=zmq.NOBLOCK)
-            return message
+            # Poll to check if a status message is available within the timeout period
+            if self.admin_poller.poll(int(timeout * 1000)):
+                message = self.socket_admin.recv(flags=zmq.NOBLOCK)
+                return message
+        except zmq.ZMQError as e:
+            return None

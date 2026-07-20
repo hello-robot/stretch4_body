@@ -323,7 +323,7 @@ Use `stretch_status --rate 10` to view the status of the robot.
         except KeyboardInterrupt:
             self.logger.info("Received request to stop stretch body server via keyboard interrupt.")
         except Exception as e:
-            self.logger.error(f"Error in stretch body server: {e}")
+            self.logger.error(f"Error in Stretch Body Server's Control Loop. Control Loop has ended. Error message: {e}.")
 
 
     def cb_routine_update_controller(self):

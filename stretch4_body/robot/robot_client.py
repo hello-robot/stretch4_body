@@ -16,6 +16,19 @@ class RobotClient(SubsystemClient):
     This class provides access to the robot's subsystems (arm, lift, base, etc.) 
     and high-level routines. It communicates with the robot server to execute commands 
     and retrieve status.
+
+    Usage:
+    ```
+    robot = RobotClient()
+    success = robot.startup()
+    if not success: raise Exception("Could not start robot client")
+    ```
+    
+    or
+    ```
+    with RobotClient() as robot:
+        if robot is None: raise Exception("Could not start robot client")
+    ```
     """
     def __init__(self, client_id=None, ip_address=None):
         """
