@@ -38,6 +38,8 @@ def print_status(robot_client):
     print('Loop count:         ' + str(robot_client.status['server']['control_loop']['num_loops']))
     print('Loop overruns:      ' + str(robot_client.status['server']['control_loop']['missed_loops']))
     print('Running on user:    ' +f'{StretchBodyServer.get_server_owning_user()}')
+    print('Running as a daemon: ' + f'{"Yes" if daemon_is_running() else "No"}')
+    print('Daemon is installed: ' + f'{"Yes" if daemon_is_installed() else "No"}')
 
     if daemon_is_installed():
         status_daemon()
