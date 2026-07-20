@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import time
+import queue
 from multiprocessing import Process, Event
 import math
 from stretch4_body.core.device import Device
@@ -31,12 +32,14 @@ def _cb_solver_loop_step(solver, q_cmd_in, status_out):
 
 # ###########################################################################################
 
-def solver_loop(do_exit, rate_hz, q_admin, q_cmd, q_status):
+def solver_loop(do_exit, rate_hz, q_admin, q_cmd, q_status, q_ready):
     """
 
     """
     solver = SelfCollisionMujoco()
-    if solver.startup():
+    model_loaded = solver.startup()
+    q_ready.put(model_loaded)
+    if model_loaded:
         print("Self Collision Solver Started")
         worker_loop(
             loop_name='self_collision_loop',
@@ -68,6 +71,7 @@ class SelfCollisionLoop(Device):
         self.q_cmd = hello_utils.CircularMultiprocessingQueue(10)
         self.q_status = hello_utils.CircularMultiprocessingQueue(10)
         self.q_admin = hello_utils.CircularMultiprocessingQueue(10)
+        self.q_ready = hello_utils.CircularMultiprocessingQueue(1)
         self.status = {'collisions':{},'collision_directions':{},'ts_solver':0}
         self.do_exit = Event()
         self.n_rate_log = 0
@@ -78,16 +82,27 @@ class SelfCollisionLoop(Device):
 
     def startup(self):
         """
-        Launch the solver loop process.
+        Launch the solver loop process and confirm the collision model loaded successfully.
+        Returns False (and does not leave a running process behind) if the model failed to load,
+        so that callers do not mistake a disabled self-collision checker for a running one.
         """
-        timeout = False
         if self.solver_process is None:
             self.solver_process = Process(
                 target=solver_loop,
-                args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin, self.q_cmd, self.q_status)
+                args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin, self.q_cmd, self.q_status, self.q_ready)
             )
             self.solver_process.start()
-        return True
+        startup_timeout_s = self.params.get('startup_timeout_s', 15.0)
+        try:
+            model_loaded = self.q_ready.get(block=True, timeout=startup_timeout_s)
+        except queue.Empty:
+            self.logger.error('Timed out waiting for self collision solver process to start')
+            model_loaded = False
+        if not model_loaded:
+            self.logger.error('Self collision solver process failed to load robot model')
+            self.solver_process.join(timeout=5.0)
+            self.solver_process = None
+        return model_loaded
 
     def step(self,joint_cfg=None):
         """
