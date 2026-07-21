@@ -37,6 +37,13 @@ def print_status(robot_client):
     print('Current rate (Hz):  %.2f'%robot_client.status['server']['control_loop']['curr_rate_hz'])
     print('Loop count:         ' + str(robot_client.status['server']['control_loop']['num_loops']))
     print('Loop overruns:      ' + str(robot_client.status['server']['control_loop']['missed_loops']))
+    print('Running on user:    ' +f'{StretchBodyServer.get_server_owning_user()}')
+    print('Running as a daemon: ' + f'{"Yes" if daemon_is_running() else "No"}')
+    print('Daemon is installed: ' + f'{"Yes" if daemon_is_installed() else "No"}')
+
+    if daemon_is_installed():
+        status_daemon()
+
     print("")
     print("Use `stretch_body_server --print` to view the latest logs.")
     print("")
@@ -282,70 +289,36 @@ def main():
         exit(0)
 
     if args.daemon:
-        if not start_daemon():
-            raise RuntimeError("Could not start the Stretch Body Server system service")
-        tail_log_file(log_file)
-        return
-
-
-    if args.install_daemon:
+        if not install_and_start_daemon():
+            raise RuntimeError("Could not start the Stretch Body Server system service.")
+        time.sleep(2.0)  # Wait for daemon to start
+    elif args.install_daemon:
         if not install_daemon():
-            raise RuntimeError("Could not install the Stretch Body Server system service")
-
-
-    if args.uninstall_daemon:
+            raise RuntimeError("Could not install the Stretch Body Server system service.")
+        return print("Stretch Body Server daemon is installed. Server will start on boot. Run `--daemon` to start immediately.")
+    elif args.uninstall_daemon:
         if not uninstall_daemon():
-            raise RuntimeError("Could not uninstall the Stretch Body Server system service")
+            raise RuntimeError("Could not uninstall the Stretch Body Server system service.")
+        return print("Uninstalled Stretch Body Server daemon. Server will not start on boot.")
 
-    if args.launch or args.restart:
-        if args.restart:
-            if restart_daemon(): # if the daemon is running, restart it. Otherwise, launch in the terminal.
-                print("\nTailing logs, press Ctrl+C to exit (server will keep running in the background):")
-                tail_log_file(log_file)
-                return
+    elif args.launch:
+        return _launch(robot_client, args)
+    elif args.restart:
+        if not daemon_is_installed():
             if is_server_active(robot_client):
                 print("Stopping existing server...")
                 with robot_client:
                     robot_client.kill_server()
                 time.sleep(2.0)  # Wait for shutdown
             else: print("No instances of the server was found. Launching a new instance.")
-        else: # args.launch is true
-            if is_server_active(robot_client):
-                if StretchBodyServer.is_server_owned_by_current_user():
-                    print(f"""
-===============================================
-                
-StretchBodyClient: A server is already running.
-StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end the running session.
-StretchBodyClient: You can run `stretch_body_server --restart` to forcefully restart the running session.
-                
-===============================================
-                
-""")
-                else:
-                    print(f"""
-===============================================
-                
-StretchBodyClient: A server is already running, but it was started by a different user ({StretchBodyServer.get_server_owning_user()}).
-StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end the other user's session.
-                
-===============================================
-                
-""")
-                return
+            return _launch(robot_client, args)
 
-        try:
-            if args.profile:
-                os.environ['STRETCH_PROFILE'] = '1'
-            robot_server.run_server()
-        except Exception as e: 
-            logger.error(f"Unexpected error while running stretch body server: {e}")
-        finally:
-            archive_session_logs()
-    
-        return
+        if not install_and_start_daemon():
+            raise RuntimeError(f"Could not restart the Stretch Body Server system service.")
+        
+        time.sleep(2.0)  # Wait for daemon to start
 
-    if args.kill:
+    elif args.kill:
         if not is_server_active(robot_client):
             print("No server is running.")
             return
@@ -400,11 +373,51 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
             robot_client.stop()
 
     else:
-        print("No active server found. Printing tail of archived logs:\n")
         print_last_log_from_archive()
+
+        if daemon_is_installed():
+            status_daemon()
+
+        print(f"\n\n----------------------\n{Fore.RED + Style.BRIGHT}No active server found. Run `stretch_body_server --restart` to start it.{Style.RESET_ALL} Printed tail of archived logs{' and background-daemon status ' if daemon_is_installed() else ' '}above.\n")
     
     return
 
+def _launch(robot_client, args):
+
+    if is_server_active(robot_client):
+        if StretchBodyServer.is_server_owned_by_current_user():
+            print(f"""
+===============================================
+        
+StretchBodyClient: A server is already running.
+StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end the running session.
+StretchBodyClient: You can run `stretch_body_server --restart` to forcefully restart the running session.
+        
+===============================================
+        
+""")
+        else:
+            print(f"""
+===============================================
+        
+StretchBodyClient: A server is already running, but it was started by a different user ({StretchBodyServer.get_server_owning_user()}).
+StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end the other user's session.
+        
+===============================================
+        
+""")
+        return False
+
+    try:
+        if args.profile:
+            os.environ['STRETCH_PROFILE'] = '1'
+        robot_server.run_server()
+    except Exception as e: 
+        logger.error(f"Unexpected error while running stretch body server: {e}")
+    finally:
+        archive_session_logs()
+
+    return True
 
 def get_service_file_content(log_level: str) -> str:
     """Creates the linux service file that gets copied to ~/.config/systemd/user/"""
@@ -470,7 +483,7 @@ def _manage_daemon(action:str):
     if action == "stop": action_with_suffix = "stopping"
     elif action == "status": action_with_suffix = "getting status of"
     log_level =  RobotParams._robot_params['logging']['root']['level']
-    logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service...")
+    # logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service...")
     
     user_systemd_dir = Path.home() / ".config" / "systemd" / "user"
     service_file_path = user_systemd_dir / "stretch_body_server.service"
@@ -482,42 +495,38 @@ def _manage_daemon(action:str):
                 f.write(get_service_file_content(log_level))
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "--user", "enable", "stretch_body_server.service"], check=True)
+            print(f"Installed the service to {service_file_path}")
             
         elif action == "uninstall":
             subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=False)
             subprocess.run(["systemctl", "--user", "disable", "stretch_body_server.service"], check=False)
             if service_file_path.exists():
                 service_file_path.unlink()
+                print(f"Removed the service from {service_file_path}")
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
             
         elif action == "start":
-            user_systemd_dir.mkdir(parents=True, exist_ok=True)
-            with open(service_file_path, "w") as f:
-                f.write(get_service_file_content(log_level))
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "--user", "start", "stretch_body_server.service"], check=True)
             
         elif action == "stop":
             subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=True)
             
         elif action == "restart":
-            user_systemd_dir.mkdir(parents=True, exist_ok=True)
-            with open(service_file_path, "w") as f:
-                f.write(get_service_file_content(log_level))
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "--user", "restart", "stretch_body_server.service"], check=True)
             
         elif action == "status":
+            print(f"\n\n----- Stretch Body Server Background Service Status -----")
+            print(f"Installed at: {service_file_path}\n\n")
             subprocess.run(["systemctl", "--user", "status", "stretch_body_server.service", "--no-pager"], check=False)
             subprocess.run(["journalctl", "--user", "-u", "stretch_body_server.service", "-n", "20", "--no-pager"], check=False)
             
-        logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service: SUCCESS")
+        # logger.info(f"{action_with_suffix.capitalize()} Stretch Body Server systemd service: SUCCESS")
         return True
     except Exception as e:
         logger.error(f"Error while {action_with_suffix} Stretch Body Server system service: {e}")
         return False
 
-def start_daemon() -> bool:
+def install_and_start_daemon() -> bool:
     """Installs the systemctl service, and then calls restart to (re)start it, if there isn't already an active non-daemon server running. Note: It calls restart in case a service is already running."""
     if not _manage_daemon("install"):
         return False
@@ -552,6 +561,22 @@ def daemon_is_running() -> bool:
             check=False
         )
         if result.returncode == 0 and result.stdout.strip() == 'active':
+            return True
+        else:
+            return False
+    except FileNotFoundError:
+        print("Error: 'systemctl' command not found. Are you on a systemd Linux machine?")
+        return False
+    
+def daemon_is_installed() -> bool:
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-enabled', 'stretch_body_server.service'],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0 and result.stdout.strip() != 'not-found':
             return True
         else:
             return False
