@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
-from pathlib import Path
 import argparse
-from stretch4_body.utils.file_access_utils import setup_shared_directory, acquire_lock_if_available
 from stretch4_body.core.gamepad_control_mappings import ControlMapping
+from stretch4_body.core.gamepad_controller import check_gamepad_teleop_singleton
 from stretch4_body.core.gamepad_teleop import GamePadTeleop
 from stretch4_body.core.hello_utils import print_stretch_re_use
-
-def check_gamepad_teleop_singleton():
-   tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_teleop_singleton.lock"
-
-   setup_shared_directory(Path(tmp_file).parent)
-   
-   if not acquire_lock_if_available(tmp_file, remove_if_exists_and_unused=True):
-      return False
-   return True
 
 
 if __name__ == "__main__":
