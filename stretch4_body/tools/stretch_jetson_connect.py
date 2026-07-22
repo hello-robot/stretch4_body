@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stretch_connect_jetson — Full Jetson bring-up: power cycle, SSH, Wi-Fi, terminal.
+stretch_jetson_connect — Full Jetson bring-up: power cycle, SSH, Wi-Fi, terminal.
 
 Phases:
   [1/5] Power cycle Jetson via PowerPeriph (aux-CPU off → on)
@@ -10,9 +10,9 @@ Phases:
   [5/5] Open interactive SSH terminal
 
 Usage:
-    stretch_connect_jetson                   # full flow
-    stretch_connect_jetson --skip-power-cycle  # Jetson already on
-    stretch_connect_jetson --skip-wifi         # Wi-Fi already configured
+    stretch_jetson_connect                   # full flow
+    stretch_jetson_connect --skip-power-cycle  # Jetson already on
+    stretch_jetson_connect --skip-wifi         # Wi-Fi already configured
 """
 
 import os
@@ -22,6 +22,8 @@ import time
 
 import click
 
+import stretch4_body.subsystem.power_periph as pp_mod
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -29,7 +31,7 @@ import click
 JETSON_HOST    = "192.168.1.101"
 JETSON_USER    = "jetson1"
 JETSON_SSH     = f"{JETSON_USER}@{JETSON_HOST}"
-JETSON_PASS    = "hello2020"          # default factory password
+JETSON_PASS: str = ""                 # set by prompt in main()
 SSH_OPTS       = [
     "-o", "StrictHostKeyChecking=no",
     "-o", "UserKnownHostsFile=/dev/null",
@@ -79,7 +81,6 @@ def power_cycle_jetson() -> None:
     """Power-cycle the Jetson via PowerPeriph aux-CPU control."""
     click.secho("\n[1/5] Power cycling Jetson via PowerPeriph…", fg="cyan", bold=True)
 
-    import stretch4_body.subsystem.power_periph as pp_mod
     pp = pp_mod.PowerPeriph()
     if not pp.startup():
         click.secho("  ⚠  PowerPeriph startup failed — skipping power cycle.", fg="yellow")
@@ -323,10 +324,17 @@ def main(skip_power_cycle: bool, skip_wifi: bool) -> None:
     """
     Full Jetson bring-up: power cycle, SSH setup, Wi-Fi, and interactive terminal.
     """
+    global JETSON_PASS
+
     click.clear()
     click.secho("=========================================", fg="cyan", bold=True)
     click.secho("   Stretch Connect Jetson                ", fg="cyan", bold=True)
     click.secho("=========================================", fg="cyan", bold=True)
+
+    JETSON_PASS = click.prompt(
+        "  Enter Jetson password (e.g. hello2020)",
+        default="hello2020", hide_input=True,
+    )
 
     if not skip_power_cycle:
         power_cycle_jetson()

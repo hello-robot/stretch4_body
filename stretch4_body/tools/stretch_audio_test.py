@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import grp
+import pwd
 import getpass
 import argparse
 import subprocess
@@ -138,8 +139,6 @@ def check_audio_manager(usb_cards):
         print_warn('wpctl not available — cannot confirm devices in the audio manager')
         return None, None, None
 
-    # Match against the USB card name(s) found via ALSA, falling back to any
-    # non-"Built-in" device if that fails.
     usb_names = [c['name'] for c in usb_cards]
 
     def find_match(entries):
@@ -151,9 +150,19 @@ def check_audio_manager(usb_cards):
                 return e
         return None
 
-    device = find_match(pw['Devices'])
     sink   = find_match(pw['Sinks'])
     source = find_match(pw['Sources'])
+
+    resolved = sink or source
+    device = None
+    if resolved:
+        target_name = resolved['name']
+        for e in pw['Devices']:
+            if e['name'].lower() in target_name.lower() or target_name.lower() in e['name'].lower():
+                device = e
+                break
+    if device is None:
+        device = find_match(pw['Devices'])
 
     print_result(device is not None, f"Audio device: {device['name']}" if device else 'No matching USB audio device in PipeWire')
     print_result(sink is not None,   f"Speaker (sink): {sink['name']}" if sink else 'No matching speaker (sink) in PipeWire')
@@ -163,8 +172,23 @@ def check_audio_manager(usb_cards):
         print_warn(f"{sink['name']} is not the default output — audio may play elsewhere")
     if source and not source['default']:
         print_warn(f"{source['name']} is not the default input — recordings may use another mic")
+        if set_default_pipewire_node(source['id']):
+            print_result(True, f"Set {source['name']} as the default input")
+            source['default'] = True
+        else:
+            print_warn(f"Could not set {source['name']} as the default input")
 
     return device, sink, source
+
+
+def set_default_pipewire_node(node_id):
+    """Set a PipeWire node (by wpctl id) as the default sink/source."""
+    try:
+        r = subprocess.run(['wpctl', 'set-default', str(node_id)],
+                            capture_output=True, text=True, timeout=5)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
 
 
 def check_audio_group():
@@ -191,6 +215,101 @@ def check_audio_group():
 
     print_result(True, 'Group membership is active in the current session')
     return True
+
+
+def _pcm_device_paths(card_index, direction):
+    """Return existing /dev/snd/pcmC<card_index>D*<direction> paths.
+
+    direction: 'p' for playback (speaker), 'c' for capture (microphone).
+    """
+    snd_dir = '/dev/snd'
+    if not os.path.isdir(snd_dir):
+        return []
+    pattern = re.compile(rf'^pcmC{card_index}D\d+{direction}$')
+    return [os.path.join(snd_dir, name) for name in sorted(os.listdir(snd_dir)) if pattern.match(name)]
+
+
+def _describe_pid(pid):
+    """Best-effort (process name, username) for a PID; '?' if unreadable."""
+    try:
+        with open(f'/proc/{pid}/comm') as f:
+            comm = f.read().strip()
+    except OSError:
+        comm = '?'
+    try:
+        user = pwd.getpwuid(os.stat(f'/proc/{pid}').st_uid).pw_name
+    except (OSError, KeyError):
+        user = '?'
+    return comm, user
+
+
+_EXPECTED_AUDIO_SERVER_PROCESSES = {'pipewire', 'pipewire-pulse', 'wireplumber', 'pulseaudio'}
+
+
+def find_device_holders(card_index, direction):
+    """Return [(pid, comm, user), ...] holding the card's speaker/mic device
+    node open (excluding the system's own PipeWire/PulseAudio daemons), or
+    None if 'fuser' isn't installed to check with.
+    """
+    holders = []
+    seen_pids = set()
+    for path in _pcm_device_paths(card_index, direction):
+        try:
+            r = subprocess.run(['fuser', path], capture_output=True, text=True, timeout=5)
+        except FileNotFoundError:
+            return None
+        out = r.stdout.strip()
+        if ':' in out:
+            out = out.split(':', 1)[1]
+        for tok in out.split():
+            m = re.match(r'(\d+)', tok)
+            if not m:
+                continue
+            pid = int(m.group(1))
+            if pid == os.getpid() or pid in seen_pids:
+                continue
+            seen_pids.add(pid)
+            comm, user = _describe_pid(pid)
+            if comm in _EXPECTED_AUDIO_SERVER_PROCESSES:
+                continue
+            holders.append((pid, comm, user))
+    return holders
+
+
+def _format_holders(holders):
+    return ', '.join(f'PID {pid} ({comm}, user {user})' for pid, comm, user in holders)
+
+
+def check_device_availability(usb_cards):
+    print_section('Device Availability')
+    if not usb_cards:
+        print_warn('No USB audio card to check')
+        return {}, {}
+
+    speaker_holders = {}
+    mic_holders = {}
+    for c in usb_cards:
+        idx = c['index']
+        pb = find_device_holders(idx, 'p')
+        cap = find_device_holders(idx, 'c')
+
+        if pb is None:
+            print_warn(f"card {idx}: cannot check speaker availability ('fuser' not installed)")
+        elif pb:
+            print_result(False, f"card {idx} speaker: unavailable — held by {_format_holders(pb)}")
+            speaker_holders[idx] = pb
+        else:
+            print_result(True, f'card {idx} speaker: available')
+
+        if cap is None:
+            print_warn(f"card {idx}: cannot check microphone availability ('fuser' not installed)")
+        elif cap:
+            print_result(False, f"card {idx} microphone: unavailable — held by {_format_holders(cap)}")
+            mic_holders[idx] = cap
+        else:
+            print_result(True, f'card {idx} microphone: available')
+
+    return speaker_holders, mic_holders
 
 
 # ==============================================================================
@@ -237,8 +356,6 @@ def interactive_mic_test(source):
 
     try:
         click.echo(f'  Recording for {duration} seconds...')
-        # `timeout` cleanly stops pw-record after `duration` seconds — pw-record
-        # itself has no duration flag and records until killed.
         subprocess.run(['timeout', str(duration), 'pw-record', *target_args,
                          '--format', 's16', '--rate', '44100', '--channels', '1', tmp_path])
 
@@ -275,9 +392,26 @@ def main():
     results['Microphone in Audio Manager']  = None if source is None and device is None else source is not None
     results['Audio Group']                  = check_audio_group()
 
+    speaker_holders, mic_holders = check_device_availability(usb_cards)
+    results['Speaker Available']    = None if not usb_cards else not speaker_holders
+    results['Microphone Available'] = None if not usb_cards else not mic_holders
+
     if not args.check_only:
-        results['Speaker Test']    = interactive_speaker_test(sink)
-        results['Microphone Test'] = interactive_mic_test(source)
+        if any(speaker_holders.values()):
+            print_section('Speaker Test')
+            who = _format_holders([h for holders in speaker_holders.values() for h in holders])
+            print_result(False, f'Speaker unavailable — held by {who}')
+            results['Speaker Test'] = False
+        else:
+            results['Speaker Test'] = interactive_speaker_test(sink)
+
+        if any(mic_holders.values()):
+            print_section('Microphone Test')
+            who = _format_holders([h for holders in mic_holders.values() for h in holders])
+            print_result(False, f'Microphone unavailable — held by {who}')
+            results['Microphone Test'] = False
+        else:
+            results['Microphone Test'] = interactive_mic_test(source)
 
     print_section('Summary')
     all_pass = True
