@@ -88,8 +88,10 @@ class DetectFrameSettled:
 
         is_stable = False
         if self.prev_gray is not None:
-            diff = cv2.absdiff(self.prev_gray, gray)
-            if np.mean(diff) < threshold:
+            diff = cv2.absdiff(self.prev_gray, gray).astype(np.float32)
+            diff_blocks = cv2.resize(diff, (8, 8), interpolation=cv2.INTER_AREA)
+            max_block_diff = np.max(diff_blocks)
+            if max_block_diff < threshold:
                 self.stable_frame_count += 1
             else:
                 self.stable_frame_count = 0 

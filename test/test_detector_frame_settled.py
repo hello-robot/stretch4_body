@@ -98,5 +98,23 @@ def test_ema_gating_stability_and_local_motion():
     assert not detector.check_stability_ema(motion_frame, threshold=3.0)
     assert not detector.has_frame_been_stable()
 
+def test_continuous_movement_3s():
+    detector = DetectFrameSettled(required_stable_frames=3)
+    start_time = time.time()
+    frame_idx = 0
+    
+    while time.time() - start_time < 3.0:
+        # Create a frame with continuous movement (moving block)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        # Shift a block of size 150x150 to simulate a hand/person moving
+        x_pos = (frame_idx * 15) % 450
+        cv2.rectangle(frame, (x_pos, 150), (x_pos + 150, 300), (255, 255, 255), -1)
+        
+        is_stable = detector.check_stability_diff(frame, threshold=5.0)
+        assert not is_stable, f"Frame incorrectly detected as stable at frame {frame_idx}"
+        
+        frame_idx += 1
+        time.sleep(0.1)
+
 if __name__ == "__main__":
     pytest.main([__file__])
