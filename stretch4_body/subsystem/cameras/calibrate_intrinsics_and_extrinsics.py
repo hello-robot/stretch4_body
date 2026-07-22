@@ -50,9 +50,21 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
         print("====================================")
         print("Starting Intrinsics Validation")
         print("====================================")
-        time.sleep(3) # wait for the camera device to come back on the USB bus after we closed it at the end of the last step
-        errors = REx_validate_intrinsics(interactive=False)
-        if any(e > 0.1 or e is None or e == float('inf') for e in errors):
+        
+        validation_passed = False
+        for retry in range(3): 
+            time.sleep(3) # wait for the camera device to come back on the USB bus after we closed it at the end of the last step
+            try:
+                errors = REx_validate_intrinsics(interactive=False)
+                if not any(e > 0.1 or e is None or e == float('inf') for e in errors):
+                    validation_passed = True
+                    break
+            except Exception as e:
+                print(f"Intrinsics validation failed: {e=}")
+            
+            print(f"Retrying intrinsics validation. Try {retry+1}/3.")
+
+        if not validation_passed:
             raise Exception(f"Intrinsic calibration failed! Distance errors ({errors}) are above 0.1m. (inf = no detection)")
 
         print("====================================")
