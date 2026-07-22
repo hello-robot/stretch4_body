@@ -55,13 +55,12 @@ customized such as manage_shutdown(), manage_fn_button() and setting precision_m
 
 
 class GamePadTeleop(Device):
-    def __init__(self, robot = None, print_dongle_status = True, lock=None, use_server=False,cb_loop=None):
+    def __init__(self, robot = None, lock=None, use_server=False,cb_loop=None):
         """
         Main controller for Stretch's gamepad that ships with the robot.
 
         Args:
             robot (robot.Robot, optional): A robot instance. If None, one will be created.
-            print_dongle_status (bool, optional): Print Dongle status when not plugged into.
             lock (_thread.lock, optional): Pass on lock object to be used while calling robot instance methods.
             use_server (bool, optional): If True, use RobotClient instead of Robot.
             cb_loop (function, optional): A callback function to be called in the main loop.
@@ -73,7 +72,7 @@ class GamePadTeleop(Device):
         self.control_mapping = ControlMapping.JOINT_SPACE
         self.contact_sensitivity_profile = GuardedContactSensitivity.MEDIUM
 
-        self.gamepad_controller = gc.GamePadController(print_dongle_status=print_dongle_status)
+        self.gamepad_controller = gc.GamePadController()
         self.precision_mode = 0.0
         self.use_arm_lift_mode = False
         self.robot = robot

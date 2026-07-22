@@ -131,11 +131,10 @@ class GamePadController(Device):
         +/- VOYEE Wired Xbox 360 Controller mostly worked, but it had various issues including false middle LED button presses, phantom shoulder button presses, and low joystick sensitivity that made small motions more difficult to execute.
     '''
 
-    def __init__(self, print_events=False, print_dongle_status=True, is_xbox_one=False):
+    def __init__(self, print_events=False, is_xbox_one=False):
         super().__init__(name='gamepad_controller', req_params=False)
 
         self.print_events = print_events
-        self.print_dongle_status = print_dongle_status
 
         self.rumble_effect_id = -1
 
@@ -201,6 +200,8 @@ class GamePadController(Device):
         if not ignore_singleton_check and not check_gamepad_teleop_singleton():
             raise RuntimeError("Gamepad teleop is already running!")
         
+        self.logger.warning("Waiting for Gamepad Dongle...")
+
         return True
 
     def _thread_target(self):
@@ -226,15 +227,13 @@ class GamePadController(Device):
     def poll_till_gamepad_dongle_present(self):
         with self.lock:
             self.is_gamepad_active = False
-        if self.print_dongle_status:
-            qprint("Waiting for Gamepad Dongle...", fg="yellow")
         try:
             self.device_path = find_first_gamepad()
             if self.device_path:
                 # Open non-blocking; do NOT grab to allow other readers if needed
                 self.dev = InputDevice(self.device_path)
                 self.rumble_effect_id = -1
-                click.secho(f"Gamepad Dongle FOUND! ({self.dev.name})", fg="green", bold=True)
+                self.logger.info(f"Gamepad Dongle FOUND! ({self.dev.name})")
                 with self.lock:
                     self.is_gamepad_active = True
         except Exception:
@@ -275,7 +274,7 @@ class GamePadController(Device):
                 self.last_event_ts = time.monotonic()
             self.update_button_encodings(events)
         except (UnpluggedError, OSError):
-            click.secho("Gamepad Dongle DISCONNECTED...", fg="red", bold=True)
+            self.logger.error("Gamepad Dongle DISCONNECTED...")
             try:
                 self.dev.close()
             except Exception:
