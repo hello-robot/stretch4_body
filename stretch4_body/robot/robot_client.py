@@ -897,6 +897,10 @@ class WristJointClient(SubsystemClient):
         Check if homed.
         """
         return self.status.get('pos_calibrated', False)
+    
+
+    def is_moving(self):
+        return self.status['is_moving']
 
     def move_by(self, x_r, v_r=None, a_r=None):
         """
@@ -1309,19 +1313,13 @@ class EndOfArmClient(SubsystemClient):
 
     def wait_on_motion_start(self,joint_names,timeout=0.5):
         def start_moving():
-            start = True
-            for n in joint_names:
-                if not self.status[n].is_moving():
-                    start = False
-            return  start
+            start = self.is_moving(joint_names)
+            return start
         self._wait_on_status(start_moving, timeout)
 
     def wait_on_motion_finish(self,joint_names,timeout=15.0):
         def done_moving():
-            done = True
-            for n in joint_names:
-                if self.subsystems[n].is_moving():
-                    done = False
+            done = not self.is_moving(joint_names)
             return  done
         self._wait_on_status(done_moving, timeout)
 
@@ -1336,9 +1334,9 @@ class EndOfArmClient(SubsystemClient):
             req_cal = self.robot_params[self.name].get('devices', {}).get(joint, {}).get('req_calibration', True)
             return not req_cal or self.status.get(joint, {}).get('pos_calibrated', False)
         
-    def is_moving(self):
+    def is_moving(self, joint_names:list[str]|None = None):
         req = False
-        for j in self.joints:
+        for j in joint_names or self.joints:
             req = req or self.status[j]['is_moving']
         return req
     
