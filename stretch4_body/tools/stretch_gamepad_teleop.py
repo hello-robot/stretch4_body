@@ -13,7 +13,7 @@ if __name__ == "__main__":
    parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
    args=parser.parse_args()
 
-   if not check_gamepad_teleop_singleton():
+   if not check_gamepad_teleop_singleton(acquire=False):
       print("Gamepad teleop is already running!")
       exit(1)
    
