@@ -194,10 +194,9 @@ class RobotClient(SubsystemClient):
                  if n not in self.subsystems:
                      raise ValueError(f"{n} is not a subsystem in {self.subsystems.keys()}")
                  if hasattr(self.subsystems[n],'is_moving'):
-                    print(f"{n=} {self.subsystems[n].is_moving()=}")
+                    # print(f"{n=} {self.subsystems[n].is_moving()=}")
                     if self.subsystems[n].is_moving():
                         done = False
-            print(f"{done=}")
             return done
         self._wait_on_status(done_moving, timeout, do_pull=True)
 
