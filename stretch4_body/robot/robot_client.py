@@ -670,9 +670,9 @@ class OmniBaseClient(SubsystemClient):
         SubsystemClient.stop(self)
 
     def is_moving(self):
-        return self.status['wheel_0']['is_moving_filtered'] \
-            and self.status['wheel_1']['is_moving_filtered'] \
-                and self.status['wheel_2']['is_moving_filtered']
+        return self.status['wheel_0']['is_mg_moving'] \
+            and self.status['wheel_1']['is_mg_moving'] \
+                and self.status['wheel_2']['is_mg_moving']
 
 
 # #####################################################################
@@ -748,7 +748,7 @@ class PrismaticJointClient(SubsystemClient):
         return self.status.get('motor', {}).get('pos_calibrated', False)
     
     def is_moving(self):
-        return self.status['motor']['is_moving_filtered']
+        return self.status['motor']['is_mg_moving']
     
     def enable_safety(self):
         """
