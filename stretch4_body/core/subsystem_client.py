@@ -168,13 +168,6 @@ class SubsystemClient(Device):
     def get_subsystem(self,s):
         return self.subsystems.get(s, None)
 
-    #Default APIs to override
-    def is_homed(self):
-        return True
-
-    def is_moving(self):
-        return False
-
     # ########## Server Admin #############
     def is_server_active(self):
         return self.client.connected
