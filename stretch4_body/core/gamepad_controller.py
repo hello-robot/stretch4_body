@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from evdev import InputDevice, ecodes, list_devices
 from select import select
 import glob
+from stretch4_body.utils.file_access_utils import setup_shared_directory, acquire_lock_if_available
+from pathlib import Path
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.hello_utils import qprint
@@ -17,6 +19,16 @@ The GamePadController is a threading class that polls for the gamepad events by 
 to the gamepad's USB dongle plugged into the robot. It processes these events and makes
 an easy to gamepad state available as a dictionary - GamePadController.get_state()
 """
+
+def check_gamepad_teleop_singleton():
+   tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_teleop_singleton.lock"
+
+   setup_shared_directory(Path(tmp_file).parent)
+   
+   if not acquire_lock_if_available(tmp_file, remove_if_exists_and_unused=True):
+      return False
+   return True
+
 
 # --- Utilities to discover a joystick device --------------------------------
 WANTED_KEY_CODES = {
@@ -174,7 +186,7 @@ class GamePadController(Device):
         self.thread = None
         self.thread_shutdown_flag = threading.Event()
 
-    def startup(self):
+    def startup(self, ignore_singleton_check:bool=False):
         super().startup()
         if self.thread is not None:
             self.thread_shutdown_flag.set()
@@ -185,6 +197,10 @@ class GamePadController(Device):
         self.thread.daemon = True
         self.thread_shutdown_flag.clear()
         self.thread.start()
+
+        if not ignore_singleton_check and not check_gamepad_teleop_singleton():
+            raise RuntimeError("Gamepad teleop is already running!")
+        
         return True
 
     def _thread_target(self):
