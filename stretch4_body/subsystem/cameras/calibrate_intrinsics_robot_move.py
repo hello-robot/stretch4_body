@@ -116,10 +116,10 @@ class RobotMovementController:
             # Polling delay roughly equivalent to standard camera framerates (e.g., 30fps)
             time.sleep(1 / 30)
 
-    def _wait_camera_to_stabilize(self):
+    def _wait_image_to_settle(self):
         self.calibration.reset_stability()
         self.calibration.log_message(
-            "Waiting for the camera to stabilize.", LogLevels.INFO
+            "Waiting for the camera image to settle. Please make sure there is no movement around the robot.", LogLevels.INFO
         )
         while not self.calibration.has_frame_been_stable() and not self._stop_event.is_set():
             time.sleep(0.1)
@@ -128,7 +128,7 @@ class RobotMovementController:
         """Background thread sequence containing the grid mapping logic."""
         self.left_button_counter = ButtonPressCounter("left_button_pressed")
 
-        self._wait_camera_to_stabilize()
+        self._wait_image_to_settle()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             self._movement_gamepad()
@@ -317,7 +317,7 @@ class RobotMovementController:
             self.robot.wait_command(timeout=60)
             time.sleep(self.delay)
 
-            self._wait_camera_to_stabilize()
+            self._wait_image_to_settle()
 
             self.calibration.request_capture()
 

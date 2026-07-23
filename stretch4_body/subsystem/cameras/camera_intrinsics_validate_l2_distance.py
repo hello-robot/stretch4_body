@@ -286,12 +286,17 @@ Press CTRL+C in the terminal to go to the next pose or abort.
             print(f"Pose {idx+1}/{len(self.poses)} reached. Waiting for camera to settle...")
             self.distances = {RGBCameras.left().name: [], RGBCameras.right().name: [], RGBCameras.center().name: []}
             
-            
-            settled_frame = self._get_settled_frame(timeout=5.0)
-            if settled_frame is None:
+            is_settled = False
+            for retry in range(5):
+                settled_frame = self._get_settled_frame(timeout=5.0)
+                if settled_frame is not None:
+                    print("Camera image settled.")
+                    is_settled = True
+                    break
+                print(f"Camera image did not settle, please make sure there is no movement around the robot. Retry {retry+1}/5.")
+            if not is_settled:
                 raise RuntimeError("Camera image did not settle.")
-            else:
-                print("Camera image settled.")
+
 
             # Report errors
             known_dists = pose['known_distance_m'] # [left, center, right]
