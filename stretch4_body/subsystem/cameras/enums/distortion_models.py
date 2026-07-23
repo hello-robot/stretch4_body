@@ -2,6 +2,8 @@ from enum import Enum, auto
 import cv2
 import numpy as np
 
+_fisheye_flags = cv2.fisheye if hasattr(cv2.fisheye, "CALIB_RECOMPUTE_EXTRINSIC") else cv2
+
 
 class DistortionModels(Enum):
     equidistant = auto()
@@ -81,9 +83,9 @@ class DistortionModels(Enum):
 
     def get_flags(self) -> int:
         if self == DistortionModels.equidistant:  # aka fisheye
-            return cv2.fisheye.CALIB_USE_INTRINSIC_GUESS
+            return _fisheye_flags.CALIB_USE_INTRINSIC_GUESS
         if self == DistortionModels.equidistant_with_recompute_extrinsics:  # aka fisheye
-            return cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC + cv2.fisheye.CALIB_USE_INTRINSIC_GUESS + cv2.fisheye.CALIB_CHECK_COND + cv2.fisheye.CALIB_FIX_SKEW
+            return _fisheye_flags.CALIB_RECOMPUTE_EXTRINSIC + _fisheye_flags.CALIB_USE_INTRINSIC_GUESS + _fisheye_flags.CALIB_CHECK_COND + _fisheye_flags.CALIB_FIX_SKEW
         elif self == DistortionModels.rational_polynomial:
             return (cv2.CALIB_RATIONAL_MODEL
                 | cv2.CALIB_FIX_ASPECT_RATIO
