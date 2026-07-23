@@ -169,8 +169,8 @@ class CalibrateIntrinsics:
                 image_points,
             ) = board.matchImagePoints(charuco_corners, charuco_ids, None, None)
 
-        object_points = np.array(object_points, dtype=np.float32)
-        image_points = np.array(image_points, dtype=np.float32)
+        object_points = np.array(object_points, dtype=np.float32).reshape(-1, 1, 3)
+        image_points = np.array(image_points, dtype=np.float32).reshape(-1, 1, 2)
 
         return (
             object_points,

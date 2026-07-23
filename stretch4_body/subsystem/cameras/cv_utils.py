@@ -382,6 +382,10 @@ def camera_calibrate(all_object_points, all_image_points, width, height, distort
         if distortion_coefficients is not None and xi is not None:
             distortion_coefficients = np.append(distortion_coefficients.flatten(), xi.flatten())
     else:
+        if distortion_model.is_fisheye():
+            all_object_points = [np.asarray(p, dtype=np.float32).reshape(1, -1, 3) for p in all_object_points]
+            all_image_points = [np.asarray(p, dtype=np.float32).reshape(1, -1, 2) for p in all_image_points]
+
         # Normal fisheye and non-fisheye:
         (
             reprojection_error,
