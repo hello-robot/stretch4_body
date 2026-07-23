@@ -308,7 +308,12 @@ class CalibrateIntrinsics:
         try:
             if charuco_corners is not None and len(charuco_corners) > 0:
                 annotated_img = aruco.drawDetectedCornersCharuco(
-                    annotated_img, charuco_corners, charuco_ids, color
+                    annotated_img,
+                    np.asarray(charuco_corners, dtype=np.float32).reshape(-1, 1, 2),
+                    np.asarray(charuco_ids, dtype=np.int32).reshape(-1, 1)
+                    if charuco_ids is not None
+                    else None,
+                    color,
                 )
             # annotated_img = aruco.drawDetectedMarkers(
             #     annotated_img, marker_corners, marker_ids, color
