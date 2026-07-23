@@ -552,7 +552,11 @@ class CalibrateIntrinsicsThreeHeadCameras(CalibrateIntrinsics):
             )
 
     def save_calibration(self):
-        [c.save_calibration() for c in self.calibration_instances]
+        for c in self.calibration_instances:
+            try:
+                c.save_calibration()
+            except Exception as e:
+                self.log_message(f"Failed to save calibration for {c.camera_type.name}. {e=}", LogLevels.ERROR)
 
     def log_message(self, text: str, level: LogLevels):
         # [c.log_message(text, level) for c in self.calibration_instances]
