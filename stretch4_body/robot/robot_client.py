@@ -137,6 +137,21 @@ class RobotClient(SubsystemClient):
             if hasattr(s,'is_homed'):
                 ready = ready and s.is_homed()
         return ready
+    
+    def is_moving(self):
+        """
+        Check if any joints are moving.
+
+        Returns
+        -------
+        bool
+            True if any joint is moving
+        """
+        ready = True
+        for s in self.subsystems.values():
+            if hasattr(s,'is_moving'):
+                ready = ready and s.is_moving()
+        return ready
 
     def wait_on_motion_start(self,subsystem_names,timeout=0.5):
         """
@@ -158,7 +173,7 @@ class RobotClient(SubsystemClient):
             return  start
         self._wait_on_status(start_moving, timeout, do_pull=True)
 
-    def wait_on_motion_finish(self,subsystem_names,timeout=15.0):
+    def wait_on_motion_finish(self,subsystem_names,timeout=15.0,wait_on_motion_start:bool=True):
         """
         Wait for the specified subsystems to finish moving.
         
@@ -168,14 +183,21 @@ class RobotClient(SubsystemClient):
             List of subsystem names to check.
         timeout : float, optional
             Timeout in seconds, by default 15.0.
+        wait_on_motion_start: bool, optional
+            Call wait_on_motion_start() to wait for the motion to start before waiting on motion to finish.
         """
+        if wait_on_motion_start:
+            self.wait_on_motion_start(subsystem_names)
         def done_moving():
             done = True
             for n in subsystem_names:
-                if n in self.subsystems and hasattr(self.subsystems[n],'is_moving'):
+                 if n not in self.subsystems:
+                     raise ValueError(f"{n} is not a subsystem in {self.subsystems.keys()}")
+                 if hasattr(self.subsystems[n],'is_moving'):
+                    # print(f"{n=} {self.subsystems[n].is_moving()=}")
                     if self.subsystems[n].is_moving():
                         done = False
-            return  done
+            return done
         self._wait_on_status(done_moving, timeout, do_pull=True)
 
     def set_guarded_contact_sensitivity(self, mode_name=None):
@@ -654,6 +676,11 @@ class OmniBaseClient(SubsystemClient):
         self.enable_freewheel_mode()
         SubsystemClient.stop(self)
 
+    def is_moving(self):
+        return self.status['wheel_0']['is_mg_moving'] \
+            and self.status['wheel_1']['is_mg_moving'] \
+                and self.status['wheel_2']['is_mg_moving']
+
 
 # #####################################################################
 
@@ -726,7 +753,10 @@ class PrismaticJointClient(SubsystemClient):
             True if the joint needs to be homed/calibrated.
         """
         return self.status.get('motor', {}).get('pos_calibrated', False)
-
+    
+    def is_moving(self):
+        return self.status['motor']['is_mg_moving']
+    
     def enable_safety(self):
         """
         Enable safety mode.
@@ -867,6 +897,10 @@ class WristJointClient(SubsystemClient):
         Check if homed.
         """
         return self.status.get('pos_calibrated', False)
+    
+
+    def is_moving(self):
+        return self.status['is_moving']
 
     def move_by(self, x_r, v_r=None, a_r=None):
         """
@@ -1277,21 +1311,15 @@ class EndOfArmClient(SubsystemClient):
         if wait_on_completion:
             self._wait_on_routine(rid,timeout=timeout)
 
-    def TODOwait_on_motion_start(self,joint_names,timeout=0.5):
+    def wait_on_motion_start(self,joint_names,timeout=0.5):
         def start_moving():
-            start = True
-            for n in joint_names:
-                if not self.status[n].is_moving():
-                    start = False
-            return  start
+            start = self.is_moving(joint_names)
+            return start
         self._wait_on_status(start_moving, timeout)
 
-    def TODOwait_on_motion_finish(self,joint_names,timeout=15.0):
+    def wait_on_motion_finish(self,joint_names,timeout=15.0):
         def done_moving():
-            done = True
-            for n in joint_names:
-                if self.subsystems[n].is_moving():
-                    done = False
+            done = not self.is_moving(joint_names)
             return  done
         self._wait_on_status(done_moving, timeout)
 
@@ -1305,6 +1333,12 @@ class EndOfArmClient(SubsystemClient):
         else:
             req_cal = self.robot_params[self.name].get('devices', {}).get(joint, {}).get('req_calibration', True)
             return not req_cal or self.status.get(joint, {}).get('pos_calibrated', False)
+        
+    def is_moving(self, joint_names:list[str]|None = None):
+        req = False
+        for j in joint_names or self.joints:
+            req = req or self.status[j]['is_moving']
+        return req
     
     def is_tool_present(self,class_name):
         """
