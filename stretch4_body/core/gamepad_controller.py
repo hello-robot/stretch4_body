@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from evdev import InputDevice, ecodes, list_devices
 from select import select
 import glob
-from stretch4_body.utils.file_access_utils import setup_shared_directory, acquire_lock_if_available
+from stretch4_body.utils.file_access_utils import is_locked, setup_shared_directory, acquire_lock_if_available
 from pathlib import Path
 
 from stretch4_body.core.device import Device
@@ -20,10 +20,14 @@ to the gamepad's USB dongle plugged into the robot. It processes these events an
 an easy to gamepad state available as a dictionary - GamePadController.get_state()
 """
 
-def check_gamepad_teleop_singleton():
+def check_gamepad_teleop_singleton(acquire:bool=True):
+   """Returns True if lock is available and, if acquire is True, has been acquired. Otherwise returns False."""
    tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_teleop_singleton.lock"
 
    setup_shared_directory(Path(tmp_file).parent)
+
+   if not acquire:
+       return not is_locked(tmp_file)
    
    if not acquire_lock_if_available(tmp_file, remove_if_exists_and_unused=True):
       return False
