@@ -351,45 +351,53 @@ def build_recursive_menu(sample_status):
             print(f"{Fore.RED}Invalid input{Style.RESET_ALL}")
             time.sleep(1)
 
-def setup_rerun_blueprint(rs, selected_fields):
+def setup_rerun_blueprint(rs, selected_fields, fields_x=None, fields_y=None):
     """
     Sets up a Rerun blueprint so that graphs are organized into fewer 
     TimeSeries views instead of spanning hundreds of default views.
+    Also handles Spatial2DViews for custom X-Y plots.
     """
     try:
         import rerun.blueprint as rrb
         
+        ts_views = []
         if not selected_fields or 'all' in selected_fields:
-            views = []
             for k in rs.keys():
                 if k == "timestamp":
                     continue
-                views.append(rrb.TimeSeriesView(origin=f"robot/{k}", name=k, visible=False))
+                ts_views.append(rrb.TimeSeriesView(origin=f"robot/{k}", name=k, visible=False))
             
-            views.append(rrb.TimeSeriesView(
+            ts_views.append(rrb.TimeSeriesView(
                 origin="robot/server/control_loop/avg_rate_hz",
                 name="server.control_loop.avg_rate_hz",
                 visible=True
             ))
-            
-            if views:
-                blueprint = rrb.Blueprint(rrb.Tabs(*views))
-                rr.send_blueprint(blueprint)
+        else:
+            for sf in selected_fields:
+                if sf == 'all':
+                    ts_views.append(rrb.TimeSeriesView(origin="/", name="Data"))
+                else:
+                    ts_views.append(rrb.TimeSeriesView(origin=sf.replace('.', '/'), name=sf))
+                    
+        xy_views = []
+        if fields_x and fields_y:
+            for x_f, y_f in zip(fields_x, fields_y):
+                path = f"xy_plot/{x_f}_vs_{y_f}"
+                name_x = x_f[6:] if x_f.startswith("robot.") else x_f
+                name_y = y_f[6:] if y_f.startswith("robot.") else y_f
+                display_name = f"{name_y} vs {name_x}"
+                xy_views.append(rrb.Spatial2DView(origin=path, name=display_name))
+                
+        all_views = ts_views + xy_views
+        if not all_views:
             return
 
-        views = []
-        for sf in selected_fields:
-            if sf == 'all':
-                views.append(rrb.TimeSeriesView(origin="/", name="Data"))
-            else:
-                views.append(rrb.TimeSeriesView(origin=sf.replace('.', '/'), name=sf))
-                
-        if len(views) == 1:
-            layout = views[0]
-        elif len(views) <= 4:
-            layout = rrb.Grid(*views)
+        if len(all_views) == 1:
+            layout = all_views[0]
+        elif len(all_views) <= 4:
+            layout = rrb.Grid(*all_views)
         else:
-            layout = rrb.Tabs(*views)
+            layout = rrb.Tabs(*all_views)
             
         blueprint = rrb.Blueprint(layout)
         rr.send_blueprint(blueprint)
@@ -419,6 +427,84 @@ def validate_selected_fields_or_exit(rs, selected_fields):
         sys.exit(1)
 
 
+def validate_xy_fields_or_exit(rs, fields_x, fields_y):
+    if not fields_x or not fields_y:
+        return
+    
+    flat = flatten_status(rs, parent_key='robot')
+    paths = flat.keys()
+    
+    invalid_parts = []
+    for part in fields_x + fields_y:
+        if part not in paths:
+            invalid_parts.append(part)
+            
+    if invalid_parts:
+        print(f"\n[!] Error: The following fields provided via --fields_x or --fields_y do not exist: {', '.join(invalid_parts)}")
+        sys.exit(1)
+
+
+def log_xy_fields(flat_status, fields_x, fields_y):
+    if not fields_x or not fields_y:
+        return
+        
+    if not hasattr(log_xy_fields, "histories"):
+        log_xy_fields.histories = {}
+        
+    for x_field, y_field in zip(fields_x, fields_y):
+        if x_field in flat_status and y_field in flat_status:
+            x_val = flat_status[x_field]
+            y_val = flat_status[y_field]
+            if isinstance(x_val, bool):
+                x_val = 1 if x_val else 0
+            if isinstance(y_val, bool):
+                y_val = 1 if y_val else 0
+            
+            if isinstance(x_val, (int, float)) and isinstance(y_val, (int, float)):
+                key = f"{x_field}_vs_{y_field}"
+                if key not in log_xy_fields.histories:
+                    log_xy_fields.histories[key] = {'x': [], 'y': []}
+                
+                hist = log_xy_fields.histories[key]
+                hist['x'].append(x_val)
+                hist['y'].append(y_val)
+                # Cap the history at 2000 points to keep plotting extremely fast and memory-bounded
+                if len(hist['x']) > 2000:
+                    hist['x'].pop(0)
+                    hist['y'].pop(0)
+                
+                try:
+                    import numpy as np
+                    from matplotlib.figure import Figure
+                    from matplotlib.backends.backend_agg import FigureCanvasAgg
+                    
+                    fig = Figure(figsize=(7, 6), dpi=100)
+                    canvas = FigureCanvasAgg(fig)
+                    ax = fig.add_subplot(111)
+                    
+                    # Create scatter plot with semi-transparent points to visualize density
+                    ax.scatter(hist['x'], hist['y'], color='blue', alpha=0.6, s=15)
+                    
+                    # Label axes clearly with units/names
+                    name_x = x_field[6:] if x_field.startswith("robot.") else x_field
+                    name_y = y_field[6:] if y_field.startswith("robot.") else y_field
+                    ax.set_title(f"{name_y} vs {name_x}")
+                    ax.set_xlabel(name_x.split('.')[-1])
+                    ax.set_ylabel(name_y.split('.')[-1])
+                    ax.grid(True, linestyle='--', alpha=0.5)
+                    
+                    fig.tight_layout()
+                    canvas.draw()
+                    rgba = np.asarray(canvas.buffer_rgba())
+                    rgb = rgba[:, :, :3]
+                    
+                    path = f"xy_plot/{x_field}_vs_{y_field}"
+                    rr.log(path, rr.Image(rgb))
+                except Exception as e:
+                    # Fail silently to avoid breaking the telemetry loop if matplotlib errors out
+                    pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -428,7 +514,25 @@ def main():
             "from the start and end of the import using --start_seconds_offset and --end_seconds_offset.\n"
             "If --rerun is specified with --import, the whole file is imported and dumped into Rerun."
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Plot omnibase velocities as time-series in Rerun
+  stretch_status --fields robot.omnibase.x_vel robot.omnibase.y_vel robot.omnibase.theta_vel --rerun
+
+  # Plot current (y-axis) vs velocity (x-axis) for the omnibase wheels
+  stretch_status \\
+    --fields robot.omnibase.x_vel robot.omnibase.y_vel robot.omnibase.theta_vel \\
+    --fields_y robot.omnibase.wheel_0.current robot.omnibase.wheel_1.current robot.omnibase.wheel_2.current \\
+    --fields_x robot.omnibase.wheel_0.vel robot.omnibase.wheel_1.vel robot.omnibase.wheel_2.vel \\
+    --rate 1 --rerun
+"""
+    )
+    parser.add_argument(
+        "--history",
+        type=float,
+        default=None,
+        help="Read from offline logs. Specify how many minutes ago to show.",
     )
     parser.add_argument(
         "--rate",
@@ -477,7 +581,30 @@ def main():
         default=None,
         help="End offset in seconds relative to the end of the imported file (only works with --import).",
     )
+
+    parser.add_argument(
+        "--fields_x",
+        nargs="+",
+        default=None,
+        help="List of field prefixes/paths for the X-axis of 2D plots",
+    )
+    parser.add_argument(
+        "--fields_y",
+        nargs="+",
+        default=None,
+        help="List of field prefixes/paths for the Y-axis of 2D plots",
+    )
     args = parser.parse_args()
+
+    fields_x = args.fields_x
+    fields_y = args.fields_y
+
+    if (fields_x and not fields_y) or (fields_y and not fields_x):
+        parser.error("Both --fields_x and --fields_y must be provided together.")
+
+    if fields_x and fields_y:
+        if len(fields_x) != len(fields_y):
+            parser.error("The number of fields in --fields_x and --fields_y must match.")
 
     if (args.start_seconds_offset is not None or args.end_seconds_offset is not None) and args.import_file is None:
         parser.error("The --start_seconds_offset and --end_seconds_offset flags can only be used when --import is specified.")
@@ -517,7 +644,7 @@ def main():
         size_mb = os.path.getsize(zip_path) / (1024 * 1024)
         print(f"Export complete: {zip_path} ({size_mb:.2f} MB)")
         return
-
+    
     def _start_rerun():
         rr.init("stretch_status", spawn=False)
         rr.spawn(memory_limit="5GB")
@@ -625,9 +752,12 @@ def main():
                                 else:
                                     selected_fields = get_default_fields(rs)
 
+                                if fields_x and fields_y:
+                                    validate_xy_fields_or_exit(rs, fields_x, fields_y)
+
                                 if args.rerun:
                                     _start_rerun()
-                                    setup_rerun_blueprint(rs, selected_fields)
+                                    setup_rerun_blueprint(rs, selected_fields, fields_x, fields_y)
 
                                 menu_shown = True
                                 
@@ -644,6 +774,12 @@ def main():
                                             continue
                                         times_by_field[path].append(t)
                                         values_by_field[path].append(val)
+
+                                # TODO: add ability to log xy_fields when importing a file
+                                # log_selected_fields(flat_status, selected_fields)
+                                # if fields_x and fields_y:
+                                #     log_xy_fields(flat_status, fields_x, fields_y)
+
                             else:
                                 print("\n=== Status ===")
                                 filtered_rs = filter_dict_by_fields(rs, selected_fields)
@@ -732,9 +868,12 @@ def main():
                                 else:
                                     selected_fields = get_default_fields(rs)
 
+                                if fields_x and fields_y:
+                                    validate_xy_fields_or_exit(rs, fields_x, fields_y)
+
                                 if args.rerun:
                                     _start_rerun()
-                                    setup_rerun_blueprint(rs, selected_fields)
+                                    setup_rerun_blueprint(rs, selected_fields, fields_x, fields_y)
 
                                 menu_shown = True
                                 
@@ -747,6 +886,8 @@ def main():
                                 rr.set_time("log_time", timestamp=t)
                                 flat_status = flatten_status(rs)
                                 log_selected_fields(flat_status, selected_fields)
+                                if fields_x and fields_y:
+                                    log_xy_fields(flat_status, fields_x, fields_y)
                 except Exception as e:
                     print(f"Error reading {f}: {e}")
 
@@ -778,9 +919,12 @@ def main():
                     else:
                         selected_fields = get_default_fields(rs)
                     
+                    if fields_x and fields_y:
+                        validate_xy_fields_or_exit(rs, fields_x, fields_y)
+
                     if args.rerun:
                         _start_rerun()
-                        setup_rerun_blueprint(rs, selected_fields)
+                        setup_rerun_blueprint(rs, selected_fields, fields_x, fields_y)
                         
                     menu_shown = True
 
@@ -793,6 +937,8 @@ def main():
                     rr.set_time("log_time", timestamp=t)
                     flat_status = flatten_status(rs)
                     log_selected_fields(flat_status, selected_fields)
+                    if fields_x and fields_y:
+                        log_xy_fields(flat_status, fields_x, fields_y)
                 
                 time.sleep(sleep_time)
         except KeyboardInterrupt:
