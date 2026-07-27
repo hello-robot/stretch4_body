@@ -60,6 +60,9 @@ def print_info(msg, indent=4):
 # Checks
 # ==============================================================================
 
+SHIPPED_SPEAKERPHONE_NAME = 'Anhui LISTENAI CO.,LTD. USB Speaker Phone'
+
+
 def find_usb_audio_cards():
     """Parse /proc/asound/cards for ALSA cards driven by the USB-Audio kernel driver."""
     cards = []
@@ -88,6 +91,7 @@ def check_usb_connection():
     if not cards:
         print_result(False, 'No USB audio device found (checked /proc/asound/cards)')
         print_info('Check that the speakerphone USB cable is plugged in.')
+        print_info(f'Expected device: {SHIPPED_SPEAKERPHONE_NAME} (the speaker/mic shipped with the robot)')
         return False, []
 
     for c in cards:

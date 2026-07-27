@@ -332,8 +332,7 @@ def main(skip_power_cycle: bool, skip_wifi: bool) -> None:
     click.secho("=========================================", fg="cyan", bold=True)
 
     JETSON_PASS = click.prompt(
-        "  Enter Jetson password (e.g. hello2020)",
-        default="hello2020", hide_input=True,
+        "  Enter Jetson password (e.g. hello2020)", hide_input=False,
     )
 
     if not skip_power_cycle:
