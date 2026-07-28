@@ -587,6 +587,18 @@ def check_eye_animations():
         return True
 
 
+def check_audio():
+    print_section('Audio')
+    try:
+        res = subprocess.run(
+            [sys.executable, '-m', 'stretch4_body.tools.stretch_audio_test', '--check-only']
+        )
+        return res.returncode == 0
+    except Exception as e:
+        print_result(False, f'Failed to run audio tests: {e}')
+        return False
+
+
 def check_calibrations():
     print_section('Calibrations Present')
     all_pass = True
@@ -1115,7 +1127,7 @@ def _restart_server():
 _ALL_CHECKS = [
     'USB Devices', 'Firmware',
     'Power/Battery', 'ESP32', 'Line Sensors',
-    'Eye LEDs', 'Calibrations',
+    'Eye LEDs', 'Calibrations', 'Audio',
     'OmniBase', 'Arm', 'Lift', 'End-of-Arm', 'IMU',
 ]
 _REQUIRE_SERVER = {
@@ -1186,6 +1198,7 @@ def main():
 
     results['Line Sensors'] = check_line_sensors()
     results['Eye LEDs']     = check_eye_animations()
+    results['Audio']        = check_audio()
 
     if r is not None:
         results['Power/Battery'] = check_power_periph()
