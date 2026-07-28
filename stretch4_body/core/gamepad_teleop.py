@@ -149,6 +149,8 @@ class GamePadTeleop(Device):
         if self.use_devices['gripper']:
             if self.gripper_name == 'parallel_gripper':
                 self.gripper = gamepad_joints.CommandParallelGripperPosition(motion_profile=self.motion_profile.get_name() )
+            elif self.gripper_name == 'nyu_gripper':
+                self.gripper = gamepad_joints.CommandNYUGripperPosition(motion_profile=self.motion_profile.get_name() )
             else:
                 self.gripper = gamepad_joints.CommandStretchGripperPosition(motion_profile=self.motion_profile.get_name() )
 

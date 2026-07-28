@@ -30,6 +30,8 @@ class MujocoJointStates:
     gripper_finger_right_joint: float = 0.0
     finger_left_joint: float = 0.0
     finger_right_joint: float = 0.0
+    ng_finger_left_joint: float = 0.0
+    ng_finger_right_joint: float = 0.0
 
 
     def to_dict(self) -> dict[str, float]:
@@ -62,6 +64,8 @@ class MujocoJointStates:
         jgfr = 0.0
         jfl = 0.0
         jfr = 0.0
+        jnfl = 0.0
+        jnfr = 0.0
         if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
             jgfl = state.get("gripper_finger_left_joint")
             jgfr = state.get("gripper_finger_right_joint")
@@ -72,6 +76,11 @@ class MujocoJointStates:
             jfr = state.get("finger_right_joint")
             if jfl is None: jfl = 0.0
             if jfr is None: jfr = 0.0
+        elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_ng4':
+            jnfl = state.get("ng_finger_left_joint")
+            jnfr = state.get("ng_finger_right_joint")
+            if jnfl is None: jnfl = 0.0
+            if jnfr is None: jnfr = 0.0
 
         mujoco_state = MujocoJointStates(
             lift_joint=state.get("lift_joint", 0.0),
@@ -87,6 +96,8 @@ class MujocoJointStates:
             gripper_finger_right_joint=jgfr,
             finger_left_joint=jfl,
             finger_right_joint=jfr,
+            ng_finger_left_joint=jnfl,
+            ng_finger_right_joint=jnfr,
         )
         return mujoco_state
 

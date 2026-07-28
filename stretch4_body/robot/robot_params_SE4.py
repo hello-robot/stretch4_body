@@ -222,6 +222,67 @@ SE4_parallel_gripper_DW4={
         'enable_torque_after_runstop': 1,
         'enable_runstop':1}
 
+SE4_nyu_gripper_DW4={
+    'gripper_conversion': {              # linear aperture model for status/pose tools
+        'finger_length_m': 0.11205,      # Straight length from finger CAD, ignoring any bend
+        'aperture_open_m': 0.145,        # Measured by hand, from fingertip to fingertip
+        'aperture_closed_m': 0.0
+    },
+    'eeprom_cfg': {
+        'temperature_limit': 72,
+        'max_voltage_limit': 29,
+        'min_voltage_limit': 11,
+        'pid': [32,32,0],                # TUNE if grasp oscillates (tendon compliance)
+        'return_delay_time': 0,
+        'angular_resolution': 1.0,
+        'phase': 61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
+        'min_pos_limit': 0,
+        'max_load_limit_pct': 20.0,      # TUNE: caps stall PWM = tendon tension = grip force. LOW for bring-up; raise only after range/polarity verified
+        'overload_safe': 15.0,
+        'overload_time_ms': 1000,
+        'overload_thresh': 20.0,
+        'overcurrent': 150,
+        'overcurrent_time_ms': 200,
+        'protection_torque': 20,
+        'overload_protection_time': 200,
+        'enable_protection_overload':1,  # ON during bring-up: derates to overload_safe instead of full-torque grinding. Revisit after tuning (0 = off)
+        'enable_protection_current':1,
+        'enable_protection_temp':1,
+        'enable_protection_sensor':0,
+        'enable_protection_voltage':0
+    },
+    'motion': {
+        # Predefined motion profiles (vel: rad/s, accel: rad/s^2)
+        'default': {'accel': 6.0, 'vel': 6.0},
+        'fast': {'accel': 6.0, 'vel': 6.0},
+        'max': {'accel': 6.0, 'vel': 6.0},
+        'slow': {'accel': 4.0, 'vel': 1.0},
+        'vel_brakezone_factor': 1,
+        'vel_is_moving_thresh': 0.01
+    },
+        'id': 25,
+        'set_safe_velocity': 1,
+        'req_calibration': 1,
+        'gr': 1.0,
+        'usb_name': '/dev/hello-feetech-wrist',
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'range_pad_deg': [ 0.0, 10.0 ],  # open-side pad: commands stop ~10 deg short of the open stop so the tendon stays taut
+        'range_deg': [0, 187],           # measured on hardware 2026-07-27: open hardstop at 190.7 deg of spool travel (hand-measured, torque off); 187 keeps a margin and range_pad_deg[1] stops commands 10 deg earlier so the tendon stays taut
+        'homing_offset_bias_t': 0,       # TUNE: back the zero off the tensioned stall point (try 50-150 ticks) if pct 0 grinds
+        'homing_to_neg_limit': 1,        # home CLOSED - the only direction that can stall
+        'homing_pwm': -80,               # sign verified on hardware (closes). Magnitude kept LOW: 150 overstrained the tendon/prints at the closed stop; raise only if homing stalls before the fingers touch
+        'homing_stall_pos_window_t': 60, # declare homing stall when spool moves <60 ticks (~5 deg) in 1s; the Feetech vel register stays noisy at the tendon hardstop so vel-based stall alone times out
+        'flip_encoder_polarity': 1,      # verified on hardware 2026-07-27: hand-opening decreased raw pos with flip=0, so raw ticks run backwards vs the opening direction
+        'stall_backoff': 0.017,
+        'stall_max_effort': 20.0,
+        'stall_max_time': 1.0,
+        'stall_min_vel': 0.1,
+        'disable_torque_on_runstop': 0,  # keep grasp on runstop - torque-off means the spring drops the object
+        'enable_torque_after_runstop': 1,
+        'enable_runstop':1}
+
 SE4_wrist_pitch_DW4={
     'eeprom_cfg': {
         'temperature_limit': 72,
@@ -478,10 +539,66 @@ SE4_eoa_wrist_dw4_tool_pg4={
                 'device_params': 'SE4_parallel_gripper_DW4'
             }
             },
-        'ros': {'joints': 
+        'ros': {'joints':
             [{
                 'py_module_name': 'stretch_core.command_groups',
                 'py_class_name': 'ParallelGripperCommandGroup',
+            }]
+            }
+        }
+
+SE4_eoa_wrist_dw4_tool_ng4={
+        'py_class_name': 'EOA_Wrist_DW4_Tool_NG4',
+        'py_module_name': 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools',
+        'use_group_sync_read': 0, #1
+        'use_group_sync_write':0, #1
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'i_feedforward_payload':0.2,
+        'wrist': 'eoaw_dw4',
+        'tool': 'eoat_ng4',
+        'stow': {
+            'arm': 0.0,
+            'lift': 0.15,
+            'wrist_pitch': 0.0,
+            'wrist_roll': 0.0,
+            'wrist_yaw': 3.14,
+            'nyu_gripper': 0
+        },
+        'collision_mgmt': {
+            'k_brake_distance': {'wrist_pitch': 0.25, 'wrist_yaw': 0.25, 'wrist_roll': 0.25},
+            'collision_pairs': {
+                'wrist_pitch_link_TO_base_link': {'link_pts': 'wrist_pitch_link', 'link_cube': 'base_link','detect_as': 'pts'},
+                'wrist_yaw_bottom_link_TO_base_link': {'link_pts': 'wrist_yaw_bottom_link', 'link_cube': 'base_link','detect_as': 'pts'}},
+            'joints': {'lift': [{'motion_dir': 'neg', 'collision_pair': 'wrist_pitch_link_TO_base_link'},
+                                {'motion_dir': 'neg', 'collision_pair': 'wrist_yaw_bottom_link_TO_base_link'}]}},
+
+        'devices': {
+            'wrist_pitch': {
+                'py_class_name': 'WristPitch',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
+                'device_params': 'SE4_wrist_pitch_DW4'
+            },
+            'wrist_roll': {
+                'py_class_name': 'WristRoll',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
+                'device_params': 'SE4_wrist_roll_DW4'
+            },
+            'wrist_yaw': {
+                'py_class_name': 'WristYaw',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
+                'device_params': 'SE4_wrist_yaw_DW4'
+            },
+            'nyu_gripper': {
+                'py_class_name': 'NYUGripper',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.nyu_gripper',
+                'device_params': 'SE4_nyu_gripper_DW4'
+            }
+            },
+        'ros': {'joints':
+            [{
+                'py_module_name': 'stretch_core.command_groups',
+                'py_class_name': 'GripperCommandGroup',
             }]
             }
         }
@@ -573,7 +690,8 @@ nominal_params={
         'eoa_wrist_dw4_tool_sg4',
         'eoa_wrist_dw4_tool_pg4',
         'eoa_wrist_dw4_tool_tablet',
-        'eoa_wrist_dw4_tool_calibration'
+        'eoa_wrist_dw4_tool_calibration',
+        'eoa_wrist_dw4_tool_ng4'
     ],
     'supported_eoa_metadata': {
         'eoa_wrist_dw4_tool_nil': {
@@ -595,6 +713,10 @@ nominal_params={
         'eoa_wrist_dw4_tool_calibration': {
             'name': 'Calibration Tool',
             'description': 'A tool for calibrating the robot\'s head sensors.'
+        },
+        'eoa_wrist_dw4_tool_ng4': {
+            'name': 'NYU Tendon Gripper',
+            'description': 'NYU open-source tendon-driven two-finger gripper.'
         }
     },
     'eoa_wrist_dw4_tool_nil': SE4_eoa_wrist_dw4_tool_nil,
@@ -602,6 +724,7 @@ nominal_params={
     'eoa_wrist_dw4_tool_pg4': SE4_eoa_wrist_dw4_tool_pg4,
     'eoa_wrist_dw4_tool_tablet': SE4_eoa_wrist_dw4_tool_tablet,
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
+    'eoa_wrist_dw4_tool_ng4': SE4_eoa_wrist_dw4_tool_ng4,
     # 'line_sensor_vel_limit':{
     #     'sensor_normals':{ #CCW from robot forward
     #         'hello-gs2-0':180,
@@ -1528,6 +1651,12 @@ nominal_params={
         'eoa_wrist_dw4_tool_calibration':{'k_brake_distance': {},
                'exclusions':[
 
+               ]},
+        'eoa_wrist_dw4_tool_ng4':{'k_brake_distance': {},
+               'exclusions':[
+                   # Add link pairs here if the first runs report false-positive
+                   # contacts between adjacent gripper links, e.g.:
+                   # ["ng_finger_left_link", "ng_finger_right_link"],
                ]}},
     'self_collision_loop': {
         'loop_rate_Hz': 60.0},

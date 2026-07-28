@@ -23,12 +23,16 @@ if gripper_type is None:
 if not args.direct:
     if gripper_type == 'parallel_gripper':
         from stretch4_body.robot.robot_client import ParallelGripperClient as Gripper
+    elif gripper_type == 'nyu_gripper':
+        from stretch4_body.robot.robot_client import NYUGripperClient as Gripper
     else:
         from stretch4_body.robot.robot_client import StretchGripperClient as Gripper
     g = Gripper(ip_address=args.ip)
 else:
     if gripper_type == 'parallel_gripper':
         from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper as Gripper
+    elif gripper_type == 'nyu_gripper':
+        from stretch4_body.subsystem.end_of_arm.nyu_gripper import NYUGripper as Gripper
     else:
         from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper as Gripper
     g = Gripper(is_direct=True)

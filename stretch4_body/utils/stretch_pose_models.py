@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 from dataclasses import dataclass, asdict, field
 from enum import Enum, auto
 from functools import cache
@@ -71,6 +72,8 @@ class RobotJoints(Enum):
                 return ['finger_left_joint', 'finger_right_joint']
             elif self.value == 'stretch_gripper':
                 return ['gripper_finger_left_joint', 'gripper_finger_right_joint']
+            elif self.value == 'nyu_gripper':
+                return ['ng_finger_left_joint', 'ng_finger_right_joint']
             else:
                 return []
         return []
@@ -82,6 +85,8 @@ class RobotJoints(Enum):
                 return ['finger_left_link', 'finger_right_link']
             elif self.value == 'stretch_gripper':
                 return ['gripper_finger_left_link', 'gripper_finger_right_link']
+            elif self.value == 'nyu_gripper':
+                return ['ng_finger_left_link', 'ng_finger_right_link']
             else:
                 return []
         return []
@@ -95,11 +100,19 @@ class RobotJoints(Enum):
                 sg_params = robot_params.get('stretch_gripper', {})
                 range_deg_0 = sg_params.get('range_deg', [-100.0, 0.0])[0]
                 return -100.0 * position / deg_to_rad(range_deg_0)
+            elif self.value == 'nyu_gripper':
+                _, robot_params = RobotParams.get_params()
+                gc = robot_params.get('nyu_gripper', {}).get('gripper_conversion', {})
+                aperture_open_m = gc.get('aperture_open_m', 0.08)
+                aperture_closed_m = gc.get('aperture_closed_m', 0.0)
+                finger_length_m = gc.get('finger_length_m', 0.10)
+                aperture_m = 2.0 * finger_length_m * math.sin(position)  # position is finger_rad
+                return 100.0 * (aperture_m - aperture_closed_m) / (aperture_open_m - aperture_closed_m)
         return position
 
     @classmethod
     def get_joint_by_name(cls, name):
-        if name in ('stretch_gripper', 'parallel_gripper', 'gripper'):
+        if name in ('stretch_gripper', 'parallel_gripper', 'nyu_gripper', 'gripper'):
             return cls.gripper
         if name in cls.__members__:
             return cls[name]
@@ -138,4 +151,6 @@ class RobotJoints(Enum):
             return 'stretch_gripper'
         elif 'parallel_gripper' in robot_params:
             return 'parallel_gripper'
+        elif 'nyu_gripper' in robot_params:
+            return 'nyu_gripper'
         return None

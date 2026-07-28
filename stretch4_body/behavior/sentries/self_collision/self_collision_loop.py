@@ -185,6 +185,13 @@ class SelfCollisionLoop(Device):
                     joint_val = parallel_gripper_pos_mm_to_urdf_m(pos_mm, pg_params)
                     configuration['finger_left_joint'] = joint_val
                     configuration['finger_right_joint'] = joint_val
+            elif robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_ng4':
+                nyu_gripper = s['end_of_arm'].get('nyu_gripper', None)
+                if nyu_gripper is not None:
+                    gripper_conversion = nyu_gripper.get('gripper_conversion', None)
+                    if gripper_conversion is not None:
+                        configuration['ng_finger_left_joint'] = gripper_conversion.get('finger_rad')
+                        configuration['ng_finger_right_joint'] = gripper_conversion.get('finger_rad')
 
         return configuration
 

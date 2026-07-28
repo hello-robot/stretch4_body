@@ -265,8 +265,8 @@ class CommandStretchGripperPosition:
     For this class only simple open and close methods are provided
     and expected only to be controlled on a button state.
     """
-    def __init__(self, motion_profile:str = 'max'):
-        self.name = 'stretch_gripper'
+    def __init__(self, motion_profile:str = 'max', name='stretch_gripper'):
+        self.name = name
         self.params = RobotParams().get_params()[1][self.name]
         self.gripper_rotate_pct = 60.0
         self.gripper_accel = self.params['motion'][motion_profile]['accel']
@@ -290,6 +290,14 @@ class CommandStretchGripperPosition:
         if self.stop_reqd:
             robot.end_of_arm.quick_stop(self.name)
             self.stop_reqd = False
+
+class CommandNYUGripperPosition(CommandStretchGripperPosition):
+    """NYU tendon gripper motion command class.
+    Pct-based with the same open/close behavior as the Stretch Gripper,
+    so it reuses that implementation against the 'nyu_gripper' device.
+    """
+    def __init__(self, motion_profile:str = 'max'):
+        CommandStretchGripperPosition.__init__(self, motion_profile, name='nyu_gripper')
 
 class CommandParallelGripperPosition:
     """Parallel Gripper motion command class for Feetech joints

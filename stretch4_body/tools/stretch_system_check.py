@@ -60,6 +60,7 @@ TOOL_DISPLAY = {
     'eoa_wrist_dw4_tool_pg4':         'DexWrist 4 — Parallel Gripper (PG4)',
     'eoa_wrist_dw4_tool_tablet':      'DexWrist 4 — Tablet Holder',
     'eoa_wrist_dw4_tool_calibration': 'DexWrist 4 — Calibration Tool',
+    'eoa_wrist_dw4_tool_ng4':         'DexWrist 4 — NYU Tendon Gripper (NG4)',
 }
 
 _model_display = 'Stretch 4' if stretch_model == 'SE4' else stretch_model

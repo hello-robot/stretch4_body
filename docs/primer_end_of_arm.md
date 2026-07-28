@@ -36,6 +36,7 @@ classDiagram
     EndOfArm <|-- EOA_Wrist_DW4_Tool_NIL
     EndOfArm <|-- EOA_Wrist_DW4_Tool_SG4
     EndOfArm <|-- EOA_Wrist_DW4_Tool_PG4
+    EndOfArm <|-- EOA_Wrist_DW4_Tool_NG4
     
     EndOfArmLoop *-- EndOfArm : Instantiated in Worker Process
     RobotServer *-- EndOfArmLoop : Manages Lifecycle
