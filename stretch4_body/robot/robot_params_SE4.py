@@ -1654,9 +1654,7 @@ nominal_params={
                ]},
         'eoa_wrist_dw4_tool_ng4':{'k_brake_distance': {},
                'exclusions':[
-                   # Add link pairs here if the first runs report false-positive
-                   # contacts between adjacent gripper links, e.g.:
-                   # ["ng_finger_left_link", "ng_finger_right_link"],
+                   ["ng_finger_left_link", "ng_finger_right_link"],
                ]}},
     'self_collision_loop': {
         'loop_rate_Hz': 60.0},
