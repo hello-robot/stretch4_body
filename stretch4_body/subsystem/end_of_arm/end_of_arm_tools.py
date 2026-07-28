@@ -186,3 +186,43 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
     def __init__(self, name='eoa_wrist_dw4_tool_tablet'):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
         self.logger.info(f"Wrist yaw stow position: {self.params['stow']['wrist_yaw']}")
+
+    def home(self, wait_on_completion=True):
+        def _do_home():
+            self.logger.info(f'Homing {self.name}')
+            self.status['is_homing'] = True
+            success = self._home_tablet_joints()
+            self.status['is_homing'] = False
+            return success
+        if wait_on_completion:
+            return _do_home()
+
+        thread = threading.Thread(target=_do_home)
+        thread.start()
+        return None
+
+    def _home_tablet_joints(self):
+        success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+
+        if not success or self.cancel_homing_event.is_set():
+            self.logger.error("Wrist pitch pre-homing failed")
+            return False
+
+        time.sleep(0.5)
+        if not _home_joint(self, 'yaw'):
+            return False
+
+        # The tablet hits the arm before pitch reaches its hardstop unless roll
+        # is first rotated to a clearance position. 
+        roll_clearance = self.params['homing']['wrist_roll']
+        success = self.motors['wrist_roll'].home(end_pos=roll_clearance)
+        if not success or self.cancel_homing_event.is_set():
+            self.logger.error("roll homing failed")
+            return False
+
+        self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
+        if not _home_joint(self, 'pitch'):
+            return False
+
+        self.move_to('wrist_roll', 0.0)
+        return True
