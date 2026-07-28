@@ -43,7 +43,17 @@ def write_fleet_yaml(fn, rp, fleet_dir=None, header=None):
 @click.command()
 @click.option('--quick', '-q', is_flag=True, help='Skip interactive steps.')
 @click.option('--auto-detect', is_flag=True, help='Automatically detect tool and set it.')
-def main(quick, auto_detect):
+@click.option('--add-user-tool', '--add_user_tool', is_flag=True, help='Add/process a new custom user tool.')
+def main(quick, auto_detect, add_user_tool):
+    if add_user_tool:
+        print("Invoking stretch_add_user_tool...")
+        try:
+            subprocess.run(['stretch_add_user_tool'], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"Error running stretch_add_user_tool: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
     import stretch4_body.core.hello_utils as hu
     hu.print_stretch_re_use()
     
@@ -94,6 +104,7 @@ def main(quick, auto_detect):
 
     direct = False
     detected_tool = None
+    direct = False
     if not quick:
         try:
             from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph

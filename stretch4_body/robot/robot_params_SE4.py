@@ -1567,3 +1567,131 @@ nominal_params={
     }
     }
 
+
+# #################################################################################
+# Dynamic User Tools Loading
+# Automatically check ~/stretch_user/user_tools for user-added tools
+# #################################################################################
+try:
+    import os
+    import sys
+    import copy
+    import ast
+    import yaml
+
+    def _get_user_tools_dirs():
+        _dirs = []
+        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+        _fleet_id = os.environ.get('HELLO_FLEET_ID')
+        if _fleet_path:
+            if _fleet_id:
+                _specific_dir = os.path.join(_fleet_path, _fleet_id, 'user_tools')
+                if os.path.exists(_specific_dir):
+                    _dirs.append(_specific_dir)
+            _shared_dir = os.path.join(_fleet_path, 'user_tools')
+            if os.path.exists(_shared_dir):
+                _dirs.append(_shared_dir)
+        else:
+            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+            if os.path.exists(_default_dir):
+                _dirs.append(_default_dir)
+        return _dirs
+
+    _user_tools_dirs = _get_user_tools_dirs()
+    for _user_tools_dir in _user_tools_dirs:
+        if os.path.exists(_user_tools_dir):
+            _subdirs = [d for d in os.listdir(_user_tools_dir) if os.path.isdir(os.path.join(_user_tools_dir, d))]
+            for _tool_name in _subdirs:
+                if _tool_name not in nominal_params['supported_eoa']:
+                    nominal_params['supported_eoa'].append(_tool_name)
+
+                    # Format a user-friendly name, e.g., "user_eoa_mytool" -> "User Eoa Mytool"
+                    _display_name = _tool_name.replace('_', ' ').title()
+                    nominal_params['supported_eoa_metadata'][_tool_name] = {
+                        'name': _display_name,
+                        'description': f'User-defined custom end-of-arm tool located in {_user_tools_dir}/{_tool_name}.'
+                    }
+
+                    # Default configuration inherits from NIL/passive tool, so users can override in stretch_user_params.yaml
+                    _default_tool_params = copy.deepcopy(SE4_eoa_wrist_dw4_tool_nil)
+                    
+                    # Check for python class inside user tool folder
+                    _tool_dir_path = os.path.join(_user_tools_dir, _tool_name)
+                    _py_file = None
+                    if os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}.py")):
+                        _py_file = os.path.join(_tool_dir_path, f"{_tool_name}.py")
+                        _module_name = _tool_name
+                    elif os.path.exists(os.path.join(_tool_dir_path, "tool.py")):
+                        _py_file = os.path.join(_tool_dir_path, "tool.py")
+                        _module_name = "tool"
+
+                    _class_name = None
+                    if _py_file:
+                        try:
+                            # Append the directory path to sys.path so the module can be dynamically imported
+                            if _tool_dir_path not in sys.path:
+                                sys.path.append(_tool_dir_path)
+                            with open(_py_file, 'r') as _f:
+                                _tree = ast.parse(_f.read())
+                            _classes = [node.name for node in ast.walk(_tree) if isinstance(node, ast.ClassDef)]
+                            if _classes:
+                                _class_name = _classes[0]
+                        except Exception:
+                            pass
+
+                    # Detect client file inside user tool folder
+                    _client_py_file = None
+                    if os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}_client.py")):
+                        _client_py_file = os.path.join(_tool_dir_path, f"{_tool_name}_client.py")
+                        _client_module_name = f"{_tool_name}_client"
+                    elif os.path.exists(os.path.join(_tool_dir_path, "tool_client.py")):
+                        _client_py_file = os.path.join(_tool_dir_path, "tool_client.py")
+                        _client_module_name = "tool_client"
+
+                    _client_class_name = None
+                    if _client_py_file:
+                        try:
+                            with open(_client_py_file, 'r') as _f:
+                                _tree = ast.parse(_f.read())
+                            _classes = [node.name for node in ast.walk(_tree) if isinstance(node, ast.ClassDef)]
+                            if _classes:
+                                _client_class_name = _classes[0]
+                        except Exception:
+                            pass
+
+                    if _class_name:
+                        _default_tool_params['py_class_name'] = _class_name
+                        _default_tool_params['py_module_name'] = _module_name
+                    else:
+                        _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
+                        _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
+
+                    # Check for tool_params.yaml inside user tool folder
+                    _params_file = os.path.join(_tool_dir_path, "tool_params.yaml")
+                    if os.path.exists(_params_file):
+                        try:
+                            with open(_params_file, 'r') as _f:
+                                _tool_custom_params = yaml.safe_load(_f) or {}
+                            # Recursive update function to merge deep dictionaries
+                            def _merge_dicts(d1, d2):
+                                for k, v in d2.items():
+                                    if isinstance(v, dict) and k in d1 and isinstance(d1[k], dict):
+                                        _merge_dicts(d1[k], v)
+                                    else:
+                                        d1[k] = copy.deepcopy(v)
+                            _merge_dicts(_default_tool_params, _tool_custom_params)
+                        except Exception as _pe:
+                            print(f"Warning: Failed to load tool_params.yaml for {_tool_name}: {_pe}")
+
+                    nominal_params[_tool_name] = _default_tool_params
+
+                    # Also populate under self_collision_mujoco
+                    if 'self_collision_mujoco' in nominal_params:
+                        nominal_params['self_collision_mujoco'][_tool_name] = {
+                            'k_brake_distance': {},
+                            'exclusions': []
+                        }
+except Exception as _e:
+    print(f"Warning: Failed to dynamically load user tools in robot_params_SE4: {_e}")
+
+

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import os
+import sys
 import time
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
@@ -55,9 +57,53 @@ class RobotClient(SubsystemClient):
                 self.base = self.omnibase  # legacy naming
             if k == 'end_of_arm':
                 self.eoa_name = self.params['tool']
-                module_name = 'stretch4_body.robot.robot_client'
-                class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
-                self.end_of_arm:EndOfArmClient = getattr(importlib.import_module(module_name), class_name)(parent=self)
+                eoa_params = self.robot_params.get(self.eoa_name, {})
+                if 'client_module_name' in eoa_params and 'client_class_name' in eoa_params:
+                    module_name = eoa_params['client_module_name']
+                    class_name = eoa_params['client_class_name']
+                    
+                    # Find the user tool path to add to sys.path
+                    _dirs = []
+                    _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+                    _fleet_id = os.environ.get('HELLO_FLEET_ID')
+                    if _fleet_path:
+                        if _fleet_id:
+                            _specific_dir = os.path.join(_fleet_path, _fleet_id, 'user_tools')
+                            if os.path.exists(_specific_dir):
+                                _dirs.append(_specific_dir)
+                        _shared_dir = os.path.join(_fleet_path, 'user_tools')
+                        if os.path.exists(_shared_dir):
+                            _dirs.append(_shared_dir)
+                    else:
+                        _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+                        if os.path.exists(_default_dir):
+                            _dirs.append(_default_dir)
+                    
+                    for _user_tools_dir in _dirs:
+                        _candidate = os.path.join(_user_tools_dir, self.eoa_name)
+                        if os.path.exists(_candidate):
+                            if _candidate not in sys.path:
+                                sys.path.append(_candidate)
+                            break
+                    current_module = importlib.import_module(module_name)
+                else:
+                    module_name = 'stretch4_body.robot.robot_client'
+                    class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
+                    
+                    # Check if the class is defined in the module
+                    current_module = importlib.import_module(module_name)
+                    if not hasattr(current_module, class_name):
+                        # Dynamically define a subclass of EndOfArmClient with name class_name
+                        # and register it into the module
+                        from stretch4_body.robot.robot_client import EndOfArmClient
+                        
+                        def dynamic_init(self_obj, parent=None):
+                            EndOfArmClient.__init__(self_obj, name=self.eoa_name, parent=parent)
+                            
+                        dynamic_class = type(class_name, (EndOfArmClient,), {"__init__": dynamic_init})
+                        setattr(current_module, class_name, dynamic_class)
+
+                self.end_of_arm:EndOfArmClient = getattr(current_module, class_name)(parent=self)
                 self.subsystems[k] = self.end_of_arm
 
         for k in self.params['server']['subsystems']:

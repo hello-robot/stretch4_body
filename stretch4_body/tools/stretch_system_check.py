@@ -62,6 +62,16 @@ TOOL_DISPLAY = {
     'eoa_wrist_dw4_tool_calibration': 'DexWrist 4 — Calibration Tool',
 }
 
+# Resolve custom user-defined tool display name if available in metadata
+try:
+    from stretch4_body.robot.robot_params import RobotParams
+    # First, let's load or check if we can get supported_eoa_metadata
+    meta = RobotParams._robot_params.get('supported_eoa_metadata', {}).get(stretch_tool, {})
+    if 'name' in meta:
+        TOOL_DISPLAY[stretch_tool] = f"User Custom — {meta['name']}"
+except Exception:
+    pass
+
 _model_display = 'Stretch 4' if stretch_model == 'SE4' else stretch_model
 
 click.secho('\n======== Stretch 4 System Check ========', fg='cyan', bold=True)

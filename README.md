@@ -96,3 +96,46 @@ Because `meson-python` editable builds run quietly in the background on import, 
 MESONPY_EDITABLE_VERBOSE=1 stretch_body_server --launch
 ```
 
+## Custom User End-of-Arm Tools
+
+Stretch 4 supports dynamic user-defined custom end-of-arm tools. Users can define, process, register, and switch to their own tools without modifying the core software stack.
+
+### 1. Directory Structure
+
+Custom tools should be placed in your fleet's `user_tools` directory:
+- If environment variables `HELLO_FLEET_PATH` and `HELLO_FLEET_ID` are set: `<HELLO_FLEET_PATH>/<HELLO_FLEET_ID>/user_tools/`
+- Otherwise (fallback): `~/stretch_user/user_tools/`
+
+Create a subdirectory named after your tool (e.g., `user_eoa_mytool`):
+
+```yaml
+> user_eoa_mytool
+    > meshes
+        my_tool_mesh.stl      # Visual/Collision mesh files
+    user_eoa_mytool.urdf      # Tool URDF file describing joints & links
+    user_eoa_mytool.py        # Optional custom Python driver class
+```
+
+If your tool has custom driver code, the main Python file must match the tool directory name (e.g., `user_eoa_mytool.py`) or be named `tool.py`, and contain a class matching the tool name in PascalCase (e.g., `class UserEoaMytool`).
+
+### 2. Mesh Preprocessing and Registration
+
+Once your files are in place, process the tool using the automatic registration utility. This script simplifies visual meshes, generates collision meshes, and appends the default baseline configuration (including serial devices, joint exclusion, and collision management) to `stretch_user_params.yaml`:
+
+```bash
+stretch_configure_tool --add_user_tool
+```
+
+The tool will prompt you to select your custom tool subdirectory, process its URDF/meshes, and generate the parameters.
+
+### 3. Switching to Your Tool
+
+To switch your robot to use the custom tool:
+
+```bash
+stretch_configure_tool --quick --tool user_eoa_mytool
+```
+
+This updates `stretch_user_params.yaml` to make `user_eoa_mytool` the active tool. The `RobotClient`, `stretch_status`, and `stretch_system_check` utilities will automatically recognize, load, and poll your custom tool.
+
+

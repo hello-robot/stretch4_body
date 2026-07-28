@@ -100,7 +100,18 @@ class RobotParams:
         for d in _nominal_params[eoa_name]['devices']:
             g=getattr(importlib.import_module(param_module_name),_nominal_params[eoa_name]['devices'][d]['device_params'])
             _nominal_params[d]=g
-        #     _nominal_params[d]=_nominal_params[eoa_name]['devices'][d]['device_params']
+        
+        # Expand user-defined tool devices as well
+        import copy
+        if eoa_name in _user_params and 'devices' in _user_params[eoa_name]:
+            for d in _user_params[eoa_name]['devices']:
+                device_params_name = _user_params[eoa_name]['devices'][d].get('device_params')
+                if device_params_name:
+                    try:
+                        g = getattr(importlib.import_module(param_module_name), device_params_name)
+                        _nominal_params[d] = copy.deepcopy(g)
+                    except AttributeError:
+                        pass
         if 'ros' in _nominal_params[eoa_name]:
                 _nominal_params['ros']['joints'].extend(_nominal_params[eoa_name]['ros']['joints'])
 
