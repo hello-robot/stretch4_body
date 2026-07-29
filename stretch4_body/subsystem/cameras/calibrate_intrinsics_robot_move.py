@@ -91,7 +91,7 @@ class RobotMovementController:
         """Initializes the gamepad and begins the background movement/teleop threads."""
         self.gamepad_teleop = GamePadTeleop(use_server=True, cb_loop=None)
         self.gamepad_teleop.sleep = 0
-        self.gamepad_teleop.startup()
+        self.gamepad_teleop.startup(ignore_singleton_check=True)
 
         self.teleop_thread.start()
         self.movement_thread.start()
