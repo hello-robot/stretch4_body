@@ -97,21 +97,60 @@ class RobotParams:
             sys.exit(1)
 
         #Now expand the params for each EOA
-        for d in _nominal_params[eoa_name]['devices']:
-            g=getattr(importlib.import_module(param_module_name),_nominal_params[eoa_name]['devices'][d]['device_params'])
-            _nominal_params[d]=g
+        import copy
+        if 'devices' in _nominal_params[eoa_name]:
+            devices_copy = copy.deepcopy(_nominal_params[eoa_name]['devices'])
+            for d in devices_copy:
+                if d == eoa_name:
+                    temp_device_params = {}
+                    device_params_name = devices_copy[d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g=getattr(importlib.import_module(param_module_name), device_params_name)
+                            temp_device_params=copy.deepcopy(g)
+                        except AttributeError:
+                            pass
+                    hello_utils.overwrite_dict(temp_device_params, devices_copy[d])
+                    for key in temp_device_params:
+                        if key not in ['py_class_name', 'py_module_name', 'client_class_name', 'client_module_name']:
+                            _nominal_params[eoa_name][key] = copy.deepcopy(temp_device_params[key])
+                else:
+                    device_params_name = devices_copy[d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g=getattr(importlib.import_module(param_module_name), device_params_name)
+                            _nominal_params[d]=copy.deepcopy(g)
+                        except AttributeError:
+                            _nominal_params[d] = {}
+                    else:
+                        _nominal_params[d] = {}
+                    hello_utils.overwrite_dict(_nominal_params[d], devices_copy[d])
         
         # Expand user-defined tool devices as well
-        import copy
         if eoa_name in _user_params and 'devices' in _user_params[eoa_name]:
             for d in _user_params[eoa_name]['devices']:
-                device_params_name = _user_params[eoa_name]['devices'][d].get('device_params')
-                if device_params_name:
-                    try:
-                        g = getattr(importlib.import_module(param_module_name), device_params_name)
-                        _nominal_params[d] = copy.deepcopy(g)
-                    except AttributeError:
-                        pass
+                if d == eoa_name:
+                    temp_device_params = {}
+                    device_params_name = _user_params[eoa_name]['devices'][d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g = getattr(importlib.import_module(param_module_name), device_params_name)
+                            temp_device_params = copy.deepcopy(g)
+                        except AttributeError:
+                            pass
+                    hello_utils.overwrite_dict(temp_device_params, _user_params[eoa_name]['devices'][d])
+                    for key in temp_device_params:
+                        if key not in ['py_class_name', 'py_module_name', 'client_class_name', 'client_module_name']:
+                            _nominal_params[eoa_name][key] = copy.deepcopy(temp_device_params[key])
+                else:
+                    device_params_name = _user_params[eoa_name]['devices'][d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g = getattr(importlib.import_module(param_module_name), device_params_name)
+                            _nominal_params[d] = copy.deepcopy(g)
+                            hello_utils.overwrite_dict(_nominal_params[d], _user_params[eoa_name]['devices'][d])
+                        except AttributeError:
+                            pass
         if 'ros' in _nominal_params[eoa_name]:
                 _nominal_params['ros']['joints'].extend(_nominal_params[eoa_name]['ros']['joints'])
 

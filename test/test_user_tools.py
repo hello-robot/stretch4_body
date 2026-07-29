@@ -20,6 +20,11 @@ class TestUserTools(unittest.TestCase):
         with open(py_file, 'w') as f:
             f.write("class UserEoaTesttool:\n    def __init__(self):\n        pass\n")
             
+        # Create a dummy client driver
+        client_py_file = os.path.join(self.tool_dir, f"{self.tool_name}_client.py")
+        with open(client_py_file, 'w') as f:
+            f.write("class UserEoaTesttool_Client:\n    def __init__(self):\n        pass\n")
+            
         # Create a tool_params.yaml to verify merging
         params_file = os.path.join(self.tool_dir, "tool_params.yaml")
         with open(params_file, 'w') as f:
@@ -46,6 +51,8 @@ class TestUserTools(unittest.TestCase):
         self.assertIn(self.tool_name, RobotParams._robot_params['supported_eoa'])
         self.assertEqual(RobotParams._robot_params[self.tool_name]['py_class_name'], 'UserEoaTesttool')
         self.assertEqual(RobotParams._robot_params[self.tool_name]['py_module_name'], self.tool_name)
+        self.assertEqual(RobotParams._robot_params[self.tool_name]['client_class_name'], 'UserEoaTesttool_Client')
+        self.assertEqual(RobotParams._robot_params[self.tool_name]['client_module_name'], f"{self.tool_name}_client")
         
         # Verify custom params were merged and inflated
         self.assertEqual(RobotParams._robot_params[self.tool_name]['tool'], 'eoat_custom')

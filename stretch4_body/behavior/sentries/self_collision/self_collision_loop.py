@@ -170,14 +170,55 @@ class SelfCollisionLoop(Device):
                 dwr = kbd['wrist_roll'] * wrist_roll.get('braking_distance', 0.0)
                 configuration['wrist_roll_joint'] = wrist_roll.get('pos', 0.0) + dwr
 
-            if robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_sg4':
+            custom_joints = {}
+            tool_name = robot_params.get('robot', {}).get('tool')
+            
+            # Load the raw parameter module to find baseline factory tools dynamically
+            factory_tools = []
+            try:
+                import importlib
+                model_name = robot_params.get('robot', {}).get('model_name', 'SE4')
+                base_module = importlib.import_module(f'stretch4_body.robot.robot_params_{model_name}')
+                factory_tools = getattr(base_module, 'nominal_params', {}).get('supported_eoa', [])
+            except Exception:
+                pass
+
+            # Identify custom tools: any tool listed in supported_eoa but not in baseline factory_tools
+            supported_eoa = robot_params.get('supported_eoa', [])
+            if tool_name and tool_name in supported_eoa and tool_name not in factory_tools:
+                import re
+                sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+                if sanitized_tool_name and sanitized_tool_name[0].isdigit():
+                    sanitized_tool_name = "_" + sanitized_tool_name
+
+                clean_class_base = re.sub(r'[^a-zA-Z0-9]', ' ', tool_name)
+                if clean_class_base and clean_class_base[0].isdigit():
+                    clean_class_base = "Tool " + clean_class_base
+                server_class_name = clean_class_base.title().replace(' ', '')
+
+                module_name = f"{sanitized_tool_name}_collision"
+                class_name = f"{server_class_name}Collision"
+
+                try:
+                    import importlib
+                    mod = importlib.import_module(module_name)
+                    collision_class = getattr(mod, class_name)
+                    mapper = collision_class()
+                    custom_joints = mapper.get_mujoco_joints(s) or {}
+                except Exception:
+                    pass
+
+            if custom_joints:
+                for jk, jv in custom_joints.items():
+                    configuration[jk] = jv
+            elif 'stretch_gripper' in s['end_of_arm']:
                 stretch_gripper = s['end_of_arm'].get('stretch_gripper', None)
                 if stretch_gripper is not None:
                     gripper_conversion = stretch_gripper.get('gripper_conversion', None)
                     if gripper_conversion is not None:
                         configuration['gripper_finger_left_joint'] = gripper_conversion.get('finger_rad')
                         configuration['gripper_finger_right_joint'] = gripper_conversion.get('finger_rad')
-            elif robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_pg4':
+            elif 'parallel_gripper' in s['end_of_arm']:
                 parallel_gripper = s['end_of_arm'].get('parallel_gripper', None)
                 if parallel_gripper is not None:
                     pos_mm = parallel_gripper.get('pos_mm', 0.0)

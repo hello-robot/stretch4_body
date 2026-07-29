@@ -1666,6 +1666,10 @@ try:
                         _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
                         _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
 
+                    if _client_class_name:
+                        _default_tool_params['client_class_name'] = _client_class_name
+                        _default_tool_params['client_module_name'] = _client_module_name
+
                     # Check for tool_params.yaml inside user tool folder
                     _params_file = os.path.join(_tool_dir_path, "tool_params.yaml")
                     if os.path.exists(_params_file):
@@ -1687,10 +1691,12 @@ try:
 
                     # Also populate under self_collision_mujoco
                     if 'self_collision_mujoco' in nominal_params:
-                        nominal_params['self_collision_mujoco'][_tool_name] = {
-                            'k_brake_distance': {},
-                            'exclusions': []
-                        }
+                        nominal_params['self_collision_mujoco'][_tool_name] = _default_tool_params.get(
+                            'self_collision_mujoco', {
+                                'k_brake_distance': {},
+                                'exclusions': []
+                            }
+                        )
 except Exception as _e:
     print(f"Warning: Failed to dynamically load user tools in robot_params_SE4: {_e}")
 

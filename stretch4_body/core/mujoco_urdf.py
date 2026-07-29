@@ -58,20 +58,57 @@ class MujocoJointStates:
         if robot_params is None:
             _, robot_params = RobotParams.get_params()
 
-        jgfl = 0.0
-        jgfr = 0.0
-        jfl = 0.0
-        jfr = 0.0
-        if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
-            jgfl = state.get("gripper_finger_left_joint")
-            jgfr = state.get("gripper_finger_right_joint")
-            if jgfl is None: jgfl = 0.0
-            if jgfr is None: jgfr = 0.0
-        elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
-            jfl = state.get("finger_left_joint")
-            jfr = state.get("finger_right_joint")
-            if jfl is None: jfl = 0.0
-            if jfr is None: jfr = 0.0
+        custom_joints = {}
+        tool_name = robot_params.get('robot', {}).get('tool')
+        
+        # Load the raw parameter module to find baseline factory tools dynamically
+        factory_tools = []
+        try:
+            import importlib
+            model_name = robot_params.get('robot', {}).get('model_name', 'SE4')
+            base_module = importlib.import_module(f'stretch4_body.robot.robot_params_{model_name}')
+            factory_tools = getattr(base_module, 'nominal_params', {}).get('supported_eoa', [])
+        except Exception:
+            pass
+
+        # Identify custom tools: any tool listed in supported_eoa but not in baseline factory_tools
+        supported_eoa = robot_params.get('supported_eoa', [])
+        if tool_name and tool_name in supported_eoa and tool_name not in factory_tools:
+            import re
+            sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+            if sanitized_tool_name and sanitized_tool_name[0].isdigit():
+                sanitized_tool_name = "_" + sanitized_tool_name
+
+            clean_class_base = re.sub(r'[^a-zA-Z0-9]', ' ', tool_name)
+            if clean_class_base and clean_class_base[0].isdigit():
+                clean_class_base = "Tool " + clean_class_base
+            server_class_name = clean_class_base.title().replace(' ', '')
+
+            module_name = f"{sanitized_tool_name}_collision"
+            class_name = f"{server_class_name}Collision"
+
+            try:
+                import importlib
+                mod = importlib.import_module(module_name)
+                collision_class = getattr(mod, class_name)
+                mapper = collision_class()
+                custom_joints = mapper.get_mujoco_joints(state) or {}
+            except Exception:
+                pass
+
+        jgfl = custom_joints.get("gripper_finger_left_joint")
+        if jgfl is None: jgfl = state.get("gripper_finger_left_joint")
+        jgfr = custom_joints.get("gripper_finger_right_joint")
+        if jgfr is None: jgfr = state.get("gripper_finger_right_joint")
+        jfl = custom_joints.get("finger_left_joint")
+        if jfl is None: jfl = state.get("finger_left_joint")
+        jfr = custom_joints.get("finger_right_joint")
+        if jfr is None: jfr = state.get("finger_right_joint")
+        
+        if jgfl is None: jgfl = 0.0
+        if jgfr is None: jgfr = 0.0
+        if jfl is None: jfl = 0.0
+        if jfr is None: jfr = 0.0
 
         mujoco_state = MujocoJointStates(
             lift_joint=state.get("lift_joint", 0.0),

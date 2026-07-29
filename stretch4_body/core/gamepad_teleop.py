@@ -137,6 +137,30 @@ class GamePadTeleop(Device):
 
         self.contact_sensitivity_profile.apply(self.robot)
 
+        # Dynamically load custom gamepad helper if available
+        self.custom_gamepad = None
+        if self.end_of_arm_tool not in ['tool_nil', 'tool_calibration', 'tool_tablet', 'tool_sg4', 'tool_pg4', 'none', None]:
+            import re
+            sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', self.end_of_arm_tool)
+            if sanitized_tool_name and sanitized_tool_name[0].isdigit():
+                sanitized_tool_name = "_" + sanitized_tool_name
+
+            clean_class_base = re.sub(r'[^a-zA-Z0-9]', ' ', self.end_of_arm_tool)
+            if clean_class_base and clean_class_base[0].isdigit():
+                clean_class_base = "Tool " + clean_class_base
+            server_class_name = clean_class_base.title().replace(' ', '')
+            
+            module_name = f"{sanitized_tool_name}_gamepad"
+            class_name = f"{server_class_name}GamepadTeleop"
+            try:
+                import importlib
+                mod = importlib.import_module(module_name)
+                custom_class = getattr(mod, class_name)
+                self.custom_gamepad = custom_class(self.robot)
+                print(f"Successfully loaded custom gamepad teleop mapping class '{class_name}' from module '{module_name}'!")
+            except Exception as e:
+                print(f"Warning: Could not dynamically load custom gamepad mapping: {e}")
+
     def set_joint_command(self):
         self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
         self.lift_command = gamepad_joints.CommandLift(motion_profile=self.motion_profile.get_name() )
@@ -288,6 +312,12 @@ class GamePadTeleop(Device):
                     self.use_arm_lift_mode = self.controller_state['right_trigger_pulled'] > TRIGGER_THRESHOLD
                     
                     actuated_joints = self.control_mapping.do_motion(robot, self)
+
+                    if self.custom_gamepad is not None:
+                        try:
+                            self.custom_gamepad.update_teleop(self.controller_state)
+                        except Exception as e:
+                            print(f"Warning: Error executing custom gamepad teleop: {e}")
 
                     if actuated_joints:
                         try:

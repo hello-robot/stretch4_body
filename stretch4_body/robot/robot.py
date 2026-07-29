@@ -23,6 +23,33 @@ class Robot(RobotCore):
             self.eoa_name = self.params['tool']
             module_name = self.robot_params[self.eoa_name]['py_module_name']
             class_name = self.robot_params[self.eoa_name]['py_class_name']
+
+            # Find the user tool path to add to sys.path
+            import os
+            import sys
+            _dirs = []
+            _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+            _fleet_id = os.environ.get('HELLO_FLEET_ID')
+            if _fleet_path:
+                if _fleet_id:
+                    _specific_dir = os.path.join(_fleet_path, _fleet_id, 'user_tools')
+                    if os.path.exists(_specific_dir):
+                        _dirs.append(_specific_dir)
+                _shared_dir = os.path.join(_fleet_path, 'user_tools')
+                if os.path.exists(_shared_dir):
+                    _dirs.append(_shared_dir)
+            else:
+                _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+                if os.path.exists(_default_dir):
+                    _dirs.append(_default_dir)
+            
+            for _user_tools_dir in _dirs:
+                _candidate = os.path.join(_user_tools_dir, self.eoa_name)
+                if os.path.exists(_candidate):
+                    if _candidate not in sys.path:
+                        sys.path.append(_candidate)
+                    break
+
             self.subsystems['end_of_arm'] = getattr(importlib.import_module(module_name), class_name)()
             self.end_of_arm = self.subsystems['end_of_arm']
             self.status['end_of_arm'] = self.subsystems['end_of_arm'].status
