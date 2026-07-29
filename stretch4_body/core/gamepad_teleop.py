@@ -312,7 +312,7 @@ class GamePadTeleop(Device):
         with self.lock:
             self.controller_state = state if state else self.gamepad_controller.get_state()
 
-    def startup(self, robot = None):
+    def startup(self, robot = None, ignore_singleton_check:bool=False):
         """Start the gamepad controller thread and robot thread if required.
 
         Args:
@@ -320,7 +320,7 @@ class GamePadTeleop(Device):
         """
         if self.robot:
             robot = self.robot
-        self.gamepad_controller.startup()
+        self.gamepad_controller.startup(ignore_singleton_check=ignore_singleton_check)
         if self.robot:
             if self.robot.startup():
                 pass #self.do_double_beep()
