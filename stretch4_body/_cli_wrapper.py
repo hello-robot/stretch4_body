@@ -281,6 +281,10 @@ def REx_camera_list():
     sys.argv[0] = "REx_camera_list"
     runpy.run_module("stretch4_body.tools.factory.REx_camera_list", run_name="__main__")
 
+def REx_discover_hello_devices():
+    sys.argv[0] = "REx_discover_hello_devices"
+    runpy.run_module("stretch4_body.tools.factory.REx_discover_hello_devices", run_name="__main__")
+
 def stretch_runstop():
     sys.argv[0] = "stretch_runstop"
     runpy.run_module("stretch4_body.tools.stretch_runstop", run_name="__main__")
@@ -308,4 +312,12 @@ def stretch_pose_edit():
 def stretch_pose_record():
     sys.argv[0] = "stretch_pose_record"
     runpy.run_module("stretch4_body.tools.stretch_pose_record", run_name="__main__")
+
+def stretch_monitor_devices():
+    sys.argv[0] = "stretch_monitor_devices"
+    runpy.run_module("stretch4_body.tools.stretch_monitor_devices", run_name="__main__")
+
+def stretch_jetson_connect():
+    sys.argv[0] = "stretch_jetson_connect"
+    runpy.run_module("stretch4_body.tools.stretch_jetson_connect", run_name="__main__")
 

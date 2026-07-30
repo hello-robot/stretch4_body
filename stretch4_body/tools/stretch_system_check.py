@@ -396,13 +396,14 @@ def check_line_sensors():
     if not p:
         all_pass = False
 
-    sensor_names = [k for k in lss if k not in ('rate_hz', 'last_frame_time')]
+    sensor_names = line_sensor.params.get('sensor_names', [])
     if not sensor_names:
         print_result(False, 'No individual sensors reporting')
         return False
 
     for sn in sensor_names:
-        frame_id = lss.get(sn, {}).get('frame_id', 0)
+        sensor_status = lss.get(sn, {})
+        frame_id = sensor_status.get('frame_id', 0) if isinstance(sensor_status, dict) else 0
         print_result(frame_id > 0, f'Sensor {sn}: frame_id = {frame_id}')
         if frame_id == 0:
             all_pass = False
@@ -571,8 +572,7 @@ def check_eye_animations():
 
     proto = None
     try:
-        bi = getattr(r.power_periph, 'board_info', {}) or {}
-        proto_str = bi.get('protocol_version')
+        proto_str = r.power_periph.status.get('protocol_version')
         if proto_str:
             proto = int(proto_str.lstrip('p'))
     except Exception:
@@ -585,6 +585,18 @@ def check_eye_animations():
     else:
         print_warn('Could not read PowerPeriph protocol version')
         return True
+
+
+def check_audio():
+    print_section('Audio')
+    try:
+        res = subprocess.run(
+            [sys.executable, '-m', 'stretch4_body.tools.stretch_audio_test', '--check-only']
+        )
+        return res.returncode == 0
+    except Exception as e:
+        print_result(False, f'Failed to run audio tests: {e}')
+        return False
 
 
 def check_calibrations():
@@ -1115,7 +1127,7 @@ def _restart_server():
 _ALL_CHECKS = [
     'USB Devices', 'Firmware',
     'Power/Battery', 'ESP32', 'Line Sensors',
-    'Eye LEDs', 'Calibrations',
+    'Eye LEDs', 'Calibrations', 'Audio',
     'OmniBase', 'Arm', 'Lift', 'End-of-Arm', 'IMU',
 ]
 _REQUIRE_SERVER = {
@@ -1186,6 +1198,7 @@ def main():
 
     results['Line Sensors'] = check_line_sensors()
     results['Eye LEDs']     = check_eye_animations()
+    results['Audio']        = check_audio()
 
     if r is not None:
         results['Power/Battery'] = check_power_periph()
