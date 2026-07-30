@@ -8,6 +8,7 @@ from stretch4_body.behavior.safe_motions.safe_motion_manager import SafeMotionMa
 from stretch4_body.behavior.sentries.sentry_manager import SentryManager
 from stretch4_body.behavior.routines.routine_manager import RoutineManager
 from stretch4_body.subsystem.line_sensor.line_sensor_loop import LineSensorLoop
+from stretch4_body.subsystem.power_periph import PowerPeriphDefn
 from stretch4_body.utils.freeable_file_lock import FreeableFileLock
 
 import logging
@@ -97,6 +98,7 @@ class RobotServer(RobotCore):
             self.server.startup()):
             self.logger.info("RobotServer started successfully.")
             self.state = LOOP_STATE_RUNNING
+            self._turn_off_eyes_if_animations_disabled()
             return True
         else:
             self.logger.error("Failed to start RobotServer.")
@@ -107,6 +109,22 @@ class RobotServer(RobotCore):
         if self.get_subsystem('end_of_arm') is not None:
             eoa=self.subsystems['end_of_arm'].is_homed()
         return eoa and RobotCore.is_homed(self)
+
+    def _turn_off_eyes_if_animations_disabled(self):
+        """
+        The pimu firmware defaults the eye LEDs to an idle glow at power-on.
+        """
+        if self.robot_params.get('sentry_eye_animations', {}).get('enabled', 1):
+            return
+        pp = self.get_subsystem('power_periph')
+        if pp is None or not pp.hw_valid:
+            return
+        protocol = pp.board_info.get('protocol_version')
+        if protocol is None or int(protocol[1:]) < 13:
+            return
+        self.logger.info('sentry_eye_animations disabled. Turning eye LEDs off.')
+        pp.set_eye_animation(PowerPeriphDefn.EYE_ANIM_OFF, PowerPeriphDefn.EYE_ANIM_OFF)
+        pp.push_command()
 
     def pause_sentry(self, sentry_name):
         self.sentry_manager.pause([sentry_name])
