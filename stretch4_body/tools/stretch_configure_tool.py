@@ -92,10 +92,10 @@ def main(quick, auto_detect):
     supported_eoa = _nominal_params.get('supported_eoa', [])
     supported_eoa_metadata = _nominal_params.get('supported_eoa_metadata', {})
 
+    direct = False
     detected_tool = None
     if not quick:
         try:
-            direct = False
             from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
             
             p = PowerPeriph()

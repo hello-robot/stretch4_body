@@ -493,16 +493,19 @@ SE4_eoa_wrist_dw4_tool_tablet={
         'use_group_sync_write':0,
         'retry_on_comm_failure': 1,
         'baud': 1000000,
-        'i_feedforward_payload':0.0,
+        'i_feedforward_payload':0.3,
         #'dxl_latency_timer': 64,
         'wrist': 'eoaw_dw4',
         'tool': 'eoat_tablet',
         'stow': {
             'arm': 0.0,
-            'lift': 0.30,
-            'wrist_pitch': 0.784,
-            'wrist_roll': 0.0,
-            'wrist_yaw': 3.633,
+            'lift': 0.169,
+            'wrist_pitch': 1.490,
+            'wrist_roll': 3.686,
+            'wrist_yaw': 4.103,
+        },
+        'homing': {
+            'wrist_roll': -0.4, #Roll held here while pitch homes so the tablet clears the robot
         },
         'devices': {
             'wrist_pitch': {
