@@ -680,7 +680,20 @@ class PowerPeriphTrace(PowerPeriphDefn):
 
 class PowerPeriphAux(PowerPeriphDefn):
     def __init__(self):
-        self.status_aux = {'foo': 0}
+        self.status_aux = {
+            'current_pwr_state': 0,
+            'current_pwr_state_name': 'STATE_ACTIVE',
+            'runstop_cause_raw': 0,
+            'motor_sync_cnt': 0,
+            'battery_cell_temp_1': 0,
+            'battery_cell_temp_2': 0,
+            'battery_cell_temp_3': 0,
+            'battery_ambient_temp': 0,
+            'battery_mosfet_temp': 0,
+            '_valid': False,
+            '_packet_length': None,
+            '_decode_error': None,
+        }
         self._load_test_payload = arr.array('B', range(256)) * 4
 
     def pull_status_aux(self, blocking=True):
@@ -715,11 +728,50 @@ class PowerPeriphAux(PowerPeriphDefn):
 
     def _unpack_status_aux(self, s):
         # take in an array of bytes
-        # this needs to exactly match the C struct format
+        # This exactly matches packed firmware Pimu_Status_Aux.
+        self.status_aux['_packet_length'] = len(s)
+        if len(s) < 9:
+            self.status_aux['_valid'] = False
+            self.status_aux['_decode_error'] = (
+                'short aux packet: %d bytes (expected at least 9)' % len(s)
+            )
+            return 0
         sidx = 0
-        self.status_aux['foo'] = unpack_int16_t(s[sidx:])
+        self.status_aux['current_pwr_state'] = unpack_uint8_t(s[sidx:])
+        self.status_aux['current_pwr_state_name'] = self.get_power_state_name(
+            self.status_aux['current_pwr_state']
+        )
+        sidx += 1
+        self.status_aux['runstop_cause_raw'] = unpack_uint8_t(s[sidx:])
+        sidx += 1
+        self.status_aux['motor_sync_cnt'] = unpack_int16_t(s[sidx:])
         sidx += 2
+        for key in (
+            'battery_cell_temp_1',
+            'battery_cell_temp_2',
+            'battery_cell_temp_3',
+            'battery_ambient_temp',
+            'battery_mosfet_temp',
+        ):
+            value = unpack_uint8_t(s[sidx:])
+            self.status_aux[key] = value - 256 if value > 127 else value
+            sidx += 1
+        self.status_aux['_valid'] = True
+        self.status_aux['_decode_error'] = None
         return sidx
+
+    @staticmethod
+    def get_power_state_name(raw):
+        states = (
+            'STATE_ACTIVE',
+            'STATE_SLEEP',
+            'STATE_SHUTDOWN_CHRG',
+            'STATE_SLEEP_CHRG',
+            'STATE_SHUTDOWN',
+        )
+        if 0 <= raw < len(states):
+            return states[raw]
+        return 'UNKNOWN_%d' % raw
     
     def _rpc_load_test_push_reply(self, reply):
         if reply[0] != self.RPC_REPLY_LOAD_TEST_PUSH:
