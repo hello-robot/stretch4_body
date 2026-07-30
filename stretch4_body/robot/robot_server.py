@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from collections import deque
 from stretch4_body.core.device import Device
 import time
 import stretch4_body.core.hello_utils as hello_utils
@@ -88,6 +89,34 @@ class RobotServer(RobotCore):
         self.psutil_processes = {}
         self.last_cpu_update = 0.0
         # We delay process map initialization until startup or first update to ensure processes are running?
+
+        # The PIMU power-state machine is exposed only by its auxiliary status
+        # RPC. Sample it here so diagnostic clients never contend for the PIMU
+        # serial port and the 100 Hz server remains the sole hardware owner.
+        self._power_aux_interval_s = 0.5
+        self._power_aux_pending = False
+        self._power_aux_last_request_mono = float("-inf")
+        self._power_aux_last_sample_mono = None
+        self._power_aux_last_state = None
+        self._power_aux_transition_seq = 0
+        self._power_aux_transitions = deque(maxlen=64)
+        self._power_aux_meta = {
+            'available': False,
+            'server_started_wall_time_s': time.time(),
+            'sample_interval_target_s': self._power_aux_interval_s,
+            'sample_seq': 0,
+            'sample_wall_time_s': None,
+            'sample_monotonic_s': None,
+            'sample_age_s': None,
+            'request_errors': 0,
+            'schema_error': None,
+            'transitions': [],
+        }
+        if self.get_subsystem('power_periph') is not None:
+            # These are references and update in place before the existing
+            # conflated server status publication.
+            self.status['power_periph']['status_aux'] = self.power_periph.status_aux
+            self.status['power_periph']['status_aux_meta'] = self._power_aux_meta
 
 
     def startup(self):
@@ -239,6 +268,10 @@ class RobotServer(RobotCore):
 
     def publish_status_msg(self):
         self.update_cpu_status()
+        if self._power_aux_last_sample_mono is not None:
+            self._power_aux_meta['sample_age_s'] = round(
+                max(0.0, time.monotonic() - self._power_aux_last_sample_mono), 3
+            )
         self.status['server']['state']=self.state
         self.status['server']['status_id'] = self.status['server']['status_id'] + 1
         self.status['server']['lease_holder'] = str(self.server.lease_holder_id)
@@ -246,6 +279,75 @@ class RobotServer(RobotCore):
         self.status['server']['lease_expiry'] = self.server.lease_expiry
         
         self.server.publish_status(self.status)
+
+    def _queue_power_periph_aux_status(self):
+        """Queue a low-rate read-only PIMU aux RPC in the existing transport pipeline."""
+        pp = self.get_subsystem('power_periph')
+        now = time.monotonic()
+        if (
+            pp is None
+            or self._power_aux_pending
+            or now - self._power_aux_last_request_mono < self._power_aux_interval_s
+        ):
+            return
+        self._power_aux_last_request_mono = now
+        try:
+            self._power_aux_pending = bool(pp.pull_status_aux(blocking=False))
+            if not self._power_aux_pending:
+                self._power_aux_meta['request_errors'] += 1
+        except Exception as exc:
+            self._power_aux_meta['request_errors'] += 1
+            self.logger.warning(
+                'Unable to queue PowerPeriph auxiliary status: %s', exc
+            )
+
+    def _complete_power_periph_aux_status(self):
+        """Timestamp an aux sample and retain firmware power-state transitions."""
+        if not self._power_aux_pending:
+            return
+        self._power_aux_pending = False
+        now_mono = time.monotonic()
+        now_wall = time.time()
+        self._power_aux_last_sample_mono = now_mono
+        aux = self.power_periph.status_aux
+        required_fields = {
+            'current_pwr_state',
+            'current_pwr_state_name',
+            'runstop_cause_raw',
+            'motor_sync_cnt',
+        }
+        schema_valid = required_fields.issubset(aux)
+        if aux.get('_valid') is False:
+            schema_valid = False
+        if not schema_valid:
+            self._power_aux_meta['available'] = False
+            self._power_aux_meta['schema_error'] = (
+                aux.get('_decode_error')
+                or 'PowerPeriph aux decoder does not expose the power-state schema'
+            )
+            return
+
+        self._power_aux_meta['available'] = True
+        self._power_aux_meta['schema_error'] = None
+        self._power_aux_meta['sample_seq'] += 1
+        self._power_aux_meta['sample_wall_time_s'] = now_wall
+        self._power_aux_meta['sample_monotonic_s'] = now_mono
+        self._power_aux_meta['sample_age_s'] = 0.0
+
+        state = aux.get('current_pwr_state')
+        if state != self._power_aux_last_state:
+            self._power_aux_transition_seq += 1
+            self._power_aux_transitions.append({
+                'seq': self._power_aux_transition_seq,
+                'observed_wall_time_s': now_wall,
+                'observed_monotonic_s': now_mono,
+                'from_state': self._power_aux_last_state,
+                'to_state': state,
+                'to_state_name': aux.get('current_pwr_state_name'),
+                'runstop_cause_raw': aux.get('runstop_cause_raw'),
+            })
+            self._power_aux_last_state = state
+        self._power_aux_meta['transitions'] = list(self._power_aux_transitions)
 
     def update_cpu_status(self):
         # Throttle to 1Hz
@@ -375,6 +477,7 @@ Use `stretch_status --rate 10` to view the status of the robot.
 
         # 9
         self.load_rpc_results(wait_on_result=True)
+        self._complete_power_periph_aux_status()
         self.publish_status_msg()
 
 
@@ -391,6 +494,7 @@ Use `stretch_status --rate 10` to view the status of the robot.
 
         # 3
         self.pull_status(blocking=False)
+        self._queue_power_periph_aux_status()
 
         # 4 Step sentries
         self.sentry_manager.step()
@@ -457,6 +561,5 @@ def run_server():
 
 if __name__ == '__main__':
     run_server()
-
 
 
