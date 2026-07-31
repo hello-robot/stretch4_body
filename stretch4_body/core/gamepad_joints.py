@@ -266,7 +266,8 @@ class CommandStretchGripperPosition:
     and expected only to be controlled on a button state.
     """
     def __init__(self, motion_profile:str = 'max'):
-        self.name = 'stretch_gripper'
+        from stretch4_body.utils.stretch_pose_models import RobotJoints
+        self.name = RobotJoints.gripper.value or 'stretch_gripper'
         self.params = RobotParams().get_params()[1][self.name]
         self.gripper_rotate_pct = 60.0
         self.gripper_accel = self.params['motion'][motion_profile]['accel']
@@ -297,7 +298,8 @@ class CommandParallelGripperPosition:
     and expected only to be controlled on a button state.
     """
     def __init__(self, motion_profile:str = 'max'):
-        self.name = 'parallel_gripper'
+        from stretch4_body.utils.stretch_pose_models import RobotJoints
+        self.name = RobotJoints.gripper.value or 'parallel_gripper'
         self.params = RobotParams().get_params()[1][self.name]
         self.gripper_step_m = 0.01
         self.gripper_accel = self.params['motion'][motion_profile]['accel']

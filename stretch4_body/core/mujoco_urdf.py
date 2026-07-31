@@ -62,7 +62,6 @@ class MujocoJointStates:
         tool_name = robot_params.get('robot', {}).get('tool')
         
         # Identify custom tools: dynamically check if the tool's folder exists under user_tools
-        from stretch4_body.core.robot_params import RobotParams
         if tool_name and RobotParams.is_user_defined_tool(tool_name):
             import re
             sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)

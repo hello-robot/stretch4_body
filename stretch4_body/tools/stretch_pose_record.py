@@ -54,7 +54,7 @@ class KeyframeRecorder:
                 if status_joint_name in eoa_status:
                     j_status = eoa_status[status_joint_name]
                     if joint is RobotJoints.gripper:
-                        if status_joint_name == 'parallel_gripper':
+                        if status_joint_name == 'parallel_gripper' or 'pos_mm' in j_status:
                             pose.joints[joint.name] = JointPose(
                                 name=joint.name,
                                 position=j_status['pos_mm'] / 1000.0,

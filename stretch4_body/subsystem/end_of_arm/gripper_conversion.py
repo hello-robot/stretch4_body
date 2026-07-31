@@ -53,16 +53,30 @@ class GripperConversion():
     Note: `aperture_open_m` and `finger_length_m` are defined in robot_params_SE4.py.
     """
     def __init__(self,gripper_params=None):
+        from stretch4_body.core.robot_params import RobotParams
+        _, robot_params = RobotParams.get_params()
+        self.tool_name = robot_params.get('robot', {}).get('tool')
+        self.is_custom = RobotParams.is_user_defined_tool(self.tool_name) if self.tool_name else False
+        self.custom_mod = None
+        if self.is_custom:
+            try:
+                self.custom_mod = RobotParams.import_user_tool_module(self.tool_name, 'gripper_conversion', is_server=True)
+            except Exception:
+                pass
+
         if gripper_params is None: #Allow to load params based on unknown tool type
             gripper_params=get_gripper_params()
-        self.params=gripper_params['gripper_conversion']
-        self.params['servo_open_angle']=gripper_params['range_deg'][1]
-        self.params['servo_closed_angle']=gripper_params['range_deg'][0]
-        aperture_open_rad = get_angle_from_chord_length_and_radius(self.params['finger_length_m'], self.params['aperture_open_m'])
-        self.aperture_open_deg = math.degrees(aperture_open_rad)
-        self.aperture_close_deg = 0.0
+        self.params = gripper_params
 
-        self.servo_to_aperture_slope = ((self.params['aperture_open_m'] - self.params['aperture_closed_m']) / (self.aperture_open_deg - self.aperture_close_deg))
+        if not self.is_custom or not self.custom_mod:
+            self.params=gripper_params['gripper_conversion']
+            self.params['servo_open_angle']=gripper_params['range_deg'][1]
+            self.params['servo_closed_angle']=gripper_params['range_deg'][0]
+            aperture_open_rad = get_angle_from_chord_length_and_radius(self.params['finger_length_m'], self.params['aperture_open_m'])
+            self.aperture_open_deg = math.degrees(aperture_open_rad)
+            self.aperture_close_deg = 0.0
+
+            self.servo_to_aperture_slope = ((self.params['aperture_open_m'] - self.params['aperture_closed_m']) / (self.aperture_open_deg - self.aperture_close_deg))
 
     def servo_angle_degrees_to_aperture_angle_degrees(self, servo_angle_degrees):
         return map_range(servo_angle_degrees, self.params['servo_closed_angle'], self.params['servo_open_angle'], self.aperture_close_deg, self.aperture_open_deg)
@@ -107,6 +121,45 @@ class GripperConversion():
         return aperture_m, finger_rad, finger_effort, finger_vel
 
     def get_status(self, gripper_status):
+        if self.custom_mod:
+            import re
+            sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', self.tool_name)
+            if sanitized and sanitized[0].isdigit():
+                sanitized = "_" + sanitized
+            
+            rad_to_mm_func = getattr(self.custom_mod, f"{sanitized}_servo_rad_to_mm", None)
+            pos_mm_to_urdf_func = getattr(self.custom_mod, f"{sanitized}_pos_mm_to_urdf_m", None)
+            
+            servo_pos = gripper_status.get('pos', 0.0)
+            pos_mm = gripper_status.get('pos_mm', None)
+            if pos_mm is None and rad_to_mm_func:
+                try:
+                    pos_mm = rad_to_mm_func(servo_pos, self.params)
+                except Exception:
+                    pos_mm = 0.0
+                    
+            if pos_mm is None:
+                pos_mm = 0.0
+                
+            aperture_m = pos_mm / 1000.0
+            
+            finger_rad = 0.0
+            if pos_mm_to_urdf_func:
+                try:
+                    finger_rad = pos_mm_to_urdf_func(pos_mm, self.params)
+                except Exception:
+                    finger_rad = 0.0
+                    
+            finger_effort = gripper_status.get('effort', 0.0)
+            finger_vel = gripper_status.get('vel', 0.0)
+            
+            return {
+                'aperture_m': aperture_m,
+                'finger_rad': finger_rad,
+                'finger_effort': finger_effort,
+                'finger_vel': finger_vel
+            }
+
         aperture_m = self.servo_to_aperture(gripper_status['pos_pct']) 
         finger_rad = math.radians(self.aperture_m_to_aperture_angle_degrees(aperture_m))  / 2.0
         finger_effort = gripper_status['effort']

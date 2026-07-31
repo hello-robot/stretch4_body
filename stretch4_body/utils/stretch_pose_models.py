@@ -126,10 +126,25 @@ class RobotJoints(Enum):
 
     def to_subsystem_units(self, position):
         if self.name == 'gripper':
+            from stretch4_body.core.robot_params import RobotParams
+            _, robot_params = RobotParams.get_params()
+            tool_name = robot_params.get('robot', {}).get('tool')
+            if tool_name and RobotParams.is_user_defined_tool(tool_name):
+                try:
+                    import re
+                    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+                    if sanitized and sanitized[0].isdigit():
+                        sanitized = "_" + sanitized
+                    mod = RobotParams.import_user_tool_module(tool_name, 'gripper_conversion', is_server=True)
+                    conv_func = getattr(mod, f"{sanitized}_urdf_to_subsystem", None)
+                    if conv_func:
+                        return conv_func(position, robot_params.get(tool_name, {}))
+                except Exception:
+                    pass
+
             if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
                 return position
             elif self.value == 'stretch_gripper':
-                _, robot_params = RobotParams.get_params()
                 sg_params = robot_params.get('stretch_gripper', {})
                 range_deg_0 = sg_params.get('range_deg', [-100.0, 0.0])[0]
                 return -100.0 * position / deg_to_rad(range_deg_0)

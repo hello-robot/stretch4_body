@@ -173,10 +173,26 @@ class GamePadTeleop(Device):
             self.wrist_pitch_command = gamepad_joints.CommandWristPitch(motion_profile=self.motion_profile.get_name() )
             self.wrist_roll_command = gamepad_joints.CommandWristRoll(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['gripper']:
-            if self.gripper_name == 'parallel_gripper':
-                self.gripper = gamepad_joints.CommandParallelGripperPosition(motion_profile=self.motion_profile.get_name() )
-            else:
-                self.gripper = gamepad_joints.CommandStretchGripperPosition(motion_profile=self.motion_profile.get_name() )
+            from stretch4_body.core.robot_params import RobotParams
+            _, robot_params = RobotParams.get_params()
+            tool_name = robot_params.get('robot', {}).get('tool')
+            is_custom_tool = RobotParams.is_user_defined_tool(tool_name) if tool_name else False
+
+            loaded_custom_gamepad = False
+            if is_custom_tool:
+                try:
+                    mod = RobotParams.import_user_tool_module(tool_name, 'gamepad')
+                    if hasattr(mod, 'CommandCustomToolPosition'):
+                        self.gripper = mod.CommandCustomToolPosition(motion_profile=self.motion_profile.get_name() )
+                        loaded_custom_gamepad = True
+                except Exception as e:
+                    pass
+
+            if not loaded_custom_gamepad:
+                if self.gripper_name == 'parallel_gripper' or is_custom_tool or (self.gripper_name and ('parallel' in self.gripper_name or 'jaw' in self.gripper_name)):
+                    self.gripper = gamepad_joints.CommandParallelGripperPosition(motion_profile=self.motion_profile.get_name() )
+                else:
+                    self.gripper = gamepad_joints.CommandStretchGripperPosition(motion_profile=self.motion_profile.get_name() )
 
 
     def cycle_motion_profile(self):
