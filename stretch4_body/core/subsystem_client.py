@@ -104,6 +104,8 @@ class SubsystemClient(Device):
 
             if self.name in status_server:
                 self.status.update(status_server[self.name]) #eg, robot.status['power_periph']
+            elif hasattr(self, 'joints') and 'end_of_arm' in status_server:
+                self.status.update(status_server['end_of_arm'])
             elif 'end_of_arm' in status_server and self.name in status_server['end_of_arm']:
                 self.status.update(status_server['end_of_arm'][self.name]) #eg, robot.status['end_of_arm']['wrist_yaw']
 

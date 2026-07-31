@@ -67,7 +67,7 @@ class RobotJoints(Enum):
     @property
     def finger_joints(self):
         if self.name == 'gripper':
-            if self.value == 'parallel_gripper':
+            if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
                 return ['finger_left_joint', 'finger_right_joint']
             elif self.value == 'stretch_gripper':
                 return ['gripper_finger_left_joint', 'gripper_finger_right_joint']
@@ -78,7 +78,7 @@ class RobotJoints(Enum):
     @property
     def finger_links(self):
         if self.name == 'gripper':
-            if self.value == 'parallel_gripper':
+            if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
                 return ['finger_left_link', 'finger_right_link']
             elif self.value == 'stretch_gripper':
                 return ['gripper_finger_left_link', 'gripper_finger_right_link']
@@ -88,7 +88,7 @@ class RobotJoints(Enum):
 
     def to_subsystem_units(self, position):
         if self.name == 'gripper':
-            if self.value == 'parallel_gripper':
+            if self.value == 'parallel_gripper' or (self.value and ('parallel' in self.value or 'jaw' in self.value)):
                 return position
             elif self.value == 'stretch_gripper':
                 _, robot_params = RobotParams.get_params()
@@ -138,4 +138,13 @@ class RobotJoints(Enum):
             return 'stretch_gripper'
         elif 'parallel_gripper' in robot_params:
             return 'parallel_gripper'
+        
+        # Check if the active tool is a custom tool with a gripper device
+        tool_name = robot_params.get('robot', {}).get('tool')
+        if tool_name and tool_name in robot_params:
+            tool_params = robot_params[tool_name]
+            for d_name, d_params in tool_params.get('devices', {}).items():
+                py_class = d_params.get('py_class_name', '')
+                if 'gripper' in d_name.lower() or 'jaw' in d_name.lower() or 'gripper' in py_class.lower() or 'jaw' in py_class.lower():
+                    return d_name
         return None

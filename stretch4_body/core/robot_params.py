@@ -247,3 +247,27 @@ class RobotParams:
                 current_module = None
         return current_module
 
+    @classmethod
+    def is_user_defined_tool(cls, tool_name):
+        """
+        Dynamically check if a tool's folder exists under user_tools directories.
+        """
+        if not tool_name:
+            return False
+        _dirs = []
+        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+        if _fleet_path:
+            _shared_dir = os.path.join(_fleet_path, 'user_tools')
+            if os.path.exists(_shared_dir):
+                _dirs.append(_shared_dir)
+        else:
+            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+            if os.path.exists(_default_dir):
+                _dirs.append(_default_dir)
+        
+        for _user_tools_dir in _dirs:
+            if os.path.exists(os.path.join(_user_tools_dir, tool_name)):
+                return True
+        return False
+
+

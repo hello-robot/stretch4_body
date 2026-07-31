@@ -176,26 +176,7 @@ class SelfCollisionLoop(Device):
             tool_name = robot_params.get('robot', {}).get('tool')
             
             # Identify custom tools: dynamically check if the tool's folder exists under user_tools
-            is_custom_tool = False
-            if tool_name:
-                import os
-                _user_tool_dirs = []
-                _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-                if _fleet_path:
-                    _shared_dir = os.path.join(_fleet_path, 'user_tools')
-                    if os.path.exists(_shared_dir):
-                        _user_tool_dirs.append(_shared_dir)
-                else:
-                    _default_dir = os.path.expanduser('~/stretch_user/user_tools')
-                    if os.path.exists(_default_dir):
-                        _user_tool_dirs.append(_default_dir)
-                
-                for _user_tools_dir in _user_tool_dirs:
-                    if os.path.exists(os.path.join(_user_tools_dir, tool_name)):
-                        is_custom_tool = True
-                        break
-
-            if tool_name and is_custom_tool:
+            if tool_name and RobotParams.is_user_defined_tool(tool_name):
                 sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
                 if sanitized_tool_name and sanitized_tool_name[0].isdigit():
                     sanitized_tool_name = "_" + sanitized_tool_name

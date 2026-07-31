@@ -2,6 +2,7 @@
 import threading
 import stretch4_body.core.robot_params
 from stretch4_body.utils.stretch_pose_models import RobotJoints
+from stretch4_body.utils.user_tool_utils import add_user_tool_to_sys_path
 stretch4_body.core.robot_params.RobotParams.set_logging_level("DEBUG")
 import sys
 import argparse
@@ -14,24 +15,44 @@ parser.add_argument("-i","--ip", help="IP address to remote server", type=str, d
 args=parser.parse_args()
 
 
-gripper_type = RobotJoints.gripper.value
-if gripper_type is None:
+from stretch4_body.utils.user_tool_utils import get_gripper_instance
+
+g, gripper_type, is_parallel = get_gripper_instance(direct=args.direct, ip_address=args.ip)
+if g is None:
     print("No gripper is configured on this robot.")
     exit(1)
 
-
-if not args.direct:
-    if gripper_type == 'parallel_gripper':
-        from stretch4_body.robot.robot_client import ParallelGripperClient as Gripper
+# For custom client end-of-arm tool grippers, bind joint-specific methods/properties directly
+is_custom_client = not args.direct and gripper_type not in ['parallel_gripper', 'stretch_gripper']
+if is_custom_client:
+    g_params = g.params.get('devices', {}).get(gripper_type, g.params)
+    if is_parallel:
+        from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
+        from stretch4_body.core.hello_utils import deg_to_rad
+        open_m = parallel_gripper_servo_rad_to_mm(deg_to_rad(g_params['range_deg'][1]), g_params) / 1000.0
+        g.poses = {'zero': 0.0,
+                   'open': open_m,
+                   'mid': open_m / 2.0,
+                   'close': 0.0}
     else:
-        from stretch4_body.robot.robot_client import StretchGripperClient as Gripper
-    g = Gripper(ip_address=args.ip)
-else:
-    if gripper_type == 'parallel_gripper':
-        from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper as Gripper
-    else:
-        from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper as Gripper
-    g = Gripper(is_direct=True)
+        g.pct_max_open = 100 * abs(g_params['range_deg'][1] / g_params['range_deg'][0])
+        g.poses = {'zero': 0,
+                   'open': g.pct_max_open,
+                   'close': -100}
+    
+    g.move_to_joint = g.move_to
+    g.move_by_joint = g.move_by
+    g.move_to = lambda x, v=None, a=None: g.move_to_joint(gripper_type, x, v, a)
+    g.move_by = lambda x, v=None, a=None: g.move_by_joint(gripper_type, x, v, a)
+    
+    def custom_pretty_print():
+        print(f"--- {gripper_type} ---")
+        status = g.status.get(gripper_type, {})
+        if 'pos_mm' in status:
+            print(f"Position (mm): {status['pos_mm']}")
+        elif 'pos' in status:
+            print(f"Position: {status['pos']}")
+    g.pretty_print = custom_pretty_print
 
 if not g.startup():
     exit()
@@ -44,7 +65,7 @@ def menu_top():
     print('------ MENU -------')
     print('m: menu')
     print('h: home')
-    if gripper_type == 'parallel_gripper':
+    if is_parallel:
         print('x: close by 10mm')
         print('y: open by 10mm')
         print('p: go to position (m)')
@@ -76,17 +97,17 @@ def step_interaction():
         if x[0]=='h':
             g.home()
         if x[0]=='x':
-            if gripper_type == 'parallel_gripper':
+            if is_parallel:
                 g.move_by(-0.01, v_des, a_des)
             else:
                 g.move_by(-10.0, v_des, a_des)
         if x[0]=='y':
-            if gripper_type == 'parallel_gripper':
+            if is_parallel:
                 g.move_by(0.01, v_des, a_des)
             else:
                 g.move_by(10.0, v_des, a_des)
         if x[0]=='p':
-            if gripper_type == 'parallel_gripper':
+            if is_parallel:
                 print("Enter position (m): ")
                 ff = float(sys.stdin.readline())
             else:

@@ -4,6 +4,7 @@ import time
 import argparse
 import stretch4_body.core.hello_utils as hu
 from stretch4_body.utils.stretch_pose_models import RobotJoints
+from stretch4_body.utils.user_tool_utils import add_user_tool_to_sys_path
 hu.print_stretch_re_use()
 
 parser=argparse.ArgumentParser(description='Calibrate the gripper position by closing until motion stops')
@@ -11,23 +12,12 @@ parser.add_argument("-d", "--direct", help="Use direct API (no server)", action=
 args=parser.parse_args()
 
 
-gripper_type = RobotJoints.gripper.value
-if gripper_type is None:
+from stretch4_body.utils.user_tool_utils import get_gripper_instance
+
+g, gripper_type, is_parallel = get_gripper_instance(direct=args.direct)
+if g is None:
     print("No gripper is configured on this robot.")
     exit(1)
-
-if not args.direct:
-    if gripper_type == 'parallel_gripper':
-        from stretch4_body.robot.robot_client import ParallelGripperClient as Gripper
-    else:
-        from stretch4_body.robot.robot_client import StretchGripperClient as Gripper
-else:
-    if gripper_type == 'parallel_gripper':
-        from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper as Gripper
-    else:
-        from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper as Gripper
-
-g=Gripper()
 if not g.startup():
     exit()
 g.home()
