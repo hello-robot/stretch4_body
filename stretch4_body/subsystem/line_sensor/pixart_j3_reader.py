@@ -3,6 +3,7 @@ import serial
 import time
 import numpy as np
 import json
+import re
 
 
 class PixartJ3Reader():
@@ -12,6 +13,36 @@ class PixartJ3Reader():
     The step() method polls the serial port, should be called as fast as possible (~1khz)
 
     """
+    FIRMWARE_RE = re.compile(r"\bFirmware\s+(?P<version>hello-pixart-j3\.\S+)", re.I)
+    I2C_INIT_ERROR_RE = re.compile(
+        r"I2C DEVICE INIT FAILED,?\s*b(?P<bus>\d+)d(?P<dev>\d+),?\s+"
+        r"addr=(?P<addr>0x[0-9a-f]+)(?P<details>.*)",
+        re.I,
+    )
+    I2C_ADDRESS_PROBE_RE = re.compile(
+        r"I2C_ADDR_PROBE\s+b(?P<bus>\d+)\s+addr=(?P<addr>0x[0-9a-f]+)"
+        r"\s+ack=(?P<ack>[01])(?P<details>.*)",
+        re.I,
+    )
+    FRAME_TIMEOUT_RE = re.compile(
+        r"SENSOR FRAME TIMEOUT,?\s*b(?P<bus>\d+)d(?P<dev>\d+),?\s+"
+        r"state=(?P<state>[A-Z_]+)\((?P<substate>\d+)\),?\s+"
+        r"age_us=(?P<age_us>\d+),?\s+frame=(?P<frame_id>\d+),?\s+"
+        r"count=(?P<firmware_count>\d+)",
+        re.I,
+    )
+    SENSOR_INTERRUPT_RE = re.compile(
+        r"SENSOR_INT\s+levels=(?P<levels>[01]{6})\s+"
+        r"transitions=(?P<transitions>\d+(?:,\d+){5})",
+        re.I,
+    )
+    DIAGNOSTIC_VALUE_RE = re.compile(
+        r"\b(?P<key>step|reg|val|sercom|dmac|timeout|status|iflag|intflag|dch|dflag|"
+        r"dmac_ch|dmac_flags|sda|scl)"
+        r"=(?P<value>-?(?:0x[0-9a-f]+|\d+))",
+        re.I,
+    )
+
     def __init__(self,port_name='/dev/hello-pixart-j3',verbose=False,bus_sensor_map=None):
 
         # Sensor 0: Bus 2, dev 0
@@ -45,7 +76,29 @@ class PixartJ3Reader():
         self.oob_line = ""
         self.line_count = 0
 
-        self.status = {'frame_advance_err':0,'not_six_sensors_err':0,'frame_not_full_err':0,'rate_hz':0,'sensors_last_frame':[],'last_frame_time':0}
+        self.status = {
+            'frame_advance_err': 0,
+            'not_six_sensors_err': 0,
+            'frame_not_full_err': 0,
+            'rate_hz': 0,
+            'sensors_last_frame': [],
+            'last_frame_time': 0,
+            # These structures are deliberately bounded. They retain the newest
+            # electrical evidence and cumulative counters without storing the
+            # high-rate 320-value distance frames or an unbounded text stream.
+            'firmware_version': None,
+            'diagnostic_sequence': 0,
+            'last_diagnostic_time': 0,
+            'i2c_init_errors': {},
+            'i2c_address_probes': {},
+            'frame_timeouts': {},
+            'sensor_interrupts': {
+                'samples': 0,
+                'levels': None,
+                'transitions': [0, 0, 0, 0, 0, 0],
+                'last_update_time': 0,
+            },
+        }
         for i in range(6):
             self.status['sensor_%d'%i]={'ts_last_read':0,'frame_id':0,'rate_hz':0,'ranges':[]}
         self.is_valid=False
@@ -104,6 +157,7 @@ class PixartJ3Reader():
                         continue;
                     self.line_count += 1
                     if self.oob_line:
+                        self._process_oob_line(self.oob_line.strip())
                         if self.line_count > 1 or not self.oob_line.endswith("}"):
                             # Don't print first line if it ends with a curly brace, it might have legitimately started mid-stream.
                             self.debug_print("OOB:", self.oob_line)
@@ -166,6 +220,104 @@ class PixartJ3Reader():
             print(f"PixartJ3Reader: An unexpected error occurred: {e}")
             self.is_valid = False
         return updated
+
+    @staticmethod
+    def _decode_diagnostic_values(details):
+        values = {}
+        for match in PixartJ3Reader.DIAGNOSTIC_VALUE_RE.finditer(details or ''):
+            key = match.group('key').lower()
+            try:
+                values[key] = int(match.group('value'), 0)
+            except ValueError:
+                continue
+        return values
+
+    def _touch_diagnostic(self, observed_at):
+        self.status['diagnostic_sequence'] += 1
+        self.status['last_diagnostic_time'] = observed_at
+
+    def _process_oob_line(self, line):
+        """Assimilate bounded firmware diagnostics that were previously discarded."""
+        if not line:
+            return False
+        observed_at = time.time()
+
+        match = self.FIRMWARE_RE.search(line)
+        if match:
+            self.status['firmware_version'] = match.group('version')
+            self._touch_diagnostic(observed_at)
+            return True
+
+        match = self.I2C_INIT_ERROR_RE.search(line)
+        if match:
+            endpoint = f"b{match.group('bus')}d{match.group('dev')}"
+            address = match.group('addr').lower()
+            key = f"{endpoint}@{address}"
+            previous = self.status['i2c_init_errors'].get(key, {})
+            self.status['i2c_init_errors'][key] = {
+                **previous,
+                'endpoint': endpoint,
+                'address': address,
+                'count': int(previous.get('count', 0)) + 1,
+                'last_time': observed_at,
+                **self._decode_diagnostic_values(match.group('details')),
+            }
+            self._touch_diagnostic(observed_at)
+            return True
+
+        match = self.I2C_ADDRESS_PROBE_RE.search(line)
+        if match:
+            endpoint = f"b{match.group('bus')}"
+            address = match.group('addr').lower()
+            key = f"{endpoint}@{address}"
+            self.status['i2c_address_probes'][key] = {
+                'bus': int(match.group('bus')),
+                'address': address,
+                'ack': bool(int(match.group('ack'))),
+                'last_time': observed_at,
+                **self._decode_diagnostic_values(match.group('details')),
+            }
+            self._touch_diagnostic(observed_at)
+            return True
+
+        match = self.FRAME_TIMEOUT_RE.search(line)
+        if match:
+            endpoint = f"b{match.group('bus')}d{match.group('dev')}"
+            state = match.group('state').upper()
+            key = f"{endpoint}:{state}"
+            previous = self.status['frame_timeouts'].get(key, {})
+            self.status['frame_timeouts'][key] = {
+                'endpoint': endpoint,
+                'state': state,
+                'substate': int(match.group('substate')),
+                'observed_count': int(previous.get('observed_count', 0)) + 1,
+                'max_age_us': max(
+                    int(previous.get('max_age_us', 0)),
+                    int(match.group('age_us')),
+                ),
+                'frame_id': int(match.group('frame_id')),
+                'firmware_count_max': max(
+                    int(previous.get('firmware_count_max', 0)),
+                    int(match.group('firmware_count')),
+                ),
+                'last_time': observed_at,
+            }
+            self._touch_diagnostic(observed_at)
+            return True
+
+        match = self.SENSOR_INTERRUPT_RE.search(line)
+        if match:
+            interrupts = self.status['sensor_interrupts']
+            interrupts['samples'] = int(interrupts.get('samples', 0)) + 1
+            interrupts['levels'] = [int(value) for value in match.group('levels')]
+            interrupts['transitions'] = [
+                int(value) for value in match.group('transitions').split(',')
+            ]
+            interrupts['last_update_time'] = observed_at
+            self._touch_diagnostic(observed_at)
+            return True
+
+        return False
 
     def debug_print(self,*args, **kwargs):
         if self.DEBUG_ENABLED:
