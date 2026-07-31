@@ -38,11 +38,11 @@ def get_gripper_params():
     eoa_name = rp['robot']['tool']
     module_name = rp[eoa_name]['py_module_name']
     class_name = rp[eoa_name]['py_class_name']
-    eoa = getattr(importlib.import_module(module_name), class_name)()
+    eoa = getattr(RobotParams.import_user_tool_module(eoa_name, module_name, is_server=True), class_name)()
     if 'stretch_gripper' in list(eoa.params.get('devices', {}).keys()):
         module_name = eoa.params['devices']['stretch_gripper']['py_module_name']
         class_name = eoa.params['devices']['stretch_gripper']['py_class_name']
-        gripper= getattr(importlib.import_module(module_name), class_name)()
+        gripper= getattr(RobotParams.import_user_tool_module(eoa_name, module_name, is_server=True), class_name)()
         return gripper.params
     return None
 

@@ -8,6 +8,8 @@ from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_pos_mm_to_urdf_m
+import importlib
+import re
 
 # ###########################################################################################
 
@@ -173,20 +175,27 @@ class SelfCollisionLoop(Device):
             custom_joints = {}
             tool_name = robot_params.get('robot', {}).get('tool')
             
-            # Load the raw parameter module to find baseline factory tools dynamically
-            factory_tools = []
-            try:
-                import importlib
-                model_name = robot_params.get('robot', {}).get('model_name', 'SE4')
-                base_module = importlib.import_module(f'stretch4_body.robot.robot_params_{model_name}')
-                factory_tools = getattr(base_module, 'nominal_params', {}).get('supported_eoa', [])
-            except Exception:
-                pass
+            # Identify custom tools: dynamically check if the tool's folder exists under user_tools
+            is_custom_tool = False
+            if tool_name:
+                import os
+                _user_tool_dirs = []
+                _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+                if _fleet_path:
+                    _shared_dir = os.path.join(_fleet_path, 'user_tools')
+                    if os.path.exists(_shared_dir):
+                        _user_tool_dirs.append(_shared_dir)
+                else:
+                    _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+                    if os.path.exists(_default_dir):
+                        _user_tool_dirs.append(_default_dir)
+                
+                for _user_tools_dir in _user_tool_dirs:
+                    if os.path.exists(os.path.join(_user_tools_dir, tool_name)):
+                        is_custom_tool = True
+                        break
 
-            # Identify custom tools: any tool listed in supported_eoa but not in baseline factory_tools
-            supported_eoa = robot_params.get('supported_eoa', [])
-            if tool_name and tool_name in supported_eoa and tool_name not in factory_tools:
-                import re
+            if tool_name and is_custom_tool:
                 sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
                 if sanitized_tool_name and sanitized_tool_name[0].isdigit():
                     sanitized_tool_name = "_" + sanitized_tool_name
@@ -200,8 +209,9 @@ class SelfCollisionLoop(Device):
                 class_name = f"{server_class_name}Collision"
 
                 try:
-                    import importlib
-                    mod = importlib.import_module(module_name)
+                    mod = RobotParams.import_user_tool_module(tool_name, "collision.py")
+                    if not mod:
+                        mod = importlib.import_module(module_name)
                     collision_class = getattr(mod, class_name)
                     mapper = collision_class()
                     custom_joints = mapper.get_mujoco_joints(s) or {}

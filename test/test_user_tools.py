@@ -7,10 +7,10 @@ import shutil
 
 class TestUserTools(unittest.TestCase):
     def setUp(self):
-        # Setup a temporary custom tool inside stretch_user/stretch-se4-4024/user_tools
-        self.fleet_path = "/home/shehab/stretch_user"
-        self.fleet_id = "stretch-se4-4024"
-        self.user_tools_dir = os.path.join(self.fleet_path, self.fleet_id, "user_tools")
+        # Setup a temporary custom tool inside stretch_user/user_tools
+        self.fleet_path = os.environ.get('HELLO_FLEET_PATH', os.path.expanduser('~/stretch_user'))
+        self.fleet_id = os.environ.get('HELLO_FLEET_ID', 'stretch-se4-4024')
+        self.user_tools_dir = os.path.join(self.fleet_path, "user_tools")
         self.tool_name = "user_eoa_testtool"
         self.tool_dir = os.path.join(self.user_tools_dir, self.tool_name)
         
@@ -57,6 +57,36 @@ class TestUserTools(unittest.TestCase):
         # Verify custom params were merged and inflated
         self.assertEqual(RobotParams._robot_params[self.tool_name]['tool'], 'eoat_custom')
         self.assertEqual(RobotParams._robot_params[self.tool_name]['stow']['custom_val'], 42)
+
+    def test_dynamic_loading_split_files(self):
+        # Setup a secondary custom tool with split files
+        split_tool_name = "user_eoa_split_tool"
+        split_tool_dir = os.path.join(self.user_tools_dir, split_tool_name)
+        os.makedirs(split_tool_dir, exist_ok=True)
+        
+        # Create end_of_arm.py
+        with open(os.path.join(split_tool_dir, "end_of_arm.py"), 'w') as f:
+            f.write("class UserEoaSplitTool:\n    def __init__(self):\n        pass\n")
+            
+        # Create tool.py
+        with open(os.path.join(split_tool_dir, "tool.py"), 'w') as f:
+            f.write("class UserEoaSplitToolGripper:\n    def __init__(self):\n        pass\n")
+            
+        # Reload robot params module to trigger scanning
+        for mod in list(sys.modules.keys()):
+            if 'robot_params' in mod:
+                del sys.modules[mod]
+                
+        from stretch4_body.core.robot_params import RobotParams
+        
+        try:
+            # Verify the split tool is registered with end_of_arm.py detected as primary
+            self.assertIn(split_tool_name, RobotParams._robot_params['supported_eoa'])
+            self.assertEqual(RobotParams._robot_params[split_tool_name]['py_class_name'], 'UserEoaSplitTool')
+            self.assertEqual(RobotParams._robot_params[split_tool_name]['py_module_name'], 'end_of_arm')
+        finally:
+            if os.path.exists(split_tool_dir):
+                shutil.rmtree(split_tool_dir)
 
 if __name__ == "__main__":
     unittest.main()

@@ -153,8 +153,10 @@ class GamePadTeleop(Device):
             module_name = f"{sanitized_tool_name}_gamepad"
             class_name = f"{server_class_name}GamepadTeleop"
             try:
-                import importlib
-                mod = importlib.import_module(module_name)
+                mod = RobotParams.import_user_tool_module(self.end_of_arm_tool, "gamepad.py")
+                if not mod:
+                    import importlib
+                    mod = importlib.import_module(module_name)
                 custom_class = getattr(mod, class_name)
                 self.custom_gamepad = custom_class(self.robot)
                 print(f"Successfully loaded custom gamepad teleop mapping class '{class_name}' from module '{module_name}'!")

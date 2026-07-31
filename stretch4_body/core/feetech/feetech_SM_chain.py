@@ -113,9 +113,11 @@ class FeetechSMChain(Device):
         self.joints = list(self.params.get('devices', {}).keys())
         self.status['joint_names']=self.joints
         for j in self.joints:
+            from stretch4_body.core.robot_params import RobotParams
+            eoa_name = self.params.get('tool', 'end_of_arm')
             module_name = self.params['devices'][j]['py_module_name']
             class_name = self.params['devices'][j]['py_class_name']
-            servo_device = getattr(importlib.import_module(module_name), class_name)(chain=self)
+            servo_device = getattr(RobotParams.import_user_tool_module(eoa_name, module_name, is_server=True), class_name)(chain=self)
             self.add_motor(servo_device)
         for mk in self.motors.keys():  # Provide nop data in case comm failures
             self.status[mk] = self.motors[mk].status

@@ -1582,12 +1582,7 @@ try:
     def _get_user_tools_dirs():
         _dirs = []
         _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-        _fleet_id = os.environ.get('HELLO_FLEET_ID')
         if _fleet_path:
-            if _fleet_id:
-                _specific_dir = os.path.join(_fleet_path, _fleet_id, 'user_tools')
-                if os.path.exists(_specific_dir):
-                    _dirs.append(_specific_dir)
             _shared_dir = os.path.join(_fleet_path, 'user_tools')
             if os.path.exists(_shared_dir):
                 _dirs.append(_shared_dir)
@@ -1618,7 +1613,13 @@ try:
                     # Check for python class inside user tool folder
                     _tool_dir_path = os.path.join(_user_tools_dir, _tool_name)
                     _py_file = None
-                    if os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}.py")):
+                    if os.path.exists(os.path.join(_tool_dir_path, "end_of_arm.py")):
+                        _py_file = os.path.join(_tool_dir_path, "end_of_arm.py")
+                        _module_name = "end_of_arm"
+                    elif os.path.exists(os.path.join(_tool_dir_path, "custom_tool_end_of_arm.py")):
+                        _py_file = os.path.join(_tool_dir_path, "custom_tool_end_of_arm.py")
+                        _module_name = "custom_tool_end_of_arm"
+                    elif os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}.py")):
                         _py_file = os.path.join(_tool_dir_path, f"{_tool_name}.py")
                         _module_name = _tool_name
                     elif os.path.exists(os.path.join(_tool_dir_path, "tool.py")):

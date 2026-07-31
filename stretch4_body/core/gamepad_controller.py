@@ -13,6 +13,7 @@ from pathlib import Path
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.hello_utils import qprint
+import stretch4_body.core.hello_utils as hello_utils
 
 """
 The GamePadController is a threading class that polls for the gamepad events by listening
@@ -194,7 +195,6 @@ class GamePadController(Device):
         if self.thread is not None:
             self.thread_shutdown_flag.set()
             self.thread.join(1)
-        import stretch4_body.core.hello_utils as hello_utils
         self.thread_stats = hello_utils.LoopStats(loop_name='{0}_thread'.format(self.name), target_loop_rate=self.thread_rate_hz)
         self.thread = threading.Thread(target=self._thread_target)
         self.thread.daemon = True

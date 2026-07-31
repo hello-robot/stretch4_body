@@ -62,30 +62,8 @@ class RobotClient(SubsystemClient):
                     module_name = eoa_params['client_module_name']
                     class_name = eoa_params['client_class_name']
                     
-                    # Find the user tool path to add to sys.path
-                    _dirs = []
-                    _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-                    _fleet_id = os.environ.get('HELLO_FLEET_ID')
-                    if _fleet_path:
-                        if _fleet_id:
-                            _specific_dir = os.path.join(_fleet_path, _fleet_id, 'user_tools')
-                            if os.path.exists(_specific_dir):
-                                _dirs.append(_specific_dir)
-                        _shared_dir = os.path.join(_fleet_path, 'user_tools')
-                        if os.path.exists(_shared_dir):
-                            _dirs.append(_shared_dir)
-                    else:
-                        _default_dir = os.path.expanduser('~/stretch_user/user_tools')
-                        if os.path.exists(_default_dir):
-                            _dirs.append(_default_dir)
-                    
-                    for _user_tools_dir in _dirs:
-                        _candidate = os.path.join(_user_tools_dir, self.eoa_name)
-                        if os.path.exists(_candidate):
-                            if _candidate not in sys.path:
-                                sys.path.append(_candidate)
-                            break
-                    current_module = importlib.import_module(module_name)
+                    from stretch4_body.core.robot_params import RobotParams
+                    current_module = RobotParams.import_user_tool_module(self.eoa_name, module_name, is_server=False)
                 else:
                     module_name = 'stretch4_body.robot.robot_client'
                     class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
