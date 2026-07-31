@@ -650,7 +650,7 @@ class CalibrateLidarToCamera:
 
         self.gamepad_teleop = GamePadTeleop(use_server=True, cb_loop=None)
         self.gamepad_teleop.sleep = 0
-        self.gamepad_teleop.startup()
+        self.gamepad_teleop.startup(ignore_singleton_check=True)
         self.left_button_counter = ButtonPressCounter("left_button_pressed")
 
         self.keyframe_recorder = KeyframeRecorder()
