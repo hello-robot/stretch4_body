@@ -1174,7 +1174,15 @@ class EndOfArmClient(SubsystemClient):
                 py_class_name = "StretchGripper"
             class_name = py_class_name+'Client'
             module_name = 'stretch4_body.robot.robot_client'
-            setattr(self, joint, getattr(importlib.import_module(module_name), class_name)(self))
+            
+            current_module = importlib.import_module(module_name)
+            if not hasattr(current_module, class_name):
+                from stretch4_body.robot.robot_client import WristJointClient
+                def dynamic_init(self_obj, parent=None, joint_name=joint):
+                    WristJointClient.__init__(self_obj, joint_name=joint_name, parent=parent)
+                dynamic_class = type(class_name, (WristJointClient,), {"__init__": dynamic_init})
+                setattr(current_module, class_name, dynamic_class)
+            setattr(self, joint, getattr(current_module, class_name)(self))
 
     def do_ping(self, joint):
         """
