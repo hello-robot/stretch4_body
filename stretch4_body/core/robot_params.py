@@ -252,8 +252,15 @@ class RobotParams:
         """
         Dynamically check if a tool's folder exists under user_tools directories.
         """
+        return cls.get_user_defined_tool_path(tool_name) is not None
+
+    @classmethod
+    def get_user_defined_tool_path(cls, tool_name):
+        """
+        Get the absolute path to a custom tool folder if it exists.
+        """
         if not tool_name:
-            return False
+            return None
         _dirs = []
         _fleet_path = os.environ.get('HELLO_FLEET_PATH')
         if _fleet_path:
@@ -266,8 +273,9 @@ class RobotParams:
                 _dirs.append(_default_dir)
         
         for _user_tools_dir in _dirs:
-            if os.path.exists(os.path.join(_user_tools_dir, tool_name)):
-                return True
-        return False
+            p = os.path.join(_user_tools_dir, tool_name)
+            if os.path.exists(p):
+                return p
+        return None
 
 
