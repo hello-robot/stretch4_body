@@ -146,7 +146,7 @@ class RobotCore(Device):
             self.trigger_motor_sync()
         return rpc_cmd_ids
 
-    def trigger_motor_sync(self):
+    def trigger_motor_sync(self, blocking=True):
         # Check if need to do a motor sync by looking at if there's been a pimu sync signal sent
         # since the last stepper.set_command for each joint
         if self.get_subsystem('power_periph') is not None:
@@ -155,7 +155,7 @@ class RobotCore(Device):
                 if hasattr(s,'is_sync_required'):
                     sync_needed = sync_needed or s.is_sync_required(self.power_periph.ts_last_motor_sync)
             if sync_needed or self.power_periph.ts_last_motor_sync is None:  # First
-                self.power_periph.trigger_motor_sync()
+                self.power_periph.trigger_motor_sync(blocking=blocking)
 
     def pause_transport(self):
         for s in self.subsystems:
