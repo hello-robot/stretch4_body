@@ -17,6 +17,7 @@ import os
 import yaml
 import datetime
 import threading
+import queue
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -77,6 +78,11 @@ def _parse_args():
         default=None,
         help="Path to save output YAML file. Default is inside calibration_dual_lidar folder.",
     )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Enable manual mode to press Enter to capture, displaying joint positions on capture.",
+    )
     return parser.parse_known_args()[0]
 
 
@@ -93,6 +99,65 @@ def get_angular_sort_indices(centroids_base: np.ndarray) -> np.ndarray:
     return np.argsort(angles)
 
 
+class ThreadedStreamWrapper:
+    def __init__(self, stream):
+        self.stream = stream
+        self.queue = queue.Queue(maxsize=100)
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while not self.stop_event.is_set():
+            try:
+                frame = next(self.stream)
+                if frame is None:
+                    time.sleep(0.01)
+                    continue
+                try:
+                    self.queue.put(frame, timeout=0.1)
+                except queue.Full:
+                    # Discard oldest frame to keep the queue fresh and bounded
+                    try:
+                        self.queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self.queue.put_nowait(frame)
+                    except queue.Full:
+                        pass
+            except StopIteration:
+                break
+            except Exception as e:
+                print(f"Error in stream thread: {e}")
+                break
+
+    def __next__(self):
+        while not self.stop_event.is_set():
+            try:
+                return self.queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+        raise StopIteration()
+
+    def __iter__(self):
+        return self
+
+    def close(self):
+        self.stop_event.set()
+        # Clean up queue to unblock any putting thread
+        try:
+            while not self.queue.empty():
+                self.queue.get_nowait()
+        except:
+            pass
+        if hasattr(self.stream, 'close'):
+            try:
+                self.stream.close()
+            except:
+                pass
+
+
 class LidarLidarCompare:
     def __init__(
         self,
@@ -101,27 +166,30 @@ class LidarLidarCompare:
         expected_height: float = 0.20833,
         tolerance: float = 0.015,
         output_file: str | None = None,
+        manual: bool = False,
     ):
         self.use_ros_for_lidars = use_ros_for_lidars
         self.expected_width = expected_width
         self.expected_height = expected_height
         self.tolerance = tolerance
         self.output_file = output_file
+        self.manual = manual
         self.stop_event = threading.Event()
 
         self.poses = [
             {'lift': 0.8, 'arm': 0.15, 'wrist_pitch': -0.49},
             {'lift': 0.8, 'arm': 0.25, 'wrist_pitch': -0.49},
             {'lift': 0.8, 'arm': 0.45, 'wrist_pitch': -0.49},
-            {'lift': 1.1, 'arm': 0.15, 'wrist_pitch': -0.49},
-            {'lift': 1.1, 'arm': 0.25, 'wrist_pitch': -0.49},
-            {'lift': 1.1, 'arm': 0.45, 'wrist_pitch': -0.49},
+            {'lift': 0.6, 'arm': 0.15, 'wrist_pitch': -0.49},
+            {'lift': 0.6, 'arm': 0.25, 'wrist_pitch': -0.49},
+            {'lift': 0.6, 'arm': 0.45, 'wrist_pitch': -0.49},
         ]
 
         # Robot startup
+        print("Starting robot client, please wait...", flush=True)
         self.robot = RobotClient()
         if not self.robot.startup():
-            print("Failed to start robot client.")
+            print("Failed to start robot client.", flush=True)
             sys.exit(1)
 
         if self.robot.params.get('tool') != 'eoa_wrist_dw4_tool_calibration':
@@ -134,9 +202,11 @@ class LidarLidarCompare:
         self.T_base_from_right = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=True)
 
         # Start lidar streams
+        print("Connecting to Lidar Streams...", flush=True)
         self.left_stream = None
         self.right_stream = None
         self._init_lidar_streams()
+        print("Lidar streams connected.", flush=True)
 
     def _init_lidar_streams(self):
         if self.use_ros_for_lidars:
@@ -158,8 +228,8 @@ class LidarLidarCompare:
         else:
             try:
                 from pyhesai_wrapper import stream_lidar_left, stream_lidar_right
-                self.left_stream = stream_lidar_left()
-                self.right_stream = stream_lidar_right()
+                self.left_stream = ThreadedStreamWrapper(stream_lidar_left())
+                self.right_stream = ThreadedStreamWrapper(stream_lidar_right())
             except ImportError:
                 raise ImportError("pyhesai_wrapper not found. Please install it or pass `--use_ros_for_lidars`.")
 
@@ -215,7 +285,152 @@ class LidarLidarCompare:
         self.robot.end_of_arm.move_to('wrist_yaw', 0)
         self.robot.push_command()
         self.robot.wait_command()
-        time.sleep(1.5)  # Allow robot and lidars to settle
+        time.sleep(2.5)  # Allow robot and lidars to settle
+
+    def flush_lidar_streams(self, max_discard=150):
+        """Flushes stale buffered frames from both left and right lidar streams to get fresh, settled data."""
+        settled_time = time.time()
+        print("Flushing stale lidar frames...")
+        
+        # Flush left stream
+        left_flushed = 0
+        while left_flushed < max_discard:
+            t0 = time.perf_counter()
+            frame = next(self.left_stream)
+            dt = time.perf_counter() - t0
+            left_flushed += 1
+            if frame is None:
+                break
+            
+            # Check system timestamp for freshness
+            ts = getattr(frame, 'timestamp_system', None)
+            if ts is not None:
+                # Discard frames older than settled_time
+                if ts >= settled_time - 0.05:
+                    break
+            
+            # If retrieving took more than 15ms, it blocked waiting for a fresh physical frame
+            if dt > 0.015:
+                break
+                
+        # Flush right stream
+        right_flushed = 0
+        while right_flushed < max_discard:
+            t0 = time.perf_counter()
+            frame = next(self.right_stream)
+            dt = time.perf_counter() - t0
+            right_flushed += 1
+            if frame is None:
+                break
+                
+            # Check system timestamp for freshness
+            ts = getattr(frame, 'timestamp_system', None)
+            if ts is not None:
+                # Discard frames older than settled_time
+                if ts >= settled_time - 0.05:
+                    break
+                    
+            # If retrieving took more than 15ms, it blocked waiting for a fresh physical frame
+            if dt > 0.015:
+                break
+                
+        print(f"Flushed {left_flushed} left frames and {right_flushed} right frames.")
+
+    def _preview_loop(self):
+        while not self.stop_event.is_set():
+            self.preview_active.wait(timeout=0.1)
+            if not self.preview_active.is_set():
+                continue
+
+            try:
+                # Pull robot status
+                self.robot.pull_status()
+                current_lift = self.robot.lift.status['pos']
+                current_arm = self.robot.arm.status['pos']
+                current_wrist_pitch = self.robot.end_of_arm.status['wrist_pitch']['pos']
+
+                # Capture a single frame pair
+                sample = self.capture_single_frame_pair()
+
+                center_err_str = "N/A"
+                mean_corner_err_str = "N/A"
+
+                if sample is not None:
+                    # Calculate real-time errors
+                    left_corners = sample['left_base_corners']
+                    right_corners = sample['right_base_corners']
+                    left_center = sample['left_base_center']
+                    right_center = sample['right_base_center']
+
+                    corner_errors = [float(np.linalg.norm(left_corners[k] - right_corners[k])) for k in range(4)]
+                    mean_corner_error = float(np.mean(corner_errors))
+                    center_error = float(np.linalg.norm(left_center - right_center))
+
+                    center_err_str = f"{center_error*1000.0:.2f} mm"
+                    mean_corner_err_str = f"{mean_corner_error*1000.0:.2f} mm"
+
+                    # Log the preview detections to Rerun so they show up live!
+                    rr.log(
+                        "world/base_link/left_corners",
+                        rr.Points3D(left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                    )
+                    rr.log(
+                        "world/base_link/right_corners",
+                        rr.Points3D(right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                    )
+                    rr.log(
+                        "world/base_link/left_center",
+                        rr.Points3D([left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                    )
+                    rr.log(
+                        "world/base_link/right_center",
+                        rr.Points3D([right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                    )
+
+                    live_instructions = f"""
+# Lidar-Lidar Live Preview (Manual Mode)
+
+### Robot Pose
+- **Lift**: {current_lift:.5f} m
+- **Arm**: {current_arm:.5f} m
+- **Wrist Pitch**: {current_wrist_pitch:.5f} rad
+
+### Real-time Calibration Errors
+- **Corner 1 Error**: {corner_errors[0]*1000.0:.2f} mm
+- **Corner 2 Error**: {corner_errors[1]*1000.0:.2f} mm
+- **Corner 3 Error**: {corner_errors[2]*1000.0:.2f} mm
+- **Corner 4 Error**: {corner_errors[3]*1000.0:.2f} mm
+- **Mean Corner Error**: **{mean_corner_error*1000.0:.2f} mm**
+- **Center Error**: **{center_error*1000.0:.2f} mm**
+
+> [!TIP]
+> Adjust the physical robot joints to minimize the errors shown above. 
+> Press **[Enter]** in the terminal to save this pose's averaged calibration measurements.
+"""
+                    self.update_instructions(live_instructions)
+                else:
+                    live_instructions = f"""
+# Lidar-Lidar Live Preview (Manual Mode)
+
+### Robot Pose
+- **Lift**: {current_lift:.5f} m
+- **Arm**: {current_arm:.5f} m
+- **Wrist Pitch**: {current_wrist_pitch:.5f} rad
+
+### Real-time Calibration Errors
+- **Target Status**: **Virtual rectangle NOT detected on both lidars**
+
+> [!WARNING]
+> Ensure both lidars have a clear line of sight to the calibration target.
+"""
+                    self.update_instructions(live_instructions)
+
+                # Print live status on a single updating terminal line using carriage return
+                print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Pitch: {current_wrist_pitch:.3f}rad | Center Err: {center_err_str} | Mean Corner Err: {mean_corner_err_str}   ", end="", flush=True)
+
+                time.sleep(0.05)
+            except Exception as e:
+                time.sleep(0.1)
 
     def capture_single_frame_pair(self):
         """Captures a frame from left and right lidars and processes rectangle centroids in base_link."""
@@ -225,14 +440,44 @@ class LidarLidarCompare:
         if left_frame is None or right_frame is None:
             return None
 
-        # Left Lidar processing
+        # Left Lidar processing and logging
         left_high = get_high_intensity_points(left_frame.points, left_frame.intensity, intensity_threshold=240.0)
+        if len(left_frame.points) > 0:
+            ones_l = np.ones((len(left_frame.points), 1))
+            left_pts_base = (self.T_base_from_left @ np.hstack([left_frame.points, ones_l]).T).T[:, :3]
+            rr.log(
+                "world/base_link/left_lidar/points",
+                rr.Points3D(left_pts_base, colors=[120, 80, 80], radii=[0.003]),
+            )
+        if len(left_high) > 0:
+            ones_lh = np.ones((len(left_high), 1))
+            left_high_base = (self.T_base_from_left @ np.hstack([left_high, ones_lh]).T).T[:, :3]
+            rr.log(
+                "world/base_link/left_lidar/high_intensity",
+                rr.Points3D(left_high_base, colors=[255, 69, 0], radii=[0.006]), # Red-Orange
+            )
+
         _, left_centroids, _ = detect_lidar_rectangle(
             left_high, expected_width=self.expected_width, expected_height=self.expected_height, tolerance=self.tolerance
         )
 
-        # Right Lidar processing
+        # Right Lidar processing and logging
         right_high = get_high_intensity_points(right_frame.points, right_frame.intensity, intensity_threshold=240.0)
+        if len(right_frame.points) > 0:
+            ones_r = np.ones((len(right_frame.points), 1))
+            right_pts_base = (self.T_base_from_right @ np.hstack([right_frame.points, ones_r]).T).T[:, :3]
+            rr.log(
+                "world/base_link/right_lidar/points",
+                rr.Points3D(right_pts_base, colors=[80, 80, 120], radii=[0.003]),
+            )
+        if len(right_high) > 0:
+            ones_rh = np.ones((len(right_high), 1))
+            right_high_base = (self.T_base_from_right @ np.hstack([right_high, ones_rh]).T).T[:, :3]
+            rr.log(
+                "world/base_link/right_lidar/high_intensity",
+                rr.Points3D(right_high_base, colors=[0, 255, 150], radii=[0.006]), # Greenish-Cyan
+            )
+
         _, right_centroids, _ = detect_lidar_rectangle(
             right_high, expected_width=self.expected_width, expected_height=self.expected_height, tolerance=self.tolerance
         )
@@ -266,82 +511,222 @@ class LidarLidarCompare:
         }
 
     def run(self, skip_user_prompt: bool, interactive: bool):
-        if not skip_user_prompt:
-            ans = input("This script will move the robot to validation poses. Do you wish to proceed? [y/N]: ")
+        if not skip_user_prompt and not self.manual:
+            print(f"\n\nThis script will move the robot to validation poses. Do you wish to proceed? [y/N]: \n\n ", end="", flush=True)
+            ans = input()
             if ans.lower() != 'y':
-                print("Exiting.")
+                print("Exiting.", flush=True)
                 raise Exception("User aborted comparison.")
 
-        rr.init("Lidar_Lidar_Comparison", spawn=False)
+        rr.init("Lidar_Lidar_Comparison", spawn=interactive)
         if interactive:
             self.setup_rerun_blueprint()
 
-        print("Starting Lidar-Lidar Comparison...")
+        print("Starting Lidar-Lidar Comparison...", flush=True)
         pose_results = []
 
         overall_corner_errors = []
         overall_center_errors = []
 
-        for idx, pose in enumerate(self.poses):
-            self.move_to_pose(pose)
-            print(f"Pose {idx+1}/{len(self.poses)} reached. Capturing lidar frames...")
+        if self.manual:
+            idx = 0
+            self.preview_active = threading.Event()
+            self.preview_thread = threading.Thread(target=self._preview_loop, daemon=True)
+            self.preview_thread.start()
 
-            frame_measurements = []
-            for attempt in range(15):
-                sample = self.capture_single_frame_pair()
-                if sample is not None:
-                    frame_measurements.append(sample)
-                time.sleep(0.05)
+            while True:
+                print(f"\n====================================", flush=True)
+                print(f"[MANUAL MODE] Pose {idx+1}: Please position the robot.", flush=True)
+                print(f"====================================", flush=True)
 
-            if len(frame_measurements) == 0:
-                print(f"Pose {idx+1}: Could not detect virtual rectangle on both lidars.")
+                # Enable live preview
+                self.preview_active.set()
+
+                print("Press [Enter] to capture this pose, or type 'q' and press Enter to finish: ", end="", flush=True)
+                ans = input()
+
+                # Disable live preview during final frame averaging capture
+                self.preview_active.clear()
+                print()  # Finalize the \r live preview console line cleanly
+
+                if ans.lower() == 'q':
+                    break
+
+                self.robot.pull_status()
+                current_lift = self.robot.lift.status['pos']
+                current_arm = self.robot.arm.status['pos']
+                current_wrist_pitch = self.robot.end_of_arm.status['wrist_pitch']['pos']
+                pose = {
+                    'lift': float(current_lift),
+                    'arm': float(current_arm),
+                    'wrist_pitch': float(current_wrist_pitch)
+                }
+                print(f"\nCapturing Pose {idx+1} (averaging 15 frames)...", flush=True)
+
+                self.flush_lidar_streams()
+
+                frame_measurements = []
+                for attempt in range(15):
+                    sample = self.capture_single_frame_pair()
+                    if sample is not None:
+                        frame_measurements.append(sample)
+                    time.sleep(0.05)
+
+                if len(frame_measurements) == 0:
+                    print(f"Pose {idx+1}: Could not detect virtual rectangle on both lidars.", flush=True)
+                    pose_dict = {
+                        'pose_number': idx + 1,
+                        'joint_targets': pose,
+                        'status': 'FAILED_NO_DETECTION',
+                    }
+                    pose_results.append(pose_dict)
+                    idx += 1
+                    continue
+
+                # Average measurements across captured frames
+                avg_left_corners = np.mean([m['left_base_corners'] for m in frame_measurements], axis=0)
+                avg_right_corners = np.mean([m['right_base_corners'] for m in frame_measurements], axis=0)
+                avg_left_center = np.mean([m['left_base_center'] for m in frame_measurements], axis=0)
+                avg_right_center = np.mean([m['right_base_center'] for m in frame_measurements], axis=0)
+
+                # Calculate errors
+                corner_errors = [float(np.linalg.norm(avg_left_corners[k] - avg_right_corners[k])) for k in range(4)]
+                mean_corner_error = float(np.mean(corner_errors))
+                center_error = float(np.linalg.norm(avg_left_center - avg_right_center))
+
+                overall_corner_errors.extend(corner_errors)
+                overall_center_errors.append(center_error)
+
+                print(f"\n--- Results for Manual Pose {idx+1} ---", flush=True)
+                for k in range(4):
+                    print(f"Corner {k+1} Error: {corner_errors[k]*1000.0:.2f} mm")
+                print(f"Center Error: {center_error*1000.0:.2f} mm")
+                print(f"Mean Corner Error: {mean_corner_error*1000.0:.2f} mm", flush=True)
+
+                # Rerun logging
+                rr.log(
+                    "world/base_link/left_corners",
+                    rr.Points3D(avg_left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "world/base_link/right_corners",
+                    rr.Points3D(avg_right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "world/base_link/left_center",
+                    rr.Points3D([avg_left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                )
+                rr.log(
+                    "world/base_link/right_center",
+                    rr.Points3D([avg_right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                )
+
+                instructions = f"""
+# Lidar-Lidar Comparison Status (Manual Mode)
+
+### Pose {idx+1}
+- **Joint Targets**: {pose}
+- **Corner 1 Error**: {corner_errors[0]*1000.0:.2f} mm
+- **Corner 2 Error**: {corner_errors[1]*1000.0:.2f} mm
+- **Corner 3 Error**: {corner_errors[2]*1000.0:.2f} mm
+- **Corner 4 Error**: {corner_errors[3]*1000.0:.2f} mm
+- **Center Error**: {center_error*1000.0:.2f} mm
+- **Mean Corner Error**: {mean_corner_error*1000.0:.2f} mm
+"""
+                self.update_instructions(instructions)
+
                 pose_dict = {
                     'pose_number': idx + 1,
                     'joint_targets': pose,
-                    'status': 'FAILED_NO_DETECTION',
+                    'status': 'SUCCESS',
+                    'left_lidar_base': {
+                        'corner_1': avg_left_corners[0].tolist(),
+                        'corner_2': avg_left_corners[1].tolist(),
+                        'corner_3': avg_left_corners[2].tolist(),
+                        'corner_4': avg_left_corners[3].tolist(),
+                        'center': avg_left_center.tolist(),
+                    },
+                    'right_lidar_base': {
+                        'corner_1': avg_right_corners[0].tolist(),
+                        'corner_2': avg_right_corners[1].tolist(),
+                        'corner_3': avg_right_corners[2].tolist(),
+                        'corner_4': avg_right_corners[3].tolist(),
+                        'center': avg_right_center.tolist(),
+                    },
+                    'errors_m': {
+                        'corner_1_error': corner_errors[0],
+                        'corner_2_error': corner_errors[1],
+                        'corner_3_error': corner_errors[2],
+                        'corner_4_error': corner_errors[3],
+                        'center_error': center_error,
+                        'mean_corner_error': mean_corner_error,
+                    },
                 }
                 pose_results.append(pose_dict)
-                continue
+                idx += 1
+        else:
+            for idx, pose in enumerate(self.poses):
+                self.move_to_pose(pose)
+                print(f"Pose {idx+1}/{len(self.poses)} reached. Capturing lidar frames...", flush=True)
 
-            # Average measurements across captured frames
-            avg_left_corners = np.mean([m['left_base_corners'] for m in frame_measurements], axis=0)
-            avg_right_corners = np.mean([m['right_base_corners'] for m in frame_measurements], axis=0)
-            avg_left_center = np.mean([m['left_base_center'] for m in frame_measurements], axis=0)
-            avg_right_center = np.mean([m['right_base_center'] for m in frame_measurements], axis=0)
+                self.flush_lidar_streams()
 
-            # Calculate errors
-            corner_errors = [float(np.linalg.norm(avg_left_corners[k] - avg_right_corners[k])) for k in range(4)]
-            mean_corner_error = float(np.mean(corner_errors))
-            center_error = float(np.linalg.norm(avg_left_center - avg_right_center))
+                frame_measurements = []
+                for attempt in range(15):
+                    sample = self.capture_single_frame_pair()
+                    if sample is not None:
+                        frame_measurements.append(sample)
+                    time.sleep(0.05)
 
-            overall_corner_errors.extend(corner_errors)
-            overall_center_errors.append(center_error)
+                if len(frame_measurements) == 0:
+                    print(f"Pose {idx+1}: Could not detect virtual rectangle on both lidars.", flush=True)
+                    pose_dict = {
+                        'pose_number': idx + 1,
+                        'joint_targets': pose,
+                        'status': 'FAILED_NO_DETECTION',
+                    }
+                    pose_results.append(pose_dict)
+                    continue
 
-            print(f"--- Results for Pose {idx+1} ---")
-            for k in range(4):
-                print(f"Corner {k+1} Error: {corner_errors[k]*1000.0:.2f} mm")
-            print(f"Center Error: {center_error*1000.0:.2f} mm")
-            print(f"Mean Corner Error: {mean_corner_error*1000.0:.2f} mm")
+                # Average measurements across captured frames
+                avg_left_corners = np.mean([m['left_base_corners'] for m in frame_measurements], axis=0)
+                avg_right_corners = np.mean([m['right_base_corners'] for m in frame_measurements], axis=0)
+                avg_left_center = np.mean([m['left_base_center'] for m in frame_measurements], axis=0)
+                avg_right_center = np.mean([m['right_base_center'] for m in frame_measurements], axis=0)
 
-            # Rerun logging
-            rr.log(
-                "world/base_link/left_corners",
-                rr.Points3D(avg_left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
-            )
-            rr.log(
-                "world/base_link/right_corners",
-                rr.Points3D(avg_right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
-            )
-            rr.log(
-                "world/base_link/left_center",
-                rr.Points3D([avg_left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
-            )
-            rr.log(
-                "world/base_link/right_center",
-                rr.Points3D([avg_right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
-            )
+                # Calculate errors
+                corner_errors = [float(np.linalg.norm(avg_left_corners[k] - avg_right_corners[k])) for k in range(4)]
+                mean_corner_error = float(np.mean(corner_errors))
+                center_error = float(np.linalg.norm(avg_left_center - avg_right_center))
 
-            instructions = f"""
+                overall_corner_errors.extend(corner_errors)
+                overall_center_errors.append(center_error)
+
+                print(f"\n--- Results for Pose {idx+1} ---", flush=True)
+                for k in range(4):
+                    print(f"Corner {k+1} Error: {corner_errors[k]*1000.0:.2f} mm")
+                print(f"Center Error: {center_error*1000.0:.2f} mm")
+                print(f"Mean Corner Error: {mean_corner_error*1000.0:.2f} mm", flush=True)
+
+                # Rerun logging
+                rr.log(
+                    "world/base_link/left_corners",
+                    rr.Points3D(avg_left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "world/base_link/right_corners",
+                    rr.Points3D(avg_right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "world/base_link/left_center",
+                    rr.Points3D([avg_left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                )
+                rr.log(
+                    "world/base_link/right_center",
+                    rr.Points3D([avg_right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                )
+
+                instructions = f"""
 # Lidar-Lidar Comparison Status
 
 ### Pose {idx+1} / {len(self.poses)}
@@ -353,36 +738,36 @@ class LidarLidarCompare:
 - **Center Error**: {center_error*1000.0:.2f} mm
 - **Mean Corner Error**: {mean_corner_error*1000.0:.2f} mm
 """
-            self.update_instructions(instructions)
+                self.update_instructions(instructions)
 
-            pose_dict = {
-                'pose_number': idx + 1,
-                'joint_targets': pose,
-                'status': 'SUCCESS',
-                'left_lidar_base': {
-                    'corner_1': avg_left_corners[0].tolist(),
-                    'corner_2': avg_left_corners[1].tolist(),
-                    'corner_3': avg_left_corners[2].tolist(),
-                    'corner_4': avg_left_corners[3].tolist(),
-                    'center': avg_left_center.tolist(),
-                },
-                'right_lidar_base': {
-                    'corner_1': avg_right_corners[0].tolist(),
-                    'corner_2': avg_right_corners[1].tolist(),
-                    'corner_3': avg_right_corners[2].tolist(),
-                    'corner_4': avg_right_corners[3].tolist(),
-                    'center': avg_right_center.tolist(),
-                },
-                'errors_m': {
-                    'corner_1_error': corner_errors[0],
-                    'corner_2_error': corner_errors[1],
-                    'corner_3_error': corner_errors[2],
-                    'corner_4_error': corner_errors[3],
-                    'center_error': center_error,
-                    'mean_corner_error': mean_corner_error,
-                },
-            }
-            pose_results.append(pose_dict)
+                pose_dict = {
+                    'pose_number': idx + 1,
+                    'joint_targets': pose,
+                    'status': 'SUCCESS',
+                    'left_lidar_base': {
+                        'corner_1': avg_left_corners[0].tolist(),
+                        'corner_2': avg_left_corners[1].tolist(),
+                        'corner_3': avg_left_corners[2].tolist(),
+                        'corner_4': avg_left_corners[3].tolist(),
+                        'center': avg_left_center.tolist(),
+                    },
+                    'right_lidar_base': {
+                        'corner_1': avg_right_corners[0].tolist(),
+                        'corner_2': avg_right_corners[1].tolist(),
+                        'corner_3': avg_right_corners[2].tolist(),
+                        'corner_4': avg_right_corners[3].tolist(),
+                        'center': avg_right_center.tolist(),
+                    },
+                    'errors_m': {
+                        'corner_1_error': corner_errors[0],
+                        'corner_2_error': corner_errors[1],
+                        'corner_3_error': corner_errors[2],
+                        'corner_4_error': corner_errors[3],
+                        'center_error': center_error,
+                        'mean_corner_error': mean_corner_error,
+                    },
+                }
+                pose_results.append(pose_dict)
 
         # Output YAML summary
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -435,12 +820,26 @@ def REx_lidar_lidar_compare(interactive: bool = True):
             expected_height=args.expected_height,
             tolerance=args.tolerance,
             output_file=args.output_file,
+            manual=args.manual,
         )
         return comparator.run(skip_user_prompt=not interactive or args.skip_user_prompt, interactive=interactive and not args.not_interactive)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user (Ctrl+C). Cleaning up and exiting...")
+        if comparator is not None:
+            if hasattr(comparator, 'robot') and comparator.robot is not None:
+                try:
+                    comparator.robot.stop()
+                except Exception as e:
+                    print(f"Warning: error stopping robot: {e}")
+        os._exit(1)
     finally:
         if comparator is not None:
-            comparator.cleanup()
+            try:
+                comparator.cleanup()
+            except Exception as e:
+                print(f"Warning: error during cleanup: {e}")
 
 
 if __name__ == "__main__":
     REx_lidar_lidar_compare(interactive=True)
+    os._exit(0)
