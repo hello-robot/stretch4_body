@@ -177,12 +177,19 @@ class LidarLidarCompare:
         self.stop_event = threading.Event()
 
         self.poses = [
-            {'lift': 0.8, 'arm': 0.15, 'wrist_pitch': -0.49},
-            {'lift': 0.8, 'arm': 0.25, 'wrist_pitch': -0.49},
-            {'lift': 0.8, 'arm': 0.45, 'wrist_pitch': -0.49},
-            {'lift': 0.6, 'arm': 0.15, 'wrist_pitch': -0.49},
-            {'lift': 0.6, 'arm': 0.25, 'wrist_pitch': -0.49},
-            {'lift': 0.6, 'arm': 0.45, 'wrist_pitch': -0.49},
+            {'lift': 0.7422438515712114, 'arm': 0.49702133496485, 'wrist_yaw': 0.37045636027438233, 'wrist_pitch': -0.8736020587008726, 'wrist_roll': -0.08513593372765309},
+            {'lift': 0.9462642491572507, 'arm': 0.49703237617656476, 'wrist_yaw': 0.37045636027438233, 'wrist_pitch': -0.8736020587008726, 'wrist_roll': -0.08513593372765309},
+            {'lift': 1.1516953266937076, 'arm': 0.5463595285612547, 'wrist_yaw': 0.21782527187976106, 'wrist_pitch': -1.0569127628532067, 'wrist_roll': -0.08743690490948154},
+            {'lift': 1.0651885827001875, 'arm': 0.4368502999959916, 'wrist_yaw': 3.748282055198564, 'wrist_pitch': 3.425379099348637, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.4317325114572012, 'arm': 0.43669278614402063, 'wrist_yaw': 3.748282055198564, 'wrist_pitch': 3.425379099348637, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.4317325114572012, 'arm': 0.11970237670445559, 'wrist_yaw': 3.948466548017641, 'wrist_pitch': 2.941408160770717, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.4317587575974519, 'arm': 0.11961223469063292, 'wrist_yaw': 1.9412526870692788, 'wrist_pitch': 2.655320743830045, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.23195447186152143, 'arm': 0.11961580356714678, 'wrist_yaw': 2.6039323874358757, 'wrist_pitch': 2.6177382145268466, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.2320348297960165, 'arm': 0.11961937244366064, 'wrist_yaw': 3.4023693875303525, 'wrist_pitch': 2.7504275526789543, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.23206843888019246, 'arm': 0.11961937244366064, 'wrist_yaw': 4.273670475049396, 'wrist_pitch': 2.8148547457701514, 'wrist_roll': 3.142359643983736},
+            {'lift': 0.2320818791746592, 'arm': 0.1196266867817242, 'wrist_yaw': 0.8099418560036186, 'wrist_pitch': 2.6384469551633027, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.01253318833188502, 'arm': 0.3393704530060471, 'wrist_yaw': 3.4085053106818943, 'wrist_pitch': 3.228262568105332, 'wrist_roll': 3.14082566319585},
+            {'lift': 0.22383738550050916, 'arm': 0.5546602520471264, 'wrist_yaw': 3.557301447106802, 'wrist_pitch': 3.0633596334076256, 'wrist_roll': 3.141592653589793},
         ]
 
         # Robot startup
@@ -290,8 +297,8 @@ class LidarLidarCompare:
         self.robot.lift.move_to(pose['lift'])
         self.robot.arm.move_to(pose['arm'])
         self.robot.end_of_arm.move_to('wrist_pitch', pose['wrist_pitch'])
-        self.robot.end_of_arm.move_to('wrist_roll', 0)
-        self.robot.end_of_arm.move_to('wrist_yaw', 0)
+        self.robot.end_of_arm.move_to('wrist_roll', pose.get('wrist_roll', 0.0))
+        self.robot.end_of_arm.move_to('wrist_yaw', pose.get('wrist_yaw', 0.0))
         self.robot.push_command()
         self.robot.wait_command()
         time.sleep(2.5)  # Allow robot and lidars to settle
