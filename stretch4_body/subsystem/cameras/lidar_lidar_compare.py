@@ -356,7 +356,9 @@ class LidarLidarCompare:
                 self.robot.pull_status()
                 current_lift = self.robot.lift.status['pos']
                 current_arm = self.robot.arm.status['pos']
+                current_wrist_yaw = self.robot.end_of_arm.status['wrist_yaw']['pos']
                 current_wrist_pitch = self.robot.end_of_arm.status['wrist_pitch']['pos']
+                current_wrist_roll = self.robot.end_of_arm.status['wrist_roll']['pos']
 
                 # Capture a single frame pair (returns dict of calibrated and uncalibrated data)
                 sample = self.capture_single_frame_pair()
@@ -424,7 +426,9 @@ class LidarLidarCompare:
 ### Robot Pose
 - **Lift**: {current_lift:.5f} m
 - **Arm**: {current_arm:.5f} m
+- **Wrist Yaw**: {current_wrist_yaw:.5f} rad
 - **Wrist Pitch**: {current_wrist_pitch:.5f} rad
+- **Wrist Roll**: {current_wrist_roll:.5f} rad
 
 ### Real-time Calibrated Errors (apply_calibration=True)
 - **Corner Errors**: {", ".join([f"{e*1000.0:.1f}" for e in corner_errors_cal])} mm
@@ -441,7 +445,7 @@ class LidarLidarCompare:
 > Press **[Enter]** in the terminal to save this pose's averaged calibration measurements.
 """
                     self.update_instructions(live_instructions)
-                    print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Calibrated Mean Corner Err: {mean_corner_error_cal*1000.0:.2f}mm | Uncalibrated Mean Corner Err: {mean_corner_error_uncal*1000.0:.2f}mm   ", end="", flush=True)
+                    print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Yaw: {current_wrist_yaw:.3f}rad | Pitch: {current_wrist_pitch:.3f}rad | Roll: {current_wrist_roll:.3f}rad | Calibrated Mean Corner Err: {mean_corner_error_cal*1000.0:.2f}mm | Uncalibrated Mean Corner Err: {mean_corner_error_uncal*1000.0:.2f}mm   ", end="", flush=True)
                 else:
                     live_instructions = f"""
 # Lidar-Lidar Live Preview (Manual Mode)
@@ -449,7 +453,9 @@ class LidarLidarCompare:
 ### Robot Pose
 - **Lift**: {current_lift:.5f} m
 - **Arm**: {current_arm:.5f} m
+- **Wrist Yaw**: {current_wrist_yaw:.5f} rad
 - **Wrist Pitch**: {current_wrist_pitch:.5f} rad
+- **Wrist Roll**: {current_wrist_roll:.5f} rad
 
 ### Real-time Calibration Errors
 - **Target Status**: **Virtual rectangle NOT detected on both lidars**
@@ -458,7 +464,7 @@ class LidarLidarCompare:
 > Ensure both lidars have a clear line of sight to the calibration target.
 """
                     self.update_instructions(live_instructions)
-                    print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Pitch: {current_wrist_pitch:.3f}rad | Target Status: NOT DETECTED   ", end="", flush=True)
+                    print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Yaw: {current_wrist_yaw:.3f}rad | Pitch: {current_wrist_pitch:.3f}rad | Roll: {current_wrist_roll:.3f}rad | Target Status: NOT DETECTED   ", end="", flush=True)
 
                 time.sleep(0.05)
             except Exception as e:
@@ -651,11 +657,15 @@ class LidarLidarCompare:
                 self.robot.pull_status()
                 current_lift = self.robot.lift.status['pos']
                 current_arm = self.robot.arm.status['pos']
+                current_wrist_yaw = self.robot.end_of_arm.status['wrist_yaw']['pos']
                 current_wrist_pitch = self.robot.end_of_arm.status['wrist_pitch']['pos']
+                current_wrist_roll = self.robot.end_of_arm.status['wrist_roll']['pos']
                 pose = {
                     'lift': float(current_lift),
                     'arm': float(current_arm),
-                    'wrist_pitch': float(current_wrist_pitch)
+                    'wrist_yaw': float(current_wrist_yaw),
+                    'wrist_pitch': float(current_wrist_pitch),
+                    'wrist_roll': float(current_wrist_roll),
                 }
                 print(f"\nCapturing Pose {idx+1} (averaging 15 frames)...", flush=True)
 
@@ -818,8 +828,8 @@ class LidarLidarCompare:
                 pose_results.append(pose_dict)
                 idx += 1
         else:
-            for idx, pose in enumerate(self.poses):
-                self.move_to_pose(pose)
+            for idx, target_pose in enumerate(self.poses):
+                self.move_to_pose(target_pose)
                 print(f"Pose {idx+1}/{len(self.poses)} reached. Capturing lidar frames...", flush=True)
 
                 self.flush_lidar_streams()
@@ -830,6 +840,20 @@ class LidarLidarCompare:
                     if sample is not None:
                         frame_measurements.append(sample)
                     time.sleep(0.05)
+
+                self.robot.pull_status()
+                current_lift = self.robot.lift.status['pos']
+                current_arm = self.robot.arm.status['pos']
+                current_wrist_yaw = self.robot.end_of_arm.status['wrist_yaw']['pos']
+                current_wrist_pitch = self.robot.end_of_arm.status['wrist_pitch']['pos']
+                current_wrist_roll = self.robot.end_of_arm.status['wrist_roll']['pos']
+                pose = {
+                    'lift': float(current_lift),
+                    'arm': float(current_arm),
+                    'wrist_yaw': float(current_wrist_yaw),
+                    'wrist_pitch': float(current_wrist_pitch),
+                    'wrist_roll': float(current_wrist_roll),
+                }
 
                 if len(frame_measurements) == 0:
                     print(f"Pose {idx+1}: Could not detect virtual rectangle on both lidars.", flush=True)
