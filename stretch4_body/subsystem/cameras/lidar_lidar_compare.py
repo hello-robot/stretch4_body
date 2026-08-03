@@ -196,10 +196,15 @@ class LidarLidarCompare:
             print("WARNING: This script is intended to be run with the 'eoa_wrist_dw4_tool_calibration' tool.")
             print("Make sure your tool parameter in your robot geometry is correctly set.")
 
-        # Load Dual Lidar Calibration using calibrated URDF
+        # Load Dual Lidar Calibration transforms
         self.dual_lidar_calib = DualLidarCalibration()
-        self.T_base_from_left = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=True)
-        self.T_base_from_right = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=True)
+        self.T_base_from_left_calibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=True)
+        self.T_base_from_right_calibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=True)
+        self.T_base_from_left_uncalibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=False)
+        self.T_base_from_right_uncalibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=False)
+        # Keep old aliases for backward compatibility
+        self.T_base_from_left = self.T_base_from_left_uncalibrated
+        self.T_base_from_right = self.T_base_from_right_uncalibrated
 
         # Start lidar streams
         print("Connecting to Lidar Streams...", flush=True)
@@ -259,11 +264,15 @@ class LidarLidarCompare:
         blueprint = rrb.Blueprint(
             rrb.Horizontal(
                 rrb.Spatial3DView(
-                    name="Base Link Lidar Comparison",
-                    origin="world/base_link",
+                    name="Calibrated View",
+                    origin="calibrated/base_link",
+                ),
+                rrb.Spatial3DView(
+                    name="Uncalibrated View",
+                    origin="uncalibrated/base_link",
                 ),
                 rrb.TextDocumentView(name="Comparison Status", origin="Validation/Instructions"),
-                column_shares=[3, 1],
+                column_shares=[2, 2, 1],
             ),
             rrb.BlueprintPanel(state="collapsed"),
             rrb.SelectionPanel(state="collapsed"),
@@ -349,42 +358,64 @@ class LidarLidarCompare:
                 current_arm = self.robot.arm.status['pos']
                 current_wrist_pitch = self.robot.end_of_arm.status['wrist_pitch']['pos']
 
-                # Capture a single frame pair
+                # Capture a single frame pair (returns dict of calibrated and uncalibrated data)
                 sample = self.capture_single_frame_pair()
 
-                center_err_str = "N/A"
-                mean_corner_err_str = "N/A"
-
                 if sample is not None:
-                    # Calculate real-time errors
-                    left_corners = sample['left_base_corners']
-                    right_corners = sample['right_base_corners']
-                    left_center = sample['left_base_center']
-                    right_center = sample['right_base_center']
+                    # Calibrated errors
+                    left_corners_cal = sample['calibrated']['left_base_corners']
+                    right_corners_cal = sample['calibrated']['right_base_corners']
+                    left_center_cal = sample['calibrated']['left_base_center']
+                    right_center_cal = sample['calibrated']['right_base_center']
 
-                    corner_errors = [float(np.linalg.norm(left_corners[k] - right_corners[k])) for k in range(4)]
-                    mean_corner_error = float(np.mean(corner_errors))
-                    center_error = float(np.linalg.norm(left_center - right_center))
+                    corner_errors_cal = [float(np.linalg.norm(left_corners_cal[k] - right_corners_cal[k])) for k in range(4)]
+                    mean_corner_error_cal = float(np.mean(corner_errors_cal))
+                    center_error_cal = float(np.linalg.norm(left_center_cal - right_center_cal))
 
-                    center_err_str = f"{center_error*1000.0:.2f} mm"
-                    mean_corner_err_str = f"{mean_corner_error*1000.0:.2f} mm"
+                    # Uncalibrated errors
+                    left_corners_uncal = sample['uncalibrated']['left_base_corners']
+                    right_corners_uncal = sample['uncalibrated']['right_base_corners']
+                    left_center_uncal = sample['uncalibrated']['left_base_center']
+                    right_center_uncal = sample['uncalibrated']['right_base_center']
 
-                    # Log the preview detections to Rerun so they show up live!
+                    corner_errors_uncal = [float(np.linalg.norm(left_corners_uncal[k] - right_corners_uncal[k])) for k in range(4)]
+                    mean_corner_error_uncal = float(np.mean(corner_errors_uncal))
+                    center_error_uncal = float(np.linalg.norm(left_center_uncal - right_center_uncal))
+
+                    # Log calibrated detections
                     rr.log(
-                        "world/base_link/left_corners",
-                        rr.Points3D(left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                        "calibrated/base_link/left_corners",
+                        rr.Points3D(left_corners_cal, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
                     )
                     rr.log(
-                        "world/base_link/right_corners",
-                        rr.Points3D(right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                        "calibrated/base_link/right_corners",
+                        rr.Points3D(right_corners_cal, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
                     )
                     rr.log(
-                        "world/base_link/left_center",
-                        rr.Points3D([left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                        "calibrated/base_link/left_center",
+                        rr.Points3D([left_center_cal], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
                     )
                     rr.log(
-                        "world/base_link/right_center",
-                        rr.Points3D([right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                        "calibrated/base_link/right_center",
+                        rr.Points3D([right_center_cal], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                    )
+
+                    # Log uncalibrated detections
+                    rr.log(
+                        "uncalibrated/base_link/left_corners",
+                        rr.Points3D(left_corners_uncal, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                    )
+                    rr.log(
+                        "uncalibrated/base_link/right_corners",
+                        rr.Points3D(right_corners_uncal, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                    )
+                    rr.log(
+                        "uncalibrated/base_link/left_center",
+                        rr.Points3D([left_center_uncal], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                    )
+                    rr.log(
+                        "uncalibrated/base_link/right_center",
+                        rr.Points3D([right_center_uncal], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
                     )
 
                     live_instructions = f"""
@@ -395,19 +426,22 @@ class LidarLidarCompare:
 - **Arm**: {current_arm:.5f} m
 - **Wrist Pitch**: {current_wrist_pitch:.5f} rad
 
-### Real-time Calibration Errors
-- **Corner 1 Error**: {corner_errors[0]*1000.0:.2f} mm
-- **Corner 2 Error**: {corner_errors[1]*1000.0:.2f} mm
-- **Corner 3 Error**: {corner_errors[2]*1000.0:.2f} mm
-- **Corner 4 Error**: {corner_errors[3]*1000.0:.2f} mm
-- **Mean Corner Error**: **{mean_corner_error*1000.0:.2f} mm**
-- **Center Error**: **{center_error*1000.0:.2f} mm**
+### Real-time Calibrated Errors (apply_calibration=True)
+- **Corner Errors**: {", ".join([f"{e*1000.0:.1f}" for e in corner_errors_cal])} mm
+- **Mean Corner Error**: **{mean_corner_error_cal*1000.0:.2f} mm**
+- **Center Error**: **{center_error_cal*1000.0:.2f} mm**
+
+### Real-time Uncalibrated Errors (apply_calibration=False)
+- **Corner Errors**: {", ".join([f"{e*1000.0:.1f}" for e in corner_errors_uncal])} mm
+- **Mean Corner Error**: **{mean_corner_error_uncal*1000.0:.2f} mm**
+- **Center Error**: **{center_error_uncal*1000.0:.2f} mm**
 
 > [!TIP]
 > Adjust the physical robot joints to minimize the errors shown above. 
 > Press **[Enter]** in the terminal to save this pose's averaged calibration measurements.
 """
                     self.update_instructions(live_instructions)
+                    print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Calibrated Mean Corner Err: {mean_corner_error_cal*1000.0:.2f}mm | Uncalibrated Mean Corner Err: {mean_corner_error_uncal*1000.0:.2f}mm   ", end="", flush=True)
                 else:
                     live_instructions = f"""
 # Lidar-Lidar Live Preview (Manual Mode)
@@ -424,9 +458,7 @@ class LidarLidarCompare:
 > Ensure both lidars have a clear line of sight to the calibration target.
 """
                     self.update_instructions(live_instructions)
-
-                # Print live status on a single updating terminal line using carriage return
-                print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Pitch: {current_wrist_pitch:.3f}rad | Center Err: {center_err_str} | Mean Corner Err: {mean_corner_err_str}   ", end="", flush=True)
+                    print(f"\r[LIVE PREVIEW] Lift: {current_lift:.3f}m | Arm: {current_arm:.3f}m | Pitch: {current_wrist_pitch:.3f}rad | Target Status: NOT DETECTED   ", end="", flush=True)
 
                 time.sleep(0.05)
             except Exception as e:
@@ -440,44 +472,81 @@ class LidarLidarCompare:
         if left_frame is None or right_frame is None:
             return None
 
-        # Left Lidar processing and logging
+        # Extract high-intensity points
         left_high = get_high_intensity_points(left_frame.points, left_frame.intensity, intensity_threshold=240.0)
+        right_high = get_high_intensity_points(right_frame.points, right_frame.intensity, intensity_threshold=240.0)
+
+        # ----------------------------------------------------
+        # 1. Logging raw points and high-intensity to Rerun
+        # ----------------------------------------------------
+        # Calibrated View
         if len(left_frame.points) > 0:
             ones_l = np.ones((len(left_frame.points), 1))
-            left_pts_base = (self.T_base_from_left @ np.hstack([left_frame.points, ones_l]).T).T[:, :3]
+            left_pts_base_cal = (self.T_base_from_left_calibrated @ np.hstack([left_frame.points, ones_l]).T).T[:, :3]
             rr.log(
-                "world/base_link/left_lidar/points",
-                rr.Points3D(left_pts_base, colors=[120, 80, 80], radii=[0.003]),
+                "calibrated/base_link/left_lidar/points",
+                rr.Points3D(left_pts_base_cal, colors=[120, 80, 80], radii=[0.003]),
             )
         if len(left_high) > 0:
             ones_lh = np.ones((len(left_high), 1))
-            left_high_base = (self.T_base_from_left @ np.hstack([left_high, ones_lh]).T).T[:, :3]
+            left_high_base_cal = (self.T_base_from_left_calibrated @ np.hstack([left_high, ones_lh]).T).T[:, :3]
             rr.log(
-                "world/base_link/left_lidar/high_intensity",
-                rr.Points3D(left_high_base, colors=[255, 69, 0], radii=[0.006]), # Red-Orange
+                "calibrated/base_link/left_lidar/high_intensity",
+                rr.Points3D(left_high_base_cal, colors=[255, 69, 0], radii=[0.006]),
             )
 
-        _, left_centroids, _ = detect_lidar_rectangle(
-            left_high, expected_width=self.expected_width, expected_height=self.expected_height, tolerance=self.tolerance
-        )
-
-        # Right Lidar processing and logging
-        right_high = get_high_intensity_points(right_frame.points, right_frame.intensity, intensity_threshold=240.0)
         if len(right_frame.points) > 0:
             ones_r = np.ones((len(right_frame.points), 1))
-            right_pts_base = (self.T_base_from_right @ np.hstack([right_frame.points, ones_r]).T).T[:, :3]
+            right_pts_base_cal = (self.T_base_from_right_calibrated @ np.hstack([right_frame.points, ones_r]).T).T[:, :3]
             rr.log(
-                "world/base_link/right_lidar/points",
-                rr.Points3D(right_pts_base, colors=[80, 80, 120], radii=[0.003]),
+                "calibrated/base_link/right_lidar/points",
+                rr.Points3D(right_pts_base_cal, colors=[80, 80, 120], radii=[0.003]),
             )
         if len(right_high) > 0:
             ones_rh = np.ones((len(right_high), 1))
-            right_high_base = (self.T_base_from_right @ np.hstack([right_high, ones_rh]).T).T[:, :3]
+            right_high_base_cal = (self.T_base_from_right_calibrated @ np.hstack([right_high, ones_rh]).T).T[:, :3]
             rr.log(
-                "world/base_link/right_lidar/high_intensity",
-                rr.Points3D(right_high_base, colors=[0, 255, 150], radii=[0.006]), # Greenish-Cyan
+                "calibrated/base_link/right_lidar/high_intensity",
+                rr.Points3D(right_high_base_cal, colors=[0, 255, 150], radii=[0.006]),
             )
 
+        # Uncalibrated View
+        if len(left_frame.points) > 0:
+            ones_l = np.ones((len(left_frame.points), 1))
+            left_pts_base_uncal = (self.T_base_from_left_uncalibrated @ np.hstack([left_frame.points, ones_l]).T).T[:, :3]
+            rr.log(
+                "uncalibrated/base_link/left_lidar/points",
+                rr.Points3D(left_pts_base_uncal, colors=[120, 80, 80], radii=[0.003]),
+            )
+        if len(left_high) > 0:
+            ones_lh = np.ones((len(left_high), 1))
+            left_high_base_uncal = (self.T_base_from_left_uncalibrated @ np.hstack([left_high, ones_lh]).T).T[:, :3]
+            rr.log(
+                "uncalibrated/base_link/left_lidar/high_intensity",
+                rr.Points3D(left_high_base_uncal, colors=[255, 69, 0], radii=[0.006]),
+            )
+
+        if len(right_frame.points) > 0:
+            ones_r = np.ones((len(right_frame.points), 1))
+            right_pts_base_uncal = (self.T_base_from_right_uncalibrated @ np.hstack([right_frame.points, ones_r]).T).T[:, :3]
+            rr.log(
+                "uncalibrated/base_link/right_lidar/points",
+                rr.Points3D(right_pts_base_uncal, colors=[80, 80, 120], radii=[0.003]),
+            )
+        if len(right_high) > 0:
+            ones_rh = np.ones((len(right_high), 1))
+            right_high_base_uncal = (self.T_base_from_right_uncalibrated @ np.hstack([right_high, ones_rh]).T).T[:, :3]
+            rr.log(
+                "uncalibrated/base_link/right_lidar/high_intensity",
+                rr.Points3D(right_high_base_uncal, colors=[0, 255, 150], radii=[0.006]),
+            )
+
+        # ----------------------------------------------------
+        # 2. Detect rectangle corners on raw sensor centroids
+        # ----------------------------------------------------
+        _, left_centroids, _ = detect_lidar_rectangle(
+            left_high, expected_width=self.expected_width, expected_height=self.expected_height, tolerance=self.tolerance
+        )
         _, right_centroids, _ = detect_lidar_rectangle(
             right_high, expected_width=self.expected_width, expected_height=self.expected_height, tolerance=self.tolerance
         )
@@ -485,29 +554,54 @@ class LidarLidarCompare:
         if left_centroids is None or len(left_centroids) != 4 or right_centroids is None or len(right_centroids) != 4:
             return None
 
-        # Transform to base_link
+        # ----------------------------------------------------
+        # 3. Process Calibrated Coordinates
+        # ----------------------------------------------------
         ones = np.ones((4, 1))
-        left_base = (self.T_base_from_left @ np.hstack([left_centroids, ones]).T).T[:, :3]
-        right_base = (self.T_base_from_right @ np.hstack([right_centroids, ones]).T).T[:, :3]
+        left_base_cal = (self.T_base_from_left_calibrated @ np.hstack([left_centroids, ones]).T).T[:, :3]
+        right_base_cal = (self.T_base_from_right_calibrated @ np.hstack([right_centroids, ones]).T).T[:, :3]
+        
+        left_center_cal = np.mean(left_base_cal, axis=0)
+        right_center_cal = np.mean(right_base_cal, axis=0)
 
-        left_center = np.mean(left_base, axis=0)
-        right_center = np.mean(right_base, axis=0)
+        dist_matrix_cal = np.linalg.norm(left_base_cal[:, None, :] - right_base_cal[None, :, :], axis=2)
+        row_ind_cal, col_ind_cal = linear_sum_assignment(dist_matrix_cal)
+        right_base_matched_cal = right_base_cal[col_ind_cal]
 
-        # Optimal corner matching using Hungarian algorithm
-        dist_matrix = np.linalg.norm(left_base[:, None, :] - right_base[None, :, :], axis=2)
-        row_ind, col_ind = linear_sum_assignment(dist_matrix)
-        right_base_matched = right_base[col_ind]
+        sort_idx_cal = get_angular_sort_indices(left_base_cal)
+        left_base_ordered_cal = left_base_cal[sort_idx_cal]
+        right_base_ordered_cal = right_base_matched_cal[sort_idx_cal]
 
-        # Order corners deterministically
-        sort_idx = get_angular_sort_indices(left_base)
-        left_base_ordered = left_base[sort_idx]
-        right_base_ordered = right_base_matched[sort_idx]
+        # ----------------------------------------------------
+        # 4. Process Uncalibrated Coordinates
+        # ----------------------------------------------------
+        left_base_uncal = (self.T_base_from_left_uncalibrated @ np.hstack([left_centroids, ones]).T).T[:, :3]
+        right_base_uncal = (self.T_base_from_right_uncalibrated @ np.hstack([right_centroids, ones]).T).T[:, :3]
+        
+        left_center_uncal = np.mean(left_base_uncal, axis=0)
+        right_center_uncal = np.mean(right_base_uncal, axis=0)
+
+        dist_matrix_uncal = np.linalg.norm(left_base_uncal[:, None, :] - right_base_uncal[None, :, :], axis=2)
+        row_ind_uncal, col_ind_uncal = linear_sum_assignment(dist_matrix_uncal)
+        right_base_matched_uncal = right_base_uncal[col_ind_uncal]
+
+        sort_idx_uncal = get_angular_sort_indices(left_base_uncal)
+        left_base_ordered_uncal = left_base_uncal[sort_idx_uncal]
+        right_base_ordered_uncal = right_base_matched_uncal[sort_idx_uncal]
 
         return {
-            'left_base_corners': left_base_ordered,
-            'right_base_corners': right_base_ordered,
-            'left_base_center': left_center,
-            'right_base_center': right_center,
+            'calibrated': {
+                'left_base_corners': left_base_ordered_cal,
+                'right_base_corners': right_base_ordered_cal,
+                'left_base_center': left_center_cal,
+                'right_base_center': right_center_cal,
+            },
+            'uncalibrated': {
+                'left_base_corners': left_base_ordered_uncal,
+                'right_base_corners': right_base_ordered_uncal,
+                'left_base_center': left_center_uncal,
+                'right_base_center': right_center_uncal,
+            }
         }
 
     def run(self, skip_user_prompt: bool, interactive: bool):
@@ -525,8 +619,10 @@ class LidarLidarCompare:
         print("Starting Lidar-Lidar Comparison...", flush=True)
         pose_results = []
 
-        overall_corner_errors = []
-        overall_center_errors = []
+        overall_corner_errors_cal = []
+        overall_center_errors_cal = []
+        overall_corner_errors_uncal = []
+        overall_center_errors_uncal = []
 
         if self.manual:
             idx = 0
@@ -583,42 +679,69 @@ class LidarLidarCompare:
                     idx += 1
                     continue
 
-                # Average measurements across captured frames
-                avg_left_corners = np.mean([m['left_base_corners'] for m in frame_measurements], axis=0)
-                avg_right_corners = np.mean([m['right_base_corners'] for m in frame_measurements], axis=0)
-                avg_left_center = np.mean([m['left_base_center'] for m in frame_measurements], axis=0)
-                avg_right_center = np.mean([m['right_base_center'] for m in frame_measurements], axis=0)
+                # Average calibrated measurements
+                avg_left_corners_cal = np.mean([m['calibrated']['left_base_corners'] for m in frame_measurements], axis=0)
+                avg_right_corners_cal = np.mean([m['calibrated']['right_base_corners'] for m in frame_measurements], axis=0)
+                avg_left_center_cal = np.mean([m['calibrated']['left_base_center'] for m in frame_measurements], axis=0)
+                avg_right_center_cal = np.mean([m['calibrated']['right_base_center'] for m in frame_measurements], axis=0)
 
-                # Calculate errors
-                corner_errors = [float(np.linalg.norm(avg_left_corners[k] - avg_right_corners[k])) for k in range(4)]
-                mean_corner_error = float(np.mean(corner_errors))
-                center_error = float(np.linalg.norm(avg_left_center - avg_right_center))
+                corner_errors_cal = [float(np.linalg.norm(avg_left_corners_cal[k] - avg_right_corners_cal[k])) for k in range(4)]
+                mean_corner_error_cal = float(np.mean(corner_errors_cal))
+                center_error_cal = float(np.linalg.norm(avg_left_center_cal - avg_right_center_cal))
 
-                overall_corner_errors.extend(corner_errors)
-                overall_center_errors.append(center_error)
+                # Average uncalibrated measurements
+                avg_left_corners_uncal = np.mean([m['uncalibrated']['left_base_corners'] for m in frame_measurements], axis=0)
+                avg_right_corners_uncal = np.mean([m['uncalibrated']['right_base_corners'] for m in frame_measurements], axis=0)
+                avg_left_center_uncal = np.mean([m['uncalibrated']['left_base_center'] for m in frame_measurements], axis=0)
+                avg_right_center_uncal = np.mean([m['uncalibrated']['right_base_center'] for m in frame_measurements], axis=0)
+
+                corner_errors_uncal = [float(np.linalg.norm(avg_left_corners_uncal[k] - avg_right_corners_uncal[k])) for k in range(4)]
+                mean_corner_error_uncal = float(np.mean(corner_errors_uncal))
+                center_error_uncal = float(np.linalg.norm(avg_left_center_uncal - avg_right_center_uncal))
+
+                overall_corner_errors_cal.extend(corner_errors_cal)
+                overall_center_errors_cal.append(center_error_cal)
+                overall_corner_errors_uncal.extend(corner_errors_uncal)
+                overall_center_errors_uncal.append(center_error_uncal)
 
                 print(f"\n--- Results for Manual Pose {idx+1} ---", flush=True)
-                for k in range(4):
-                    print(f"Corner {k+1} Error: {corner_errors[k]*1000.0:.2f} mm")
-                print(f"Center Error: {center_error*1000.0:.2f} mm")
-                print(f"Mean Corner Error: {mean_corner_error*1000.0:.2f} mm", flush=True)
+                print(f"  [Calibrated]   Mean Corner Error: {mean_corner_error_cal*1000.0:.2f} mm | Center Error: {center_error_cal*1000.0:.2f} mm")
+                print(f"  [Uncalibrated] Mean Corner Error: {mean_corner_error_uncal*1000.0:.2f} mm | Center Error: {center_error_uncal*1000.0:.2f} mm", flush=True)
 
-                # Rerun logging
+                # Rerun logging - Calibrated
                 rr.log(
-                    "world/base_link/left_corners",
-                    rr.Points3D(avg_left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                    "calibrated/base_link/left_corners",
+                    rr.Points3D(avg_left_corners_cal, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
                 )
                 rr.log(
-                    "world/base_link/right_corners",
-                    rr.Points3D(avg_right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                    "calibrated/base_link/right_corners",
+                    rr.Points3D(avg_right_corners_cal, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
                 )
                 rr.log(
-                    "world/base_link/left_center",
-                    rr.Points3D([avg_left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                    "calibrated/base_link/left_center",
+                    rr.Points3D([avg_left_center_cal], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
                 )
                 rr.log(
-                    "world/base_link/right_center",
-                    rr.Points3D([avg_right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                    "calibrated/base_link/right_center",
+                    rr.Points3D([avg_right_center_cal], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                )
+
+                # Rerun logging - Uncalibrated
+                rr.log(
+                    "uncalibrated/base_link/left_corners",
+                    rr.Points3D(avg_left_corners_uncal, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "uncalibrated/base_link/right_corners",
+                    rr.Points3D(avg_right_corners_uncal, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "uncalibrated/base_link/left_center",
+                    rr.Points3D([avg_left_center_uncal], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                )
+                rr.log(
+                    "uncalibrated/base_link/right_center",
+                    rr.Points3D([avg_right_center_uncal], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
                 )
 
                 instructions = f"""
@@ -626,12 +749,16 @@ class LidarLidarCompare:
 
 ### Pose {idx+1}
 - **Joint Targets**: {pose}
-- **Corner 1 Error**: {corner_errors[0]*1000.0:.2f} mm
-- **Corner 2 Error**: {corner_errors[1]*1000.0:.2f} mm
-- **Corner 3 Error**: {corner_errors[2]*1000.0:.2f} mm
-- **Corner 4 Error**: {corner_errors[3]*1000.0:.2f} mm
-- **Center Error**: {center_error*1000.0:.2f} mm
-- **Mean Corner Error**: {mean_corner_error*1000.0:.2f} mm
+
+#### Calibrated (apply_calibration=True)
+- **Corner Errors**: {", ".join([f"{e*1000.0:.2f}" for e in corner_errors_cal])} mm
+- **Mean Corner Error**: {mean_corner_error_cal*1000.0:.2f} mm
+- **Center Error**: {center_error_cal*1000.0:.2f} mm
+
+#### Uncalibrated (apply_calibration=False)
+- **Corner Errors**: {", ".join([f"{e*1000.0:.2f}" for e in corner_errors_uncal])} mm
+- **Mean Corner Error**: {mean_corner_error_uncal*1000.0:.2f} mm
+- **Center Error**: {center_error_uncal*1000.0:.2f} mm
 """
                 self.update_instructions(instructions)
 
@@ -639,28 +766,54 @@ class LidarLidarCompare:
                     'pose_number': idx + 1,
                     'joint_targets': pose,
                     'status': 'SUCCESS',
-                    'left_lidar_base': {
-                        'corner_1': avg_left_corners[0].tolist(),
-                        'corner_2': avg_left_corners[1].tolist(),
-                        'corner_3': avg_left_corners[2].tolist(),
-                        'corner_4': avg_left_corners[3].tolist(),
-                        'center': avg_left_center.tolist(),
+                    'calibrated': {
+                        'left_lidar_base': {
+                            'corner_1': avg_left_corners_cal[0].tolist(),
+                            'corner_2': avg_left_corners_cal[1].tolist(),
+                            'corner_3': avg_left_corners_cal[2].tolist(),
+                            'corner_4': avg_left_corners_cal[3].tolist(),
+                            'center': avg_left_center_cal.tolist(),
+                        },
+                        'right_lidar_base': {
+                            'corner_1': avg_right_corners_cal[0].tolist(),
+                            'corner_2': avg_right_corners_cal[1].tolist(),
+                            'corner_3': avg_right_corners_cal[2].tolist(),
+                            'corner_4': avg_right_corners_cal[3].tolist(),
+                            'center': avg_right_center_cal.tolist(),
+                        },
+                        'errors_m': {
+                            'corner_1_error': corner_errors_cal[0],
+                            'corner_2_error': corner_errors_cal[1],
+                            'corner_3_error': corner_errors_cal[2],
+                            'corner_4_error': corner_errors_cal[3],
+                            'center_error': center_error_cal,
+                            'mean_corner_error': mean_corner_error_cal,
+                        },
                     },
-                    'right_lidar_base': {
-                        'corner_1': avg_right_corners[0].tolist(),
-                        'corner_2': avg_right_corners[1].tolist(),
-                        'corner_3': avg_right_corners[2].tolist(),
-                        'corner_4': avg_right_corners[3].tolist(),
-                        'center': avg_right_center.tolist(),
-                    },
-                    'errors_m': {
-                        'corner_1_error': corner_errors[0],
-                        'corner_2_error': corner_errors[1],
-                        'corner_3_error': corner_errors[2],
-                        'corner_4_error': corner_errors[3],
-                        'center_error': center_error,
-                        'mean_corner_error': mean_corner_error,
-                    },
+                    'uncalibrated': {
+                        'left_lidar_base': {
+                            'corner_1': avg_left_corners_uncal[0].tolist(),
+                            'corner_2': avg_left_corners_uncal[1].tolist(),
+                            'corner_3': avg_left_corners_uncal[2].tolist(),
+                            'corner_4': avg_left_corners_uncal[3].tolist(),
+                            'center': avg_left_center_uncal.tolist(),
+                        },
+                        'right_lidar_base': {
+                            'corner_1': avg_right_corners_uncal[0].tolist(),
+                            'corner_2': avg_right_corners_uncal[1].tolist(),
+                            'corner_3': avg_right_corners_uncal[2].tolist(),
+                            'corner_4': avg_right_corners_uncal[3].tolist(),
+                            'center': avg_right_center_uncal.tolist(),
+                        },
+                        'errors_m': {
+                            'corner_1_error': corner_errors_uncal[0],
+                            'corner_2_error': corner_errors_uncal[1],
+                            'corner_3_error': corner_errors_uncal[2],
+                            'corner_4_error': corner_errors_uncal[3],
+                            'center_error': center_error_uncal,
+                            'mean_corner_error': mean_corner_error_uncal,
+                        },
+                    }
                 }
                 pose_results.append(pose_dict)
                 idx += 1
@@ -688,42 +841,69 @@ class LidarLidarCompare:
                     pose_results.append(pose_dict)
                     continue
 
-                # Average measurements across captured frames
-                avg_left_corners = np.mean([m['left_base_corners'] for m in frame_measurements], axis=0)
-                avg_right_corners = np.mean([m['right_base_corners'] for m in frame_measurements], axis=0)
-                avg_left_center = np.mean([m['left_base_center'] for m in frame_measurements], axis=0)
-                avg_right_center = np.mean([m['right_base_center'] for m in frame_measurements], axis=0)
+                # Average calibrated measurements
+                avg_left_corners_cal = np.mean([m['calibrated']['left_base_corners'] for m in frame_measurements], axis=0)
+                avg_right_corners_cal = np.mean([m['calibrated']['right_base_corners'] for m in frame_measurements], axis=0)
+                avg_left_center_cal = np.mean([m['calibrated']['left_base_center'] for m in frame_measurements], axis=0)
+                avg_right_center_cal = np.mean([m['calibrated']['right_base_center'] for m in frame_measurements], axis=0)
 
-                # Calculate errors
-                corner_errors = [float(np.linalg.norm(avg_left_corners[k] - avg_right_corners[k])) for k in range(4)]
-                mean_corner_error = float(np.mean(corner_errors))
-                center_error = float(np.linalg.norm(avg_left_center - avg_right_center))
+                corner_errors_cal = [float(np.linalg.norm(avg_left_corners_cal[k] - avg_right_corners_cal[k])) for k in range(4)]
+                mean_corner_error_cal = float(np.mean(corner_errors_cal))
+                center_error_cal = float(np.linalg.norm(avg_left_center_cal - avg_right_center_cal))
 
-                overall_corner_errors.extend(corner_errors)
-                overall_center_errors.append(center_error)
+                # Average uncalibrated measurements
+                avg_left_corners_uncal = np.mean([m['uncalibrated']['left_base_corners'] for m in frame_measurements], axis=0)
+                avg_right_corners_uncal = np.mean([m['uncalibrated']['right_base_corners'] for m in frame_measurements], axis=0)
+                avg_left_center_uncal = np.mean([m['uncalibrated']['left_base_center'] for m in frame_measurements], axis=0)
+                avg_right_center_uncal = np.mean([m['uncalibrated']['right_base_center'] for m in frame_measurements], axis=0)
+
+                corner_errors_uncal = [float(np.linalg.norm(avg_left_corners_uncal[k] - avg_right_corners_uncal[k])) for k in range(4)]
+                mean_corner_error_uncal = float(np.mean(corner_errors_uncal))
+                center_error_uncal = float(np.linalg.norm(avg_left_center_uncal - avg_right_center_uncal))
+
+                overall_corner_errors_cal.extend(corner_errors_cal)
+                overall_center_errors_cal.append(center_error_cal)
+                overall_corner_errors_uncal.extend(corner_errors_uncal)
+                overall_center_errors_uncal.append(center_error_uncal)
 
                 print(f"\n--- Results for Pose {idx+1} ---", flush=True)
-                for k in range(4):
-                    print(f"Corner {k+1} Error: {corner_errors[k]*1000.0:.2f} mm")
-                print(f"Center Error: {center_error*1000.0:.2f} mm")
-                print(f"Mean Corner Error: {mean_corner_error*1000.0:.2f} mm", flush=True)
+                print(f"  [Calibrated]   Mean Corner Error: {mean_corner_error_cal*1000.0:.2f} mm | Center Error: {center_error_cal*1000.0:.2f} mm")
+                print(f"  [Uncalibrated] Mean Corner Error: {mean_corner_error_uncal*1000.0:.2f} mm | Center Error: {center_error_uncal*1000.0:.2f} mm", flush=True)
 
-                # Rerun logging
+                # Rerun logging - Calibrated
                 rr.log(
-                    "world/base_link/left_corners",
-                    rr.Points3D(avg_left_corners, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                    "calibrated/base_link/left_corners",
+                    rr.Points3D(avg_left_corners_cal, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
                 )
                 rr.log(
-                    "world/base_link/right_corners",
-                    rr.Points3D(avg_right_corners, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                    "calibrated/base_link/right_corners",
+                    rr.Points3D(avg_right_corners_cal, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
                 )
                 rr.log(
-                    "world/base_link/left_center",
-                    rr.Points3D([avg_left_center], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                    "calibrated/base_link/left_center",
+                    rr.Points3D([avg_left_center_cal], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
                 )
                 rr.log(
-                    "world/base_link/right_center",
-                    rr.Points3D([avg_right_center], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                    "calibrated/base_link/right_center",
+                    rr.Points3D([avg_right_center_cal], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
+                )
+
+                # Rerun logging - Uncalibrated
+                rr.log(
+                    "uncalibrated/base_link/left_corners",
+                    rr.Points3D(avg_left_corners_uncal, colors=[255, 0, 0], radii=[0.008], labels=[f"L_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "uncalibrated/base_link/right_corners",
+                    rr.Points3D(avg_right_corners_uncal, colors=[0, 255, 0], radii=[0.008], labels=[f"R_C{k+1}" for k in range(4)]),
+                )
+                rr.log(
+                    "uncalibrated/base_link/left_center",
+                    rr.Points3D([avg_left_center_uncal], colors=[255, 100, 100], radii=[0.012], labels=["L_Center"]),
+                )
+                rr.log(
+                    "uncalibrated/base_link/right_center",
+                    rr.Points3D([avg_right_center_uncal], colors=[100, 255, 100], radii=[0.012], labels=["R_Center"]),
                 )
 
                 instructions = f"""
@@ -731,12 +911,16 @@ class LidarLidarCompare:
 
 ### Pose {idx+1} / {len(self.poses)}
 - **Joint Targets**: {pose}
-- **Corner 1 Error**: {corner_errors[0]*1000.0:.2f} mm
-- **Corner 2 Error**: {corner_errors[1]*1000.0:.2f} mm
-- **Corner 3 Error**: {corner_errors[2]*1000.0:.2f} mm
-- **Corner 4 Error**: {corner_errors[3]*1000.0:.2f} mm
-- **Center Error**: {center_error*1000.0:.2f} mm
-- **Mean Corner Error**: {mean_corner_error*1000.0:.2f} mm
+
+#### Calibrated (apply_calibration=True)
+- **Corner Errors**: {", ".join([f"{e*1000.0:.2f}" for e in corner_errors_cal])} mm
+- **Mean Corner Error**: {mean_corner_error_cal*1000.0:.2f} mm
+- **Center Error**: {center_error_cal*1000.0:.2f} mm
+
+#### Uncalibrated (apply_calibration=False)
+- **Corner Errors**: {", ".join([f"{e*1000.0:.2f}" for e in corner_errors_uncal])} mm
+- **Mean Corner Error**: {mean_corner_error_uncal*1000.0:.2f} mm
+- **Center Error**: {center_error_uncal*1000.0:.2f} mm
 """
                 self.update_instructions(instructions)
 
@@ -744,28 +928,54 @@ class LidarLidarCompare:
                     'pose_number': idx + 1,
                     'joint_targets': pose,
                     'status': 'SUCCESS',
-                    'left_lidar_base': {
-                        'corner_1': avg_left_corners[0].tolist(),
-                        'corner_2': avg_left_corners[1].tolist(),
-                        'corner_3': avg_left_corners[2].tolist(),
-                        'corner_4': avg_left_corners[3].tolist(),
-                        'center': avg_left_center.tolist(),
+                    'calibrated': {
+                        'left_lidar_base': {
+                            'corner_1': avg_left_corners_cal[0].tolist(),
+                            'corner_2': avg_left_corners_cal[1].tolist(),
+                            'corner_3': avg_left_corners_cal[2].tolist(),
+                            'corner_4': avg_left_corners_cal[3].tolist(),
+                            'center': avg_left_center_cal.tolist(),
+                        },
+                        'right_lidar_base': {
+                            'corner_1': avg_right_corners_cal[0].tolist(),
+                            'corner_2': avg_right_corners_cal[1].tolist(),
+                            'corner_3': avg_right_corners_cal[2].tolist(),
+                            'corner_4': avg_right_corners_cal[3].tolist(),
+                            'center': avg_right_center_cal.tolist(),
+                        },
+                        'errors_m': {
+                            'corner_1_error': corner_errors_cal[0],
+                            'corner_2_error': corner_errors_cal[1],
+                            'corner_3_error': corner_errors_cal[2],
+                            'corner_4_error': corner_errors_cal[3],
+                            'center_error': center_error_cal,
+                            'mean_corner_error': mean_corner_error_cal,
+                        },
                     },
-                    'right_lidar_base': {
-                        'corner_1': avg_right_corners[0].tolist(),
-                        'corner_2': avg_right_corners[1].tolist(),
-                        'corner_3': avg_right_corners[2].tolist(),
-                        'corner_4': avg_right_corners[3].tolist(),
-                        'center': avg_right_center.tolist(),
-                    },
-                    'errors_m': {
-                        'corner_1_error': corner_errors[0],
-                        'corner_2_error': corner_errors[1],
-                        'corner_3_error': corner_errors[2],
-                        'corner_4_error': corner_errors[3],
-                        'center_error': center_error,
-                        'mean_corner_error': mean_corner_error,
-                    },
+                    'uncalibrated': {
+                        'left_lidar_base': {
+                            'corner_1': avg_left_corners_uncal[0].tolist(),
+                            'corner_2': avg_left_corners_uncal[1].tolist(),
+                            'corner_3': avg_left_corners_uncal[2].tolist(),
+                            'corner_4': avg_left_corners_uncal[3].tolist(),
+                            'center': avg_left_center_uncal.tolist(),
+                        },
+                        'right_lidar_base': {
+                            'corner_1': avg_right_corners_uncal[0].tolist(),
+                            'corner_2': avg_right_corners_uncal[1].tolist(),
+                            'corner_3': avg_right_corners_uncal[2].tolist(),
+                            'corner_4': avg_right_corners_uncal[3].tolist(),
+                            'center': avg_right_center_uncal.tolist(),
+                        },
+                        'errors_m': {
+                            'corner_1_error': corner_errors_uncal[0],
+                            'corner_2_error': corner_errors_uncal[1],
+                            'corner_3_error': corner_errors_uncal[2],
+                            'corner_4_error': corner_errors_uncal[3],
+                            'center_error': center_error_uncal,
+                            'mean_corner_error': mean_corner_error_uncal,
+                        },
+                    }
                 }
                 pose_results.append(pose_dict)
 
@@ -774,9 +984,16 @@ class LidarLidarCompare:
         fleet_id = os.environ.get("HELLO_FLEET_ID", "unknown")
 
         overall_summary = {
-            'overall_mean_corner_error_m': float(np.mean(overall_corner_errors)) if len(overall_corner_errors) > 0 else None,
-            'overall_mean_center_error_m': float(np.mean(overall_center_errors)) if len(overall_center_errors) > 0 else None,
-            'max_corner_error_m': float(np.max(overall_corner_errors)) if len(overall_corner_errors) > 0 else None,
+            'calibrated': {
+                'overall_mean_corner_error_m': float(np.mean(overall_corner_errors_cal)) if len(overall_corner_errors_cal) > 0 else None,
+                'overall_mean_center_error_m': float(np.mean(overall_center_errors_cal)) if len(overall_center_errors_cal) > 0 else None,
+                'max_corner_error_m': float(np.max(overall_corner_errors_cal)) if len(overall_corner_errors_cal) > 0 else None,
+            },
+            'uncalibrated': {
+                'overall_mean_corner_error_m': float(np.mean(overall_corner_errors_uncal)) if len(overall_corner_errors_uncal) > 0 else None,
+                'overall_mean_center_error_m': float(np.mean(overall_center_errors_uncal)) if len(overall_center_errors_uncal) > 0 else None,
+                'max_corner_error_m': float(np.max(overall_corner_errors_uncal)) if len(overall_corner_errors_uncal) > 0 else None,
+            }
         }
 
         output_data = {
@@ -802,8 +1019,12 @@ class LidarLidarCompare:
 
         print(f"\n====================================")
         print(f"Lidar-Lidar Comparison Complete!")
-        print(f"Overall Mean Corner Error: {overall_summary['overall_mean_corner_error_m']*1000.0 if overall_summary['overall_mean_corner_error_m'] else 0.0:.2f} mm")
-        print(f"Overall Mean Center Error: {overall_summary['overall_mean_center_error_m']*1000.0 if overall_summary['overall_mean_center_error_m'] else 0.0:.2f} mm")
+        print(f"--- Calibrated Results (apply_calibration=True) ---")
+        print(f"Overall Mean Corner Error: {overall_summary['calibrated']['overall_mean_corner_error_m']*1000.0 if overall_summary['calibrated']['overall_mean_corner_error_m'] else 0.0:.2f} mm")
+        print(f"Overall Mean Center Error: {overall_summary['calibrated']['overall_mean_center_error_m']*1000.0 if overall_summary['calibrated']['overall_mean_center_error_m'] else 0.0:.2f} mm")
+        print(f"--- Uncalibrated Results (apply_calibration=False) ---")
+        print(f"Overall Mean Corner Error: {overall_summary['uncalibrated']['overall_mean_corner_error_m']*1000.0 if overall_summary['uncalibrated']['overall_mean_corner_error_m'] else 0.0:.2f} mm")
+        print(f"Overall Mean Center Error: {overall_summary['uncalibrated']['overall_mean_center_error_m']*1000.0 if overall_summary['uncalibrated']['overall_mean_center_error_m'] else 0.0:.2f} mm")
         print(f"Saved results to: {self.output_file}")
         print(f"====================================\n")
 
