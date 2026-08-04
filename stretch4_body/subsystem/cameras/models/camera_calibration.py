@@ -23,9 +23,6 @@ DEFAULT_IMAGES_SAVE_PATH = f"{DEFAULT_CALIBRATION_FOLDER_PATH}/calibration_image
 
 
 class RGBCameraCalibrationFile(Enum):
-    LEFT = auto()
-    CENTER = auto()
-    RIGHT = auto()
     USER = auto()
 
     @property
@@ -34,8 +31,6 @@ class RGBCameraCalibrationFile(Enum):
 
     def _calibration_file_name(self) -> str:
         """Returns the camera calibration file from ~/stretch_user/stretch-se4-xxxx/calibration_cameras/{camera_name}.yaml"""
-        if self.camera_name in ["left", "right", "center"]:
-            return f"calibration_ros_camera_info_{self.camera_name}.yaml"
         if self.camera_name == "user":
             return "calibration_rgb_head_camera.yaml"
         raise ValueError(f"{self.camera_name} is not a valid camera name")
