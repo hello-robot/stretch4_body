@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from stretch4_body.subsystem.cameras.calibrate_gripper_camera import REx_gripper_camera_calibration
 from stretch4_body.subsystem.cameras.enums.charuco_dictionary import CharucoBoards
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import calibrate_extrinsics_camera_lidar
 import argparse
@@ -68,6 +69,11 @@ def main():
       action="store_true",
       help="Generate ChArUco pdf for printing.",
    )
+   parser.add_argument(
+      "--gripper",
+      action="store_true",
+      help="Offload the gripper camera calibration values to the calibration.yaml file on the robot."
+   )
 
    args, unknown = parser.parse_known_args()
 
@@ -100,9 +106,12 @@ def main():
          return REx_calibrate_intrinsics(interactive=interactive)
       
       return REx_calibrate_intrinsics_robot_move(interactive=interactive)
+   elif args.gripper:
+      return REx_gripper_camera_calibration()
    else:
       print("No calibration type specified. Defaulting to both intrinsics and extrinsics calibration, non-interactive (no rerun windows will appear).")
-      return calibrate_intrinsics_and_extrinsics_not_interactive()
+      calibrate_intrinsics_and_extrinsics_not_interactive()
+      REx_gripper_camera_calibration()
 
 if __name__ == "__main__":
    main()
