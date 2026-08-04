@@ -66,16 +66,21 @@ class GripperCameraLuxonis(SyncedCamera):
             rgbd = self.pipeline.create(dai.node.RGBD)
             rgbd.setDepthUnits(dai.StereoDepthConfig.AlgorithmControl.DepthUnit.METER)
 
+            manip = self.pipeline.create(dai.node.ImageManip)
+            manip.initialConfig.setFrameType(dai.ImgFrame.Type.RGB888p)
+            manip.setMaxOutputFrameSize(self.right.image_size[0] * self.right.image_size[1] * 3)
+            manip.inputImage.setBlocking(False)
+            manip.inputImage.setMaxSize(self.right.buffer_size)
+            node_right.link(manip.inputImage)
 
-            node_left.link(rgbd.inColor)
+            rgbd.inColor.setBlocking(False)
+            rgbd.inColor.setMaxSize(self.right.buffer_size)
+            manip.out.link(rgbd.inColor)
+
+            rgbd.inDepth.setBlocking(False)
+            rgbd.inDepth.setMaxSize(self.right.buffer_size)
             stereo.depth.link(rgbd.inDepth)
-            sync.inputs["pointcloud"].setBlocking(False)
-            rgbd.pcl.link(sync.inputs["pointcloud"])
-            sync.inputs["pointcloud"].setMaxSize(self.right.buffer_size)
-            node_left.link(stereo.inputAlignTo)
-            # self.right_output = node_right.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
-            # self.depth_output = stereo.depth.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
-            # self.pointcloud_output = rgbd.pcl.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
+            self.q_pointcloud = rgbd.pcl.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
 
         self.q_sync = sync.out.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
 
@@ -115,12 +120,17 @@ class GripperCameraLuxonis(SyncedCamera):
                 frame_left_msg = msgGroup["left"] if "left" in msgNames else None
                 frame_right_msg = msgGroup["right"] if "right" in msgNames else None
                 frame_depth_msg = msgGroup["depth"] if "depth" in msgNames else None
-                frame_pointcloud_msg = msgGroup["pointcloud"] if "pointcloud" in msgNames else None
 
                 pointcloud = None
                 pointcloud_color = None
-                if frame_pointcloud_msg:
-                    pointcloud, pointcloud_color = frame_pointcloud_msg.getPointsRGB()
+                if self.enable_pointcloud:
+                    frame_pointcloud_msg = None
+                    while self.q_pointcloud.has():
+                        frame_pointcloud_msg = self.q_pointcloud.tryGet()
+                    if frame_pointcloud_msg is None:
+                        frame_pointcloud_msg = self.q_pointcloud.get()
+                    if frame_pointcloud_msg is not None:
+                        pointcloud, pointcloud_color = frame_pointcloud_msg.getPointsRGB()
                 
                 if frame_depth_msg:
                     timestamp = frame_depth_msg.getTimestamp().total_seconds()
