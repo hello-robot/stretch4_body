@@ -687,88 +687,6 @@ def _do_calibration(
 
     return calibration
 
-
-def _save_calibration_to_ros_yaml(calibration: CalibrateCameraResults, filepath: str):
-    data_dict = asdict(calibration)
-
-    for key in [
-        "camera_matrix",
-        "distortion_coefficients",
-        "projection_matrix",
-        "rectification_matrix",
-    ]:
-        if key in data_dict:
-            matrix = data_dict[key]
-            if matrix is None:
-                data_dict[key] = None
-                continue
-
-            if isinstance(matrix, list):
-                m = np.array(matrix)
-            else:
-                m = matrix
-
-            if not hasattr(m, "shape"):
-                data_dict[key] = m
-                continue
-
-            if m.ndim == 1:
-                rows = 1
-                cols = m.shape[0]
-                data = m.tolist()
-            elif m.ndim == 2:
-                rows = m.shape[0]
-                cols = m.shape[1]
-                data = m.flatten().tolist()
-            else:
-                print(
-                    f"Warning: Matrix '{key}' with unexpected shape {m.shape} encountered."
-                )
-                data_dict[key] = m.tolist()
-                continue
-
-            data_dict[key] = {"rows": rows, "cols": cols, "data": data}
-
-    serialized_dict = CalibrateCameraResults._serialize(data_dict)
-    serialized_dict["camera_type"] = serialized_dict["camera_name"]
-
-    camera_name = calibration.camera_name
-    if "left" in calibration.camera_name:
-        camera_name = "/left"
-    elif "right" in calibration.camera_name:
-        camera_name = "/right"
-    elif "center" in calibration.camera_name:
-        camera_name = "/center"
-    serialized_dict["camera_name"] = camera_name
-
-    serialized_dict["image_width"] = calibration.image_size[1]
-    serialized_dict["image_height"] = calibration.image_size[0]
-    serialized_dict["distortion_model"] = calibration.distortion_model.get_model_name()
-    serialized_dict["fleet_id"] = os.environ.get("HELLO_FLEET_ID", "")
-
-    try:
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-        if os.path.exists(filepath):
-            import shutil
-            mod_time = int(os.path.getmtime(filepath))
-            p = Path(filepath)
-            backup_path = p.with_name(f"{p.stem}_backup_{mod_time}{p.suffix}")
-            shutil.copy2(filepath, backup_path)
-            print(f"Backed up {filepath} to {backup_path}")
-
-        with open(filepath, "w") as yaml_file:
-            yaml.safe_dump(
-                serialized_dict, yaml_file, default_flow_style=None, sort_keys=False
-            )
-        print(f"Successfully saved calibration file to: {filepath}")
-
-    except IOError as e:
-        print(f"Error: Could not write to file {filepath}. {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-
-
 def save_calibration(
     calibration: CalibrateCameraResults,
     image_directory: str | None,
@@ -776,20 +694,6 @@ def save_calibration(
     log_callback: Callable[[str, LogLevels], None],
 ):
     calibration_results = calibration.get_serializable()
-
-    ros_yaml_file_to_save = (
-        RGBCameraCalibrationFile.LEFT.get_camera_calibration_file_path()
-    )
-    if camera_type.is_right():
-        ros_yaml_file_to_save = (
-            RGBCameraCalibrationFile.RIGHT.get_camera_calibration_file_path()
-        )
-    elif camera_type.is_center():
-        ros_yaml_file_to_save = (
-            RGBCameraCalibrationFile.CENTER.get_camera_calibration_file_path()
-        )
-
-    _save_calibration_to_ros_yaml(calibration, ros_yaml_file_to_save)
 
     if image_directory is not None:
         results_file_time = time.strftime("%Y%m%d%H%M%S")
