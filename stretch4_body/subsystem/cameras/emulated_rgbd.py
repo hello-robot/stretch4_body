@@ -519,16 +519,59 @@ def stream_left_right_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_ri
 
 
 def stream_gripper_rgbd(*, is_rotate=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
-    for synced_frame in stream_gripper_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=True):
+    try:
+        calib = RGBCameraCalibration.load_calibration_from_fleet_path(
+            RGBCameras.gripper_right, is_flip_width_and_height=False
+        )
+        camera_matrix = calib.camera_matrix
+    except Exception as e:
+        import logging
+        logging.warning(f"Could not load calibration for gripper_right: {e}. Using fallback default intrinsics.")
+        camera_matrix = np.array([
+            [251.0758, 0.0, 201.3269],
+            [0.0, 250.9491, 319.2119],
+            [0.0, 0.0, 1.0]
+        ])
+
+    for synced_frame in stream_gripper_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=False):
         if synced_frame is None:
             continue
         image_frame = synced_frame.right
         if image_frame is None:
             continue
         
-        pointcloud = synced_frame.pointcloud if synced_frame.pointcloud is not None else np.zeros((0, 3))
-        pointcloud_colors = synced_frame.pointcloud_color if synced_frame.pointcloud_color is not None else np.zeros((0, 3))
         depth_image = synced_frame.depth if synced_frame.depth is not None else np.zeros((0, 0))
+        if synced_frame.pointcloud is not None:
+            pointcloud = synced_frame.pointcloud
+            pointcloud_colors = synced_frame.pointcloud_color
+        elif depth_image.size > 0:
+            fx = camera_matrix[0, 0]
+            fy = camera_matrix[1, 1]
+            cx = camera_matrix[0, 2]
+            cy = camera_matrix[1, 2]
+            
+            h, w = depth_image.shape
+            v, u = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
+            
+            valid_mask = depth_image > 0
+            z = depth_image[valid_mask].astype(np.float32) / 1000.0  # mm to meters
+            
+            u_valid = u[valid_mask]
+            v_valid = v[valid_mask]
+            
+            x = (u_valid - cx) * z / fx
+            y = (v_valid - cy) * z / fy
+            
+            pointcloud = np.stack((x, y, z), axis=-1)
+            
+            rgb_image = image_frame.image
+            if rgb_image is not None and rgb_image.ndim == 3:
+                pointcloud_colors = rgb_image[valid_mask][:, ::-1] # BGR to RGB
+            else:
+                pointcloud_colors = np.zeros((len(pointcloud), 3))
+        else:
+            pointcloud = np.zeros((0, 3))
+            pointcloud_colors = np.zeros((0, 3))
         
         yield RGBDFrame(
             timestamp=synced_frame.timestamp,
