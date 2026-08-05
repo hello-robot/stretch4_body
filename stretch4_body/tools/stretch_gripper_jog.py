@@ -35,10 +35,16 @@ if is_custom_client:
                    'mid': open_m / 2.0,
                    'close': 0.0}
     else:
-        g.pct_max_open = 100 * abs(g_params['range_deg'][1] / g_params['range_deg'][0])
-        g.poses = {'zero': 0,
-                   'open': g.pct_max_open,
-                   'close': -100}
+        # A custom client defines its own pct convention; fall back to the
+        # Stretch Gripper one only when it does not. range_deg[0] is 0 for
+        # tools that put their closed hardstop at pct 0
+        if not hasattr(g, 'pct_max_open'):
+            range_deg = g_params.get('range_deg', [0.0, 0.0])
+            g.pct_max_open = 100 * abs(range_deg[1] / range_deg[0]) if range_deg[0] else 100.0
+        if not hasattr(g, 'poses'):
+            g.poses = {'zero': 0,
+                       'open': g.pct_max_open,
+                       'close': -100}
     
     g.move_to_joint = g.move_to
     g.move_by_joint = g.move_by
@@ -60,6 +66,7 @@ if not g.startup():
 g.pull_status()
 v_des=g.params['motion']['default']['vel']
 a_des=g.params['motion']['default']['accel']
+pct_min = min(g.poses.values()) if not is_parallel else None
 
 def menu_top():
     print('------ MENU -------')
@@ -72,7 +79,7 @@ def menu_top():
     else:
         print('x: close by 10%')
         print('y: open by 10%')
-        print('p: go to position (%6.2f to -100)'%g.pct_max_open)
+        print('p: go to position (%6.2f to %6.2f)'%(g.pct_max_open, pct_min))
     print('r: reboot')
     print('-----')
     print('a: open')
@@ -113,7 +120,7 @@ def step_interaction():
             else:
                 print("Enter position (%): ")
                 ff = float(sys.stdin.readline())
-                ff=min(max(-100,ff),g.pct_max_open)
+                ff=min(max(pct_min,ff),g.pct_max_open)
             g.move_to(ff, v_des, a_des)
         if x[0] == 'a':
             g.move_to(g.poses['open'], v_des, a_des)
