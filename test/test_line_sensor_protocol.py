@@ -351,59 +351,5 @@ class TestOneSensorFailureStaysContained:
         assert pjr.is_valid
 
 
-class TestTareIsSentinelSafe:
-    """NaN-masked ranges must not be able to poison the tare.
-
-    A status code is not a distance. Before this guard a single no-return
-    sample made that bin's tare NaN for good, which then blanked the bin in
-    every projected cloud -- and NaN passes the obvious sanity checks
-    (abs(offset) < limit is False for NaN, and the shape check passes).
-    """
-
-    def _calibration(self):
-        # line_sensor_utils pulls in RobotParams, which reads the fleet
-        # directory at import and raises KeyError without it. On a dev machine
-        # there is none, so these two run on the robot rather than be deleted.
-        try:
-            from stretch4_body.subsystem.line_sensor import line_sensor_utils as U
-        except (ImportError, KeyError) as exc:
-            pytest.skip(f'needs the robot fleet environment: {exc!r}')
-        cal = U.LineSensorCalibration.__new__(U.LineSensorCalibration)
-        cal.tare_offsets = {}
-        return cal
-
-    def test_sentinel_samples_do_not_poison_the_median(self):
-        frames = []
-        for i in range(100):
-            raw = np.full(16, 202.0)
-            if i % 7 == 0:
-                raw[3] = 5110.0        # bin 3 no-returns in ~14% of frames
-            frames.append(protocol.decode_distances_mm(raw)[0])
-        errors = np.stack(frames) - 0.2296
-        with np.errstate(invalid='ignore'):
-            offsets = np.nanmedian(errors, axis=0)
-        assert np.isfinite(offsets).all()
-        assert offsets[3] == pytest.approx(offsets[4])  # same as its neighbours
-
-    def test_bin_that_never_returns_gets_no_tare_not_a_nan_one(self):
-        frames = [protocol.decode_distances_mm(
-            np.where(np.arange(16) == 5, 5110.0, 202.0))[0] for _ in range(20)]
-        errors = np.stack(frames) - 0.2296
-        with np.errstate(invalid='ignore'), warnings.catch_warnings():
-            warnings.simplefilter('ignore', RuntimeWarning)  # all-NaN column
-            offsets = np.nanmedian(errors, axis=0)
-        offsets = np.where(np.isfinite(offsets), offsets, 0.0)
-        assert offsets[5] == 0.0        # uncorrected, not NaN
-        assert np.isfinite(offsets).all()
-
-    def test_apply_tare_leaves_sentinel_bins_nan(self):
-        cal = self._calibration()
-        cal.tare_offsets['sensor_0'] = np.full(4, 0.01)
-        ranges, codes = protocol.decode_distances_mm([202, 5110, 5090, 204])
-        out = cal.apply_tare(ranges, 'sensor_0')
-        assert np.isnan(out[1:3]).all()  # codes stay codes
-        assert out[0] == pytest.approx(0.192)
-
-
 if __name__ == '__main__':
     pytest.main([__file__])

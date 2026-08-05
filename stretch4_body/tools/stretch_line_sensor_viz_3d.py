@@ -91,7 +91,14 @@ class LineSensorVisualizer3D:
 
         # Calibration Helper
         self.calibration = LineSensorCalibration(self.lsl)
-        self.calibration.load_latest_tare()
+        if self.use_calibration:
+            self.calibration.load_tares()
+            got = sorted(self.calibration.tares)
+            print(f'Calibration: {len(got)}/{len(self.calibration.sensor_names)} '
+                  f'sensors tared{" -> " + ", ".join(got) if got else ""}')
+            for name, exc in sorted(self.calibration.rejected.items()):
+                # A refused tare means that sensor renders UNCALIBRATED.
+                print(f'  {name}: UNCALIBRATED ({exc.reason})')
         
         # Tracker for Clustering
         self.tracker = LineSensorClusterTracker(ls_tracker)
@@ -810,15 +817,19 @@ class LineSensorVisualizer3D:
                 continue
                 
             status = self.lsl.status[sensor_name]
-            ranges = np.array(status['ranges'])
-            
+            ranges = np.asarray(status['ranges'], dtype=float)
+            # Sentinel bins are NaN in ranges and identified by `codes`; the
+            # tare must not touch them, and the projection drops them.
+            codes = status.get('codes')
+
             if len(ranges) == 0:
                 continue
-            
+
             # Apply Calibration (Tare)
             if self.use_calibration:
-                ranges = self.calibration.apply_tare(ranges, sensor_name)
-            
+                ranges = self.calibration.apply_tare(ranges, sensor_name, codes)
+
+
             # Get Points via Geometry Helper
             points = self.geom.get_sensor_points_in_robot_frame(i, ranges)
             
