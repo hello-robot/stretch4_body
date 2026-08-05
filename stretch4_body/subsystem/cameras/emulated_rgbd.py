@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 import threading
 from dataclasses import dataclass
 import numpy as np
@@ -235,13 +238,13 @@ class EmulatedRGBDStreamer:
         calib = self.calibs[camera_type]
 
         if len(self.latest_pts_base) == 0:
-            print(f"[{camera_type.name}] Dropping frame: no unified lidar cloud.")
+            logger.info(f"[{camera_type.name}] Dropping frame: no unified lidar cloud.")
             return None
 
         for lidar_name, lidar_timestamp in self.latest_lidar_timestamps.items():
             diff = abs(frame.timestamp_system - lidar_timestamp)
             if diff > 2.0 / 10.0:
-                print(f"Camera {camera_type.name} timestamp {frame.timestamp} is too far from {lidar_name=} timestamp {lidar_timestamp}, {diff=}")
+                logger.info(f"Camera {camera_type.name} timestamp {frame.timestamp} is too far from {lidar_name=} timestamp {lidar_timestamp}, {diff=}")
                 return None
 
         pts_base = self.latest_pts_base

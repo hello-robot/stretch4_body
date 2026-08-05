@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 import os
 import yaml
 import datetime
@@ -43,7 +46,7 @@ class DualLidarCalibration:
             p = Path(self.filepath)
             backup_path = p.with_name(f"{p.stem}_backup_{mod_time}{p.suffix}")
             shutil.copy2(self.filepath, backup_path)
-            print(f"Backed up {self.filepath} to {backup_path}")
+            logger.info(f"Backed up {self.filepath} to {backup_path}")
 
         with open(self.filepath, "w") as f:
             yaml.dump(self.data, f, default_flow_style=None)
@@ -93,7 +96,7 @@ class DualLidarCalibration:
         try:
             robot = URDF.load(io.StringIO(get_urdf_from_robot_params()))
         except Exception as e:
-            print(f"Failed to load URDF: {e}")
+            logger.info(f"Failed to load URDF: {e}")
             return np.eye(4)
 
         link_to_parent = {}
@@ -104,7 +107,7 @@ class DualLidarCalibration:
         chain = []
         while current != "base_link":
             if current not in link_to_parent:
-                print(f"Lidar link {lidar_link} not connected to base_link")
+                logger.info(f"Lidar link {lidar_link} not connected to base_link")
                 return np.eye(4)
             parent, origin = link_to_parent[current]
             chain.append(origin)

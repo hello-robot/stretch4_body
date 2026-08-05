@@ -1,6 +1,9 @@
 import time
 import cv2
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 import threading
 from stretch4_body.core.hello_utils import LoopTimer
@@ -127,7 +130,7 @@ def main():
         # synced_image, timestamp = camera.camera.get_next()
 
         if synced_image is None:
-            print("synced_image is None")
+            logger.warning("synced_image is None")
             time.sleep(0.5)
             continue
         def log_to_rerun(synced_image: SyncedImageFrame):
@@ -152,4 +155,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     main()

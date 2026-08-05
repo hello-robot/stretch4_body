@@ -3,6 +3,8 @@ Adapter for connecting and controlling the Luxonis Short-Range stereo camera pai
 """
 
 import logging
+
+logger = logging.getLogger(__name__)
 import depthai as dai
 
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
@@ -101,7 +103,7 @@ class GripperCameraLuxonis(SyncedCamera):
             D = np.array(calib.getDistortionCoefficients(LuxonisCameraAdapter.get_depthai_camera_socket(camera_type)), dtype=np.float64)
             return M, D
         except Exception as e:
-            print(f"Warning: could not read calibration from OAK-D: {e}")
+            logger.warning(f"could not read calibration from OAK-D: {e}")
         return None, None
         
     def is_open(self):
@@ -157,7 +159,7 @@ class GripperCameraLuxonis(SyncedCamera):
                     )
                     yield synced_image
                 else:
-                    print("No depth frame received.")
+                    logger.warning("No depth frame received.")
 
     def stop(self):
         self.pipeline.stop()

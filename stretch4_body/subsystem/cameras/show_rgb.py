@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from stretch4_body.core.hello_utils import LoopTimer
 import argparse
 from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import (
@@ -163,4 +166,5 @@ def show_rgb():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     show_rgb()

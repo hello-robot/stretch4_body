@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import logging
+
+logger = logging.getLogger(__name__)
 import argparse
 import datetime
 import os
@@ -32,21 +35,21 @@ def save_to_user_yaml(calibration: CalibrateCameraResults, camera_type: RGBCamer
             with open(user_calib_path, "r") as file:
                 existing_stretch_user_calibration_file = yaml.safe_load(file) or {}
     except Exception as e:
-        print(f"Warning: could not read {user_calib_path}: {e}")
+        logger.warning(f"could not read {user_calib_path}: {e}")
 
     if os.path.exists(user_calib_path):
         mod_time = int(os.path.getmtime(user_calib_path))
         p = Path(user_calib_path)
         backup_path = p.with_name(f"{p.stem}_backup_{mod_time}{p.suffix}")
         shutil.copy2(user_calib_path, backup_path)
-        print(f"Backed up {user_calib_path} to {backup_path}")
+        logger.info(f"Backed up {user_calib_path} to {backup_path}")
 
     existing_stretch_user_calibration_file[camera_type.name] = calibration_results
     
     with open(user_calib_path, "w") as file:
         yaml.dump(existing_stretch_user_calibration_file, file, sort_keys=True)
     
-    print(f"Successfully saved {camera_type.name} to {user_calib_path}")
+    logger.info(f"Successfully saved {camera_type.name} to {user_calib_path}")
 
 
 def REx_gripper_camera_calibration():
@@ -55,24 +58,24 @@ def REx_gripper_camera_calibration():
     )
     args = parser.parse_args()
 
-    print("Reading gripper configurations...")
+    logger.info("Reading gripper configurations...")
     left_config = RGBCameras.gripper_left.config
     right_config = RGBCameras.gripper_right.config
 
-    print("Initializing GripperCameraLuxonis to read factory intrinsics...")
+    logger.info("Initializing GripperCameraLuxonis to read factory intrinsics...")
     camera = GripperCameraLuxonis(left_config, right_config, enable_pointcloud=False)
 
     try:
         for cam_type in [RGBCameras.gripper_left, RGBCameras.gripper_right]:
-            print(f"\n--- Processing {cam_type.name} ---")
+            logger.info(f"\n--- Processing {cam_type.name} ---")
             M, D = camera.get_gripper_intrinsics(cam_type)
             if M is None or D is None:
-                print(f"Error: Could not read calibration for {cam_type.name} from device.")
+                logger.error(f"Could not read calibration for {cam_type.name} from device.")
                 continue
 
-            print(f"Successfully read intrinsics for {cam_type.name}.")
-            print(f"Camera Matrix (M):\n{M}")
-            print(f"Distortion Coefficients (D):\n{D}")
+            logger.info(f"Successfully read intrinsics for {cam_type.name}.")
+            logger.info(f"Camera Matrix (M):\n{M}")
+            logger.info(f"Distortion Coefficients (D):\n{D}")
 
             # Construct CalibrateCameraResults
             calibration = CalibrateCameraResults(
@@ -101,12 +104,13 @@ def REx_gripper_camera_calibration():
             # Save user-level format
             save_to_user_yaml(calibration, cam_type)
 
-        print("\nGripper camera calibration processing completed.")
+        logger.info("\nGripper camera calibration processing completed.")
 
     finally:
-        print("Stopping camera...")
+        logger.info("Stopping camera...")
         camera.stop()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     REx_gripper_camera_calibration()
