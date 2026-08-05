@@ -107,54 +107,97 @@ def run_head_camera_old(duration, target_fps=30):
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
 
-def run_head_camera_new(duration, target_fps=30):
-    """Benchmarks the SyncedCameraLuxonis from stretch4_body."""
-    print("\n--- Benchmarking SyncedCameraLuxonis (stretch4_body) ---")
+def start_ros_launch(launch_args):
+    """Starts a ROS2 launch file in a separate process group and waits for it to initialize."""
+    import subprocess
+    import os
+    import time
+    print(f"Launching: {' '.join(launch_args)}")
     try:
-        from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+        # Launch the ROS2 process in its own process group
+        proc = subprocess.Popen(
+            launch_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid
+        )
+        # Sleep to let nodes initialize and begin publishing
+        print("Waiting 8 seconds for ROS2 camera nodes to initialize...")
+        time.sleep(8.0)
+        return proc
+    except Exception as e:
+        print(f"Failed to launch ROS2 nodes: {e}")
+        return None
+
+
+def stop_ros_launch(proc):
+    """Cleanly stops the ROS2 launch process group using SIGINT."""
+    import signal
+    import os
+    if proc is None:
+        return
+    print("Stopping ROS2 launch process...")
+    try:
+        # Send SIGINT to the entire process group
+        os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+        proc.wait(timeout=10.0)
+    except Exception as e:
+        print(f"Error stopping ROS2 launch process: {e}")
+        try:
+            # Force kill if SIGINT didn't work
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            pass
+    print("Waiting 5 seconds for ROS2 camera nodes to stop...")
+    time.sleep(5.0)
+
+
+def run_left_right_python(duration):
+    """Benchmarks stream_left_right_camera(use_ros_for_cameras=False) from stretch4_body."""
+    print("\n--- Benchmarking Head Camera stream_left_right_camera (stretch4_body Python) ---")
+    try:
+        from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_camera
     except ImportError as e:
         print(f"Failed to import stretch4_body camera modules: {e}")
         return None
 
     t_init_start = time.perf_counter()
     try:
-        # Setup configs mimicking the benchmark properties
-        left_config = RGBCameras.head_left.config
-        right_config = RGBCameras.head_right.config
-        left_config.fps = target_fps
-        right_config.fps = target_fps
-        left_config.buffer_size = 1
-        right_config.buffer_size = 1
-        
-        # Start synced camera wrapper
-        camera = RGBCameras.head_left_right.start_synced()
+        frame_generator = stream_left_right_camera(use_ros_for_cameras=False)
     except Exception as e:
-        print(f"Failed to initialize new SyncedCameraLuxonis: {e}")
+        print(f"Failed to initialize stream_left_right_camera: {e}")
         return None
 
-    # Wait for the first frame
-    print("Waiting for first frame...")
-    frame_generator = camera.get_frames()
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
     
-    try:
-        t_first_frame = None
-        # Retrieve first frame
-        first_frame = next(frame_generator)
-        if first_frame is not None:
-            t_first_frame = time.perf_counter()
-    except StopIteration:
-        print("Generator stopped immediately.")
-        camera.stop()
-        return None
-    except Exception as e:
-        print(f"Error getting first frame: {e}")
-        camera.stop()
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.right is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting first frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_camera Python.")
+        try:
+            frame_generator.close()
+        except Exception:
+            pass
         return None
 
     init_latency = t_first_frame - t_init_start
     print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
 
-    # Data collection loop
     timestamps_host = []
     timestamps_sensor = []
     seq_nums = []
@@ -170,7 +213,236 @@ def run_head_camera_new(duration, target_fps=30):
         if time.monotonic() >= t_end:
             break
 
-    camera.stop()
+    try:
+        frame_generator.close()
+    except Exception:
+        pass
+
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_ros(duration):
+    """Benchmarks stream_left_right_camera(use_ros_for_cameras=True) from stretch4_body."""
+    print("\n--- Benchmarking Head Camera stream_left_right_camera (stretch4_body ROS2) ---")
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"])
+    if proc is None:
+        print("Could not start ROS2 head camera launch file. Skipping ROS benchmark.")
+        return None
+
+    try:
+        from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_camera
+    except ImportError as e:
+        print(f"Failed to import stretch4_body camera modules: {e}")
+        stop_ros_launch(proc)
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_camera(use_ros_for_cameras=True)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_camera ROS2: {e}")
+        stop_ros_launch(proc)
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.right is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_camera ROS2.")
+        try:
+            frame_generator.close()
+        except Exception:
+            pass
+        stop_ros_launch(proc)
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None and frame.right is not None:
+            timestamps_host.append(time.time())
+            timestamps_sensor.append(frame.right.timestamp)
+            seq_nums.append(frame.right.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+    try:
+        frame_generator.close()
+    except Exception:
+        pass
+
+    stop_ros_launch(proc)
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_center_python(duration):
+    """Benchmarks stream_left_right_center_camera(use_ros_for_cameras=False) from stretch4_body."""
+    print("\n--- Benchmarking Head Camera stream_left_right_center_camera (stretch4_body Python) ---")
+    try:
+        from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_center_camera
+    except ImportError as e:
+        print(f"Failed to import stretch4_body camera modules: {e}")
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_center_camera(use_ros_for_cameras=False)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_center_camera: {e}")
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.right is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting first frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_center_camera Python.")
+        try:
+            frame_generator.close()
+        except Exception:
+            pass
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None and frame.right is not None:
+            timestamps_host.append(time.monotonic())
+            timestamps_sensor.append(frame.right.timestamp)
+            seq_nums.append(frame.right.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+    try:
+        frame_generator.close()
+    except Exception:
+        pass
+
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_center_ros(duration):
+    """Benchmarks stream_left_right_center_camera(use_ros_for_cameras=True) from stretch4_body."""
+    print("\n--- Benchmarking Head Camera stream_left_right_center_camera (stretch4_body ROS2) ---")
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"])
+    if proc is None:
+        print("Could not start ROS2 head camera launch file. Skipping ROS benchmark.")
+        return None
+
+    try:
+        from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_center_camera
+    except ImportError as e:
+        print(f"Failed to import stretch4_body camera modules: {e}")
+        stop_ros_launch(proc)
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_center_camera(use_ros_for_cameras=True)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_center_camera ROS2: {e}")
+        stop_ros_launch(proc)
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.right is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_center_camera ROS2.")
+        try:
+            frame_generator.close()
+        except Exception:
+            pass
+        stop_ros_launch(proc)
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+ 
+    for frame in frame_generator:
+        if frame is not None and frame.right is not None:
+            timestamps_host.append(time.time())
+            timestamps_sensor.append(frame.right.timestamp)
+            seq_nums.append(frame.right.frame_number)
+         
+        if time.monotonic() >= t_end:
+            break
+
+    try:
+        frame_generator.close()
+    except Exception:
+        pass
+
+    stop_ros_launch(proc)
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
 
@@ -230,50 +502,52 @@ def run_gripper_camera_old(duration, target_fps=30):
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
 
-def run_gripper_camera_new(duration, target_fps=30):
-    """Benchmarks the GripperCameraLuxonis from stretch4_body."""
-    print("\n--- Benchmarking GripperCameraLuxonis (stretch4_body) ---")
+def run_gripper_python(duration):
+    """Benchmarks stream_gripper_camera(use_ros_for_cameras=False) from stretch4_body."""
+    print("\n--- Benchmarking Gripper Camera stream_gripper_camera (stretch4_body Python) ---")
     try:
-        from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+        from stretch4_body.subsystem.cameras.stream_cameras import stream_gripper_camera
     except ImportError as e:
         print(f"Failed to import stretch4_body camera modules: {e}")
         return None
 
     t_init_start = time.perf_counter()
     try:
-        # Ensure config parameters match benchmark profile
-        left_config = RGBCameras.gripper_left.config
-        right_config = RGBCameras.gripper_right.config
-        left_config.fps = target_fps
-        right_config.fps = target_fps
-        left_config.buffer_size = 1
-        right_config.buffer_size = 1
-
-        camera = RGBCameras.gripper_rgbd.start_synced()
+        frame_generator = stream_gripper_camera(use_ros_for_cameras=False)
     except Exception as e:
-        print(f"Failed to initialize new GripperCameraLuxonis: {e}")
+        print(f"Failed to initialize stream_gripper_camera: {e}")
         return None
 
-    # Wait for first frame
-    print("Waiting for first frame...")
-    frame_generator = camera.get_frames()
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
     
-    try:
-        first_frame = next(frame_generator)
-        t_first_frame = time.perf_counter()
-    except StopIteration:
-        print("Generator stopped immediately.")
-        camera.stop()
-        return None
-    except Exception as e:
-        print(f"Error getting first frame: {e}")
-        camera.stop()
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.right is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting first frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_gripper_camera Python.")
+        try:
+            frame_generator.close()
+        except Exception:
+            pass
         return None
 
     init_latency = t_first_frame - t_init_start
     print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
 
-    # Data collection loop
     timestamps_host = []
     timestamps_sensor = []
     seq_nums = []
@@ -283,13 +557,95 @@ def run_gripper_camera_new(duration, target_fps=30):
     for frame in frame_generator:
         if frame is not None and frame.right is not None:
             timestamps_host.append(time.monotonic())
-            timestamps_sensor.append(frame.timestamp)  # Sensor-level sync timestamp
+            timestamps_sensor.append(frame.right.timestamp)
             seq_nums.append(frame.right.frame_number)
         
         if time.monotonic() >= t_end:
             break
 
-    camera.stop()
+    try:
+        frame_generator.close()
+    except Exception:
+        pass
+
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_gripper_ros(duration):
+    """Benchmarks stream_gripper_camera(use_ros_for_cameras=True) from stretch4_body."""
+    print("\n--- Benchmarking Gripper Camera stream_gripper_camera (stretch4_body ROS2) ---")
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "gripper_camera.launch.py"])
+    if proc is None:
+        print("Could not start ROS2 gripper camera launch file. Skipping ROS benchmark.")
+        return None
+
+    try:
+        from stretch4_body.subsystem.cameras.stream_cameras import stream_gripper_camera
+    except ImportError as e:
+        print(f"Failed to import stretch4_body camera modules: {e}")
+        stop_ros_launch(proc)
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_gripper_camera(use_ros_for_cameras=True)
+    except Exception as e:
+        print(f"Failed to initialize stream_gripper_camera ROS2: {e}")
+        stop_ros_launch(proc)
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.right is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_gripper_camera ROS2.")
+        try:
+            frame_generator.close()
+        except Exception:
+            pass
+        stop_ros_launch(proc)
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+ 
+    for frame in frame_generator:
+        if frame is not None and frame.right is not None:
+            timestamps_host.append(time.time())
+            timestamps_sensor.append(frame.right.timestamp)
+            seq_nums.append(frame.right.frame_number)
+         
+        if time.monotonic() >= t_end:
+            break
+
+    try:
+        frame_generator.close()
+    except Exception:
+        pass
+
+    stop_ros_launch(proc)
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
 
@@ -338,7 +694,7 @@ def compile_results(host_times, sensor_times, seq_nums, init_latency):
     if drop_rate < 0:
         drop_rate = 0.0  # Safe boundary
 
-    return {
+    result = {
         "init_latency": init_latency,
         "fps": fps,
         "mean_latency_ms": mean_lat,
@@ -348,6 +704,9 @@ def compile_results(host_times, sensor_times, seq_nums, init_latency):
         "frame_count": len(host_times)
     }
 
+    print(f"{result=}")
+
+    return result
 
 def main():
     parser = argparse.ArgumentParser(description="Luxonis Camera Regression & Performance Benchmark")
@@ -371,7 +730,16 @@ def main():
         else:
             print("stretch4_rgbd path not found, skipping Head (stretch4_rgbd) benchmark.")
 
-        results["Head (stretch4_body)"] = run_head_camera_new(args.duration, args.fps)
+        results["Head Left-Right Python (stretch4_body)"] = run_left_right_python(args.duration)
+        time.sleep(3.0)
+
+        results["Head Left-Right ROS (stretch4_body)"] = run_left_right_ros(args.duration)
+        time.sleep(3.0)
+
+        results["Head Left-Right-Center Python (stretch4_body)"] = run_left_right_center_python(args.duration)
+        time.sleep(3.0)
+
+        results["Head Left-Right-Center ROS (stretch4_body)"] = run_left_right_center_ros(args.duration)
         time.sleep(3.0)
 
     # 2. Benchmark Gripper Cameras
@@ -382,7 +750,10 @@ def main():
         else:
             print("stretch4_gripper_modeling_and_control path not found, skipping Gripper (stretch4_gripper_modeling_and_control) benchmark.")
 
-        results["Gripper (stretch4_body)"] = run_gripper_camera_new(args.duration, args.fps)
+        results["Gripper Python (stretch4_body)"] = run_gripper_python(args.duration)
+        time.sleep(3.0)
+
+        results["Gripper ROS (stretch4_body)"] = run_gripper_ros(args.duration)
 
     # 3. Print Quantitative Performance Summary
     print("\n" + "=" * 80)
@@ -395,7 +766,7 @@ def main():
 
     for label, metrics in results.items():
         if metrics is None:
-            print(f"{label:<50} | N/A - Failed/Not Installed")
+            print(f"{label:<50} | N/A - Failed/Not Installed/Not Sourced")
             continue
 
         latency_str = f"{metrics['mean_latency_ms']:.1f} \u00b1 {metrics['std_latency_ms']:.1f} ms"
@@ -407,9 +778,9 @@ def main():
     print("=" * 80)
 
     head_old = results.get("Head (stretch4_rgbd)")
-    head_new = results.get("Head (stretch4_body)")
+    head_new = results.get("Head Left-Right Python (stretch4_body)")
     gripper_old = results.get("Gripper (stretch4_gripper_modeling_and_control)")
-    gripper_new = results.get("Gripper (stretch4_body)")
+    gripper_new = results.get("Gripper Python (stretch4_body)")
 
     has_regression = False
 
@@ -459,7 +830,7 @@ def main():
                 f.write("|---|---|---|---|---|---|---|\n")
                 for label, metrics in results.items():
                     if metrics is None:
-                        f.write(f"| {label} | N/A - Failed/Not Installed | | | | | |\n")
+                        f.write(f"| {label} | N/A - Failed/Not Installed/Not Sourced | | | | | |\n")
                     else:
                         latency_str = f"{metrics['mean_latency_ms']:.1f} ± {metrics['std_latency_ms']:.1f} ms"
                         f.write(f"| {label} | {metrics['init_latency']:.2f} s | {metrics['fps']:.1f} | {latency_str} | {metrics['jitter_ms']:.2f} ms | {metrics['drop_rate']:.1f} % | {metrics['frame_count']} |\n")
@@ -496,9 +867,14 @@ def test_camera_performance_regression():
     target_fps = 30
 
     head_old = run_head_camera_old(duration, target_fps) if os.path.exists(OLD_RGBD_PATH) else None
-    head_new = run_head_camera_new(duration, target_fps)
+    head_new = run_left_right_python(duration)
+    head_ros = run_left_right_ros(duration)
+    head_center_new = run_left_right_center_python(duration)
+    head_center_ros = run_left_right_center_ros(duration)
+
     gripper_old = run_gripper_camera_old(duration, target_fps) if os.path.exists(OLD_GRIPPER_PATH) else None
-    gripper_new = run_gripper_camera_new(duration, target_fps)
+    gripper_new = run_gripper_python(duration)
+    gripper_ros = run_gripper_ros(duration)
 
     if head_old is None and head_new is None and gripper_old is None and gripper_new is None:
         pytest.skip("No cameras were successfully initialized. Skipping verification.")
@@ -524,6 +900,30 @@ def test_camera_performance_regression():
             has_failed = True
             failure_messages.append(f"Head Camera Latency too high: Realized={head_new['mean_latency_ms']:.1f}ms (expected <= 100ms)")
 
+    if head_ros:
+        if head_ros["fps"] < 25.0:
+            has_failed = True
+            failure_messages.append(f"Head Camera ROS FPS underperforming: Realized={head_ros['fps']:.1f} FPS (expected >= 25)")
+        if head_ros["mean_latency_ms"] > 150.0:
+            has_failed = True
+            failure_messages.append(f"Head Camera ROS Latency too high: Realized={head_ros['mean_latency_ms']:.1f}ms (expected <= 150ms)")
+
+    if head_center_new:
+        if head_center_new["fps"] < 25.0:
+            has_failed = True
+            failure_messages.append(f"Head Center Camera FPS underperforming: Realized={head_center_new['fps']:.1f} FPS (expected >= 25)")
+        if head_center_new["mean_latency_ms"] > 120.0:
+            has_failed = True
+            failure_messages.append(f"Head Center Camera Latency too high: Realized={head_center_new['mean_latency_ms']:.1f}ms (expected <= 120ms)")
+
+    if head_center_ros:
+        if head_center_ros["fps"] < 25.0:
+            has_failed = True
+            failure_messages.append(f"Head Center Camera ROS FPS underperforming: Realized={head_center_ros['fps']:.1f} FPS (expected >= 25)")
+        if head_center_ros["mean_latency_ms"] > 200.0:
+            has_failed = True
+            failure_messages.append(f"Head Center Camera ROS Latency too high: Realized={head_center_ros['mean_latency_ms']:.1f}ms (expected <= 200ms)")
+
     if gripper_old and gripper_new:
         latency_threshold = gripper_old["mean_latency_ms"] * 1.15
         fps_threshold = gripper_old["fps"] * 0.85
@@ -541,6 +941,14 @@ def test_camera_performance_regression():
         if gripper_new["mean_latency_ms"] > 120.0:
             has_failed = True
             failure_messages.append(f"Gripper Camera Latency too high: Realized={gripper_new['mean_latency_ms']:.1f}ms (expected <= 120ms)")
+
+    if gripper_ros:
+        if gripper_ros["fps"] < 25.0:
+            has_failed = True
+            failure_messages.append(f"Gripper Camera ROS FPS underperforming: Realized={gripper_ros['fps']:.1f} FPS (expected >= 25)")
+        if gripper_ros["mean_latency_ms"] > 600.0:
+            has_failed = True
+            failure_messages.append(f"Gripper Camera ROS Latency too high: Realized={gripper_ros['mean_latency_ms']:.1f}ms (expected <= 600ms)")
 
     assert not has_failed, "Performance regression or stand-alone underperformance detected:\n" + "\n".join(failure_messages)
 

@@ -604,14 +604,19 @@ class RGBPipelineControllerROS(RGBPipelineController):
         
         try:
             from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
+            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_right
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
 
         if self.show_image_in is RecordRgbShowImageIn.RERUN:
             self._start_rerun()
 
-        left_pipeline_controller = self.copy_for(RGBCameras.left(), is_open_camera=False)
-        right_pipeline_controller = self.copy_for(RGBCameras.right(), is_open_camera=False)
+        if self.camera_type == RGBCameras.gripper_rgbd:
+            left_pipeline_controller = self.copy_for(RGBCameras.gripper_left, is_open_camera=False)
+            right_pipeline_controller = self.copy_for(RGBCameras.gripper_right, is_open_camera=False)
+        else:
+            left_pipeline_controller = self.copy_for(RGBCameras.left(), is_open_camera=False)
+            right_pipeline_controller = self.copy_for(RGBCameras.right(), is_open_camera=False)
         
         use_center = self.camera_type == RGBCameras.head_left_right_center
         center_pipeline_controller = None
@@ -629,10 +634,14 @@ class RGBPipelineControllerROS(RGBPipelineController):
         right_generator = None
         center_generator = None
 
-        left_generator = stream_camera_left(stream_manager=self.stream_manager)
-        right_generator = stream_camera_right(stream_manager=self.stream_manager)
-        if use_center:
-            center_generator = stream_camera_center(stream_manager=self.stream_manager)
+        if self.camera_type == RGBCameras.gripper_rgbd:
+            left_generator = stream_gripper_stereo(stream_manager=self.stream_manager)
+            right_generator = stream_gripper_right(stream_manager=self.stream_manager)
+        else:
+            left_generator = stream_camera_left(stream_manager=self.stream_manager)
+            right_generator = stream_camera_right(stream_manager=self.stream_manager)
+            if use_center:
+                center_generator = stream_camera_center(stream_manager=self.stream_manager)
 
         self.generator = self.stream_manager.stream()
 
@@ -643,7 +652,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 left_ros_frame = self.stream_manager.get(left_generator)
                 right_ros_frame = self.stream_manager.get(right_generator)
-                center_ros_frame = self.stream_manager.get(center_generator)
+                center_ros_frame = self.stream_manager.get(center_generator) if center_generator is not None else None
 
                 if left_ros_frame is None or right_ros_frame is None:
                     continue
