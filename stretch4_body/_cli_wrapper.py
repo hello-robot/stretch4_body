@@ -205,10 +205,6 @@ def REx_stepper_gains_YAML_to_flash():
     sys.argv[0] = "REx_stepper_gains_YAML_to_flash"
     runpy.run_module("stretch4_body.tools.factory.REx_stepper_gains_YAML_to_flash", run_name="__main__")
 
-def REx_line_sensor_display():
-    sys.argv[0] = "REx_line_sensor_display"
-    runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_display", run_name="__main__")
-
 def REx_omnibase_calibrate_imu_collect():
     sys.argv[0] = "REx_omnibase_calibrate_imu_collect"
     runpy.run_module("stretch4_body.tools.factory.REx_omnibase_calibrate_imu_collect", run_name="__main__")

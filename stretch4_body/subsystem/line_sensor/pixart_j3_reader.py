@@ -34,6 +34,12 @@ class PixartJ3Reader():
     # that is ~0.17 s, long enough to ride out a single dropped report.
     DEAD_AFTER_MISSED_FRAMES = 5
 
+    # Reopen schedule after a serial failure. Starts quick because most faults
+    # are transient, backs off so an unplugged sensor does not spin the CPU
+    # reopening a port that is not there.
+    REOPEN_BACKOFF_MIN_S = 0.5
+    REOPEN_BACKOFF_MAX_S = 5.0
+
     def __init__(self, port_name='/dev/hello-pixart-j3', verbose=False,
                  bus_sensor_map=None, flip_range_ordering=None, report_num=None,
                  _params=None):
@@ -82,8 +88,18 @@ class PixartJ3Reader():
         self.line_count = 0
         self._warned_report_len = False
 
+        # Runtime control. Both default ON at construction and are never
+        # persisted
+        self.streaming = True
+        self.disabled = set()          # sensor indices turned off on purpose
+        self._skip_keys = ()           # their JSON keys, matched pre-parse
+        self._reopen_backoff_s = self.REOPEN_BACKOFF_MIN_S
+        self._reopen_at = 0.0
+        self._reported_open_failure = False
+
         self.status = {'frame_advance_err': 0, 'not_six_sensors_err': 0,
                        'frame_not_full_err': 0, 'decode_errors': 0,
+                       'reader_restarts': 0,
                        'rate_hz': 0, 'sensors_last_frame': [],
                        'last_frame_time': 0,
                        # Until a frame arrives nothing has reported, so
@@ -95,45 +111,169 @@ class PixartJ3Reader():
                 'ts_last_read': 0, 'frame_id': 0, 'rate_hz': 0,
                 'ranges': np.zeros(0, dtype=np.float64),
                 'codes': np.zeros(0, dtype=np.uint8),
-                'n_no_return': 0, 'n_beyond_limit': 0,
+                'n_no_return': 0, 'n_beyond_limit': 0, 'enabled': True,
                 # Never reported yet counts as missing, so a sensor that never
                 # comes up at all is reported dead.
                 'missed_frames': self.DEAD_AFTER_MISSED_FRAMES}
         self.is_valid = False
 
-    def startup(self):
+    def startup(self, quiet=False):
         try:
             self.debug_print("Attempting to open", self.port_name)
             # Exclusive: two readers on one port each get half the byte stream
             # and both corrupt. Make the second opener fail loudly instead.
             self.ser = serial.Serial(port=self.port_name, exclusive=True)
             self.verbose_print(f"Serial port {self.port_name} opened successfully.")
-            self.json_line = ""
-            self.oob_line = ""
-            self.line_count = 0
+            self._reset_framing()
             self.is_valid = True
             return True
         except serial.SerialException as e:
-            print(f"PixartJ3Reader: Error opening or communicating with serial port: {e}")
+            if not quiet:
+                print(f"PixartJ3Reader: Error opening or communicating with serial port: {e}")
             return False
         except Exception as e:
-            print(f"PixartJ3Reader: An unexpected error occurred: {e}")
+            # OSError/FileNotFoundError land here: on a USB replug the device
+            # node itself disappears, which is not a SerialException.
+            if not quiet:
+                print(f"PixartJ3Reader: An unexpected error occurred: {e}")
             return False
+
+    def _reset_framing(self):
+        """Drop any half-assembled line and resync on the next newline.
+
+        Needed after a reopen and after a streaming pause, both of which leave
+        us mid-report. The existing line_count checks already tolerate a
+        stream that begins in the middle.
+        """
+        self.json_line = ""
+        self.oob_line = ""
+        self.line_count = 0
+        self.sensors_seen = {}
+        self.last_frame_id = None
+
+    def _close_port(self):
+        """Close without ever raising. The port is opened exclusive=True, so a
+        leaked descriptor makes every later reopen fail with 'device busy' --
+        which is what turned a transient fault into permanent death."""
+        try:
+            if getattr(self, 'ser', None) is not None and self.ser.is_open:
+                self.ser.close()
+        except Exception:
+            pass
+
+    def _fail(self, message):
+        """Take the reader out of service and schedule a reopen."""
+        print(f"PixartJ3Reader: {message}")
+        self.is_valid = False
+        self._close_port()
+        self._reopen_at = time.time() + self._reopen_backoff_s
+    
+        for i in range(6):
+            if i in self.disabled:
+                continue
+            self.status['sensor_%d' % i]['missed_frames'] = \
+                self.DEAD_AFTER_MISSED_FRAMES
+        self.status['sensors_dead'] = sorted(
+            'sensor_%d' % i for i in range(6) if i not in self.disabled)
+
+    def _try_reopen(self):
+        """Retry the port on a backoff. Called from step() while out of
+        service."""
+        now = time.time()
+        if now < self._reopen_at:
+            return False
+        if self.startup(quiet=self._reported_open_failure):
+            self.status['reader_restarts'] += 1
+            self._reopen_backoff_s = self.REOPEN_BACKOFF_MIN_S
+            self._reported_open_failure = False
+            print(f"PixartJ3Reader: serial port recovered "
+                  f"(restart #{self.status['reader_restarts']})")
+            return True
+        self._reported_open_failure = True
+        self._reopen_backoff_s = min(self._reopen_backoff_s * 2.0,
+                                     self.REOPEN_BACKOFF_MAX_S)
+        self._reopen_at = now + self._reopen_backoff_s
+        return False
+
+    # -- runtime control ---------------------------------------------------
+
+    def set_streaming(self, on):
+        """Pause or resume decoding.
+
+        While paused the port is still READ and the bytes thrown away. Letting
+        it fill instead would back up the kernel buffer and hand us a corrupt
+        part-report the moment we resumed.
+        """
+        on = bool(on)
+        if on == self.streaming:
+            return self.streaming
+        self.streaming = on
+        if on:
+            self._reset_framing()
+        print(f"PixartJ3Reader: streaming {'ON' if on else 'OFF'}")
+        return self.streaming
+
+    def _sensor_index(self, name):
+        if isinstance(name, int):
+            idx = name
+        else:
+            try:
+                idx = int(str(name).rsplit('_', 1)[1])
+            except (IndexError, ValueError):
+                raise ValueError(f'not a sensor name: {name!r}')
+        if not 0 <= idx < 6:
+            raise ValueError(f'sensor index out of range: {name!r}')
+        return idx
+
+    def set_sensor_enabled(self, name, on):
+        """Turn one sensor's decoding on or off.
+
+        A disabled sensor is skipped BEFORE json.loads.
+        """
+        idx = self._sensor_index(name)
+        on = bool(on)
+        if on:
+            self.disabled.discard(idx)
+        else:
+            self.disabled.add(idx)
+        self._skip_keys = tuple(f'"{k}"' for k, i in self.key_table.items()
+                                if i in self.disabled)
+        s = self.status['sensor_%d' % idx]
+        s['enabled'] = on
+        if not on:
+            # Blank it. Leaving the last scan in place would let a consumer
+            # keep steering on a reading that is now arbitrarily old.
+            s['ranges'] = np.zeros(0, dtype=np.float64)
+            s['codes'] = np.zeros(0, dtype=np.uint8)
+            s['n_no_return'] = 0
+            s['n_beyond_limit'] = 0
+            s['missed_frames'] = 0     # off on purpose is not dead
+        print(f"PixartJ3Reader: sensor_{idx} {'ENABLED' if on else 'DISABLED'}")
+        return on
 
     def step(self):
         # Return true if status is updated with new sensor data
         updated = False
 
         if not self.is_valid:
+            # Out of service: keep trying to come back rather than staying
+            # dead until someone restarts the robot server.
+            self._try_reopen()
             return updated
 
         if not self.ser.is_open:
-            self.startup()
+            self._fail('serial port closed unexpectedly')
             return updated
         try:
+            if not self.streaming:
+                # Paused: drain and discard, so the kernel buffer cannot fill
+                # and hand us a corrupt part-report when we resume.
+                if self.ser.in_waiting > 0:
+                    self.ser.read(self.ser.in_waiting)
+                return updated
             while self.ser.in_waiting > 0:
                 if not self.ser.is_open:
-                    self.is_valid = False
+                    self._fail('serial port closed mid-read')
                     return updated
                 lines = self.ser.read(self.ser.in_waiting).decode('utf-8').splitlines(True)
                 for line in lines:
@@ -179,17 +319,20 @@ class PixartJ3Reader():
                             self.debug_print("JSON line didn't find expected close curly brace before newline. Ignoring. Line:", self.json_line)
                         self.json_line = ""
                     else:
+                        # Disabled sensors are dropped here, BEFORE json.loads to save compute
+                        if self._skip_keys and any(k in self.json_line
+                                                   for k in self._skip_keys):
+                            self.json_line = ""
+                            self.oob_line = ""
+                            continue
                         if self.process_json_line(self.json_line):
                             updated = True
                         self.json_line = ""
                         self.oob_line = ""
         except serial.SerialException as e:
-            print(f"PixartJ3Reader: Error opening or communicating with serial port: {e}")
-            self.is_valid = False
-            self.ser.close()
+            self._fail(f'serial error: {e}')
         except Exception as e:
-            print(f"PixartJ3Reader: An unexpected error occurred: {e}")
-            self.is_valid = False
+            self._fail(f'unexpected error: {e}')
         return updated
 
     def process_json_line(self, json_line):
@@ -271,7 +414,7 @@ class PixartJ3Reader():
         s['n_beyond_limit'] = int(np.count_nonzero(codes == protocol.CODE_BEYOND_LIMIT))
         s['frame_id'] = frame_id
 
-        if len(self.sensors_seen) == 6:
+        if len(self.sensors_seen) == 6 - len(self.disabled):
             self.process_frame(now)
 
     def process_frame(self, now=None):
@@ -279,7 +422,9 @@ class PixartJ3Reader():
             return
         if now is None:
             now = time.time()
-        if len(self.sensors_seen) != 6:
+        # A disabled sensor is expected to be absent, so it must not count
+        # against the frame or it would raise this error on every frame.
+        if len(self.sensors_seen) != 6 - len(self.disabled):
             self.status['not_six_sensors_err'] += 1
         # Per-sensor liveness: a sensor that stops reporting keeps its last
         # ranges in status forever, so without this a dead sensor is
@@ -287,6 +432,10 @@ class PixartJ3Reader():
         dead = []
         for i in range(6):
             s = self.status['sensor_%d' % i]
+            if i in self.disabled:
+                # Off on purpose.
+                s['missed_frames'] = 0
+                continue
             if i in self.sensors_seen:
                 s['missed_frames'] = 0
             else:
@@ -330,12 +479,20 @@ class PixartJ3Reader():
         return self.bus_sensor_map[(bus - 1)][sensor]
 
     HEALTH_KEYS = ('rate_hz', 'last_frame_time', 'sensors_dead', 'decode_errors',
-                   'frame_advance_err', 'frame_not_full_err', 'not_six_sensors_err')
+                   'frame_advance_err', 'frame_not_full_err', 'not_six_sensors_err',
+                   'reader_restarts')
 
     def health(self):
-        """Subsystem-wide counters, separate from any one sensor's block."""
+        """Subsystem-wide counters, separate from any one sensor's block.
+
+        `streaming` and `disabled_sensors` are stated loudly because turning
+        line sensors off removes cliff detection: a consumer must be able to
+        see that it is steering with fewer eyes than it thinks.
+        """
         h = {k: self.status[k] for k in self.HEALTH_KEYS}
-        h['streaming'] = bool(self.is_valid)
+        h['port_open'] = bool(self.is_valid)
+        h['streaming'] = bool(self.is_valid and self.streaming)
+        h['disabled_sensors'] = sorted('sensor_%d' % i for i in self.disabled)
         return h
 
     def dead_sensors(self):

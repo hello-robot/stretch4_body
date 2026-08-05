@@ -605,17 +605,6 @@ nominal_params={
     'eoa_wrist_dw4_tool_pg4': SE4_eoa_wrist_dw4_tool_pg4,
     'eoa_wrist_dw4_tool_tablet': SE4_eoa_wrist_dw4_tool_tablet,
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
-    # 'line_sensor_vel_limit':{
-    #     'sensor_normals':{ #CCW from robot forward
-    #         'hello-gs2-0':180,
-    #         'hello-gs2-1':120,
-    #         'hello-gs2-2':60,
-    #         'hello-gs2-3':0,
-    #         'hello-gs2-4':300,
-    #         'hello-gs2-5':240},
-    #     'phase_adj':330.0, #adjust to forward
-    #     'dropoff_deg':20.0
-    # },
     'line_sensor_loop':{
         'loop_rate_Hz': 250, #Run fast as polling serial, 6 ch, 30hz
         'cpu_affinity': 16,

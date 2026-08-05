@@ -764,8 +764,42 @@ class LineSensorLoopClient(SubsystemClient):
         return dict(self.status.get('health') or {})
 
     def dead_sensors(self):
-        """Names that have stopped reporting, or never started."""
+        """Names that have stopped reporting, or never started.
+
+        Distinct from disabled_sensors(): dead is a fault, disabled is a
+        choice. A disabled sensor never appears here.
+        """
         return list((self.status.get('health') or {}).get('sensors_dead', []))
+
+    # -- runtime control ---------------------------------------------------
+
+    def is_streaming(self):
+        return bool((self.status.get('health') or {}).get('streaming', False))
+
+    def disabled_sensors(self):
+        """Names switched off at runtime. Check this before trusting a clear
+        floor: a disabled sensor reports nothing, not 'nothing is there'."""
+        return list((self.status.get('health') or {}).get('disabled_sensors', []))
+
+    def reader_restarts(self):
+        """How many times the serial port has recovered itself. A number that
+        keeps climbing means a flaky cable, not a healthy subsystem."""
+        return int((self.status.get('health') or {}).get('reader_restarts', 0))
+
+    def set_streaming(self, on):
+        """Pause or resume the line sensors.
+
+        Takes effect after the next push_command(). Turning them off removes
+        cliff detection; the body reports it in health['streaming'] rather
+        than enforcing anything, so whatever is driving must check.
+        """
+        self._queue_command('line_sensor_loop', 'set_streaming', bool(on))
+
+    def set_sensor_enabled(self, sensor_name, on):
+        """Turn one sensor's decoding on or off. Takes effect after the next
+        push_command(). Not persisted -- a restart comes up with all six on."""
+        self._queue_command('line_sensor_loop', 'set_sensor_enabled',
+                            sensor_name, bool(on))
 
     def is_sensor_updated(self, sensor_name):
         """True if this sensor produced a new frame since the last check.

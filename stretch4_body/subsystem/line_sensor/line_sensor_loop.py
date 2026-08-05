@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import time
+import uuid
 from typing import TypedDict
 import numpy as np
 from stretch4_body.core.device import Device
@@ -22,11 +23,24 @@ def _cb_line_sensor_unpause(lsa):
     return True
 
 def _cb_line_sensor_loop_step(pjr, q_cmd_in, status_out):
-    """Publish the WHOLE reader status, every time anything moved.
+    """Publish the reader status, every time anything moved.
+
     """
+    while q_cmd_in.qsize():
+        try:
+            cmd = q_cmd_in.get_nowait()
+            subsystem, method, cmd_id, args, kwargs = cmd
+            getattr(pjr, method)(*args, **kwargs)
+        except queue.Empty:
+            break
+        except AttributeError:
+            print(f'LineSensorLoop: no such reader command: {cmd}')
+        except Exception as e:
+            # A bad command must not take the reader down with it.
+            print(f'LineSensorLoop: command {cmd} failed: {e}')
     if pjr.step():
         status_out.update(pjr.status)
-        status_out['health'] = pjr.health()
+    status_out['health'] = pjr.health()
     return True
 
 # ###########################################################################################
@@ -69,16 +83,19 @@ class LineSensorLoop(Device):
     def __init__(self):
         Device.__init__(self, 'line_sensor_loop')
         self.pjr_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(3)
+        # Commands get room (matching end_of_arm), status does not.
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(100)
         self.q_status = hello_utils.CircularMultiprocessingQueue(3)
         self.q_admin = hello_utils.CircularMultiprocessingQueue(3)
         self.n_bins = int(self.params['line_sensor_geometry']['pixart_report_num'])
         self.status: "LineSensorLoopStatus" = {
             'last_frame_time': 0, 'rate_hz': 0,
-            'health': {'streaming': False, 'rate_hz': 0, 'last_frame_time': 0,
+            'health': {'streaming': False, 'port_open': False, 'rate_hz': 0,
+                       'last_frame_time': 0, 'disabled_sensors': [],
                        'sensors_dead': list(self.params['sensor_names']),
                        'decode_errors': 0, 'frame_advance_err': 0,
-                       'frame_not_full_err': 0, 'not_six_sensors_err': 0},
+                       'frame_not_full_err': 0, 'not_six_sensors_err': 0,
+                       'reader_restarts': 0},
             'calibration': {'loaded': [], 'rejected': {}, 'id': '',
                             'n_bins': self.n_bins}}
         self.status_aux = {}
@@ -93,7 +110,7 @@ class LineSensorLoop(Device):
                 'ts_last_read': 0, 'frame_id': 0, 'rate_hz': 0,
                 'ranges': np.zeros(0, dtype=np.float64),
                 'codes': np.zeros(0, dtype=np.uint8),
-                'n_no_return': 0, 'n_beyond_limit': 0,
+                'n_no_return': 0, 'n_beyond_limit': 0, 'enabled': True,
                 'missed_frames': PixartJ3Reader.DEAD_AFTER_MISSED_FRAMES}
 
     def startup(self):
@@ -193,7 +210,38 @@ class LineSensorLoop(Device):
             
         signal.signal(signal.SIGINT, original_sigint)
 
+    # -- runtime control ---------------------------------------------------
+    #
+    # The server's generic dispatch calls these directly on this object (the
+    # parent process). The reader lives in the child, so each one forwards
+    # onto q_cmd, which the step callback drains. 
+
+    def _queue_reader_command(self, method, *args, **kwargs):
+        self.q_cmd.put(['line_sensor_loop', method, uuid.uuid1(), args, kwargs])
+
+    def set_streaming(self, on):
+        """Pause or resume decoding without restarting anything.
+
+        Turning this off removes cliff detection. It is reported in
+        status['health']['streaming'] so a consumer can refuse to drive, and
+        it is deliberately not persisted -- a restart always comes up
+        streaming.
+        """
+        self.logger.warning('Line sensors streaming -> %s',
+                            'ON' if on else 'OFF (cliff detection is off)')
+        self._queue_reader_command('set_streaming', bool(on))
+
+    def set_sensor_enabled(self, sensor_name, on):
+        """Turn one sensor's decoding on or off. Not persisted."""
+        if sensor_name not in self.params['sensor_names']:
+            raise ValueError(f'unknown sensor: {sensor_name!r}')
+        self.logger.warning('%s -> %s', sensor_name,
+                            'ENABLED' if on else 'DISABLED')
+        self._queue_reader_command('set_sensor_enabled', sensor_name, bool(on))
+
     def push_command(self, blocking=False):
+        """No-op: commands reach the reader through q_cmd as they are
+        dispatched, so there is nothing to flush at the end of a cycle."""
         pass
 
 
