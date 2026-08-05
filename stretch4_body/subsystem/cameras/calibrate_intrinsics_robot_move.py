@@ -169,12 +169,13 @@ class RobotMovementController:
         import select
         import sys
         def keyboard_poller():
-            logger.info("\n" + "="*50)
-            logger.info("Keyboard commands enabled:")
-            logger.info("  Press 'x' + Enter to capture a frame and pose")
-            logger.info("  Press 's' + Enter to save calibration and exit")
-            logger.info("  Press 'q' + Enter to quit")
-            logger.info("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to capture a frame and pose")
+  Press 's' + Enter to save calibration and exit")
+  Press 'q' + Enter to quit")
+{'='*50}\n""")
             while not self._stop_event.is_set():
                 try:
                     rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -256,11 +257,12 @@ class RobotMovementController:
         import select
         import sys
         def keyboard_poller():
-            logger.info("\n" + "="*50)
-            logger.info("Keyboard commands enabled:")
-            logger.info("  Press 'x' + Enter to unpause/proceed to next pose")
-            logger.info("  Press 'q' + Enter to quit")
-            logger.info("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to unpause/proceed to next pose")
+  Press 'q' + Enter to quit")
+{'='*50}\n""")
             while not self._stop_event.is_set():
                 try:
                     rlist, _, _ = select.select([sys.stdin], [], [], 0.1)

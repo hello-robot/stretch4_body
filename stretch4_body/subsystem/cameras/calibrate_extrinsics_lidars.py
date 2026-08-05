@@ -1017,12 +1017,13 @@ class CalibrateLidarToCamera:
 
         import select
         def keyboard_poller():
-            logger.info("\n" + "="*50)
-            logger.info("Keyboard commands enabled:")
-            logger.info("  Press 'x' + Enter to capture/unpause")
-            logger.info("  Press 's' + Enter to save average and exit")
-            logger.info("  Press 'q' + Enter to quit without saving")
-            logger.info("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to capture/unpause")
+  Press 's' + Enter to save average and exit")
+  Press 'q' + Enter to quit without saving")
+{'='*50}\n""")
             
             while not self.quit_requested.is_set():
                 try:
