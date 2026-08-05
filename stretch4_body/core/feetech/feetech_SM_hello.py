@@ -382,7 +382,7 @@ class FeetechSMHello(Device):
         return self.motor.do_ping(verbose)
 
     def is_homed(self):
-        return self.status['pos_calibrated'] or not self.params['req_calibration']
+        return self.status['pos_calibrated']
 
     def check_servo_errors(self):
         if self.status['overload_error']:
