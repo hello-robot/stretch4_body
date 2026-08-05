@@ -17,7 +17,9 @@ from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import REx_cali
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import REx_calibrate_extrinsics_cameras
 from stretch4_body.subsystem.cameras.camera_intrinsics_validate_l2_distance import REx_validate_intrinsics
 
-def calibrate_intrinsics_and_extrinsics_not_interactive():
+def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.WARNING):
+    logging.basicConfig(level=loggin_level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
     logger.info("""
     This script performs the full camera calibration pipeline for the robot.
     The user answers the first prompt, and leaves the robot for 20 minutes to perform calibration.
@@ -86,6 +88,5 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
         raise
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     calibrate_intrinsics_and_extrinsics_not_interactive()
 
