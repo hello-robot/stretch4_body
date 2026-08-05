@@ -919,7 +919,7 @@ class WristJointClient(SubsystemClient):
     def status(self) -> FeetechSMHelloStatus:
         if self.parent is not None:
             return self.parent.status.get(self.name, {})
-        return self.status
+        return self._status
     
     @status.setter
     def status(self, value):

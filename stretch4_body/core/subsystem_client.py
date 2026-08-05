@@ -19,7 +19,7 @@ class SubsystemClient(Device):
 
     def __init__(self, name, client_id=None, parent=None, ip_address=None):
         Device.__init__(self,name)
-        self.status = {}
+        self._status = {}
         self.subsystems = {}
         self.is_valid=False
         self.parent = parent
@@ -35,6 +35,10 @@ class SubsystemClient(Device):
             self.cmd_dict = self.parent.cmd_dict
             self.push_lock = self.parent.push_lock
 
+    @property
+    def status(self):
+        return self._status
+    
     @property
     def connected(self):
         return self.is_valid and self.client.connected
