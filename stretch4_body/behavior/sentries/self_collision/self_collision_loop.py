@@ -7,9 +7,8 @@ from stretch4_body.core.device import Device
 from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
 from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.core.mujoco_urdf import get_custom_tool_joints
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_pos_mm_to_urdf_m
-import importlib
-import re
 
 # ###########################################################################################
 
@@ -177,27 +176,7 @@ class SelfCollisionLoop(Device):
             
             # Identify custom tools: dynamically check if the tool's folder exists under user_tools
             if tool_name and RobotParams.is_user_defined_tool(tool_name):
-                sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
-                if sanitized_tool_name and sanitized_tool_name[0].isdigit():
-                    sanitized_tool_name = "_" + sanitized_tool_name
-
-                clean_class_base = re.sub(r'[^a-zA-Z0-9]', ' ', tool_name)
-                if clean_class_base and clean_class_base[0].isdigit():
-                    clean_class_base = "Tool " + clean_class_base
-                server_class_name = clean_class_base.title().replace(' ', '')
-
-                module_name = f"{sanitized_tool_name}_collision"
-                class_name = f"{server_class_name}Collision"
-
-                try:
-                    mod = RobotParams.import_user_tool_module(tool_name, "collision.py")
-                    if not mod:
-                        mod = importlib.import_module(module_name)
-                    collision_class = getattr(mod, class_name)
-                    mapper = collision_class()
-                    custom_joints = mapper.get_mujoco_joints(s) or {}
-                except Exception:
-                    pass
+                custom_joints = get_custom_tool_joints(tool_name, s)
 
             if custom_joints:
                 for jk, jv in custom_joints.items():
