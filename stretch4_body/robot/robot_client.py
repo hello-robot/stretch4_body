@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import time
+import numpy as np
+from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
@@ -687,8 +689,96 @@ class OmniBaseClient(SubsystemClient):
 # #####################################################################
 
 class LineSensorLoopClient(SubsystemClient):
+    """Client view of the six PixArt line sensors.
+
+    The calibration the body loaded and validated arrives inside the status,
+    so a client -- including one on another machine with no fleet directory --
+    never opens a tare file or repeats the fingerprint check. Ask this class
+    for the arrays instead of unpacking status['calibration'] by hand.
+    """
+
     def __init__(self,parent=None):
         SubsystemClient.__init__(self,name='line_sensor_loop',parent=parent)
+        self._calib_id = None
+        self._calib = {}          # sensor_name -> (offsets, valid_mask, null_rate)
+        self._frame_id_last = {}
+
+    # -- calibration -------------------------------------------------------
+
+    def _refresh_calibration(self):
+        """Unpack the wire form once per calibration, not once per status."""
+        block = self.status.get('calibration') or {}
+        cid = block.get('id')
+        if cid == self._calib_id:
+            return
+        calib = {}
+        for name in block.get('loaded', []):
+            try:
+                calib[name] = calibration.unpack_tare(block[name])
+            except (KeyError, ValueError) as exc:
+                self.logger.error('%s: unusable tare on the wire: %s', name, exc)
+        self._calib, self._calib_id = calib, cid
+
+    def calibrated_sensors(self):
+        """Names with a tare the body accepted."""
+        self._refresh_calibration()
+        return sorted(self._calib)
+
+    def uncalibrated_sensors(self):
+        """{name: why the body refused its tare}."""
+        return dict((self.status.get('calibration') or {}).get('rejected', {}))
+
+    def bin_reliable(self):
+        """{name: bool array} -- bins whose tare is trustworthy."""
+        self._refresh_calibration()
+        return {n: v[1] for n, v in self._calib.items()}
+
+    def bin_null_rate(self):
+        """{name: float array} -- per-bin no-return rate seen on clear floor."""
+        self._refresh_calibration()
+        return {n: v[2] for n, v in self._calib.items()}
+
+    def apply_tare(self, ranges, sensor_name, codes=None):
+        """Tare one sensor's ranges. An uncalibrated sensor passes through.
+
+        Uses the same routine the body's own tools use, so there is one
+        implementation of what a tare means rather than one per consumer.
+        """
+        self._refresh_calibration()
+        entry = self._calib.get(sensor_name)
+        if entry is None:
+            return np.asarray(ranges, dtype=np.float64)
+        offsets, valid_mask, _ = entry
+        return calibration.apply_tare_array(ranges, offsets, valid_mask, codes)
+
+    def tared_ranges(self, sensor_name):
+        """Latest ranges for one sensor, tared, with its per-bin codes."""
+        s = self.status.get(sensor_name)
+        if not s or not len(s['ranges']):
+            return np.zeros(0), np.zeros(0, dtype=np.uint8)
+        return self.apply_tare(s['ranges'], sensor_name, s['codes']), s['codes']
+
+    # -- liveness ----------------------------------------------------------
+
+    def health(self):
+        return dict(self.status.get('health') or {})
+
+    def dead_sensors(self):
+        """Names that have stopped reporting, or never started."""
+        return list((self.status.get('health') or {}).get('sensors_dead', []))
+
+    def is_sensor_updated(self, sensor_name):
+        """True if this sensor produced a new frame since the last check.
+
+        The status socket is CONFLATE=1 and publishes at 100 Hz while sensors
+        report at ~30 Hz, so most status messages repeat a sensor's previous
+        frame. Without this a consumer processes the same scan three times.
+        """
+        s = self.status.get(sensor_name) or {}
+        fid = s.get('frame_id', 0)
+        changed = self._frame_id_last.get(sensor_name) != fid
+        self._frame_id_last[sensor_name] = fid
+        return changed
 
 # #####################################################################
 

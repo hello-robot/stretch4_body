@@ -329,6 +329,15 @@ class PixartJ3Reader():
     def bus_sensor_to_index_number(self, bus, sensor):
         return self.bus_sensor_map[(bus - 1)][sensor]
 
+    HEALTH_KEYS = ('rate_hz', 'last_frame_time', 'sensors_dead', 'decode_errors',
+                   'frame_advance_err', 'frame_not_full_err', 'not_six_sensors_err')
+
+    def health(self):
+        """Subsystem-wide counters, separate from any one sensor's block."""
+        h = {k: self.status[k] for k in self.HEALTH_KEYS}
+        h['streaming'] = bool(self.is_valid)
+        return h
+
     def dead_sensors(self):
         """Names of sensors that have stopped reporting (or never started)."""
         return list(self.status['sensors_dead'])

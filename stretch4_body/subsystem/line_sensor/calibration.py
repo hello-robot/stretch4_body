@@ -435,3 +435,63 @@ class RecordingSession:
     @property
     def sensor_names(self):
         return list(self.recordings)
+
+# ---------------------------------------------------------------------------
+# wire form
+#
+# The loop publishes the tare inside the 100 Hz robot status.
+#
+# The status socket is CONFLATE=1, so a subscriber keeps only the newest
+# message and any "publish once when it changes" scheme would be lost on a
+# client that connected a moment later. The block therefore rides every
+# message, which makes its size the thing that matters.
+#
+# Both directions live here so an encoder change cannot silently outrun its
+# decoder. WIRE_VERSION is checked on unpack.
+# ---------------------------------------------------------------------------
+
+WIRE_VERSION = 1
+_OFFSET_QUANTUM_M = 1e-5      # 0.01 mm; the chip itself quantises to 1 mm
+_OFFSET_LIMIT_M = 32767 * _OFFSET_QUANTUM_M   # 0.327 m, > max_abs_tare_m
+
+
+def pack_tare(offsets, valid_mask, null_rate_per_bin):
+    """Compact one sensor's tare for the status dict.
+
+    Lossy by design and bounded: offsets to 0.01 mm, null rates to 1/255.
+
+    """
+    offsets = np.asarray(offsets, dtype=np.float64)
+    valid_mask = np.asarray(valid_mask, dtype=bool)
+    null_rate = np.asarray(null_rate_per_bin, dtype=np.float64)
+    if offsets.shape != valid_mask.shape:
+        raise ValueError(f'offsets {offsets.shape} and mask {valid_mask.shape} differ')
+    if null_rate.shape != offsets.shape:
+        null_rate = np.zeros(offsets.shape, dtype=np.float64)
+    if not np.isfinite(offsets).all():
+        raise ValueError('cannot pack non-finite offsets')
+    if np.abs(offsets).max(initial=0.0) > _OFFSET_LIMIT_M:
+        raise ValueError(f'offset exceeds the {_OFFSET_LIMIT_M:.3f} m wire range')
+    return {
+        'wire_version': WIRE_VERSION,
+        'n_bins': int(offsets.size),
+        'offsets_q': np.round(offsets / _OFFSET_QUANTUM_M).astype(np.int16),
+        'valid_packed': np.packbits(valid_mask),
+        'null_rate_q': np.round(np.clip(null_rate, 0.0, 1.0) * 255.0).astype(np.uint8),
+    }
+
+
+def unpack_tare(block):
+    """Inverse of pack_tare. Returns (offsets, valid_mask, null_rate)."""
+    version = block.get('wire_version')
+    if version != WIRE_VERSION:
+        raise ValueError(f'tare wire_version {version}, this code speaks {WIRE_VERSION}')
+    n_bins = int(block['n_bins'])
+    offsets = np.asarray(block['offsets_q'], dtype=np.float64) * _OFFSET_QUANTUM_M
+    # unpackbits always returns a multiple of 8; trim back to the bin count.
+    valid = np.unpackbits(np.asarray(block['valid_packed'], dtype=np.uint8))[:n_bins].astype(bool)
+    null_rate = np.asarray(block['null_rate_q'], dtype=np.float64) / 255.0
+    if offsets.size != n_bins or valid.size != n_bins or null_rate.size != n_bins:
+        raise ValueError(f'tare block claims {n_bins} bins but carries '
+                         f'{offsets.size}/{valid.size}/{null_rate.size}')
+    return offsets, valid, null_rate

@@ -98,6 +98,10 @@ def main() -> int:
     ap.add_argument('--hz', type=float, default=10.0, help='refresh rate')
     ap.add_argument('--rmax', type=float, default=0.8,
                     help='top of the real-range axis, m (default 0.8)')
+    ap.add_argument('--calib', action='store_true',
+                    help='apply the tare the body serves, so a flat floor '
+                         'should sit on the ideal-range line. Bins with no '
+                         'trustworthy tare are left raw and reported.')
     args = ap.parse_args()
 
     # Import RobotClient FIRST: it pulls in cv2, which hijacks the Qt plugin
@@ -131,6 +135,16 @@ def main() -> int:
     nbins = geom.get('pixart_report_num', 320)
     r_ideal = (geom.get('emitter_height_above_floor_mm', 100.67) / 1000.0
                / np.sin(np.deg2rad(geom.get('sensor_angle_down_deg', 26.0))))
+
+    if args.calib:
+        # The body loaded and validated these; nothing is read from disk here.
+        got = loop.calibrated_sensors()
+        print(f'--calib: {len(got)}/{len(names)} sensors tared'
+              f'{" -> " + ", ".join(got) if got else ""}')
+        for name, why in sorted(loop.uncalibrated_sensors().items()):
+            print(f'  {name}: UNCALIBRATED, shown raw ({why.split(":")[0]})')
+        if not got:
+            print('  nothing to apply; run REx_line_sensor_calibrate --all')
 
     rmax = float(args.rmax)
     cutoff = rmax                      # dashed line: real ranges below, codes above
@@ -263,6 +277,7 @@ def main() -> int:
 
             client.pull_status()
             status = loop.status
+            # Liveness moved into the health block when status messages became
             dead = set(status.get('sensors_dead', ()))
             frame = {}
             for name in names:
@@ -271,8 +286,14 @@ def main() -> int:
                 codes = entry.get('codes') if isinstance(entry, dict) else None
                 if ranges is None or codes is None or not len(ranges):
                     continue
-                frame[name] = {'ranges': np.asarray(ranges, dtype=float),
-                               'codes': np.asarray(codes)}
+                ranges = np.asarray(ranges, dtype=float)
+                codes = np.asarray(codes)
+                if args.calib:
+                    # Sentinel bins and bins without a trustworthy tare come
+                    # back unchanged, so what you see is corrected where the
+                    # correction is real and raw everywhere else.
+                    ranges = loop.apply_tare(ranges, name, codes)
+                frame[name] = {'ranges': ranges, 'codes': codes}
             state['frame'] = frame
 
             for k, name in enumerate(names):

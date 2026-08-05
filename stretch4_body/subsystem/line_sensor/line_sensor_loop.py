@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
+import os
 import time
 from typing import TypedDict
+import numpy as np
 from stretch4_body.core.device import Device
 from multiprocessing import Process, Event
 from stretch4_body.core.worker_loop import *
+import stretch4_body.core.hello_utils as hu
+from stretch4_body.subsystem.line_sensor import calibration, calibration_store
 from stretch4_body.subsystem.line_sensor.pixart_j3_reader import PixartJ3Reader
 
 # ###########################################################################################
@@ -18,9 +22,11 @@ def _cb_line_sensor_unpause(lsa):
     return True
 
 def _cb_line_sensor_loop_step(pjr, q_cmd_in, status_out):
+    """Publish the WHOLE reader status, every time anything moved.
+    """
     if pjr.step():
         status_out.update(pjr.status)
-    # status_aux_out.update(lsa.status_aux)
+        status_out['health'] = pjr.health()
     return True
 
 # ###########################################################################################
@@ -66,7 +72,15 @@ class LineSensorLoop(Device):
         self.q_cmd = hello_utils.CircularMultiprocessingQueue(3)
         self.q_status = hello_utils.CircularMultiprocessingQueue(3)
         self.q_admin = hello_utils.CircularMultiprocessingQueue(3)
-        self.status: "LineSensorLoopStatus" = {'last_frame_time':0, 'rate_hz': 0}
+        self.n_bins = int(self.params['line_sensor_geometry']['pixart_report_num'])
+        self.status: "LineSensorLoopStatus" = {
+            'last_frame_time': 0, 'rate_hz': 0,
+            'health': {'streaming': False, 'rate_hz': 0, 'last_frame_time': 0,
+                       'sensors_dead': list(self.params['sensor_names']),
+                       'decode_errors': 0, 'frame_advance_err': 0,
+                       'frame_not_full_err': 0, 'not_six_sensors_err': 0},
+            'calibration': {'loaded': [], 'rejected': {}, 'id': '',
+                            'n_bins': self.n_bins}}
         self.status_aux = {}
         self.do_exit = Event()
         self.n_rate_log = 0
@@ -75,7 +89,12 @@ class LineSensorLoop(Device):
         for sn in self.params['sensor_names']:
             self.rate_log[sn] = []
             self.frame_id_last[sn]=0
-            self.status[sn]={'frame_id':0}
+            self.status[sn] = {
+                'ts_last_read': 0, 'frame_id': 0, 'rate_hz': 0,
+                'ranges': np.zeros(0, dtype=np.float64),
+                'codes': np.zeros(0, dtype=np.uint8),
+                'n_no_return': 0, 'n_beyond_limit': 0,
+                'missed_frames': PixartJ3Reader.DEAD_AFTER_MISSED_FRAMES}
 
     def startup(self):
         """
@@ -94,17 +113,69 @@ class LineSensorLoop(Device):
             self.pjr_process.start()
             #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.pjr_process.pid)) #Assign process to core
             
-            # Wait for system to start posting status
+            # Wait for system to start posting status.
             ts=time.time()
             while self.status['last_frame_time']==0 and not timeout:
-                self.status.update(self.q_status.get(block=True, timeout=0.1))
+                try:
+                    self.status.update(self.q_status.get(block=True, timeout=0.1))
+                except queue.Empty:
+                    pass
                 if time.time()-ts>2.0:
                     timeout=True
 
 
         if timeout:
             self.logger.error('Timed out waiting for LineSensorLoop')
+        self.load_calibration()
         return not timeout
+
+    # -- calibration -------------------------------------------------------
+
+    def calibration_base_dir(self):
+        return os.path.join(hu.get_fleet_directory(), 'calibration_line_sensors')
+
+    def load_calibration(self, verbose=True):
+        """Load, validate and publish the tares.
+
+        A refusal leaves that sensor uncalibrated and says why. It is never
+        downgraded to a warning: running uncalibrated is recoverable, running
+        on a tare from a different configuration is not.
+        """
+        base = self.calibration_base_dir()
+        block = {'loaded': [], 'rejected': {}, 'n_bins': self.n_bins,
+                 'base_dir': base}
+        for idx, name in enumerate(self.params['sensor_names']):
+            path = calibration_store.tare_path(base, name)
+            try:
+                fp = calibration.config_fingerprint(name, idx, self.params)
+                tare = calibration_store.load_validated_tare(path, fp, self.n_bins)
+                entry = calibration.pack_tare(tare.offsets, tare.valid_mask,
+                                              tare.null_rate_per_bin)
+                entry.update({
+                    'timestamp': tare.timestamp,
+                    'session_id': tare.session_id,
+                    'fingerprint_sha256': tare.fingerprint_sha256,
+                    'ideal_range_m': float(np.mean(tare.ideal_range)),
+                    'n_valid_bins': int(tare.valid_mask.sum()),
+                })
+                block[name] = entry
+                block['loaded'].append(name)
+            except Exception as exc:
+                reason = getattr(exc, 'reason', exc.__class__.__name__)
+                block['rejected'][name] = f'{reason}: {exc}'
+                if verbose:
+                    self.logger.warning('%s: NO TARE (%s)', name, reason)
+        # An id over what was actually loaded, so a client can cache the
+        # unpacked arrays and notice a recalibration without diffing 320-point
+        # arrays on every status message.
+        block['id'] = calibration.fingerprint_hash(
+            {n: block[n]['fingerprint_sha256'] + block[n]['timestamp']
+             for n in block['loaded']})
+        self.status['calibration'] = block
+        if verbose:
+            self.logger.info('Line sensor calibration: %d/%d sensors loaded',
+                             len(block['loaded']), len(self.params['sensor_names']))
+        return block
 
     def _manage_ctrlC(self, *args):
         # If you have multiple event processing processes, set each Event.
