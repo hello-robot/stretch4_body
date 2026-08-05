@@ -9,19 +9,17 @@ Run `stretch_camera_show --help` for all the available options.
 Examples:
 
 ```
-stretch_camera_show --left --opencv # Display the left head camera only
+stretch_camera_show # Display the left, right and center head cameras in rerun (Default)
 
-stretch_camera_show --right --opencv # Display the right head camera only
+stretch_camera_show --left # Display the left head camera only in rerun
 
-stretch_camera_show --center --opencv # Display the center head camera only
+stretch_camera_show --left --opencv # Display the left head camera only in opencv
 
-stretch_camera_show --left_right --opencv # Display the left, right head cameras only
+stretch_camera_show --left --no-rotate # Display the left head camera without rotation in rerun
 
-stretch_camera_show --left_right_center --opencv # Display the left, right and center head cameras
+stretch_camera_show --gripper # Display the gripper camera feeds and the point cloud from the stereo depth in rerun
 
-stretch_camera_show --gripper --rerun # Display the gripper camera feeds and the point cloud from the stereo depth
-
-stretch_camera_show --left --recording_directory ./recordings # Store images to disk
+stretch_camera_show --left --recording_directory ./recordings # Store images to disk (and display in rerun)
 ```
 
 ## Using the Cameras with Python
