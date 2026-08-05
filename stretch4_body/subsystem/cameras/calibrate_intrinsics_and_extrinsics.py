@@ -44,16 +44,18 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
         logger.info("Calibration cancelled.")
         return
 
+    def _print_title(title:str):
+        logger.info(f"""
+====================================
+{title}
+====================================
+""")
+
     try:
-        logger.info("====================================")
-        logger.info("Starting Intrinsics Calibration")
-        logger.info("====================================")
+        _print_title("Starting Intrinsics Calibration")
         REx_calibrate_intrinsics_robot_move(interactive=False)
 
-        logger.info("====================================")
-        logger.info("Starting Intrinsics Validation")
-        logger.info("====================================")
-        
+        _print_title("Starting Intrinsics Validation")
         validation_passed = False
         for retry in range(3): 
             time.sleep(3) # wait for the camera device to come back on the USB bus after we closed it at the end of the last step
@@ -70,19 +72,13 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
         if not validation_passed:
             raise Exception(f"Intrinsic calibration failed! Distance errors ({errors}) are above 0.1m. (inf = no detection)")
 
-        logger.info("====================================")
-        logger.info("Starting Extrinsics Camera-Camera Calibration")
-        logger.info("====================================")
+        _print_title("Starting Extrinsics Camera-Camera Calibration")
         REx_calibrate_extrinsics_cameras(interactive=False)
         
-        logger.info("====================================")
-        logger.info("Starting Extrinsics Camera-Lidar Calibration")
-        logger.info("====================================")
+        _print_title("Starting Extrinsics Camera-Lidar Calibration")
         REx_calibrate_extrinsics_lidars(interactive=False)
         
-        logger.info("====================================")
-        logger.info("Finished Intrinsics and Extrinsics Calibration")
-        logger.info("====================================")
+        _print_title("Finished Intrinsics and Extrinsics Calibration")
 
         exit(0)
     except KeyboardInterrupt:
