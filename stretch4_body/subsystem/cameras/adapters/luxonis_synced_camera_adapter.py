@@ -5,6 +5,8 @@ import datetime
 import time
 import threading
 import logging
+
+logger = logging.getLogger(__name__)
 import depthai as dai
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
@@ -135,7 +137,7 @@ class SyncedCameraLuxonis(SyncedCamera):
                 pass
 
     def focus_roi(self, roi: list[int], camera_type: RGBCameras | None = None):
-        print(f"Setting roi {roi} for {camera_type.name if camera_type else 'all'}")
+        logger.info(f"Setting roi {roi} for {camera_type.name if camera_type else 'all'}")
         ctrl = dai.CameraControl()
         ctrl.setAutoExposureRegion(*roi)
         ctrl.setAutoFocusRegion(*roi)

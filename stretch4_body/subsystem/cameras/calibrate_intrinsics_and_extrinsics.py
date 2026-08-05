@@ -6,6 +6,9 @@ At the end of this, the camera-camera and camera-lidar extrinsics are calibrated
 Requires lidar-lidar calibration to be performed first.
 Requires the camera calibration tool to be mounted on the robot.
 """
+import logging
+
+logger = logging.getLogger(__name__)
 import sys
 import time
 
@@ -15,7 +18,7 @@ from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import REx_cal
 from stretch4_body.subsystem.cameras.camera_intrinsics_validate_l2_distance import REx_validate_intrinsics
 
 def calibrate_intrinsics_and_extrinsics_not_interactive():
-    print("""
+    logger.info("""
     This script performs the full camera calibration pipeline for the robot.
     The user answers the first prompt, and leaves the robot for 20 minutes to perform calibration.
     At the end of this, the camera-camera and camera-lidar extrinsics are calibrated.
@@ -38,18 +41,18 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
     """)
     ans = input("The robot will move for 20 minutes to perform calibration. Proceed? [y/N]: ")
     if ans.lower() != 'y':
-        print("Calibration cancelled.")
+        logger.info("Calibration cancelled.")
         return
 
     try:
-        print("====================================")
-        print("Starting Intrinsics Calibration")
-        print("====================================")
+        logger.info("====================================")
+        logger.info("Starting Intrinsics Calibration")
+        logger.info("====================================")
         REx_calibrate_intrinsics_robot_move(interactive=False)
 
-        print("====================================")
-        print("Starting Intrinsics Validation")
-        print("====================================")
+        logger.info("====================================")
+        logger.info("Starting Intrinsics Validation")
+        logger.info("====================================")
         
         validation_passed = False
         for retry in range(3): 
@@ -60,32 +63,33 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
                     validation_passed = True
                     break
             except Exception as e:
-                print(f"Intrinsics validation failed: {e=}")
+                logger.info(f"Intrinsics validation failed: {e=}")
             
-            print(f"Retrying intrinsics validation. Try {retry+1}/3.")
+            logger.info(f"Retrying intrinsics validation. Try {retry+1}/3.")
 
         if not validation_passed:
             raise Exception(f"Intrinsic calibration failed! Distance errors ({errors}) are above 0.1m. (inf = no detection)")
 
-        print("====================================")
-        print("Starting Extrinsics Camera-Camera Calibration")
-        print("====================================")
+        logger.info("====================================")
+        logger.info("Starting Extrinsics Camera-Camera Calibration")
+        logger.info("====================================")
         REx_calibrate_extrinsics_cameras(interactive=False)
         
-        print("====================================")
-        print("Starting Extrinsics Camera-Lidar Calibration")
-        print("====================================")
+        logger.info("====================================")
+        logger.info("Starting Extrinsics Camera-Lidar Calibration")
+        logger.info("====================================")
         REx_calibrate_extrinsics_lidars(interactive=False)
         
-        print("====================================")
-        print("Finished Intrinsics and Extrinsics Calibration")
-        print("====================================")
+        logger.info("====================================")
+        logger.info("Finished Intrinsics and Extrinsics Calibration")
+        logger.info("====================================")
 
         exit(0)
     except KeyboardInterrupt:
-        print("\nCalibration sequence aborted by user.")
+        logger.info("\nCalibration sequence aborted by user.")
         raise
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     calibrate_intrinsics_and_extrinsics_not_interactive()
 

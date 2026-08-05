@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
 from stretch4_body.subsystem.cameras.adapters.synced_camera import SyncedCamera
 from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapter
@@ -578,7 +581,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 ros_frame = self.stream_manager.get(camera_generator)
                 if ros_frame is None:
-                    print("ros_frame is None in get_frame")
+                    logger.info("ros_frame is None in get_frame")
                     continue
 
                 frame = ImageFrame(timestamp=ros_frame.timestamp, frame_number=self.frame_number, image=ros_frame.image, timestamp_system=ros_frame.timestamp)

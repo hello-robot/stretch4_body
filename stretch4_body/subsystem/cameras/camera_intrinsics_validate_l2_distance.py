@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import logging
+
+logger = logging.getLogger(__name__)
 import time
 import argparse
 import sys
@@ -52,12 +55,12 @@ class CalibrationValidator:
 
         self.robot = RobotClient()
         if not self.robot.startup():
-            print("Failed to start robot client.")
+            logger.info("Failed to start robot client.")
             sys.exit(1)
 
         if self.robot.params.get('tool') != 'eoa_wrist_dw4_tool_calibration':
-            print("WARNING: This script is intended to be run with the 'eoa_wrist_dw4_tool_calibration' tool.")
-            print("Make sure your tool parameter in your robot geometry is correctly set.")
+            logger.warning("This script is intended to be run with the 'eoa_wrist_dw4_tool_calibration' tool.")
+            logger.info("Make sure your tool parameter in your robot geometry is correctly set.")
             raise Exception("Tool is mpt correct. Expecting the eoa_wrist_dw4_tool_calibration tool.")
 
         self.camera_type = RGBCameras.synced_left_right_center()
@@ -80,7 +83,7 @@ class CalibrationValidator:
             try:
                 self.calibrations[cam.name] = cam.load_calibration()
             except Exception as e:
-                print(f"Failed to load calibration for {cam.name}: {e}")
+                logger.info(f"Failed to load calibration for {cam.name}: {e}")
 
         # Metrics state for running average
         self.distances = {RGBCameras.left().name: [], RGBCameras.right().name: [], RGBCameras.center().name: []}
@@ -92,17 +95,17 @@ class CalibrationValidator:
         }
 
     def cleanup(self):
-        print("Cleaning up CalibrationValidator...")
+        logger.info("Cleaning up CalibrationValidator...")
         if hasattr(self, 'pipeline') and self.pipeline is not None:
             try:
                 self.pipeline.stop()
             except Exception as e:
-                print(f"Error stopping pipeline: {e}")
+                logger.info(f"Error stopping pipeline: {e}")
         if hasattr(self, 'robot') and self.robot is not None:
             try:
                 self.robot.stop()
             except Exception as e:
-                print(f"Error stopping robot: {e}")
+                logger.info(f"Error stopping robot: {e}")
 
     def setup_rerun_blueprint(self):
         rr.spawn()
@@ -127,13 +130,13 @@ class CalibrationValidator:
         try:
             rr.send_blueprint(blueprint)
         except Exception as e:
-            print(f"Failed to send rerun blueprint: {e}")
+            logger.info(f"Failed to send rerun blueprint: {e}")
 
     def update_instructions(self, message: str):
         rr.log("Validation/Instructions", rr.TextDocument(message, media_type=rr.MediaType.MARKDOWN))
 
     def move_to_pose(self, pose):
-        print(f"Moving to pose: {pose}")
+        logger.info(f"Moving to pose: {pose}")
         self.robot.lift.move_to(pose['lift'])
         self.robot.arm.move_to(pose['arm'])
         self.robot.end_of_arm.move_to('wrist_pitch', pose['wrist_pitch'])
@@ -268,7 +271,7 @@ Press CTRL+C in the terminal to go to the next pose or abort.
         if not skip_user_prompt:
             ans = input("This script will move the robot to validation poses. Do you wish to proceed? [y/N]: ")
             if ans.lower() != 'y':
-                print("Exiting.")
+                logger.info("Exiting.")
                 raise Exception("User aborted validation.")
 
         rr.init("Calibration_Validation", spawn=False,)
@@ -276,24 +279,24 @@ Press CTRL+C in the terminal to go to the next pose or abort.
             self.setup_rerun_blueprint()
 
 
-        print("Starting non-interactive validation with known distances.")
+        logger.info("Starting non-interactive validation with known distances.")
         total_errors = {RGBCameras.left().name: [], RGBCameras.center().name: [], RGBCameras.right().name: []}
 
 
         for idx, pose in enumerate(self.poses):
             self.move_to_pose(pose)
             
-            print(f"Pose {idx+1}/{len(self.poses)} reached. Waiting for camera to settle...")
+            logger.info(f"Pose {idx+1}/{len(self.poses)} reached. Waiting for camera to settle...")
             self.distances = {RGBCameras.left().name: [], RGBCameras.right().name: [], RGBCameras.center().name: []}
             
             is_settled = False
             for retry in range(5):
                 settled_frame = self._get_settled_frame(timeout=5.0)
                 if settled_frame is not None:
-                    print("Camera image settled.")
+                    logger.info("Camera image settled.")
                     is_settled = True
                     break
-                print(f"Camera image did not settle, please make sure there is no movement around the robot. Retry {retry+1}/5.")
+                logger.info(f"Camera image did not settle, please make sure there is no movement around the robot. Retry {retry+1}/5.")
             if not is_settled:
                 raise RuntimeError("Camera image did not settle.")
 
@@ -303,33 +306,33 @@ Press CTRL+C in the terminal to go to the next pose or abort.
             cam_order = [RGBCameras.left().name, RGBCameras.center().name, RGBCameras.right().name]
 
             # Gather and average multiple frames for robustness
-            print("Capturing frames for measurement...")
+            logger.info("Capturing frames for measurement...")
             frame_gen = self.pipeline.get_frame_synced(is_run_pipeline=False)
             for _ in range(5):
                 f = next(frame_gen)
                 self.process_frame(f)
             
-            print(f"--- Results for Pose {idx+1} ---")
+            logger.info(f"--- Results for Pose {idx+1} ---")
             for c_idx, cam_name in enumerate(cam_order):
                 if len(self.distances[cam_name]) > 0:
                     dist_avg = np.mean(self.distances[cam_name])
                     known_d = known_dists[c_idx]
                     err = abs(dist_avg - known_d)
                     total_errors[cam_name].append(err)
-                    print(f"{cam_name.capitalize()}: Measured={dist_avg:.3f}m, Known={known_d:.3f}m, Error={err:.3f}m")
+                    logger.info(f"{cam_name.capitalize()}: Measured={dist_avg:.3f}m, Known={known_d:.3f}m, Error={err:.3f}m")
                 else:
-                    print(f"{cam_name.capitalize()}: No Charuco detected.")
+                    logger.info(f"{cam_name.capitalize()}: No Charuco detected.")
         
-        print("--- Final Averaged Errors ---")
+        logger.info("--- Final Averaged Errors ---")
         avg_errors = []
         for cam_name in [RGBCameras.left().name, RGBCameras.center().name, RGBCameras.right().name]:
             errors = total_errors[cam_name]
             if len(errors) > 0:
                 mean_err = float(np.mean(errors))
-                print(f"{cam_name.capitalize()}: {mean_err:.3f}m")
+                logger.info(f"{cam_name.capitalize()}: {mean_err:.3f}m")
                 avg_errors.append(mean_err)
             else:
-                print(f"{cam_name.capitalize()}: N/A")
+                logger.info(f"{cam_name.capitalize()}: N/A")
                 avg_errors.append(float('inf'))
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -347,7 +350,7 @@ Press CTRL+C in the terminal to go to the next pose or abort.
         with open(save_path, "w") as f:
             yaml.dump(results, f, default_flow_style=False)
             
-        print(f"Saved validation results to {save_path}")
+        logger.info(f"Saved validation results to {save_path}")
             
         return avg_errors
 
@@ -363,4 +366,5 @@ def REx_validate_intrinsics(interactive:bool):
             validator.cleanup()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     REx_validate_intrinsics(interactive=True)

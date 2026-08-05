@@ -8,6 +8,8 @@ import numpy as np
 import depthai as dai
 import logging
 
+logger = logging.getLogger(__name__)
+
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
 from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapter
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
@@ -26,7 +28,7 @@ def _load_cache():
             with open(CACHE_FILE_PATH, 'r') as f:
                 return json.load(f)
     except Exception as e:
-        print(f"Warning: Failed to load device cache: {e}")
+        logger.warning(f"Failed to load device cache: {e}")
     return {}
 
 def _save_cache(cache_data):
@@ -34,15 +36,15 @@ def _save_cache(cache_data):
         with open(CACHE_FILE_PATH, 'w') as f:
             json.dump(cache_data, f)
     except Exception as e:
-        print(f"Warning: Failed to save device cache: {e}")
+        logger.warning(f"Failed to save device cache: {e}")
 
 def clear_device_cache():
     try:
         if os.path.exists(CACHE_FILE_PATH):
             os.remove(CACHE_FILE_PATH)
-            print(f"Cleared cache at {CACHE_FILE_PATH}")
+            logger.info(f"Cleared cache at {CACHE_FILE_PATH}")
     except Exception as e:
-        print(f"Warning: Failed to clear device cache: {e}")
+        logger.warning(f"Failed to clear device cache: {e}")
 
 def get_device_port_by_product_name(product_name:str):
     """When multiple Luxonis cameras are connected, we should query their serial number to use them."""
@@ -59,7 +61,7 @@ def get_device_port_by_product_name(product_name:str):
             # Check expiry
             if current_time - cached_device.get("timestamp", 0) <= CACHE_EXPIRY_SECONDS:
                 if cached_device.get("product_name") == product_name:
-                    print(f"Found cached device for {product_name=}")
+                    logger.info(f"Found cached device for {product_name=}")
                     return info.name
 
     # If not found in cache, fallback and update cache
@@ -71,7 +73,7 @@ def get_device_port_by_product_name(product_name:str):
 
         with dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=info.deviceId) as device:
             actual_product_name = device.getProductName()
-            print(f"Found device {actual_product_name}. Looking for {product_name=}")
+            logger.info(f"Found device {actual_product_name}. Looking for {product_name=}")
             
             cache_data[info.deviceId] = {
                 "product_name": actual_product_name,
@@ -145,7 +147,7 @@ class LuxonisCameraAdapter(CameraAdapter):
             enableUndistortion=False,
         )
 
-        print("camera_config:", camera_config)
+        logger.info(f"camera_config: {camera_config}")
         camera_output_compressed = None
         if camera_config.is_compressed:
             videoEncoder = pipeline.create(dai.node.VideoEncoder)
@@ -167,10 +169,10 @@ class LuxonisCameraAdapter(CameraAdapter):
         device = dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=device_port)
         pipeline = dai.Pipeline(defaultDevice=device)
 
-        print("DeviceID:", device.getDeviceInfo().getDeviceId())
-        print("USB Port:", device_port)
-        print("USB speed:", device.getUsbSpeed())
-        print("Connected cameras:", device.getConnectedCameras())
+        logger.info(f"DeviceID: {device.getDeviceInfo().getDeviceId()}")
+        logger.info(f"USB Port: {device_port}")
+        logger.info(f"USB speed: {device.getUsbSpeed()}")
+        logger.info(f"Connected cameras: {device.getConnectedCameras()}")
 
         pipeline.setXLinkChunkSize(0)
 
@@ -268,7 +270,7 @@ class LuxonisCameraAdapter(CameraAdapter):
     def focus_roi(self, roi: list[int], camera_type: RGBCameras | None = None):
         if not hasattr(self, 'input_queue'):
             return
-        print(f"Setting roi {roi} for {camera_type.name}")
+        logger.info(f"Setting roi {roi} for {camera_type.name}")
         ctrl = dai.CameraControl()
         ctrl.setAutoExposureRegion(*roi)
         ctrl.setAutoFocusRegion(*roi)
