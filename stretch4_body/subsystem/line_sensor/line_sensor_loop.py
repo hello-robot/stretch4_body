@@ -25,13 +25,16 @@ def _cb_line_sensor_loop_step(pjr, q_cmd_in, status_out):
 
 # ###########################################################################################
 
-def line_sensor_loop(do_exit, rate_hz, q_admin, q_cmd, q_status,bus_sensor_map):
+def line_sensor_loop(do_exit, rate_hz, q_admin, q_cmd, q_status, bus_sensor_map,
+                     flip_range_ordering, report_num):
     """
     Do line sensor DAQ and model updates in its own process as can take 100% CPU
     Run at a high rate (100hz assuming that every 2 or 3 cycles all sensor models will be updated,
     as the sensor DAQ is asynchronous, at 30hz, to this loop..
     """
-    pjr = PixartJ3Reader(verbose=False,bus_sensor_map=bus_sensor_map)
+    pjr = PixartJ3Reader(verbose=False, bus_sensor_map=bus_sensor_map,
+                         flip_range_ordering=flip_range_ordering,
+                         report_num=report_num)
     if pjr.startup():
         worker_loop(
             loop_name='line_sensor_loop',
@@ -83,7 +86,10 @@ class LineSensorLoop(Device):
         if self.pjr_process is None:
             self.pjr_process = Process(
                 target=line_sensor_loop,
-                args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin, self.q_cmd, self.q_status,self.params['bus_sensor_map'],)
+                args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin,
+                      self.q_cmd, self.q_status, self.params['bus_sensor_map'],
+                      self.params['flip_range_ordering'],
+                      self.params['line_sensor_geometry']['pixart_report_num'],)
             )
             self.pjr_process.start()
             #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.pjr_process.pid)) #Assign process to core
@@ -143,12 +149,9 @@ class LineSensorLoop(Device):
 
         while self.q_status.qsize():
             try:
+                # flip_range_ordering is applied at decode in PixartJ3Reader;
+                # messages arrive here in final bin order.
                 um_status=self.q_status.get(block=False)
-                #print(um_status.keys())
-                if self.params['flip_range_ordering']:
-                    for sn in self.params['sensor_names']:
-                        if sn in um_status:
-                            um_status[sn]['ranges']=um_status[sn]['ranges'][::-1]
                 self.status.update(um_status)
                 if self.n_rate_log:
                     for sn in self.params['sensor_names']:

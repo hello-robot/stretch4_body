@@ -381,12 +381,27 @@ class LineSensorCalibration:
             # Adjustment = Measured - Ideal
             # So Corrected = Measured - Adjustment = Ideal
             errors = samples_np - r_ideal
-            
-            median_adjustments = np.median(errors, axis=0)
+
+            # Ranges carry NaN at every non-measurement bin, it must not take part in tare
+            # arithmetic. nanmedian ignores those samples
+            with np.errstate(invalid='ignore'):
+                median_adjustments = np.nanmedian(errors, axis=0)
+
+            # A bin with no valid sample in the whole run gets no tare rather
+            # than a NaN one; it is left uncorrected and reported.
+            no_data = ~np.isfinite(median_adjustments)
+            n_no_data = int(np.count_nonzero(no_data))
+            if n_no_data:
+                median_adjustments = np.where(no_data, 0.0, median_adjustments)
+                print(f"Sensor {name}: WARNING {n_no_data}/{len(no_data)} bins "
+                      f"never returned a distance during calibration and have "
+                      f"NO tare (left uncorrected). Re-run on a clean, flat, "
+                      f"light-coloured floor.")
             self.tare_offsets[name] = median_adjustments
-            
-            avg_adj = np.mean(median_adjustments)
-            print(f"Sensor {name}: Avg Tare = {avg_adj:.4f} m")
+
+            avg_adj = float(np.mean(median_adjustments[~no_data])) if not no_data.all() else 0.0
+            print(f"Sensor {name}: Avg Tare = {avg_adj:.4f} m "
+                  f"({len(no_data) - n_no_data}/{len(no_data)} bins tared)")
 
     def save_tare(self, timestamp=None, sensors=None):
         """
@@ -477,13 +492,13 @@ class LineSensorCalibration:
             return ranges
             
         adjustment = self.tare_offsets[sensor_name]
-        
+
         # Check shape compatibility
         if ranges.shape != adjustment.shape:
              # Try capturing shape mismatch only once to avoid spam?
              # For now, just return raw if mismatch
              return ranges
-             
+
         return ranges - adjustment
 
 

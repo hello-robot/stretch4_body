@@ -29,6 +29,10 @@ def stretch_line_sensor_viz_3d():
     sys.argv[0] = "stretch_line_sensor_viz_3d"
     runpy.run_module("stretch4_body.tools.stretch_line_sensor_viz_3d", run_name="__main__")
 
+def stretch_line_sensor_ranges():
+    sys.argv[0] = "stretch_line_sensor_ranges"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_ranges", run_name="__main__")
+
 def stretch_power_periph_scope():
     sys.argv[0] = "stretch_power_periph_scope"
     runpy.run_module("stretch4_body.tools.stretch_power_periph_scope", run_name="__main__")
