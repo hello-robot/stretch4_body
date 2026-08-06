@@ -278,7 +278,7 @@ def main() -> int:
             client.pull_status()
             status = loop.status
             # Liveness moved into the health block when status messages became
-            dead = set(status.get('sensors_dead', ()))
+            dead = set((status.get('health') or {}).get('sensors_dead', ()))
             frame = {}
             for name in names:
                 entry = status.get(name, {})

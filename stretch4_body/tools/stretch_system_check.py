@@ -81,6 +81,8 @@ r = None
 # Output helpers
 # ==============================================================================
 
+_SKIP_REASONS = {}
+
 def print_section(title):
     click.secho(f'\n---- {title} ----', fg='cyan', bold=True)
 
@@ -377,36 +379,110 @@ def check_esp32():
 
 
 def check_line_sensors():
-    print_section('Line Sensors (PixArt J3)')
+    print_section('Line Sensors (hello-pixart-j3)')
 
     if r is None:
+        _SKIP_REASONS['Line Sensors'] = 'server offline'
         print_warn('Server offline — cannot check line sensor status')
-        return True
+        return None
 
+    # A feature that was never switched on is not a failure. Ask the server's
+    # own subsystem list rather than inferring from a missing attribute, which
+    # cannot tell "turned off in params" from "enabled but failed to start".
+    enabled = 'line_sensor_loop' in (r.params.get('server', {}).get('subsystems', []) or [])
     line_sensor = getattr(r, 'line_sensor_loop', None)
+
+    if not enabled:
+        _SKIP_REASONS['Line Sensors'] = 'disabled in params'
+        on = list(r.params.get('server', {}).get('subsystems', []) or [])
+        print_info('DISABLED: line_sensor_loop — no cliff or obstacle detection '
+                   'from the line sensors.')
+        print_info(f'Enabled server subsystems: {", ".join(on) if on else "none"}')
+        print_info('Enable it under server.subsystems in stretch_user_params.yaml.')
+        return None
+
     if line_sensor is None:
-        print_result(False, 'line_sensor_loop not in server subsystems (sensors not detected)')
+        print_result(False, 'line_sensor_loop is ENABLED in params but the client '
+                            'has no handle for it — the subsystem failed to start')
         return False
 
     all_pass = True
     lss = line_sensor.status
-    rate = lss.get('rate_hz', 0)
-    p = rate > 0
-    print_result(p, f'Line sensor loop running at {rate:.1f} Hz')
-    if not p:
+    health = lss.get('health') or {}
+    sensor_names = line_sensor.params.get('sensor_names', [])
+
+    # -- the link ----------------------------------------------------------
+    # frame_id > 0 used to be the whole test. It stays true forever after one
+    # good frame, so this check passed with the board unplugged.
+    port_open = bool(health.get('port_open', False))
+    print_result(port_open, 'Serial port open (/dev/hello-pixart-j3)')
+    all_pass &= port_open
+
+    if not health.get('streaming', False):
+        print_warn('Streaming is OFF — cliff detection is disabled')
         all_pass = False
 
-    sensor_names = line_sensor.params.get('sensor_names', [])
-    if not sensor_names:
-        print_result(False, 'No individual sensors reporting')
-        return False
+    rate = health.get('rate_hz', lss.get('rate_hz', 0)) or 0
+    p = rate > 0
+    print_result(p, f'Line sensor loop running at {rate:.1f} Hz')
+    all_pass &= p
 
+    # -- which sensors are actually alive ----------------------------------
+    dead = list(health.get('sensors_dead', []))
+    disabled = list(health.get('disabled_sensors', []))
+    ok = [sn for sn in sensor_names if sn not in dead and sn not in disabled]
+    print_result(not dead, f'{len(ok)}/{len(sensor_names)} sensors reporting'
+                           + (f' — DEAD: {", ".join(dead)}' if dead else ''))
+    all_pass &= not dead
+    if disabled:
+        print_warn(f'DISABLED at runtime (not a fault): {", ".join(disabled)} — '
+                   f'{len(disabled)} of {len(sensor_names)} sensors are not looking')
+    else:
+        print_result(True, f'All {len(sensor_names)} sensors enabled (none disabled)')
+
+    # -- per sensor --------------------------------------------------------
     for sn in sensor_names:
-        sensor_status = lss.get(sn, {})
-        frame_id = sensor_status.get('frame_id', 0) if isinstance(sensor_status, dict) else 0
-        print_result(frame_id > 0, f'Sensor {sn}: frame_id = {frame_id}')
-        if frame_id == 0:
+        s = lss.get(sn, {})
+        if not isinstance(s, dict):
+            print_result(False, f'{sn}: no status block')
             all_pass = False
+            continue
+        if sn in disabled:
+            print_info(f'{sn}: disabled')
+            continue
+        s_rate = s.get('rate_hz', 0) or 0
+        missed = s.get('missed_frames', 0)
+        good = sn not in dead and s_rate > 0
+        print_result(good, f'{sn}: {s_rate:.1f} Hz, frame_id = {s.get("frame_id", 0)}'
+                           + (f', missed {missed} frames' if missed else ''))
+        all_pass &= good
+
+    # -- a sensor missing from every frame -----------------------------------
+    # These climb together at the frame rate when a sensor is structurally
+    # absent. Rising counters are the signal; a nonzero total may just be
+    # history from an earlier fault, so report rather than fail on it.
+    incomplete = health.get('frame_not_full_err', 0)
+    if incomplete:
+        print_warn(f'{incomplete} incomplete frames recorded since startup '
+                   f'(a sensor missing from frames, or an earlier dropout)')
+
+    restarts = health.get('reader_restarts', 0)
+    if restarts:
+        print_warn(f'Serial port has self-recovered {restarts} time(s) — '
+                   f'suspect a flaky cable if this keeps climbing')
+
+    decode = health.get('decode_errors', 0)
+    if decode:
+        print_warn(f'{decode} decode errors since startup')
+
+    # -- calibration -------------------------------------------------------
+    cal = lss.get('calibration') or {}
+    loaded, rejected = cal.get('loaded', []), cal.get('rejected', {})
+    print_result(len(loaded) == len(sensor_names),
+                 f'Calibration: {len(loaded)}/{len(sensor_names)} tares loaded')
+    for name, why in sorted(rejected.items()):
+        print_info(f'{name}: NO TARE ({str(why).split(":")[0]})')
+    all_pass &= len(loaded) == len(sensor_names)
 
     return all_pass
 
@@ -1217,7 +1293,8 @@ def main():
     for name in _ALL_CHECKS:
         passed = results.get(name)
         if passed is None:
-            skip_reason = 'run with --firmware to check' if name == 'Firmware' else 'server offline'
+            skip_reason = _SKIP_REASONS.get(name) or (
+                'run with --firmware to check' if name == 'Firmware' else 'server offline')
             click.secho(f'  [SKIP] {name} ({skip_reason})', fg='yellow')
         else:
             print_result(passed, name)

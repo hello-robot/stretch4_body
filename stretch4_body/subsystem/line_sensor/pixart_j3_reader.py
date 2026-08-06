@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import logging
 import serial
 import time
 import numpy as np
@@ -40,9 +41,13 @@ class PixartJ3Reader():
     REOPEN_BACKOFF_MIN_S = 0.5
     REOPEN_BACKOFF_MAX_S = 5.0
 
+    LOGGER_NAME = 'line_sensor_loop'
+
     def __init__(self, port_name='/dev/hello-pixart-j3', verbose=False,
                  bus_sensor_map=None, flip_range_ordering=None, report_num=None,
                  _params=None):
+ 
+        self.logger = logging.getLogger(self.LOGGER_NAME)
 
         needs_params = (bus_sensor_map is None or flip_range_ordering is None
                         or report_num is None)
@@ -97,15 +102,13 @@ class PixartJ3Reader():
         self._reopen_at = 0.0
         self._reported_open_failure = False
 
+        self._sensors_dead = ['sensor_%d' % i for i in range(6)]
+
         self.status = {'frame_advance_err': 0, 'not_six_sensors_err': 0,
                        'frame_not_full_err': 0, 'decode_errors': 0,
                        'reader_restarts': 0,
                        'rate_hz': 0, 'sensors_last_frame': [],
-                       'last_frame_time': 0,
-                       # Until a frame arrives nothing has reported, so
-                       # everything is dead. Starting empty would make a
-                       # totally silent subsystem look healthy.
-                       'sensors_dead': ['sensor_%d' % i for i in range(6)]}
+                       'last_frame_time': 0}
         for i in range(6):
             self.status['sensor_%d' % i] = {
                 'ts_last_read': 0, 'frame_id': 0, 'rate_hz': 0,
@@ -129,13 +132,13 @@ class PixartJ3Reader():
             return True
         except serial.SerialException as e:
             if not quiet:
-                print(f"PixartJ3Reader: Error opening or communicating with serial port: {e}")
+                self.logger.warning('Error opening or communicating with serial port: %s', e)
             return False
         except Exception as e:
             # OSError/FileNotFoundError land here: on a USB replug the device
             # node itself disappears, which is not a SerialException.
             if not quiet:
-                print(f"PixartJ3Reader: An unexpected error occurred: {e}")
+                self.logger.warning('Unexpected error opening the serial port: %s', e)
             return False
 
     def _reset_framing(self):
@@ -163,7 +166,10 @@ class PixartJ3Reader():
 
     def _fail(self, message):
         """Take the reader out of service and schedule a reopen."""
-        print(f"PixartJ3Reader: {message}")
+        # ERROR: every sensor is blind until a reopen succeeds, and this is
+        # the event a field log has to show.
+        self.logger.error('%s -- all sensors reported dead until the port recovers',
+                          message)
         self.is_valid = False
         self._close_port()
         self._reopen_at = time.time() + self._reopen_backoff_s
@@ -173,7 +179,7 @@ class PixartJ3Reader():
                 continue
             self.status['sensor_%d' % i]['missed_frames'] = \
                 self.DEAD_AFTER_MISSED_FRAMES
-        self.status['sensors_dead'] = sorted(
+        self._sensors_dead = sorted(
             'sensor_%d' % i for i in range(6) if i not in self.disabled)
 
     def _try_reopen(self):
@@ -186,8 +192,9 @@ class PixartJ3Reader():
             self.status['reader_restarts'] += 1
             self._reopen_backoff_s = self.REOPEN_BACKOFF_MIN_S
             self._reported_open_failure = False
-            print(f"PixartJ3Reader: serial port recovered "
-                  f"(restart #{self.status['reader_restarts']})")
+         
+            self.logger.warning('serial port recovered (restart #%d)',
+                                self.status['reader_restarts'])
             return True
         self._reported_open_failure = True
         self._reopen_backoff_s = min(self._reopen_backoff_s * 2.0,
@@ -210,7 +217,7 @@ class PixartJ3Reader():
         self.streaming = on
         if on:
             self._reset_framing()
-        print(f"PixartJ3Reader: streaming {'ON' if on else 'OFF'}")
+        self.logger.warning('streaming %s', 'ON' if on else 'OFF (cliff detection is off)')
         return self.streaming
 
     def _sensor_index(self, name):
@@ -248,7 +255,7 @@ class PixartJ3Reader():
             s['n_no_return'] = 0
             s['n_beyond_limit'] = 0
             s['missed_frames'] = 0     # off on purpose is not dead
-        print(f"PixartJ3Reader: sensor_{idx} {'ENABLED' if on else 'DISABLED'}")
+        self.logger.warning('sensor_%d %s', idx, 'ENABLED' if on else 'DISABLED')
         return on
 
     def step(self):
@@ -309,7 +316,7 @@ class PixartJ3Reader():
                             self.debug_print("OOB:", self.oob_line)
                         self.oob_line = ""
                         if self.json_line:
-                            print("PixartJ3Reader: Expected blank JSON line")
+                            self.logger.debug('Expected blank JSON line')
                             self.json_line = ""
                             self.status['decode_errors'] += 1
                         continue
@@ -371,9 +378,10 @@ class PixartJ3Reader():
             payload = data[key]
             if len(payload) != self.PIXART_REPORT_NUM:
                 if not self._warned_report_len:
-                    print(f"PixartJ3Reader: firmware sent {len(payload)} range "
-                          f"elements but pixart_report_num={self.PIXART_REPORT_NUM}; "
-                          f"these reports are being dropped -- fix line_sensor_geometry params")
+                    self.logger.error(
+                        'firmware sent %d range elements but pixart_report_num=%d; '
+                        'these reports are being dropped -- fix line_sensor_geometry params',
+                        len(payload), self.PIXART_REPORT_NUM)
                     self._warned_report_len = True
                 self.status['decode_errors'] += 1
                 return False
@@ -442,7 +450,7 @@ class PixartJ3Reader():
                 s['missed_frames'] += 1
             if s['missed_frames'] >= self.DEAD_AFTER_MISSED_FRAMES:
                 dead.append('sensor_%d' % i)
-        self.status['sensors_dead'] = dead
+        self._sensors_dead = dead
         last = self.status['last_frame_time']
         if last and now > last:
             self.status['rate_hz'] = 1.0 / (now - last)
@@ -469,16 +477,16 @@ class PixartJ3Reader():
 
     def debug_print(self, *args, **kwargs):
         if self.DEBUG_ENABLED:
-            print("PixartJ3Reader(d):", *args, **kwargs)
+            self.logger.debug(' '.join(str(a) for a in args))
 
     def verbose_print(self, *args, **kwargs):
         if self.verbose:
-            print("PixartJ3Reader(v):", *args, **kwargs)
+            self.logger.debug(' '.join(str(a) for a in args))
 
     def bus_sensor_to_index_number(self, bus, sensor):
         return self.bus_sensor_map[(bus - 1)][sensor]
 
-    HEALTH_KEYS = ('rate_hz', 'last_frame_time', 'sensors_dead', 'decode_errors',
+    HEALTH_KEYS = ('rate_hz', 'last_frame_time', 'decode_errors',
                    'frame_advance_err', 'frame_not_full_err', 'not_six_sensors_err',
                    'reader_restarts')
 
@@ -490,6 +498,8 @@ class PixartJ3Reader():
         see that it is steering with fewer eyes than it thinks.
         """
         h = {k: self.status[k] for k in self.HEALTH_KEYS}
+        # The only place sensors_dead is published.
+        h['sensors_dead'] = list(self._sensors_dead)
         h['port_open'] = bool(self.is_valid)
         h['streaming'] = bool(self.is_valid and self.streaming)
         h['disabled_sensors'] = sorted('sensor_%d' % i for i in self.disabled)
@@ -497,7 +507,7 @@ class PixartJ3Reader():
 
     def dead_sensors(self):
         """Names of sensors that have stopped reporting (or never started)."""
-        return list(self.status['sensors_dead'])
+        return list(self._sensors_dead)
 
     def blind_sensors(self, min_fraction=0.9):
         """Names of sensors that ARE reporting but see almost nothing --

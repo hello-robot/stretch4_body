@@ -181,7 +181,7 @@ def test_disabled_sensor_is_not_reported_dead():
     for f in range(1, 12):                 # well past DEAD_AFTER_MISSED_FRAMES
         r.ser.feed(frame(f, skip={2}))
         r.step()
-    assert r.status['sensors_dead'] == []
+    assert r.health()['sensors_dead'] == []
     assert r.health()['disabled_sensors'] == ['sensor_2']
 
 
@@ -191,7 +191,7 @@ def test_a_genuinely_missing_sensor_is_still_reported_dead():
     for f in range(1, 12):
         r.ser.feed(frame(f, skip={2}))     # absent, but NOT disabled
         r.step()
-    assert 'sensor_2' in r.status['sensors_dead']
+    assert 'sensor_2' in r.health()['sensors_dead']
 
 
 def test_frame_accounting_tolerates_a_disabled_sensor():
@@ -340,11 +340,11 @@ def test_losing_the_port_reports_every_sensor_dead():
     arriving. All six kept publishing their last scan, looking healthy."""
     r = make_reader([frame(1)])
     r.step()
-    assert r.status['sensors_dead'] == []
+    assert r.health()['sensors_dead'] == []
     r.ser.raise_on_read = _serial.SerialException('cable pulled')
     r.ser.feed(frame(2))
     r.step()
-    assert r.status['sensors_dead'] == ['sensor_%d' % i for i in range(6)]
+    assert r.health()['sensors_dead'] == ['sensor_%d' % i for i in range(6)]
 
 
 def test_a_disabled_sensor_is_not_called_dead_when_the_port_drops():
@@ -355,8 +355,8 @@ def test_a_disabled_sensor_is_not_called_dead_when_the_port_drops():
     r.ser.raise_on_read = _serial.SerialException('cable pulled')
     r.ser.feed(frame(2))
     r.step()
-    assert 'sensor_4' not in r.status['sensors_dead']
-    assert len(r.status['sensors_dead']) == 5
+    assert 'sensor_4' not in r.health()['sensors_dead']
+    assert len(r.health()['sensors_dead']) == 5
 
 
 def test_recovery_clears_the_dead_list():
@@ -365,13 +365,38 @@ def test_recovery_clears_the_dead_list():
     r.ser.raise_on_read = _serial.SerialException('cable pulled')
     r.ser.feed(frame(2))              # else read() is never reached
     r.step()
-    assert r.status['sensors_dead']
+    assert r.health()['sensors_dead']
     r.ser = FakeSerial([frame(3), frame(4), frame(5), frame(6), frame(7)])
     r.is_valid = True
     r._reset_framing()
     for _ in range(5):
         r.step()
-    assert r.status['sensors_dead'] == []
+    assert r.health()['sensors_dead'] == []
+
+
+def test_recovery_handles_the_board_restarting_its_frame_counter():
+    """A real unplug cuts VBUS, so the sensor board reboots and frameId
+    restarts near zero 
+    """
+    r = make_reader([frame(50_000)])
+    r.step()
+    assert r.last_frame_id == 50_000
+    errs = r.status['frame_advance_err']
+
+    r.ser.raise_on_read = _serial.SerialException('cable pulled')
+    r.ser.feed(frame(50_001))
+    r.step()
+    assert r.is_valid is False
+
+    # Board came back and is counting from 1 again.
+    r.ser = FakeSerial([frame(1), frame(2), frame(3)])
+    r.is_valid = True
+    r._reset_framing()
+    for _ in range(3):
+        r.step()
+    assert r.status['sensor_0']['frame_id'] == 3
+    assert r.status['frame_advance_err'] == errs   # the jump is not a fault
+    assert r.health()['sensors_dead'] == []
 
 
 def test_streaming_state_survives_a_reconnect(monkeypatch):
@@ -385,3 +410,31 @@ def test_streaming_state_survives_a_reconnect(monkeypatch):
     assert r.is_valid is True
     assert r.streaming is False
     assert r.health()['streaming'] is False
+
+
+def test_sensors_dead_has_exactly_one_home():
+    r = make_reader()
+    assert 'sensors_dead' not in r.status
+    assert 'sensors_dead' not in PixartJ3Reader.HEALTH_KEYS
+    assert r.health()['sensors_dead'] == ['sensor_%d' % i for i in range(6)]
+
+
+def test_health_reports_dead_sensors_with_no_frame_to_carry_them():
+    """The point of the single home: a port loss produces no frame, and health
+    still tells the truth."""
+    r = make_reader()
+    r._fail('injected')
+    assert r.step() is False                      # nothing published from step
+    assert r.health()['sensors_dead'] == ['sensor_%d' % i for i in range(6)]
+    assert r.health()['port_open'] is False
+
+
+def test_the_reader_logs_through_the_subsystem_logger(caplog):
+    """print() went to a block-buffered stdout under systemd and could be lost
+    outright -- reader_restarts would read 2 with nothing in the journal."""
+    import logging
+    r = make_reader()
+    with caplog.at_level(logging.ERROR, logger=PixartJ3Reader.LOGGER_NAME):
+        r._fail('injected fault')
+    assert any('injected fault' in rec.message for rec in caplog.records)
+    assert r.logger.name == 'line_sensor_loop'    # what worker_loop/LoopStats use

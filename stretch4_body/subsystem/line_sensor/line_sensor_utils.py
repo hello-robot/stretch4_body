@@ -283,7 +283,7 @@ class LineSensorCalibration:
                 polls += 1
                 status = self.lsl.status
                 # Liveness lives in the health block now that status messages
-                dead = set(status.get('sensors_dead', ()) or ())
+                dead = set((status.get('health') or {}).get('sensors_dead', ()) or ())
                 now = time.time()
                 for name in targets:
                     if name in dead:
