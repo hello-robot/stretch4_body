@@ -77,7 +77,13 @@ def main(quick, auto_detect, add_user_tool):
         print('Please verify if Stretch configuration YAML files are present before continuing.')
         sys.exit(1)
 
-    _user_params = read_fleet_yaml(user_params_fn, fleet_dir)
+    from stretch4_body.core.robot_params import RobotParams
+
+    if not RobotParams.are_params_valid():
+        print('Please verify if Stretch configuration YAML files are present before continuing.')
+        sys.exit(1)
+
+    _user_params, _robot_params = RobotParams.get_params()
     _config_params = read_fleet_yaml(config_params_fn, fleet_dir)
 
     # Get the name of the robot model
@@ -86,21 +92,19 @@ def main(quick, auto_detect, add_user_tool):
     elif 'robot' in _config_params and 'model_name' in _config_params['robot']:
         model_name = _config_params['robot']['model_name']
     else:
-        print("ERROR: Could not find 'robot.model_name' in stretch_configuration_params.yaml or stretch_user_params.yaml")
-        sys.exit(1)
+        model_name = _robot_params.get('robot', {}).get('model_name', 'unknown')
 
     print(f"Detected Robot Model: {model_name}")
     param_module_name = 'stretch4_body.robot.robot_params_' + model_name
     try:
         module = importlib.import_module(param_module_name)
-        _nominal_params = getattr(module, 'nominal_params')
     except Exception as e:
         print(f"ERROR: Could not load parameters for model {model_name} from {param_module_name}")
         print(e)
         sys.exit(1)
 
-    supported_eoa = _nominal_params.get('supported_eoa', [])
-    supported_eoa_metadata = _nominal_params.get('supported_eoa_metadata', {})
+    supported_eoa = _robot_params.get('supported_eoa', [])
+    supported_eoa_metadata = _robot_params.get('supported_eoa_metadata', {})
 
     direct = False
     detected_tool = None
@@ -142,7 +146,7 @@ def main(quick, auto_detect, add_user_tool):
 
             # Auto-detect tool ID
             print('Scanning for tool on Feetech bus...')
-            eoa_usb = _nominal_params.get('end_of_arm', {}).get('usb_name', '/dev/hello-feetech-wrist')
+            eoa_usb = _robot_params.get('end_of_arm', {}).get('usb_name', '/dev/hello-feetech-wrist')
             
             # Suppress the spammy output from list_servos
             with contextlib.redirect_stdout(None):
@@ -150,19 +154,25 @@ def main(quick, auto_detect, add_user_tool):
             
             servo_ids = set([s['id'] for s in servos])
             
-            # Dynamically determine tool IDs from nominal params
+            # Dynamically determine tool IDs from robot params
             module = importlib.import_module(param_module_name)
+            import copy
             tool_to_ids = {}
             for tool_name in supported_eoa:
-                tool_config = _nominal_params.get(tool_name)
+                tool_config = _robot_params.get(tool_name)
                 if tool_config and 'devices' in tool_config:
                     tool_ids = []
                     for dev_name, dev_info in tool_config['devices'].items():
+                        dev_params = {}
                         dev_params_name = dev_info.get('device_params')
                         if dev_params_name:
                             dev_params = getattr(module, dev_params_name, {})
-                            if 'id' in dev_params:
-                                tool_ids.append(dev_params['id'])
+                        
+                        resolved_dev_params = copy.deepcopy(dev_params)
+                        resolved_dev_params.update(dev_info)
+                        
+                        if 'id' in resolved_dev_params:
+                            tool_ids.append(resolved_dev_params['id'])
                     tool_to_ids[tool_name] = set(tool_ids)
             
             # Find the best matching tool (the one with all IDs present and most IDs)
@@ -198,8 +208,8 @@ def main(quick, auto_detect, add_user_tool):
             current_tool = _user_params['robot']['tool']
         elif 'robot' in _config_params and 'tool' in _config_params['robot']:
             current_tool = _config_params['robot']['tool']
-        elif 'tool' in _nominal_params.get('robot', {}):
-            current_tool = _nominal_params['robot']['tool']
+        elif 'tool' in _robot_params.get('robot', {}):
+            current_tool = _robot_params['robot']['tool']
 
         print(f"Current End-Of-Arm Tool: {current_tool}")
         print("\nAvailable Tools:")
