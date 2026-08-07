@@ -8,7 +8,9 @@ import os
 import yaml
 from typing import Any
 from collections.abc import Generator
-
+import collections
+import time
+import cv2
 
 from stretch4_body.subsystem.cameras.models.camera_calibration import RGBCameraCalibration
 from stretch4_body.subsystem.cameras.detectors.detector_ai_models import AIModelWrapper
@@ -24,12 +26,9 @@ from stretch4_body.subsystem.cameras import (
 from stretch4_body.subsystem.cameras.models.image_frame import (
     ImageFrame,
 )
-from stretch4_body.subsystem.cameras.models.dual_lidar_calibration import (
-    DualLidarCalibration,
-)
+from stretch4_urdf import get_urdf_from_robot_params
 from stretch4_body.subsystem.cameras.cv_utils import project_points
 from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import RGBPipelineControllerROS
-
 
 
 @dataclass
@@ -45,6 +44,7 @@ class RGBDFrame:
     """An array of colors corresponding to the point cloud points"""
     depth_image: np.ndarray
 
+
 @dataclass
 class SyncedRGBDFrame:
     timestamp: float
@@ -56,7 +56,7 @@ class SyncedRGBDFrame:
 class EmulatedRGBDStreamer:
     _instance = None
 
-    def __init__(self, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False):
+    def __init__(self, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False, is_rotate:bool=True, ai_models_to_use:list[AIModelWrapper]|None=None, detect_aruco_marker_size:float|None=None):
         self.fleet_path = os.environ.get("HELLO_FLEET_PATH", "")
         self.fleet_id = os.environ.get("HELLO_FLEET_ID", "")
 
@@ -67,7 +67,10 @@ class EmulatedRGBDStreamer:
 
         from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
         
-        self.lidar_calib = DualLidarCalibration()
+        urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+        from yourdfpy import URDF
+        import io
+        self.urdf = URDF.load(io.StringIO(urdf_contents))
 
         self.camera_extrinsics = {}
         if os.path.exists(CAMERA_EXTRINSICS_YAML_PATH):
@@ -83,10 +86,15 @@ class EmulatedRGBDStreamer:
 
         self.stop_event = threading.Event()
 
+        self.use_ros_for_cameras = use_ros_for_cameras
+        self.is_rotate = is_rotate
+        self.ai_models_to_use = ai_models_to_use
+        self.detect_aruco_marker_size = detect_aruco_marker_size
+
         self.lidars = {}
         if use_ros_for_lidars:
             try:
-                from stretch_python_bridge import stream_lidar_left, stream_lidar_right, StreamManager # This is a ros2 package, requires a colcon build
+                from stretch_python_bridge import stream_lidar_points_left as stream_lidar_left, stream_lidar_points_right as stream_lidar_right, StreamManager
             except ImportError:
                 raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
 
@@ -114,15 +122,14 @@ class EmulatedRGBDStreamer:
             if use_right_lidar:
                 self.lidars["right"] = stream_lidar_right()
 
-        self.latest_lidar_pts: dict[str, np.ndarray] = {}
-        self.latest_pts_base = np.zeros((0, 3))
-        self.latest_lidar_timestamps = {}
+        if not self.lidars:
+            raise RuntimeError("No LiDAR is connected or used. Emulated RGB-D requires at least one active LiDAR.")
 
         self.T_base_to_center = np.eye(4)
         key = "transform_right_lidar_to_head_center"
         if key in self.camera_extrinsics:
             T_l_to_c = np.array(self.camera_extrinsics[key]["data"])
-            T_base_to_l = self.lidar_calib.get_lidar_to_base_transform(is_right_lidar=True)
+            T_base_to_l = self.get_lidar_to_base_transform(is_right_lidar=True)
             self.T_base_to_center = T_l_to_c @ np.linalg.inv(T_base_to_l)
 
         self.T_base_to_cam = {
@@ -137,44 +144,104 @@ class EmulatedRGBDStreamer:
         self.calibs[RGBCameras.right()] = RGBCameras.right().load_calibration()
         self.calibs[RGBCameras.center()] = RGBCameras.center().load_calibration()
 
+        # Generator structures
+        self.camera_generators = {}
+
+        from concurrent.futures import ThreadPoolExecutor
+        self.executor = ThreadPoolExecutor(max_workers=4)
+
+    def get_nominal_transform(self, joint_name: str) -> np.ndarray:
+        for joint in self.urdf.robot.joints:
+            if joint.name == joint_name:
+                return np.eye(4) if joint.origin is None else joint.origin
+        return np.eye(4)
+
+    def get_lidar_to_base_transform(self, is_right_lidar: bool) -> np.ndarray:
+        T_joint_head = self.get_nominal_transform("joint_head")
+        if is_right_lidar:
+            T_lidar_joint = self.get_nominal_transform("lidar_right_joint")
+        else:
+            T_lidar_joint = self.get_nominal_transform("lidar_left_joint")
+        return T_joint_head @ T_lidar_joint
+
+    def unify_clouds(self, left_pts: np.ndarray, right_pts: np.ndarray) -> np.ndarray:
+        merged = []
+        if left_pts is not None and len(left_pts) > 0:
+            T_lidar_to_base = self.get_lidar_to_base_transform(is_right_lidar=False)
+            ones = np.ones((len(left_pts), 1))
+            left_base = (T_lidar_to_base @ np.hstack([left_pts[:, :3], ones]).T).T[:, :3]
+            merged.append(left_base)
+
+        if right_pts is not None and len(right_pts) > 0:
+            T_lidar_to_base = self.get_lidar_to_base_transform(is_right_lidar=True)
+            ones = np.ones((len(right_pts), 1))
+            right_base = (T_lidar_to_base @ np.hstack([right_pts[:, :3], ones]).T).T[:, :3]
+            merged.append(right_base)
+
+        if not merged:
+            return np.zeros((0, 3))
+        return np.vstack(merged)
+
     @classmethod
-    def get_instance(cls, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False):
+    def get_instance(cls, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False, is_rotate:bool=True, ai_models_to_use:list[AIModelWrapper]|None=None, detect_aruco_marker_size:float|None=None):
         if cls._instance is None:
-            cls._instance = cls(use_left_lidar, use_right_lidar, use_ros_for_lidars)
+            cls._instance = cls(
+                use_left_lidar=use_left_lidar,
+                use_right_lidar=use_right_lidar,
+                use_ros_for_lidars=use_ros_for_lidars,
+                use_ros_for_cameras=use_ros_for_cameras,
+                is_rotate=is_rotate,
+                ai_models_to_use=ai_models_to_use,
+                detect_aruco_marker_size=detect_aruco_marker_size
+            )
         return cls._instance
 
-    def process_lidars(self):
-        did_update = False
+    def start_camera_stream(self, camera_type: RGBCameras):
+        if camera_type in self.camera_generators:
+            return
 
-        for l_name, l_sensor in self.lidars.items():
-            lidar_frame = next(l_sensor)
-            if lidar_frame is not None:
-                self.latest_lidar_pts[l_name] = lidar_frame.points
-                self.latest_lidar_timestamps[l_name] = lidar_frame.timestamp_system
-                did_update = True
-                
-        if did_update or len(self.latest_pts_base) == 0:
-            left_pts=self.latest_lidar_pts.get("left")
-            right_pts=self.latest_lidar_pts.get("right")
+        if camera_type == RGBCameras.synced_left_right():
+            gen_fn = stream_left_right_camera
+        elif camera_type == RGBCameras.synced_left_right_center():
+            gen_fn = stream_left_right_center_camera
+        elif camera_type == RGBCameras.left():
+            gen_fn = stream_left_camera
+        elif camera_type == RGBCameras.right():
+            gen_fn = stream_right_camera
+        elif camera_type == RGBCameras.center():
+            gen_fn = stream_center_camera
+        elif camera_type == RGBCameras.gripper_rgbd:
+            gen_fn = stream_gripper_camera
+        else:
+            raise ValueError(f"Unknown camera type: {camera_type}")
 
-            if left_pts is None or right_pts is None:
-                return
-            
-            self.latest_pts_base = self.lidar_calib.unify_clouds(
-                left_pts=left_pts,
-                right_pts=right_pts,
-            )
+        self.camera_generators[camera_type] = gen_fn(
+            is_rotate=self.is_rotate,
+            ai_models_to_use=self.ai_models_to_use,
+            detect_aruco_marker_size=self.detect_aruco_marker_size,
+            use_ros_for_cameras=self.use_ros_for_cameras
+        )
+
+    @staticmethod
+    def apply_shadow_filter(sparse_depth_image: np.ndarray, window_size: int=5, depth_threshold: float=0.3):
+        if window_size <= 1:
+            return sparse_depth_image, np.zeros_like(sparse_depth_image, dtype=bool)
+        depth_inf = sparse_depth_image.copy()
+        depth_inf[depth_inf == 0] = np.inf
+        kernel = np.ones((window_size, window_size), np.uint8)
+        min_depth = cv2.erode(depth_inf, kernel)
+        shadowed = (sparse_depth_image > 0) & (sparse_depth_image - min_depth > depth_threshold)
+        filtered_depth = sparse_depth_image.copy()
+        filtered_depth[shadowed] = 0.0
+        return filtered_depth, shadowed
 
     @staticmethod
     def create_rgbd_frame(camera_type:RGBCameras, frame:ImageFrame, pts_base:np.ndarray, T_base_to_cam:dict[RGBCameras, np.ndarray], calib:RGBCameraCalibration) -> RGBDFrame:
-
         T_base_to_this_cam = T_base_to_cam[camera_type]
 
-        # Transform to camera frame once
-        ones = np.ones((len(pts_base), 1))
-        pts_cam_all = (T_base_to_this_cam @ np.hstack([pts_base, ones]).T).T[:, :3]
+        # Highly optimized 3D projection mapping matching fast_emulated_rgbd.py
+        pts_cam_all = pts_base @ T_base_to_this_cam[:3, :3].T + T_base_to_this_cam[:3, 3]
 
-        # Filter points behind camera
         valid_idx = pts_cam_all[:, 2] > 0
         pts_cam_valid = pts_cam_all[valid_idx]
         pts_base_valid = pts_base[valid_idx]
@@ -199,23 +266,36 @@ class EmulatedRGBDStreamer:
             u_valid = u[valid_uv]
             v_valid = v[valid_uv]
 
-            colors_bgr = frame.image_raw[v_valid, u_valid]
-            cols = colors_bgr[:, ::-1]  # BGR to RGB
-
-            pts_cam = pts_cam_valid[valid_uv]
-            pts_world = pts_base_valid[valid_uv]
-
             if len(v_valid) > 0:
                 z_vals = pts_cam_valid[valid_uv, 2]
-                # buffer = np.full((h, w), np.inf, dtype=np.float32)
-                # np.minimum.at(buffer, (v_valid, u_valid), z_vals)
-                # depth_img[buffer != np.inf] = buffer[buffer != np.inf]
-                
                 sort_idx = np.argsort(z_vals)[::-1]
                 v_sorted = v_valid[sort_idx]
                 u_sorted = u_valid[sort_idx]
                 z_sorted = z_vals[sort_idx]
+                
+                orig_indices = np.arange(len(v_valid))[sort_idx]
+                
                 depth_img[v_sorted, u_sorted] = z_sorted
+                
+                index_img = np.full((h, w), -1, dtype=np.int32)
+                index_img[v_sorted, u_sorted] = orig_indices
+                
+                # Apply high-speed sparsity shadow filter
+                depth_img, shadowed = EmulatedRGBDStreamer.apply_shadow_filter(depth_img, window_size=5, depth_threshold=0.3)
+                
+                valid_mask = depth_img > 0
+                surviving_indices = index_img[valid_mask]
+                
+                pts_cam = pts_cam_valid[valid_uv][surviving_indices]
+                pts_world = pts_base_valid[valid_uv][surviving_indices]
+                
+                v_filtered, u_filtered = np.where(valid_mask)
+                colors_bgr = frame.image_raw[v_filtered, u_filtered]
+                cols = colors_bgr[:, ::-1]  # BGR to RGB
+            else:
+                pts_cam = np.zeros((0, 3))
+                pts_world = np.zeros((0, 3))
+                cols = np.zeros((0, 3))
         else:
             pts_cam = np.zeros((0, 3))
             pts_world = np.zeros((0, 3))
@@ -230,293 +310,282 @@ class EmulatedRGBDStreamer:
             pointcloud_colors=cols,
             depth_image=depth_img,
         )
-        
 
-    def process_camera_rgbd(
-        self, frame: ImageFrame, camera_type: RGBCameras
-    ) -> RGBDFrame|None:
-        calib = self.calibs[camera_type]
+    def _get_next_camera_frames(self) -> dict[RGBCameras, Any]:
+        frames = {}
+        for cam_type, gen in list(self.camera_generators.items()):
+            try:
+                frame_or_synced = next(gen)
+            except StopIteration:
+                continue
+            if frame_or_synced is None:
+                continue
+            if cam_type == RGBCameras.synced_left_right():
+                if getattr(frame_or_synced, "left", None) is not None:
+                    frames[RGBCameras.left()] = frame_or_synced.left
+                if getattr(frame_or_synced, "right", None) is not None:
+                    frames[RGBCameras.right()] = frame_or_synced.right
+            elif cam_type == RGBCameras.synced_left_right_center():
+                if getattr(frame_or_synced, "left", None) is not None:
+                    frames[RGBCameras.left()] = frame_or_synced.left
+                if getattr(frame_or_synced, "right", None) is not None:
+                    frames[RGBCameras.right()] = frame_or_synced.right
+                if getattr(frame_or_synced, "center", None) is not None:
+                    frames[RGBCameras.center()] = frame_or_synced.center
+            else:
+                frames[cam_type] = frame_or_synced
+        return frames
 
-        if len(self.latest_pts_base) == 0:
-            logger.info(f"[{camera_type.name}] Dropping frame: no unified lidar cloud.")
-            return None
+    def stream_rgbd(self, camera_types: list[RGBCameras]) -> Generator[RGBDFrame, None, None]:
+        master_lidar_name = "left" if "left" in self.lidars else ("right" if "right" in self.lidars else next(iter(self.lidars.keys())))
 
-        for lidar_name, lidar_timestamp in self.latest_lidar_timestamps.items():
-            diff = abs(frame.timestamp_system - lidar_timestamp)
-            if diff > 2.0 / 10.0:
-                logger.info(f"Camera {camera_type.name} timestamp {frame.timestamp} is too far from {lidar_name=} timestamp {lidar_timestamp}, {diff=}")
-                return None
+        while not self.stop_event.is_set():
+            try:
+                master_lidar_frame = next(self.lidars[master_lidar_name])
+            except StopIteration:
+                break
 
-        pts_base = self.latest_pts_base
-        return self.create_rgbd_frame(camera_type, frame, pts_base, self.T_base_to_cam, calib)
+            if master_lidar_frame is None:
+                continue
+
+            mid_ts = getattr(master_lidar_frame, 'timestamp_system', time.monotonic())
+
+            cam_frames = self._get_next_camera_frames()
+            if not cam_frames:
+                continue
+
+            synced_lidar_frames = {master_lidar_name: master_lidar_frame}
+            for l_name in self.lidars:
+                if l_name != master_lidar_name:
+                    try:
+                        synced_lidar_frames[l_name] = next(self.lidars[l_name])
+                    except StopIteration:
+                        pass
+
+            left_frame = synced_lidar_frames.get("left")
+            right_frame = synced_lidar_frames.get("right")
+
+            left_pts = left_frame.points if left_frame is not None else None
+            right_pts = right_frame.points if right_frame is not None else None
+
+            if left_pts is None and right_pts is None:
+                continue
+
+            pts_base = self.unify_clouds(
+                left_pts=left_pts if left_pts is not None else np.zeros((0, 3)),
+                right_pts=right_pts if right_pts is not None else np.zeros((0, 3)),
+            )
+
+            futures = {}
+            for camera_type in camera_types:
+                cam_frame = cam_frames.get(camera_type)
+                if cam_frame is None:
+                    continue
+
+                calib = self.calibs[camera_type]
+                futures[camera_type] = self.executor.submit(
+                    self.create_rgbd_frame,
+                    camera_type,
+                    cam_frame,
+                    pts_base,
+                    self.T_base_to_cam,
+                    calib
+                )
+
+            for camera_type, future in futures.items():
+                try:
+                    rgbd_frame = future.result()
+                except Exception as e:
+                    logger.error(f"Error creating RGB-D frame for {camera_type}: {e}")
+                    continue
+
+                if rgbd_frame is not None:
+                    yield rgbd_frame
+
+    def stream_rgbd_synced(self, camera_types: list[RGBCameras]) -> Generator[SyncedRGBDFrame, None, None]:
+        master_lidar_name = "left" if "left" in self.lidars else ("right" if "right" in self.lidars else next(iter(self.lidars.keys())))
+
+        while not self.stop_event.is_set():
+            try:
+                master_lidar_frame = next(self.lidars[master_lidar_name])
+            except StopIteration:
+                break
+
+            if master_lidar_frame is None:
+                continue
+
+            mid_ts = getattr(master_lidar_frame, 'timestamp_system', time.monotonic())
+
+            cam_frames = self._get_next_camera_frames()
+            if not cam_frames:
+                continue
+
+            synced_lidar_frames = {master_lidar_name: master_lidar_frame}
+            for l_name in self.lidars:
+                if l_name != master_lidar_name:
+                    try:
+                        synced_lidar_frames[l_name] = next(self.lidars[l_name])
+                    except StopIteration:
+                        pass
+
+            left_frame = synced_lidar_frames.get("left")
+            right_frame = synced_lidar_frames.get("right")
+
+            left_pts = left_frame.points if left_frame is not None else None
+            right_pts = right_frame.points if right_frame is not None else None
+
+            if left_pts is None and right_pts is None:
+                continue
+
+            pts_base = self.unify_clouds(
+                left_pts=left_pts if left_pts is not None else np.zeros((0, 3)),
+                right_pts=right_pts if right_pts is not None else np.zeros((0, 3)),
+            )
+
+            futures = {}
+            for camera_type in camera_types:
+                cam_frame = cam_frames.get(camera_type)
+                if cam_frame is None:
+                    continue
+
+                calib = self.calibs[camera_type]
+                futures[camera_type] = self.executor.submit(
+                    self.create_rgbd_frame,
+                    camera_type,
+                    cam_frame,
+                    pts_base,
+                    self.T_base_to_cam,
+                    calib
+                )
+
+            synced_rgbd = SyncedRGBDFrame(timestamp=mid_ts)
+            has_any = False
+            for camera_type, future in futures.items():
+                try:
+                    rgbd_frame = future.result()
+                except Exception as e:
+                    logger.error(f"Error creating RGB-D frame for {camera_type}: {e}")
+                    continue
+
+                if rgbd_frame is not None:
+                    if camera_type == RGBCameras.left():
+                        synced_rgbd.left = rgbd_frame
+                        has_any = True
+                    elif camera_type == RGBCameras.right():
+                        synced_rgbd.right = rgbd_frame
+                        has_any = True
+                    elif camera_type == RGBCameras.center():
+                        synced_rgbd.center = rgbd_frame
+                        has_any = True
+
+            if has_any:
+                yield synced_rgbd
 
     def stop(self):
+        self.stop_event.set()
         for l_sensor in self.lidars.values():
             if hasattr(l_sensor, "stop"):
                 l_sensor.stop()
-        self.stop_event.set()
+        if hasattr(self, "executor"):
+            self.executor.shutdown(wait=False)
+        if EmulatedRGBDStreamer._instance == self:
+            EmulatedRGBDStreamer._instance = None
 
-    
 
 class EmulatedRGBDStreamerROS(EmulatedRGBDStreamer):
-    """
-    A specialized streamer that leverages RGBPipelineControllerROS's internal 
-    StreamManager for concurrent lidar and camera streams.
-    """
     def __init__(self, camera_type: RGBCameras, is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_left_lidar:bool=True, use_right_lidar:bool=True):
-        self.fleet_path = os.environ.get("HELLO_FLEET_PATH", "")
-        self.fleet_id = os.environ.get("HELLO_FLEET_ID", "")
-
-        if not self.fleet_path or not self.fleet_id:
-            raise RuntimeError(
-                "HELLO_FLEET_PATH or HELLO_FLEET_ID environment variables are missing."
-            )
-
-
-        from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
-        self.stop_event = threading.Event()
-
-        self.lidar_calib = DualLidarCalibration()
-
-        self.camera_extrinsics = {}
-        if os.path.exists(CAMERA_EXTRINSICS_YAML_PATH):
-            with open(CAMERA_EXTRINSICS_YAML_PATH, "r") as f:
-                self.camera_extrinsics = yaml.safe_load(f) or {}
-
-        self.T_left_to_center = np.array(
-            self.camera_extrinsics.get("left_to_center", np.eye(4))
-        )
-        self.T_right_to_center = np.array(
-            self.camera_extrinsics.get("right_to_center", np.eye(4))
-        )
-        
-        self.T_base_to_center = np.eye(4)
-        key = "transform_right_lidar_to_head_center"
-        if key in self.camera_extrinsics:
-            T_l_to_c = np.array(self.camera_extrinsics[key]["data"])
-            T_base_to_l = self.lidar_calib.get_lidar_to_base_transform(is_right_lidar=True)
-            self.T_base_to_center = T_l_to_c @ np.linalg.inv(T_base_to_l)
-
-        self.T_base_to_cam = {
-            RGBCameras.left(): np.linalg.inv(self.T_left_to_center) @ self.T_base_to_center,
-            RGBCameras.right(): np.linalg.inv(self.T_right_to_center) @ self.T_base_to_center,
-            RGBCameras.center(): np.linalg.inv(np.eye(4)) @ self.T_base_to_center,
-        }
-
-        self.calibs: dict[RGBCameras, Any] = {}
-        try:
-            self.calibs[RGBCameras.left()] = RGBCameras.left().load_calibration()
-        except: pass
-        try:
-            self.calibs[RGBCameras.right()] = RGBCameras.right().load_calibration()
-        except: pass
-        try:
-            self.calibs[RGBCameras.center()] = RGBCameras.center().load_calibration()
-        except: pass
-
-        self.latest_lidar_pts: dict[str, np.ndarray] = {}
-        self.latest_pts_base = np.zeros((0, 3))
-        self.latest_lidar_timestamps:dict[str, float] = {}
-        
-        self.camera_type = camera_type
-        self.pipeline = RGBPipelineControllerROS(
-            camera_type=camera_type,
-            recording_directory=None,
-            show_image_in=None,
+        super().__init__(
+            use_left_lidar=use_left_lidar,
+            use_right_lidar=use_right_lidar,
+            use_ros_for_lidars=True,
+            use_ros_for_cameras=True,
             is_rotate=is_rotate,
-            is_rectify=is_rectify,
-            is_crop=is_crop,
-            ai_models_to_use=ai_models_to_use or [],
+            ai_models_to_use=ai_models_to_use,
             detect_aruco_marker_size=detect_aruco_marker_size
         )
-        
-        self.use_left_lidar = use_left_lidar
-        self.use_right_lidar = use_right_lidar
-        
-        try:
-            from stretch_python_bridge import stream_lidar_left, stream_lidar_right
-        except ImportError:
-            raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
-        
-        self.lidars = {}
-        if self.use_left_lidar:
-             self.lidars["left"] = stream_lidar_left(stream_manager=self.pipeline.stream_manager)
-        if self.use_right_lidar:
-             self.lidars["right"] = stream_lidar_right(stream_manager=self.pipeline.stream_manager)
 
 
-    def process_lidars(self):
-        left_pts_frame = self.pipeline.stream_manager.get(self.lidars.get("left"), block=False) if self.use_left_lidar else None
-        right_pts_frame = self.pipeline.stream_manager.get(self.lidars.get("right"), block=False) if self.use_right_lidar else None
-        
-        did_update = False
-        if left_pts_frame is not None:
-            self.latest_lidar_pts["left"] = left_pts_frame.points
-            self.latest_lidar_timestamps["left"] = left_pts_frame.timestamp_system
-            did_update = True
-        if right_pts_frame is not None:
-            self.latest_lidar_pts["right"] = right_pts_frame.points
-            self.latest_lidar_timestamps["right"] = right_pts_frame.timestamp_system
-            did_update = True
-            
-        if did_update or len(self.latest_pts_base) == 0:
-
-            left_pts=self.latest_lidar_pts.get("left")
-            right_pts=self.latest_lidar_pts.get("right")
-            if left_pts is None or right_pts is None:
-                return
-            
-            self.latest_pts_base = self.lidar_calib.unify_clouds(
-                left_pts=left_pts,
-                right_pts=right_pts
-            )
-
-    def get_rgbd_frame(self) -> Generator[RGBDFrame, None, None]:
-        for frame in self.pipeline.get_frame(is_run_pipeline=True):
-            if frame is None:
-                continue
-                
-            self.process_lidars()
-            rgbd_frame = self.process_camera_rgbd(frame, self.camera_type)
-            if rgbd_frame is None:
-                continue
-            
-            yield rgbd_frame
-
-    def get_rgbd_frame_synced(self) -> Generator[SyncedRGBDFrame, None, None]:
-        for synced_frame in self.pipeline.get_frame_synced(is_run_pipeline=True):
-            if synced_frame is None:
-                continue
-                
-            self.process_lidars()
-            
-            ret = SyncedRGBDFrame(timestamp=synced_frame.timestamp)
-            if synced_frame.left:
-                ret.left = self.process_camera_rgbd(synced_frame.left, RGBCameras.left())
-            if synced_frame.right:
-                ret.right = self.process_camera_rgbd(synced_frame.right, RGBCameras.right())
-            if synced_frame.center:
-                ret.center = self.process_camera_rgbd(synced_frame.center, RGBCameras.center())
-            
-            if ret.left is None and ret.right is None and ret.center is None:
-                continue
-            
-            yield ret
-
-    def stop(self):
-        super().stop()
-        self.stop_event.set()
-        self.pipeline.stop()
-
-
-def stream_left_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None , detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+def stream_left_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     try:
-        if use_ros_for_cameras and use_ros_for_lidars:
-            streamer = EmulatedRGBDStreamerROS(camera_type=RGBCameras.head_left, is_rotate=is_rotate, is_rectify=False, is_crop=False, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar)
-            yield from streamer.get_rgbd_frame()
-            return
-        
-        streamer = EmulatedRGBDStreamer.get_instance(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
-        for image_frame in stream_left_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use , detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras):
-            if image_frame is None:
-                continue
-            streamer.process_lidars()
-            rgbd_frame = streamer.process_camera_rgbd(image_frame, RGBCameras.left()
-            )
-            if rgbd_frame is None:
-                continue
-            yield rgbd_frame
-    finally:
-        streamer.stop() 
-
-
-def stream_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None , detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
-    try:
-        if use_ros_for_cameras and use_ros_for_lidars:
-            streamer = EmulatedRGBDStreamerROS(camera_type=RGBCameras.head_right, is_rotate=is_rotate, is_rectify=False, is_crop=False, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar)
-            yield from streamer.get_rgbd_frame()
-            return
-        
-        streamer = EmulatedRGBDStreamer.get_instance(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
-        for image_frame in stream_right_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use , detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras):
-            if image_frame is None:
-                continue
-            streamer.process_lidars()
-            rgbd_frame = streamer.process_camera_rgbd(image_frame,  RGBCameras.right()
-            )
-            if rgbd_frame is None:
-                continue
-            yield rgbd_frame
+        streamer = EmulatedRGBDStreamer.get_instance(
+            use_left_lidar=use_left_lidar,
+            use_right_lidar=use_right_lidar,
+            use_ros_for_lidars=use_ros_for_lidars,
+            use_ros_for_cameras=use_ros_for_cameras,
+            is_rotate=is_rotate,
+            ai_models_to_use=ai_models_to_use,
+            detect_aruco_marker_size=detect_aruco_marker_size
+        )
+        streamer.start_camera_stream(RGBCameras.left())
+        yield from streamer.stream_rgbd([RGBCameras.left()])
     finally:
         streamer.stop()
 
 
-def stream_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None , detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+def stream_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     try:
-        if use_ros_for_cameras and use_ros_for_lidars:
-            streamer = EmulatedRGBDStreamerROS(camera_type=RGBCameras.head_center, is_rotate=is_rotate, is_rectify=False, is_crop=False, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar)
-            yield from streamer.get_rgbd_frame()
-            return
-        
-        streamer = EmulatedRGBDStreamer.get_instance(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
-        for image_frame in stream_center_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use , detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras):
-            if image_frame is None:
-                continue
-            streamer.process_lidars()
-            rgbd_frame = streamer.process_camera_rgbd(image_frame, RGBCameras.center())
-            if rgbd_frame is None:
-                continue
-            yield rgbd_frame
+        streamer = EmulatedRGBDStreamer.get_instance(
+            use_left_lidar=use_left_lidar,
+            use_right_lidar=use_right_lidar,
+            use_ros_for_lidars=use_ros_for_lidars,
+            use_ros_for_cameras=use_ros_for_cameras,
+            is_rotate=is_rotate,
+            ai_models_to_use=ai_models_to_use,
+            detect_aruco_marker_size=detect_aruco_marker_size
+        )
+        streamer.start_camera_stream(RGBCameras.right())
+        yield from streamer.stream_rgbd([RGBCameras.right()])
     finally:
         streamer.stop()
 
 
-def stream_left_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None , detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
+def stream_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     try:
-        if use_ros_for_cameras and use_ros_for_lidars:
-            streamer = EmulatedRGBDStreamerROS(camera_type=RGBCameras.head_left_right, is_rotate=is_rotate, is_rectify=False, is_crop=False, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar)
-            yield from streamer.get_rgbd_frame_synced()
-            return
-        
-        streamer = EmulatedRGBDStreamer.get_instance(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
-        for synced_frame in stream_left_right_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use , detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras):
-            if synced_frame is None:
-                continue
-            streamer.process_lidars()
-            ret = SyncedRGBDFrame(timestamp=synced_frame.timestamp)
-            if synced_frame.left:
-                ret.left = streamer.process_camera_rgbd(synced_frame.left, RGBCameras.left())
-            if synced_frame.right:
-                ret.right = streamer.process_camera_rgbd(synced_frame.right, RGBCameras.right())
-            if ret.left is None and ret.right is None:
-                continue
-            yield ret
+        streamer = EmulatedRGBDStreamer.get_instance(
+            use_left_lidar=use_left_lidar,
+            use_right_lidar=use_right_lidar,
+            use_ros_for_lidars=use_ros_for_lidars,
+            use_ros_for_cameras=use_ros_for_cameras,
+            is_rotate=is_rotate,
+            ai_models_to_use=ai_models_to_use,
+            detect_aruco_marker_size=detect_aruco_marker_size
+        )
+        streamer.start_camera_stream(RGBCameras.center())
+        yield from streamer.stream_rgbd([RGBCameras.center()])
     finally:
         streamer.stop()
 
 
-def stream_left_right_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None , detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
-    try:  
-        if use_ros_for_cameras and use_ros_for_lidars: 
-                streamer = EmulatedRGBDStreamerROS(camera_type=RGBCameras.head_left_right_center, is_rotate=is_rotate, is_rectify=False, is_crop=False, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar)
-                yield from streamer.get_rgbd_frame_synced()
-                return
-            
-        streamer = EmulatedRGBDStreamer.get_instance(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
-        for synced_frame in stream_left_right_center_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use , detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras):
-            if synced_frame is None:
-                continue
-            streamer.process_lidars()
-            ret = SyncedRGBDFrame(timestamp=synced_frame.timestamp)
-            if synced_frame.left:
-                ret.left = streamer.process_camera_rgbd(synced_frame.left, RGBCameras.left())
-            if synced_frame.right:
-                ret.right = streamer.process_camera_rgbd(synced_frame.right, RGBCameras.right())
-            if synced_frame.center:
-                ret.center = streamer.process_camera_rgbd(synced_frame.center, RGBCameras.center())
-            if ret.left is None and ret.right is None and ret.center is None:
-                continue
-            yield ret
+def stream_left_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
+    try:
+        streamer = EmulatedRGBDStreamer.get_instance(
+            use_left_lidar=use_left_lidar,
+            use_right_lidar=use_right_lidar,
+            use_ros_for_lidars=use_ros_for_lidars,
+            use_ros_for_cameras=use_ros_for_cameras,
+            is_rotate=is_rotate,
+            ai_models_to_use=ai_models_to_use,
+            detect_aruco_marker_size=detect_aruco_marker_size
+        )
+        streamer.start_camera_stream(RGBCameras.synced_left_right())
+        yield from streamer.stream_rgbd_synced([RGBCameras.left(), RGBCameras.right()])
+    finally:
+        streamer.stop()
+
+
+def stream_left_right_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
+    try:
+        streamer = EmulatedRGBDStreamer.get_instance(
+            use_left_lidar=use_left_lidar,
+            use_right_lidar=use_right_lidar,
+            use_ros_for_lidars=use_ros_for_lidars,
+            use_ros_for_cameras=use_ros_for_cameras,
+            is_rotate=is_rotate,
+            ai_models_to_use=ai_models_to_use,
+            detect_aruco_marker_size=detect_aruco_marker_size
+        )
+        streamer.start_camera_stream(RGBCameras.synced_left_right_center())
+        yield from streamer.stream_rgbd_synced([RGBCameras.left(), RGBCameras.right(), RGBCameras.center()])
     finally:
         streamer.stop()
 
