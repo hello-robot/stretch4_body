@@ -101,6 +101,7 @@ class RobotJoints(Enum):
     wrist_roll = auto()
     gripper = auto()
 
+
     @classmethod
     def get_joint_by_name(cls, name: str) -> Optional['RobotJoints']:
         if name in cls.__members__:
@@ -118,16 +119,16 @@ class RobotJoints(Enum):
         return joints
 
     @property
-    def value(self) -> str:
+    def value(self) -> str | None:
         if self.name == 'gripper':
             return self.gripper_name
         else:
             return self.name
 
     @property
-    def gripper_model(self) -> Optional[GripperMetadata]:
-        if self.name == 'gripper':
-            return GRIPPER_MODELS.get(self.value)
+    def gripper_model(self) -> GripperMetadata | None:
+        if self.name == 'gripper' and self.value is not None: 
+                return GRIPPER_MODELS.get(self.value)
         return None
 
     @property
@@ -147,7 +148,7 @@ class RobotJoints(Enum):
         return model.finger_links if model else []
 
     @property
-    def gripper_client(self) -> Optional[ParallelGripperClient | StretchGripperClient]:
+    def gripper_client(self) -> ParallelGripperClient | StretchGripperClient | None:
         model = self.gripper_model
         return model.client_class() if model else None
 
@@ -254,3 +255,4 @@ class RobotJoints(Enum):
         accel_xy_m = base_params['accel_xy_m']
         vel_xy_m = base_params['vel_xy_m']
         return vel_xy_m, accel_xy_m, vel_w_r, accel_w_r
+
