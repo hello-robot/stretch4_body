@@ -42,7 +42,7 @@ def menu():
     print('e: place esp32 into bootloader')
     print('g: reset esp32')
     print('n: set network info')
-    print('f: set firebase info')
+    print('u: set firebase info')
     print('----------')
     print('q: quit')
     print('-------------------')
@@ -95,8 +95,8 @@ def step_interaction():
             p.send_network_info(ssid,password)
 
 
-        if x[0]=='f':
-            url=get_val_default('Enter URL ',p.params['firebase']['network_ssid'])
+        if x[0]=='u':
+            url=get_val_default('Enter URL ',p.params['firebase']['url'])
             api_key=get_val_default('Enter API Key ',p.params['firebase']['api_key'])
             user_email = get_val_default('Enter User Email ', p.params['firebase']['user_email'])
             user_password = get_val_default('Enter User Password ', p.params['firebase']['user_password'])
