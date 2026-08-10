@@ -107,8 +107,8 @@ def run_head_camera_old(duration, target_fps=30):
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
 
-def start_ros_launch(launch_args):
-    """Starts a ROS2 launch file in a separate process group and waits for it to initialize."""
+def start_ros_launch(launch_args, wait_seconds=8.0):
+    """Starts a ROS2 launch file in a separate process group and optionally waits for it to initialize."""
     import subprocess
     import os
     import time
@@ -122,8 +122,9 @@ def start_ros_launch(launch_args):
             preexec_fn=os.setsid
         )
         # Sleep to let nodes initialize and begin publishing
-        print("Waiting 8 seconds for ROS2 camera nodes to initialize...")
-        time.sleep(8.0)
+        if wait_seconds > 0:
+            print(f"Waiting {wait_seconds} seconds for ROS2 nodes to initialize...")
+            time.sleep(wait_seconds)
         return proc
     except Exception as e:
         print(f"Failed to launch ROS2 nodes: {e}")
@@ -189,10 +190,6 @@ def run_left_right_python(duration):
 
     if not first_frame_received:
         print("Timeout waiting for first frame from stream_left_right_camera Python.")
-        try:
-            frame_generator.close()
-        except Exception:
-            pass
         return None
 
     init_latency = t_first_frame - t_init_start
@@ -213,10 +210,6 @@ def run_left_right_python(duration):
         if time.monotonic() >= t_end:
             break
 
-    try:
-        frame_generator.close()
-    except Exception:
-        pass
 
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
@@ -265,10 +258,6 @@ def run_left_right_ros(duration):
 
     if not first_frame_received:
         print("Timeout waiting for first frame from stream_left_right_camera ROS2.")
-        try:
-            frame_generator.close()
-        except Exception:
-            pass
         stop_ros_launch(proc)
         return None
 
@@ -290,10 +279,6 @@ def run_left_right_ros(duration):
         if time.monotonic() >= t_end:
             break
 
-    try:
-        frame_generator.close()
-    except Exception:
-        pass
 
     stop_ros_launch(proc)
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
@@ -336,10 +321,6 @@ def run_left_right_center_python(duration):
 
     if not first_frame_received:
         print("Timeout waiting for first frame from stream_left_right_center_camera Python.")
-        try:
-            frame_generator.close()
-        except Exception:
-            pass
         return None
 
     init_latency = t_first_frame - t_init_start
@@ -360,10 +341,6 @@ def run_left_right_center_python(duration):
         if time.monotonic() >= t_end:
             break
 
-    try:
-        frame_generator.close()
-    except Exception:
-        pass
 
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
@@ -412,10 +389,6 @@ def run_left_right_center_ros(duration):
 
     if not first_frame_received:
         print("Timeout waiting for first frame from stream_left_right_center_camera ROS2.")
-        try:
-            frame_generator.close()
-        except Exception:
-            pass
         stop_ros_launch(proc)
         return None
 
@@ -437,12 +410,445 @@ def run_left_right_center_ros(duration):
         if time.monotonic() >= t_end:
             break
 
-    try:
-        frame_generator.close()
-    except Exception:
-        pass
 
     stop_ros_launch(proc)
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_rgbd_python(duration):
+    """Benchmarks stream_left_rgbd(use_ros_for_cameras=False) from stretch4_body."""
+    print("\n--- Benchmarking stream_left_rgbd (stretch4_body Python) ---")
+    try:
+        from stretch4_body.subsystem.cameras.emulated_rgbd import stream_left_rgbd
+    except ImportError as e:
+        print(f"Failed to import stretch4_body emulated_rgbd modules: {e}")
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_rgbd(use_ros_for_cameras=False)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_rgbd: {e}")
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.image_frame is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting first frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_rgbd Python.")
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None and frame.image_frame is not None:
+            timestamps_host.append(time.monotonic())
+            timestamps_sensor.append(frame.image_frame.timestamp)
+            seq_nums.append(frame.image_frame.frame_number)
+        else:
+            time.sleep(0.01)
+        
+        if time.monotonic() >= t_end:
+            break
+        
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_rgbd_ros(duration):
+    """Benchmarks stream_left_rgbd(use_ros_for_cameras=True) from stretch4_body."""
+    print("\n--- Benchmarking stream_left_rgbd (stretch4_body ROS2) ---")
+    proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"], wait_seconds=0.0)
+    proc_driver = start_ros_launch(["ros2", "launch", "stretch_core", "stretch_driver.launch.py"], wait_seconds=8.0)
+    proc_lidar = start_ros_launch(["ros2", "launch", "stretch_core", "dual_hesai.launch.py"], wait_seconds=8.0)
+    if proc_camera is None or proc_lidar is None or proc_driver is None:
+        print("Could not start ROS2 launch files. Skipping ROS benchmark.")
+        if proc_camera: stop_ros_launch(proc_camera)
+        if proc_lidar: stop_ros_launch(proc_lidar)
+        if proc_driver: stop_ros_launch(proc_driver)
+        return None
+
+    try:
+        from stretch4_body.subsystem.cameras.emulated_rgbd import stream_left_rgbd
+    except ImportError as e:
+        print(f"Failed to import stretch4_body emulated_rgbd modules: {e}")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        stop_ros_launch(proc_driver)
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_rgbd(use_ros_for_cameras=True, use_ros_for_lidars=True)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_rgbd ROS2: {e}")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        stop_ros_launch(proc_driver)
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None and frame.image_frame is not None:
+                t_first_frame = time.perf_counter()
+                first_frame_received = True
+                break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_rgbd ROS2.")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        stop_ros_launch(proc_driver)
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None and frame.image_frame is not None:
+            timestamps_host.append(time.time())
+            timestamps_sensor.append(frame.image_frame.timestamp)
+            seq_nums.append(frame.image_frame.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+
+    stop_ros_launch(proc_camera)
+    stop_ros_launch(proc_lidar)
+    stop_ros_launch(proc_driver)
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_rgbd_python(duration):
+    """Benchmarks stream_left_right_rgbd(use_ros_for_cameras=False) from stretch4_body."""
+    print("\n--- Benchmarking stream_left_right_rgbd (stretch4_body Python) ---")
+    try:
+        from stretch4_body.subsystem.cameras.emulated_rgbd import stream_left_right_rgbd
+    except ImportError as e:
+        print(f"Failed to import stretch4_body emulated_rgbd modules: {e}")
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_rgbd(use_ros_for_cameras=False)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_rgbd: {e}")
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None:
+                active_frame = frame.right if frame.right is not None else frame.left
+                if active_frame is not None and active_frame.image_frame is not None:
+                    t_first_frame = time.perf_counter()
+                    first_frame_received = True
+                    break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting first frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_rgbd Python.")
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None:
+            active_frame = frame.right if frame.right is not None else frame.left
+            if active_frame is not None and active_frame.image_frame is not None:
+                timestamps_host.append(time.monotonic())
+                timestamps_sensor.append(active_frame.image_frame.timestamp)
+                seq_nums.append(active_frame.image_frame.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_rgbd_ros(duration):
+    """Benchmarks stream_left_right_rgbd(use_ros_for_cameras=True) from stretch4_body."""
+    print("\n--- Benchmarking stream_left_right_rgbd (stretch4_body ROS2) ---")
+    proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"], wait_seconds=0.0)
+    proc_lidar = start_ros_launch(["ros2", "launch", "stretch_core", "dual_hesai.launch.py"], wait_seconds=8.0)
+    if proc_camera is None or proc_lidar is None:
+        print("Could not start ROS2 launch files. Skipping ROS benchmark.")
+        if proc_camera: stop_ros_launch(proc_camera)
+        if proc_lidar: stop_ros_launch(proc_lidar)
+        return None
+
+    try:
+        from stretch4_body.subsystem.cameras.emulated_rgbd import stream_left_right_rgbd
+    except ImportError as e:
+        print(f"Failed to import stretch4_body emulated_rgbd modules: {e}")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_rgbd(use_ros_for_cameras=True, use_ros_for_lidars=True)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_rgbd ROS2: {e}")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None:
+                active_frame = frame.right if frame.right is not None else frame.left
+                if active_frame is not None and active_frame.image_frame is not None:
+                    t_first_frame = time.perf_counter()
+                    first_frame_received = True
+                    break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_rgbd ROS2.")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None:
+            active_frame = frame.right if frame.right is not None else frame.left
+            if active_frame is not None and active_frame.image_frame is not None:
+                timestamps_host.append(time.time())
+                timestamps_sensor.append(active_frame.image_frame.timestamp)
+                seq_nums.append(active_frame.image_frame.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+
+    stop_ros_launch(proc_camera)
+    stop_ros_launch(proc_lidar)
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_center_rgbd_python(duration):
+    """Benchmarks stream_left_right_center_rgbd(use_ros_for_cameras=False) from stretch4_body."""
+    print("\n--- Benchmarking stream_left_right_center_rgbd (stretch4_body Python) ---")
+    try:
+        from stretch4_body.subsystem.cameras.emulated_rgbd import stream_left_right_center_rgbd
+    except ImportError as e:
+        print(f"Failed to import stretch4_body emulated_rgbd modules: {e}")
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_center_rgbd(use_ros_for_cameras=False)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_center_rgbd: {e}")
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None:
+                active_frame = frame.right if frame.right is not None else (frame.left if frame.left is not None else frame.center)
+                if active_frame is not None and active_frame.image_frame is not None:
+                    t_first_frame = time.perf_counter()
+                    first_frame_received = True
+                    break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting first frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_center_rgbd Python.")
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None:
+            active_frame = frame.right if frame.right is not None else (frame.left if frame.left is not None else frame.center)
+            if active_frame is not None and active_frame.image_frame is not None:
+                timestamps_host.append(time.monotonic())
+                timestamps_sensor.append(active_frame.image_frame.timestamp)
+                seq_nums.append(active_frame.image_frame.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+
+    return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
+
+
+def run_left_right_center_rgbd_ros(duration):
+    """Benchmarks stream_left_right_center_rgbd(use_ros_for_cameras=True) from stretch4_body."""
+    print("\n--- Benchmarking stream_left_right_center_rgbd (stretch4_body ROS2) ---")
+    proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"], wait_seconds=0.0)
+    proc_lidar = start_ros_launch(["ros2", "launch", "stretch_core", "dual_hesai.launch.py"], wait_seconds=8.0)
+    if proc_camera is None or proc_lidar is None:
+        print("Could not start ROS2 launch files. Skipping ROS benchmark.")
+        if proc_camera: stop_ros_launch(proc_camera)
+        if proc_lidar: stop_ros_launch(proc_lidar)
+        return None
+
+    try:
+        from stretch4_body.subsystem.cameras.emulated_rgbd import stream_left_right_center_rgbd
+    except ImportError as e:
+        print(f"Failed to import stretch4_body emulated_rgbd modules: {e}")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        return None
+
+    t_init_start = time.perf_counter()
+    try:
+        frame_generator = stream_left_right_center_rgbd(use_ros_for_cameras=True, use_ros_for_lidars=True)
+    except Exception as e:
+        print(f"Failed to initialize stream_left_right_center_rgbd ROS2: {e}")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        return None
+
+    print("Waiting for first frame (up to 15 seconds)...")
+    t_first_frame = None
+    first_frame_received = False
+    
+    t_start = time.monotonic()
+    while (time.monotonic() - t_start) < 15.0:
+        try:
+            frame = next(frame_generator)
+            if frame is not None:
+                active_frame = frame.right if frame.right is not None else (frame.left if frame.left is not None else frame.center)
+                if active_frame is not None and active_frame.image_frame is not None:
+                    t_first_frame = time.perf_counter()
+                    first_frame_received = True
+                    break
+        except StopIteration:
+            break
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            break
+        time.sleep(0.05)
+
+    if not first_frame_received:
+        print("Timeout waiting for first frame from stream_left_right_center_rgbd ROS2.")
+        stop_ros_launch(proc_camera)
+        stop_ros_launch(proc_lidar)
+        return None
+
+    init_latency = t_first_frame - t_init_start
+    print(f"First frame received! Initialization Latency: {init_latency:.3f} s")
+
+    timestamps_host = []
+    timestamps_sensor = []
+    seq_nums = []
+
+    t_end = time.monotonic() + duration
+
+    for frame in frame_generator:
+        if frame is not None:
+            active_frame = frame.right if frame.right is not None else (frame.left if frame.left is not None else frame.center)
+            if active_frame is not None and active_frame.image_frame is not None:
+                timestamps_host.append(time.time())
+                timestamps_sensor.append(active_frame.image_frame.timestamp)
+                seq_nums.append(active_frame.image_frame.frame_number)
+        
+        if time.monotonic() >= t_end:
+            break
+
+
+    stop_ros_launch(proc_camera)
+    stop_ros_launch(proc_lidar)
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
 
@@ -539,10 +945,6 @@ def run_gripper_python(duration):
 
     if not first_frame_received:
         print("Timeout waiting for first frame from stream_gripper_camera Python.")
-        try:
-            frame_generator.close()
-        except Exception:
-            pass
         return None
 
     init_latency = t_first_frame - t_init_start
@@ -563,10 +965,6 @@ def run_gripper_python(duration):
         if time.monotonic() >= t_end:
             break
 
-    try:
-        frame_generator.close()
-    except Exception:
-        pass
 
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
 
@@ -615,10 +1013,6 @@ def run_gripper_ros(duration):
 
     if not first_frame_received:
         print("Timeout waiting for first frame from stream_gripper_camera ROS2.")
-        try:
-            frame_generator.close()
-        except Exception:
-            pass
         stop_ros_launch(proc)
         return None
 
@@ -640,10 +1034,6 @@ def run_gripper_ros(duration):
         if time.monotonic() >= t_end:
             break
 
-    try:
-        frame_generator.close()
-    except Exception:
-        pass
 
     stop_ros_launch(proc)
     return compile_results(timestamps_host, timestamps_sensor, seq_nums, init_latency)
@@ -712,7 +1102,7 @@ def main():
     parser = argparse.ArgumentParser(description="Luxonis Camera Regression & Performance Benchmark")
     parser.add_argument("--duration", type=float, default=10.0, help="Duration in seconds to run each benchmark")
     parser.add_argument("--fps", type=int, default=30, help="Target frame rate (FPS) for the camera streams")
-    parser.add_argument("--type", type=str, choices=["all", "head", "gripper"], default="all", help="Which cameras to benchmark")
+    parser.add_argument("--type", type=str, choices=["all", "head", "gripper", "rgbd"], default="all", help="Which cameras to benchmark")
     parser.add_argument("--output", type=str, default="camera_regression_results.md", help="Path to save the performance comparison report")
     args = parser.parse_args()
 
@@ -755,7 +1145,27 @@ def main():
 
         results["Gripper ROS (stretch4_body)"] = run_gripper_ros(args.duration)
 
-    # 3. Print Quantitative Performance Summary
+    # 3. Benchmark RGB-D Cameras
+    if args.type in ["all", "rgbd"]:
+        results["Left RGBD Python (stretch4_body)"] = run_left_rgbd_python(args.duration)
+        time.sleep(3.0)
+
+        results["Left RGBD ROS (stretch4_body)"] = run_left_rgbd_ros(args.duration)
+        time.sleep(3.0)
+
+        results["Left-Right RGBD Python (stretch4_body)"] = run_left_right_rgbd_python(args.duration)
+        time.sleep(3.0)
+
+        results["Left-Right RGBD ROS (stretch4_body)"] = run_left_right_rgbd_ros(args.duration)
+        time.sleep(3.0)
+
+        results["Left-Right-Center RGBD Python (stretch4_body)"] = run_left_right_center_rgbd_python(args.duration)
+        time.sleep(3.0)
+
+        results["Left-Right-Center RGBD ROS (stretch4_body)"] = run_left_right_center_rgbd_ros(args.duration)
+        time.sleep(3.0)
+
+    # 4. Print Quantitative Performance Summary
     print("\n" + "=" * 80)
     print("                      PERFORMANCE COMPARISON REPORT")
     print("=" * 80)
@@ -772,7 +1182,7 @@ def main():
         latency_str = f"{metrics['mean_latency_ms']:.1f} \u00b1 {metrics['std_latency_ms']:.1f} ms"
         print(f"{label:<50} | {metrics['init_latency']:.2f} s      | {metrics['fps']:.1f}         | {latency_str:<22} | {metrics['jitter_ms']:.2f} ms     | {metrics['drop_rate']:.1f} %      | {metrics['frame_count']}")
 
-    # 4. Check for Regressions
+    # 5. Check for Regressions
     print("\n" + "=" * 80)
     print("                           REGRESSION CHECK")
     print("=" * 80)
@@ -876,8 +1286,16 @@ def test_camera_performance_regression():
     gripper_new = run_gripper_python(duration)
     gripper_ros = run_gripper_ros(duration)
 
-    if head_old is None and head_new is None and gripper_old is None and gripper_new is None:
-        pytest.skip("No cameras were successfully initialized. Skipping verification.")
+    left_rgbd_new = run_left_rgbd_python(duration)
+    left_rgbd_ros = run_left_rgbd_ros(duration)
+    left_right_rgbd_new = run_left_right_rgbd_python(duration)
+    left_right_rgbd_ros = run_left_right_rgbd_ros(duration)
+    left_right_center_rgbd_new = run_left_right_center_rgbd_python(duration)
+    left_right_center_rgbd_ros = run_left_right_center_rgbd_ros(duration)
+
+    if (head_old is None and head_new is None and gripper_old is None and gripper_new is None and
+            left_rgbd_new is None and left_right_rgbd_new is None and left_right_center_rgbd_new is None):
+        pytest.skip("No cameras or RGB-D streams were successfully initialized. Skipping verification.")
 
     has_failed = False
     failure_messages = []
@@ -950,8 +1368,67 @@ def test_camera_performance_regression():
             has_failed = True
             failure_messages.append(f"Gripper Camera ROS Latency too high: Realized={gripper_ros['mean_latency_ms']:.1f}ms (expected <= 600ms)")
 
+    if left_rgbd_new:
+        if left_rgbd_new["fps"] < 10.0:
+            has_failed = True
+            failure_messages.append(f"Left RGBD Python FPS underperforming: Realized={left_rgbd_new['fps']:.1f} FPS (expected >= 10)")
+        if left_rgbd_new["mean_latency_ms"] > 250.0:
+            has_failed = True
+            failure_messages.append(f"Left RGBD Python Latency too high: Realized={left_rgbd_new['mean_latency_ms']:.1f}ms (expected <= 250ms)")
+
+    if left_rgbd_ros:
+        if left_rgbd_ros["fps"] < 10.0:
+            has_failed = True
+            failure_messages.append(f"Left RGBD ROS FPS underperforming: Realized={left_rgbd_ros['fps']:.1f} FPS (expected >= 10)")
+        if left_rgbd_ros["mean_latency_ms"] > 300.0:
+            has_failed = True
+            failure_messages.append(f"Left RGBD ROS Latency too high: Realized={left_rgbd_ros['mean_latency_ms']:.1f}ms (expected <= 300ms)")
+
+    if left_right_rgbd_new:
+        if left_right_rgbd_new["fps"] < 10.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right RGBD Python FPS underperforming: Realized={left_right_rgbd_new['fps']:.1f} FPS (expected >= 10)")
+        if left_right_rgbd_new["mean_latency_ms"] > 250.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right RGBD Python Latency too high: Realized={left_right_rgbd_new['mean_latency_ms']:.1f}ms (expected <= 250ms)")
+
+    if left_right_rgbd_ros:
+        if left_right_rgbd_ros["fps"] < 10.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right RGBD ROS FPS underperforming: Realized={left_right_rgbd_ros['fps']:.1f} FPS (expected >= 10)")
+        if left_right_rgbd_ros["mean_latency_ms"] > 300.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right RGBD ROS Latency too high: Realized={left_right_rgbd_ros['mean_latency_ms']:.1f}ms (expected <= 300ms)")
+
+    if left_right_center_rgbd_new:
+        if left_right_center_rgbd_new["fps"] < 10.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right-Center RGBD Python FPS underperforming: Realized={left_right_center_rgbd_new['fps']:.1f} FPS (expected >= 10)")
+        if left_right_center_rgbd_new["mean_latency_ms"] > 250.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right-Center RGBD Python Latency too high: Realized={left_right_center_rgbd_new['mean_latency_ms']:.1f}ms (expected <= 250ms)")
+
+    if left_right_center_rgbd_ros:
+        if left_right_center_rgbd_ros["fps"] < 10.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right-Center RGBD ROS FPS underperforming: Realized={left_right_center_rgbd_ros['fps']:.1f} FPS (expected >= 10)")
+        if left_right_center_rgbd_ros["mean_latency_ms"] > 300.0:
+            has_failed = True
+            failure_messages.append(f"Left-Right-Center RGBD ROS Latency too high: Realized={left_right_center_rgbd_ros['mean_latency_ms']:.1f}ms (expected <= 300ms)")
+
     assert not has_failed, "Performance regression or stand-alone underperformance detected:\n" + "\n".join(failure_messages)
 
 
 if __name__ == "__main__":
-    main()
+    import os
+    try:
+        main()
+        print("\nBenchmark completed successfully! Exiting cleanly...")
+        os._exit(0)
+    except AssertionError as e:
+        print(f"\nBenchmark failed:\n{e}")
+        os._exit(1)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        os._exit(1)
