@@ -18,6 +18,8 @@ import sys
 import click
 import subprocess
 import threading
+import importlib
+import re
 
 from stretch4_body.utils.file_access_utils import acquire_lock_if_available, setup_shared_directory
 from stretch4_flying_gripper.teleop_config import get_base_planar_ik_urdf_file
@@ -113,7 +115,6 @@ class GamePadTeleop(Device):
                           'gripper':'end_of_arm' in self.robot.subsystems and self.gripper_name is not None }
 
 
-        self.set_joint_command()
         
         self.effort_trackers = {
             'lift': gc.JointEffortTracker('lift', pos_thresholds=[34.0, 45.0], neg_thresholds= [25.0, 35.0]),
@@ -137,6 +138,29 @@ class GamePadTeleop(Device):
 
         self.contact_sensitivity_profile.apply(self.robot)
 
+        # Dynamically load custom gamepad helper if available
+        self.custom_gamepad = None
+        self.custom_gamepad_command_position_class = None
+        is_custom_tool = RobotParams.is_user_defined_tool(self.end_of_arm_tool) if self.end_of_arm_tool is not None else False
+        if is_custom_tool:
+            tool_class_name = re.sub(r'[^a-zA-Z0-9]', ' ', self.end_of_arm_tool).title().replace(' ', '')
+
+            gamepad_class_name = f"{tool_class_name}GamepadTeleop"
+            command_position_class_name = f"Command{tool_class_name}Position"
+            
+            try:
+                mod = RobotParams.import_user_tool_module(self.end_of_arm_tool, "gamepad.py")
+                gamepad_class = getattr(mod, gamepad_class_name)
+                command_position_class = getattr(mod, command_position_class_name)
+                self.custom_gamepad = gamepad_class(self.robot)
+                self.custom_gamepad_command_position_class = command_position_class
+                print(f"Loaded custom {gamepad_class} and {command_position_class} classes")
+            except Exception as e:
+                raise RuntimeError(f"Could not dynamically load custom gamepad mapping for the custom tool: {e}")
+
+            
+        self.set_joint_command()
+
     def set_joint_command(self):
         self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
         self.lift_command = gamepad_joints.CommandLift(motion_profile=self.motion_profile.get_name() )
@@ -147,10 +171,14 @@ class GamePadTeleop(Device):
             self.wrist_pitch_command = gamepad_joints.CommandWristPitch(motion_profile=self.motion_profile.get_name() )
             self.wrist_roll_command = gamepad_joints.CommandWristRoll(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['gripper']:
-            if self.gripper_name == 'parallel_gripper':
+            if self.custom_gamepad_command_position_class is not None:
+                self.gripper = self.custom_gamepad_command_position_class(motion_profile=self.motion_profile.get_name() )
+            elif self.gripper_name == 'parallel_gripper':
                 self.gripper = gamepad_joints.CommandParallelGripperPosition(motion_profile=self.motion_profile.get_name() )
-            else:
+            elif self.gripper_name == 'stretch_gripper':
                 self.gripper = gamepad_joints.CommandStretchGripperPosition(motion_profile=self.motion_profile.get_name() )
+            else:
+                raise NotImplementedError(f"Gripper {self.gripper_name} is not supported.")
 
 
     def cycle_motion_profile(self):
@@ -288,6 +316,12 @@ class GamePadTeleop(Device):
                     self.use_arm_lift_mode = self.controller_state['right_trigger_pulled'] > TRIGGER_THRESHOLD
                     
                     actuated_joints = self.control_mapping.do_motion(robot, self)
+
+                    if self.custom_gamepad is not None:
+                        try:
+                            self.custom_gamepad.update_teleop(self.controller_state)
+                        except Exception as e:
+                            print(f"Warning: Error executing custom gamepad teleop: {e}")
 
                     if actuated_joints:
                         try:

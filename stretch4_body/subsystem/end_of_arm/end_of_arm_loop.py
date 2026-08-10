@@ -57,7 +57,7 @@ def end_of_arm_loop_worker(do_exit, rate_hz, q_admin, q_cmd, q_status):
     rp=RobotParams._robot_params
     module_name = rp[eoa_name]['py_module_name']
     class_name = rp[eoa_name]['py_class_name']
-    eoa = getattr(importlib.import_module(module_name), class_name)()
+    eoa = getattr(RobotParams.import_user_tool_module(eoa_name, module_name, is_server=True), class_name)()
     if eoa.startup():
         worker_loop(
             loop_name='end_of_arm_loop',

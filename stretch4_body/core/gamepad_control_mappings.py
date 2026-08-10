@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from stretch4_body.core.gamepad_enums import GripperHandedness
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.gamepad_enums import MotionProfile
+import math
 
 import coal # do not remove this unused import; it is needed by pinocchio
 import pinocchio as pin
@@ -146,7 +147,6 @@ class ControlMapping(Enum):
         - Right Trigger + Shoulder buttons for Roll
         - A and B buttons for open close gripper
         """
-        import math
         
         dxl_zero_vel_set_division_factor = 3
         actuated_joints = {}

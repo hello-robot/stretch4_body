@@ -2,6 +2,8 @@
 import importlib
 import threading
 import signal
+import os
+import sys
 import traceback
 from serial import SerialException
 import time
@@ -23,7 +25,10 @@ class Robot(RobotCore):
             self.eoa_name = self.params['tool']
             module_name = self.robot_params[self.eoa_name]['py_module_name']
             class_name = self.robot_params[self.eoa_name]['py_class_name']
-            self.subsystems['end_of_arm'] = getattr(importlib.import_module(module_name), class_name)()
+
+            from stretch4_body.core.robot_params import RobotParams
+            mod = RobotParams.import_user_tool_module(self.eoa_name, module_name, is_server=True)
+            self.subsystems['end_of_arm'] = getattr(mod, class_name)()
             self.end_of_arm = self.subsystems['end_of_arm']
             self.status['end_of_arm'] = self.subsystems['end_of_arm'].status
             self.status_aux['end_of_arm'] = self.subsystems['end_of_arm'].status_aux
@@ -285,6 +290,19 @@ class Robot(RobotCore):
             self.subsystems['lift'].step_sentry(self.status)
         if self.get_subsystem('end_of_arm') is not None:
             self.subsystems['end_of_arm'].step_sentry(self.status)
+
+    def set_guarded_contact_sensitivity(self, mode_name=None):
+        """
+        Set the guarded contact sensitivity.
+        """
+        if mode_name is None:
+            mode_name = 'default'
+        if mode_name not in self.params['guarded_contact']:
+            self.logger.error(f"set_guarded_contact_sensitivity: Invalid mode name: {mode_name}")
+            return
+        for s in self.subsystems:
+            if hasattr(self.subsystems[s], 'set_guarded_contact_sensitivity') and s in self.params['guarded_contact'][mode_name]:
+                self.subsystems[s].set_guarded_contact_sensitivity(self.params['guarded_contact'][mode_name][s])
 
 class EndOfArmStatusThread(threading.Thread):
     """

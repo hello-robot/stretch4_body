@@ -2,8 +2,9 @@ import stretch4_body.core.hello_utils as hello_utils
 import importlib
 import sys
 import os
-import click
-from datetime import datetime
+import copy
+import importlib
+import importlib.util
 
 #System parameters that are common across models. May be updated by the factory via Pip.
 nominal_system_params={
@@ -97,10 +98,59 @@ class RobotParams:
             sys.exit(1)
 
         #Now expand the params for each EOA
-        for d in _nominal_params[eoa_name]['devices']:
-            g=getattr(importlib.import_module(param_module_name),_nominal_params[eoa_name]['devices'][d]['device_params'])
-            _nominal_params[d]=g
-        #     _nominal_params[d]=_nominal_params[eoa_name]['devices'][d]['device_params']
+        if 'devices' in _nominal_params[eoa_name]:
+            devices_copy = copy.deepcopy(_nominal_params[eoa_name]['devices'])
+            for d in devices_copy:
+                if d == eoa_name:
+                    temp_device_params = {}
+                    device_params_name = devices_copy[d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g=getattr(importlib.import_module(param_module_name), device_params_name)
+                            temp_device_params=copy.deepcopy(g)
+                        except AttributeError:
+                            pass
+                    hello_utils.overwrite_dict(temp_device_params, devices_copy[d])
+                    for key in temp_device_params:
+                        if key not in ['py_class_name', 'py_module_name', 'client_class_name', 'client_module_name']:
+                            _nominal_params[eoa_name][key] = copy.deepcopy(temp_device_params[key])
+                else:
+                    device_params_name = devices_copy[d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g=getattr(importlib.import_module(param_module_name), device_params_name)
+                            _nominal_params[d]=copy.deepcopy(g)
+                        except AttributeError:
+                            _nominal_params[d] = {}
+                    else:
+                        _nominal_params[d] = {}
+                    hello_utils.overwrite_dict(_nominal_params[d], devices_copy[d])
+        
+        # Expand user-defined tool devices as well
+        if eoa_name in _user_params and 'devices' in _user_params[eoa_name]:
+            for d in _user_params[eoa_name]['devices']:
+                if d == eoa_name:
+                    temp_device_params = {}
+                    device_params_name = _user_params[eoa_name]['devices'][d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g = getattr(importlib.import_module(param_module_name), device_params_name)
+                            temp_device_params = copy.deepcopy(g)
+                        except AttributeError:
+                            pass
+                    hello_utils.overwrite_dict(temp_device_params, _user_params[eoa_name]['devices'][d])
+                    for key in temp_device_params:
+                        if key not in ['py_class_name', 'py_module_name', 'client_class_name', 'client_module_name']:
+                            _nominal_params[eoa_name][key] = copy.deepcopy(temp_device_params[key])
+                else:
+                    device_params_name = _user_params[eoa_name]['devices'][d].get('device_params')
+                    if device_params_name:
+                        try:
+                            g = getattr(importlib.import_module(param_module_name), device_params_name)
+                            _nominal_params[d] = copy.deepcopy(g)
+                            hello_utils.overwrite_dict(_nominal_params[d], _user_params[eoa_name]['devices'][d])
+                        except AttributeError:
+                            pass
         if 'ros' in _nominal_params[eoa_name]:
                 _nominal_params['ros']['joints'].extend(_nominal_params[eoa_name]['ros']['joints'])
 
@@ -151,4 +201,81 @@ class RobotParams:
         formatter_names = ["default_console_formatter", "brief_console_formatter", "default_file_formatter"]
         if formatter in formatter_names and handler in cls._robot_params['logging']['handlers']:
             cls._robot_params['logging']['handlers'][handler]['formatter'] = formatter
+    @classmethod
+    def import_user_tool_module(cls, eoa_name, module_name, is_server=True):
+        """
+        Dynamically imports a user tool module in a collision-safe manner.
+        Handles generic module names (e.g. 'client', 'tool', 'end_of_arm') without colliding.
+        """
+        _dirs = []
+        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+        if _fleet_path:
+            _shared_dir = os.path.join(_fleet_path, 'user_tools')
+            if os.path.exists(_shared_dir):
+                _dirs.append(_shared_dir)
+        else:
+            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+            if os.path.exists(_default_dir):
+                _dirs.append(_default_dir)
+
+        module_name_clean = module_name[:-3] if module_name.endswith('.py') else module_name
+
+        current_module = None
+        for _user_tools_dir in _dirs:
+            _candidate = os.path.join(_user_tools_dir, eoa_name)
+            if os.path.exists(_candidate):
+                if _candidate not in sys.path:
+                    sys.path.insert(0, _candidate)
+                _py_file = os.path.join(_candidate, f"{module_name_clean}.py")
+                if os.path.exists(_py_file):
+                    side = "server" if is_server else "client"
+                    unique_mod_name = f"user_tool_{side}_{eoa_name}_{module_name_clean}"
+                    spec = importlib.util.spec_from_file_location(unique_mod_name, _py_file)
+                    if spec and spec.loader:
+                        try:
+                            current_module = importlib.util.module_from_spec(spec)
+                            sys.modules[unique_mod_name] = current_module
+                            spec.loader.exec_module(current_module)
+                            break
+                        except Exception as e:
+                            print(f"Error loading custom tool module {module_name_clean} directly: {e}")
+                            current_module = None
+        if current_module is None:
+            try:
+                current_module = importlib.import_module(module_name_clean)
+            except Exception:
+                current_module = None
+        return current_module
+
+    @classmethod
+    def is_user_defined_tool(cls, tool_name):
+        """
+        Dynamically check if a tool's folder exists under user_tools directories.
+        """
+        return cls.get_user_defined_tool_path(tool_name) is not None
+
+    @classmethod
+    def get_user_defined_tool_path(cls, tool_name):
+        """
+        Get the absolute path to a custom tool folder if it exists.
+        """
+        if not tool_name:
+            return None
+        _dirs = []
+        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
+        if _fleet_path:
+            _shared_dir = os.path.join(_fleet_path, 'user_tools')
+            if os.path.exists(_shared_dir):
+                _dirs.append(_shared_dir)
+        else:
+            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
+            if os.path.exists(_default_dir):
+                _dirs.append(_default_dir)
+        
+        for _user_tools_dir in _dirs:
+            p = os.path.join(_user_tools_dir, tool_name)
+            if os.path.exists(p):
+                return p
+        return None
+
 

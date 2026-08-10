@@ -7,6 +7,7 @@ from stretch4_body.core.device import Device
 from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
 from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.core.mujoco_urdf import get_custom_tool_joints
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_pos_mm_to_urdf_m
 
 # ###########################################################################################
@@ -170,14 +171,24 @@ class SelfCollisionLoop(Device):
                 dwr = kbd['wrist_roll'] * wrist_roll.get('braking_distance', 0.0)
                 configuration['wrist_roll_joint'] = wrist_roll.get('pos', 0.0) + dwr
 
-            if robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_sg4':
+            custom_joints = {}
+            tool_name = robot_params.get('robot', {}).get('tool')
+            
+            # Identify custom tools: dynamically check if the tool's folder exists under user_tools
+            if tool_name and RobotParams.is_user_defined_tool(tool_name):
+                custom_joints = get_custom_tool_joints(tool_name, s)
+
+            if custom_joints:
+                for jk, jv in custom_joints.items():
+                    configuration[jk] = jv
+            elif 'stretch_gripper' in s['end_of_arm']:
                 stretch_gripper = s['end_of_arm'].get('stretch_gripper', None)
                 if stretch_gripper is not None:
                     gripper_conversion = stretch_gripper.get('gripper_conversion', None)
                     if gripper_conversion is not None:
                         configuration['gripper_finger_left_joint'] = gripper_conversion.get('finger_rad')
                         configuration['gripper_finger_right_joint'] = gripper_conversion.get('finger_rad')
-            elif robot_params['robot']['tool'] == 'eoa_wrist_dw4_tool_pg4':
+            elif 'parallel_gripper' in s['end_of_arm']:
                 parallel_gripper = s['end_of_arm'].get('parallel_gripper', None)
                 if parallel_gripper is not None:
                     pos_mm = parallel_gripper.get('pos_mm', 0.0)

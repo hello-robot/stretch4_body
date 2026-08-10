@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import importlib
+import logging
+import re
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import mujoco
 import mujoco.viewer
@@ -10,6 +13,69 @@ from stretch4_urdf import get_urdf
 from stretch4_body.core.device import Device
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import *
 from stretch4_body.core.robot_params import RobotParams
+
+_custom_collision_mappers = {}
+_custom_collision_mapper_retry_at = {}
+CUSTOM_COLLISION_MAPPER_RETRY_S = 5.0
+_logger = logging.getLogger('collision_mapper')
+
+def get_custom_collision_mapper(tool_name):
+    """Return the cached collision mapper for a user tool, constructing it on
+    first use. Construction is retried at most every
+    CUSTOM_COLLISION_MAPPER_RETRY_S, so a failing mapper neither reloads on
+    every sentry cycle nor stays disabled once the user repairs it."""
+    mapper = _custom_collision_mappers.get(tool_name)
+    if mapper is not None:
+        return mapper
+    if time.time() < _custom_collision_mapper_retry_at.get(tool_name, 0.0):
+        return None
+
+    try:
+        sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+        if sanitized_tool_name and sanitized_tool_name[0].isdigit():
+            sanitized_tool_name = "_" + sanitized_tool_name
+
+        clean_class_base = re.sub(r'[^a-zA-Z0-9]', ' ', tool_name)
+        if clean_class_base and clean_class_base[0].isdigit():
+            clean_class_base = "Tool " + clean_class_base
+        server_class_name = clean_class_base.title().replace(' ', '')
+
+        module_name = f"{sanitized_tool_name}_collision"
+        class_name = f"{server_class_name}Collision"
+
+        mod = RobotParams.import_user_tool_module(tool_name, "collision.py")
+        if not mod:
+            mod = importlib.import_module(module_name)
+        mapper = getattr(mod, class_name)()
+    except Exception as e:
+        _custom_collision_mapper_retry_at[tool_name] = time.time() + CUSTOM_COLLISION_MAPPER_RETRY_S
+        _logger.warning("Collision mapper for user tool '%s' failed to load, so its joints are held at their "
+                        "default positions for collision checking. Retrying in %.0fs. %s",
+                        tool_name, CUSTOM_COLLISION_MAPPER_RETRY_S, e)
+        return None
+
+    _custom_collision_mappers[tool_name] = mapper
+    _custom_collision_mapper_retry_at.pop(tool_name, None)
+    return mapper
+
+
+def get_custom_tool_joints(tool_name, state):
+    """Map robot status to a user tool's joint positions, returning {} when no
+    mapper is available. A mapper that raises while mapping is evicted and
+    retried on the same backoff as one that fails to construct, so a repaired
+    collision.py recovers either way."""
+    mapper = get_custom_collision_mapper(tool_name)
+    if mapper is None:
+        return {}
+    try:
+        return mapper.get_mujoco_joints(state) or {}
+    except Exception as e:
+        _custom_collision_mappers.pop(tool_name, None)
+        _custom_collision_mapper_retry_at[tool_name] = time.time() + CUSTOM_COLLISION_MAPPER_RETRY_S
+        _logger.warning("Collision mapper for user tool '%s' raised while mapping, so its joints are held at "
+                        "their default positions for collision checking. Retrying in %.0fs. %s",
+                        tool_name, CUSTOM_COLLISION_MAPPER_RETRY_S, e)
+        return {}
 
 @dataclass
 class MujocoJointStates:
@@ -31,9 +97,15 @@ class MujocoJointStates:
     finger_left_joint: float = 0.0
     finger_right_joint: float = 0.0
 
+    # User-tool joints the fixed fields don't cover; consumers skip names
+    # absent from the loaded model
+    custom_joints: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, float]:
-        return asdict(self)
+        d = asdict(self)
+        d.pop('custom_joints', None)
+        d.update(self.custom_joints)
+        return d
 
     def __repr__(self) -> str:
         fields = []
@@ -47,7 +119,8 @@ class MujocoJointStates:
     @staticmethod
     def from_urdf_joint_state(state: dict, robot_params=None):
         """
-        Take in urdf joint state and convert to mujoco joint state convention
+        Take in urdf joint state and convert to mujoco joint state convention.
+        robot_params is accepted for backwards compatibility and unused.
         eg state =
         {'lift_joint': 0.11316090153133451, 'arm_l1_joint': 0.0014814796174020114,
         'arm_l2_joint': 0.0014814796174020114, 'arm_l3_joint': 0.0014814796174020114,
@@ -55,23 +128,18 @@ class MujocoJointStates:
         'wrist_pitch_joint': 0.12425244381873693, 'wrist_roll_joint': 0.07363107781851078}
 
         """
-        if robot_params is None:
-            _, robot_params = RobotParams.get_params()
+        # A user tool's joints are mapped from raw robot status by
+        # get_urdf_joint_configuration and arrive here already in urdf
+        # convention, so no mapper runs on this side
+        jgfl = state.get("gripper_finger_left_joint")
+        jgfr = state.get("gripper_finger_right_joint")
+        jfl = state.get("finger_left_joint")
+        jfr = state.get("finger_right_joint")
 
-        jgfl = 0.0
-        jgfr = 0.0
-        jfl = 0.0
-        jfr = 0.0
-        if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
-            jgfl = state.get("gripper_finger_left_joint")
-            jgfr = state.get("gripper_finger_right_joint")
-            if jgfl is None: jgfl = 0.0
-            if jgfr is None: jgfr = 0.0
-        elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
-            jfl = state.get("finger_left_joint")
-            jfr = state.get("finger_right_joint")
-            if jfl is None: jfl = 0.0
-            if jfr is None: jfr = 0.0
+        if jgfl is None: jgfl = 0.0
+        if jgfr is None: jgfr = 0.0
+        if jfl is None: jfl = 0.0
+        if jfr is None: jfr = 0.0
 
         mujoco_state = MujocoJointStates(
             lift_joint=state.get("lift_joint", 0.0),
@@ -88,6 +156,11 @@ class MujocoJointStates:
             finger_left_joint=jfl,
             finger_right_joint=jfr,
         )
+
+        known_fields = MujocoJointStates.__dataclass_fields__.keys()
+        for k, v in state.items():
+            if k not in known_fields and isinstance(v, (int, float)):
+                mujoco_state.custom_joints[k] = v
         return mujoco_state
 
 

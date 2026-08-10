@@ -43,7 +43,17 @@ def write_fleet_yaml(fn, rp, fleet_dir=None, header=None):
 @click.command()
 @click.option('--quick', '-q', is_flag=True, help='Skip interactive steps.')
 @click.option('--auto-detect', is_flag=True, help='Automatically detect tool and set it.')
-def main(quick, auto_detect):
+@click.option('--add-user-tool', '--add_user_tool', is_flag=True, help='Add/process a new custom user tool.')
+def main(quick, auto_detect, add_user_tool):
+    if add_user_tool:
+        print("Invoking stretch_add_user_tool...")
+        try:
+            subprocess.run(['stretch_add_user_tool'], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"Error running stretch_add_user_tool: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
     import stretch4_body.core.hello_utils as hu
     hu.print_stretch_re_use()
     
@@ -67,7 +77,13 @@ def main(quick, auto_detect):
         print('Please verify if Stretch configuration YAML files are present before continuing.')
         sys.exit(1)
 
-    _user_params = read_fleet_yaml(user_params_fn, fleet_dir)
+    from stretch4_body.core.robot_params import RobotParams
+
+    if not RobotParams.are_params_valid():
+        print('Please verify if Stretch configuration YAML files are present before continuing.')
+        sys.exit(1)
+
+    _user_params, _robot_params = RobotParams.get_params()
     _config_params = read_fleet_yaml(config_params_fn, fleet_dir)
 
     # Get the name of the robot model
@@ -76,24 +92,23 @@ def main(quick, auto_detect):
     elif 'robot' in _config_params and 'model_name' in _config_params['robot']:
         model_name = _config_params['robot']['model_name']
     else:
-        print("ERROR: Could not find 'robot.model_name' in stretch_configuration_params.yaml or stretch_user_params.yaml")
-        sys.exit(1)
+        model_name = _robot_params.get('robot', {}).get('model_name', 'unknown')
 
     print(f"Detected Robot Model: {model_name}")
     param_module_name = 'stretch4_body.robot.robot_params_' + model_name
     try:
         module = importlib.import_module(param_module_name)
-        _nominal_params = getattr(module, 'nominal_params')
     except Exception as e:
         print(f"ERROR: Could not load parameters for model {model_name} from {param_module_name}")
         print(e)
         sys.exit(1)
 
-    supported_eoa = _nominal_params.get('supported_eoa', [])
-    supported_eoa_metadata = _nominal_params.get('supported_eoa_metadata', {})
+    supported_eoa = _robot_params.get('supported_eoa', [])
+    supported_eoa_metadata = _robot_params.get('supported_eoa_metadata', {})
 
     direct = False
     detected_tool = None
+    direct = False
     if not quick:
         try:
             from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
@@ -131,7 +146,7 @@ def main(quick, auto_detect):
 
             # Auto-detect tool ID
             print('Scanning for tool on Feetech bus...')
-            eoa_usb = _nominal_params.get('end_of_arm', {}).get('usb_name', '/dev/hello-feetech-wrist')
+            eoa_usb = _robot_params.get('end_of_arm', {}).get('usb_name', '/dev/hello-feetech-wrist')
             
             # Suppress the spammy output from list_servos
             with contextlib.redirect_stdout(None):
@@ -139,19 +154,25 @@ def main(quick, auto_detect):
             
             servo_ids = set([s['id'] for s in servos])
             
-            # Dynamically determine tool IDs from nominal params
+            # Dynamically determine tool IDs from robot params
             module = importlib.import_module(param_module_name)
+            import copy
             tool_to_ids = {}
             for tool_name in supported_eoa:
-                tool_config = _nominal_params.get(tool_name)
+                tool_config = _robot_params.get(tool_name)
                 if tool_config and 'devices' in tool_config:
                     tool_ids = []
                     for dev_name, dev_info in tool_config['devices'].items():
+                        dev_params = {}
                         dev_params_name = dev_info.get('device_params')
                         if dev_params_name:
                             dev_params = getattr(module, dev_params_name, {})
-                            if 'id' in dev_params:
-                                tool_ids.append(dev_params['id'])
+                        
+                        resolved_dev_params = copy.deepcopy(dev_params)
+                        resolved_dev_params.update(dev_info)
+                        
+                        if 'id' in resolved_dev_params:
+                            tool_ids.append(resolved_dev_params['id'])
                     tool_to_ids[tool_name] = set(tool_ids)
             
             # Find the best matching tool (the one with all IDs present and most IDs)
@@ -187,8 +208,8 @@ def main(quick, auto_detect):
             current_tool = _user_params['robot']['tool']
         elif 'robot' in _config_params and 'tool' in _config_params['robot']:
             current_tool = _config_params['robot']['tool']
-        elif 'tool' in _nominal_params.get('robot', {}):
-            current_tool = _nominal_params['robot']['tool']
+        elif 'tool' in _robot_params.get('robot', {}):
+            current_tool = _robot_params['robot']['tool']
 
         print(f"Current End-Of-Arm Tool: {current_tool}")
         print("\nAvailable Tools:")
@@ -244,9 +265,35 @@ def main(quick, auto_detect):
         p_restart = None
         if not direct:
             print('Restarting stretch_body_server...')
+            subprocess.run(['stretch_body_server', '--kill'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(2.0)
             p_restart = subprocess.Popen(['stretch_body_server', '--restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             print('Waiting for stretch_body_server to come back online...')
+
+        # Reload RobotParams in-place to ensure the new tool settings are loaded from disk
+        import stretch4_body.core.robot_params
+        
+        # Save old class reference
+        old_robot_params_class = stretch4_body.core.robot_params.RobotParams
+        
+        # Reload the module to parse new yaml
+        importlib.reload(stretch4_body.core.robot_params)
+        
+        # Get the new reloaded class and its loaded params
+        new_robot_params_class = stretch4_body.core.robot_params.RobotParams
+        new_user, new_robot = new_robot_params_class.get_params()
+        
+        # Update the old class's dictionaries in-place so all existing references get the new params!
+        old_user, old_robot = old_robot_params_class.get_params()
+        old_user.clear()
+        old_user.update(new_user)
+        old_robot.clear()
+        old_robot.update(new_robot)
+        
+        # Also restore the module reference to the old class to be safe
+        stretch4_body.core.robot_params.RobotParams = old_robot_params_class
+
         if direct:
             from stretch4_body.robot.robot import Robot as RobotClient
         else:

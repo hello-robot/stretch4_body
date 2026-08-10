@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import os
+import sys
 import time
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
@@ -55,9 +57,31 @@ class RobotClient(SubsystemClient):
                 self.base = self.omnibase  # legacy naming
             if k == 'end_of_arm':
                 self.eoa_name = self.params['tool']
-                module_name = 'stretch4_body.robot.robot_client'
-                class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
-                self.end_of_arm:EndOfArmClient = getattr(importlib.import_module(module_name), class_name)(parent=self)
+                eoa_params = self.robot_params.get(self.eoa_name, {})
+                if 'client_module_name' in eoa_params and 'client_class_name' in eoa_params:
+                    module_name = eoa_params['client_module_name']
+                    class_name = eoa_params['client_class_name']
+                    
+                    from stretch4_body.core.robot_params import RobotParams
+                    current_module = RobotParams.import_user_tool_module(self.eoa_name, module_name, is_server=False)
+                else:
+                    module_name = 'stretch4_body.robot.robot_client'
+                    class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
+                    
+                    # Check if the class is defined in the module
+                    current_module = importlib.import_module(module_name)
+                    if not hasattr(current_module, class_name):
+                        # Dynamically define a subclass of EndOfArmClient with name class_name
+                        # and register it into the module
+                        from stretch4_body.robot.robot_client import EndOfArmClient
+                        
+                        def dynamic_init(self_obj, parent=None):
+                            EndOfArmClient.__init__(self_obj, name=self.eoa_name, parent=parent)
+                            
+                        dynamic_class = type(class_name, (EndOfArmClient,), {"__init__": dynamic_init})
+                        setattr(current_module, class_name, dynamic_class)
+
+                self.end_of_arm:EndOfArmClient = getattr(current_module, class_name)(parent=self)
                 self.subsystems[k] = self.end_of_arm
 
         for k in self.params['server']['subsystems']:
@@ -895,7 +919,7 @@ class WristJointClient(SubsystemClient):
     def status(self) -> FeetechSMHelloStatus:
         if self.parent is not None:
             return self.parent.status.get(self.name, {})
-        return self.status
+        return self._status
     
     @status.setter
     def status(self, value):
@@ -1128,7 +1152,15 @@ class EndOfArmClient(SubsystemClient):
                 py_class_name = "StretchGripper"
             class_name = py_class_name+'Client'
             module_name = 'stretch4_body.robot.robot_client'
-            setattr(self, joint, getattr(importlib.import_module(module_name), class_name)(self))
+            
+            current_module = importlib.import_module(module_name)
+            if not hasattr(current_module, class_name):
+                from stretch4_body.robot.robot_client import WristJointClient
+                def dynamic_init(self_obj, parent=None, joint_name=joint):
+                    WristJointClient.__init__(self_obj, joint_name=joint_name, parent=parent)
+                dynamic_class = type(class_name, (WristJointClient,), {"__init__": dynamic_init})
+                setattr(current_module, class_name, dynamic_class)
+            setattr(self, joint, getattr(current_module, class_name)(self))
 
     def do_ping(self, joint):
         """
