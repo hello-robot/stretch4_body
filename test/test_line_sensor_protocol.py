@@ -251,6 +251,48 @@ class TestReaderDecode:
         assert pjr.last_frame_id == 2
 
 
+class TestFrameAccounting:
+    """The error counters must count faults only. A counter that ticks on
+    healthy startup trains operators to ignore it."""
+
+    ALL = ['distances10', 'distances11', 'distances20',
+           'distances21', 'distances30', 'distances31']
+
+    def _frame(self, pjr, frame_id, keys):
+        for key in keys:
+            pjr.process_json_line(payload(frame_id, key, [200, 200, 200, 200]))
+
+    def test_joining_a_report_mid_frame_is_not_an_error(self):
+        # The reader always starts reading part-way into a frame, so its first
+        # flush is short by construction. Counting it made system check report
+        # one incomplete frame after every healthy startup.
+        pjr = make_reader()
+        self._frame(pjr, 1, ['distances20', 'distances30', 'distances31'])
+        self._frame(pjr, 2, self.ALL)
+        assert pjr.status['frame_not_full_err'] == 0
+        assert pjr.status['not_six_sensors_err'] == 0
+
+    def test_a_genuine_partial_frame_is_still_counted(self):
+        pjr = make_reader()
+        self._frame(pjr, 1, self.ALL)                          # spends the allowance
+        self._frame(pjr, 2, [k for k in self.ALL if k != 'distances31'])
+        self._frame(pjr, 3, self.ALL)                          # flushes frame 2
+        assert pjr.status['frame_not_full_err'] == 1
+        assert pjr.status['not_six_sensors_err'] == 1
+
+    def test_the_allowance_returns_after_a_resync(self):
+        # A reopen or a streaming resume drops us mid-report again, so the
+        # same one-off partial frame is expected there too.
+        pjr = make_reader()
+        self._frame(pjr, 1, self.ALL)
+        pjr.set_streaming(False)
+        pjr.set_streaming(True)
+        self._frame(pjr, 2, ['distances20', 'distances30'])
+        self._frame(pjr, 3, self.ALL)
+        assert pjr.status['frame_not_full_err'] == 0
+        assert pjr.status['not_six_sensors_err'] == 0
+
+
 class _FakeSerial:
     """Feeds a canned byte stream through the real step() framing code."""
 

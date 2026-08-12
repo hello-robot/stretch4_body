@@ -100,6 +100,7 @@ class PixartJ3Reader():
         self.oob_line = ""
         self.line_count = 0
         self._warned_report_len = False
+        self._resyncing = True
 
         # Runtime control. Both default ON at construction and are never
         # persisted
@@ -165,12 +166,17 @@ class PixartJ3Reader():
         Needed after a reopen and after a streaming pause, both of which leave
         us mid-report. The existing line_count checks already tolerate a
         stream that begins in the middle.
+
+        _resyncing marks the frame we join part-way through. Its missing
+        sensors are an artifact of when we started reading, not a fault, so
+        the first partial frame after this is flushed without counting.
         """
         self.json_line = ""
         self.oob_line = ""
         self.line_count = 0
         self.sensors_seen = {}
         self.last_frame_id = None
+        self._resyncing = True
 
     def _close_port(self):
         """Close without ever raising. The port is opened exclusive=True, so a
@@ -465,8 +471,12 @@ class PixartJ3Reader():
                 self.verbose_print(f"** FrameId did not advance by 1: {self.last_frame_id} -> {frame_id}")
                 self.status['frame_advance_err'] += 1
             if self.sensors_seen:
-                self.status['frame_not_full_err'] += 1
-                self.process_frame(now)  # Flush the previous, partial frame
+                # Flush the previous, partial frame. 
+                if self._resyncing:
+                    self.process_frame(now, expected_partial=True)
+                else:
+                    self.status['frame_not_full_err'] += 1
+                    self.process_frame(now)
             self.last_frame_id = frame_id
 
         self.sensors_seen[sensor_index] = self.sensors_seen.get(sensor_index, 0) + 1
@@ -486,14 +496,16 @@ class PixartJ3Reader():
         if len(self.sensors_seen) == 6 - len(self.disabled):
             self.process_frame(now)
 
-    def process_frame(self, now=None):
+    def process_frame(self, now=None, expected_partial=False):
         if not self.sensors_seen:
             return
         if now is None:
             now = time.time()
+        # Any frame boundary means we are now tracking whole frames.
+        self._resyncing = False
         # A disabled sensor is expected to be absent, so it must not count
         # against the frame or it would raise this error on every frame.
-        if len(self.sensors_seen) != 6 - len(self.disabled):
+        if not expected_partial and len(self.sensors_seen) != 6 - len(self.disabled):
             self.status['not_six_sensors_err'] += 1
         # Per-sensor liveness: a sensor that stops reporting keeps its last
         # ranges in status forever, so without this a dead sensor is

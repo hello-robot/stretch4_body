@@ -463,8 +463,8 @@ def check_line_sensors():
     # history from an earlier fault, so report rather than fail on it.
     incomplete = health.get('frame_not_full_err', 0)
     if incomplete:
-        print_warn(f'{incomplete} incomplete frames recorded since startup '
-                   f'(a sensor missing from frames, or an earlier dropout)')
+        print_warn(f'{incomplete} incomplete frames since startup — a sensor '
+                   f'dropped out of frames')
 
     restarts = health.get('reader_restarts', 0)
     if restarts:

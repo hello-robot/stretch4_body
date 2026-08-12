@@ -32,6 +32,8 @@ class FakeSerial:
         self.raise_on_read = None
         self.closed_count = 0
         self.total_read = 0
+        self.written = b''
+        self.flush_count = 0
 
     @property
     def in_waiting(self):
@@ -47,6 +49,15 @@ class FakeSerial:
 
     def feed(self, data):
         self._buf += data
+
+    def write(self, data):
+        # startup() sends the '?' firmware query here.
+        self.written += data
+        return len(data)
+
+    def reset_input_buffer(self):
+        self._buf = b''
+        self.flush_count += 1
 
     def close(self):
         self.is_open = False
@@ -260,9 +271,10 @@ def test_reader_reopens_itself_and_counts_the_restart(monkeypatch):
     assert r.is_valid is False
 
     opened = []
+    fresh = FakeSerial()
     def fake_open(**kw):
         opened.append(kw)
-        return FakeSerial([frame(9)])
+        return fresh
     monkeypatch.setattr(_serial, 'Serial', fake_open)
 
     r._reopen_at = 0.0                     # pretend the backoff elapsed
@@ -271,6 +283,12 @@ def test_reader_reopens_itself_and_counts_the_restart(monkeypatch):
     assert r.status['reader_restarts'] == 1
     assert opened and opened[0]['exclusive'] is True
 
+    # Feed only now: opening flushes the port, and so does the first read
+    # after it, so anything queued before that is deliberately discarded
+    # rather than parsed mid-report.
+    r.step()
+    assert fresh.flush_count == 2
+    fresh.feed(frame(9))
     r.step()                               # and data flows again
     assert r.status['sensor_0']['frame_id'] == 9
 
