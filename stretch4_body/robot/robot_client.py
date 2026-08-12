@@ -173,11 +173,10 @@ class RobotClient(SubsystemClient):
         bool
             True if any joint is moving
         """
-        ready = True
         for s in self.subsystems.values():
-            if hasattr(s,'is_moving'):
-                ready = ready and s.is_moving()
-        return ready
+            if hasattr(s,'is_moving') and s.is_moving():
+                return True
+        return False
 
     def wait_on_motion_start(self,subsystem_names,timeout=0.5):
         """
