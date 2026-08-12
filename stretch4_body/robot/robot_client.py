@@ -190,12 +190,11 @@ class RobotClient(SubsystemClient):
             Timeout in seconds, by default 0.5.
         """
         def start_moving():
-            start = True
             for n in subsystem_names:
                 if n in self.subsystems and hasattr(self.subsystems[n],'is_moving'):
-                    if not self.subsystems[n].is_moving():
-                        start = False
-            return  start
+                    if self.subsystems[n].is_moving():
+                        return True
+            return False
         self._wait_on_status(start_moving, timeout, do_pull=True)
 
     def wait_on_motion_finish(self,subsystem_names,timeout=15.0,wait_on_motion_start:bool=True):
@@ -214,15 +213,14 @@ class RobotClient(SubsystemClient):
         if wait_on_motion_start:
             self.wait_on_motion_start(subsystem_names)
         def done_moving():
-            done = True
             for n in subsystem_names:
                  if n not in self.subsystems:
                      raise ValueError(f"{n} is not a subsystem in {self.subsystems.keys()}")
                  if hasattr(self.subsystems[n],'is_moving'):
                     # print(f"{n=} {self.subsystems[n].is_moving()=}")
                     if self.subsystems[n].is_moving():
-                        done = False
-            return done
+                        return False
+            return True
         self._wait_on_status(done_moving, timeout, do_pull=True)
 
     def set_guarded_contact_sensitivity(self, mode_name=None):
