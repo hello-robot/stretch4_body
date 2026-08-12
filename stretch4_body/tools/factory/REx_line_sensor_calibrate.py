@@ -13,7 +13,11 @@ bin that mostly returns them is rejected rather than averaged in.
     REx_line_sensor_calibrate --all
     REx_line_sensor_calibrate -s sensor_1 -s sensor_5 --print-per-bin
     REx_line_sensor_calibrate --all --dry-run
+    REx_line_sensor_calibrate --all --inspect
     REx_line_sensor_calibrate --recompute <session_id|path>   # no robot needed
+
+A full run also starts with the same quick inspection and refuses to record
+the long session on a floor that cannot pass (--no-preflight skips this).
 
 Calibrate on a clean, flat, light-coloured floor with nothing within ~0.5 m of
 the base. Dark or glossy surfaces make the sensors no-return, and a run built
@@ -30,10 +34,13 @@ import sys
 
 import numpy as np
 
-from stretch4_body.subsystem.line_sensor import calibration, calibration_store
+from stretch4_body.subsystem.line_sensor import calibration, calibration_store, protocol
 from stretch4_body.subsystem.line_sensor.calibration import CalibrationThresholds
 
 _D = CalibrationThresholds()
+
+# The quick floor inspection records this many frames (~2 s at 30 Hz) --
+INSPECT_FRAMES = 60
 
 
 def _parse_args():
@@ -53,6 +60,12 @@ def _parse_args():
                         'promote the result; needs no robot')
     p.add_argument('--dry-run', action='store_true',
                    help='record and report, but never save a tare')
+    p.add_argument('--inspect', action='store_true',
+                   help='quick (~2s) check of whether this floor can support a '
+                        'calibration at all.')
+    p.add_argument('--no-preflight', action='store_true',
+                   help='skip the automatic floor inspection that normally runs '
+                        'before the long recording')
     p.add_argument('--print-per-bin', action='store_true',
                    help='print per-bin counts for every bin')
     p.add_argument('--min-range-m', type=float, default=_D.min_range_m)
@@ -124,6 +137,69 @@ def _print_report(name, rec, result, print_per_bin):
                   f"5.09={pb['beyond_limit_counts'][b]:4d} "
                   f"out={pb['out_of_window_counts'][b]:4d} "
                   f"{'ACCEPTED' if result.valid_mask[b] else 'REJECTED'}")
+
+
+def _inspect_floor(calib, targets, thresholds, n_frames=INSPECT_FRAMES):
+    """Fast check to see if the floor is suitable to run calibration on.
+    Returns (all_ok, {name: (ok, verdict_line)}).
+    """
+    session = calib.record_session(n_frames=n_frames, sensors=targets,
+                                   timeout_s=max(15.0, n_frames / 10.0))
+    verdicts = {}
+    for name in targets:
+        rec = session.recordings.get(name)
+        if rec is None or rec.n_frames == 0:
+            verdicts[name] = (False, 'no frames received -- sensor dead?')
+            continue
+        codes = np.asarray(rec.codes)
+        ranges = np.asarray(rec.ranges, dtype=float)
+        total = float(codes.size)
+        no_ret = np.count_nonzero(codes == protocol.CODE_NO_RETURN) / total
+        beyond = np.count_nonzero(codes == protocol.CODE_BEYOND_LIMIT) / total
+        valid = codes == protocol.CODE_VALID
+        floor = valid & (ranges >= thresholds.min_range_m) \
+                      & (ranges <= thresholds.max_range_m)
+        out_win = np.count_nonzero(valid) / total - np.count_nonzero(floor) / total
+        
+        bin_ok = np.mean(floor, axis=0) >= thresholds.min_valid_fraction
+        bins_frac = float(np.mean(bin_ok))
+        stats = (f'floor {100 * np.count_nonzero(floor) / total:5.1f}%  '
+                 f'5.11 {100 * no_ret:5.1f}%  5.09 {100 * beyond:5.1f}%  '
+                 f'off-window {100 * out_win:5.1f}%  '
+                 f'bins-would-pass {100 * bins_frac:5.1f}%')
+        if bins_frac >= thresholds.min_accepted_bin_fraction:
+            note = ('  (note: some no-return; a darker patch?)'
+                    if no_ret > 0.02 else '')
+            verdicts[name] = (True, f'OK    {stats}{note}')
+        elif no_ret >= 0.5:
+            verdicts[name] = (False, f'DARK FLOOR  {stats} -- the surface '
+                                     f'absorbs the beam (5.11 no-return); '
+                                     f'calibrate on a lighter floor')
+        elif beyond >= 0.10:
+            verdicts[name] = (False, f'NO FLOOR    {stats} -- 5.09 beyond-limit: '
+                                     f'the beam passes where the floor should '
+                                     f'be (edge/cliff/very glossy)')
+        elif out_win >= 0.10:
+            verdicts[name] = (False, f'OBSTRUCTED  {stats} -- returns exist but '
+                                     f'not at floor range; clear ~0.5 m around '
+                                     f'the base')
+        else:
+            verdicts[name] = (False, f'PATCHY      {stats} -- too many bins '
+                                     f'below the {thresholds.min_valid_fraction:.0%} '
+                                     f'valid-frame gate')
+    return all(ok for ok, _ in verdicts.values()), verdicts
+
+
+def _print_inspection(verdicts):
+    print('\nfloor inspection:')
+    for name, (ok, line) in verdicts.items():
+        print(f"  {name}: {line}")
+    if all(ok for ok, _ in verdicts.values()):
+        print('  => floor looks usable for calibration')
+    else:
+        print('  => this floor CANNOT produce a full tare; fix the setup '
+              '(clean, flat, light-coloured floor,\n     nothing within ~0.5 m '
+              'of the base) and re-run')
 
 
 def _score_session(session, ideal, thresholds, base_dir, out_dir, args, targets):
@@ -246,19 +322,17 @@ def main():
         print('choose --all or one or more -s <sensor>', file=sys.stderr)
         return 2
 
-    from stretch4_body.robot.robot_client import RobotClient
+    from stretch4_body.subsystem.line_sensor import connect
     from stretch4_body.subsystem.line_sensor.line_sensor_utils import LineSensorCalibration
 
-    robot = RobotClient(client_id='line_sensor_calibrate')
-    if not robot.startup():
-        print('RobotClient startup failed: is the body server running?', file=sys.stderr)
-        return 1
     try:
-        if not hasattr(robot, 'line_sensor_loop'):
-            print('line_sensor_loop is not enabled on the robot server; add it to '
-                  'the subsystems list in stretch_user_params.yaml', file=sys.stderr)
-            return 1
-        calib = LineSensorCalibration(robot.line_sensor_loop)
+        conn = connect.open_line_sensors('line_sensor_calibrate')
+    except connect.LineSensorUnavailable as exc:
+        print(exc.detail, file=sys.stderr)
+        return 1
+    print(conn.describe())
+    try:
+        calib = LineSensorCalibration(conn.loop)
         targets = list(calib.sensor_names) if args.all else args.sensor_name
         unknown = [s for s in targets if s not in calib.sensor_names]
         if unknown:
@@ -270,6 +344,18 @@ def main():
         print('\nPlace the robot on a clean, flat, light-coloured floor with')
         print('nothing within ~0.5 m of the base.')
         print(f'ideal flat-floor range {ideal:.6f} m ({calibration.IDEAL_RANGE_MODEL})')
+
+        if args.inspect or not args.no_preflight:
+            print(f'inspecting the floor ({INSPECT_FRAMES} frames)...')
+            all_ok, verdicts = _inspect_floor(calib, targets, thresholds)
+            _print_inspection(verdicts)
+            if args.inspect:
+                return 0 if all_ok else 1
+            if not all_ok:
+                print('\naborting before the long recording (--no-preflight '
+                      'records anyway)')
+                return 1
+
         print(f'recording {args.frames} distinct frames for: {", ".join(targets)}')
 
         session = calib.record_session(n_frames=args.frames, sensors=targets,
@@ -288,7 +374,7 @@ def main():
         print('\ninterrupted; no tare saved')
         return 130
     finally:
-        robot.stop()
+        conn.close()
 
 
 if __name__ == '__main__':

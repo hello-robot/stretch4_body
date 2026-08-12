@@ -54,7 +54,7 @@ MM_CODE_BAND_MIN = MM_BEYOND_LIMIT
 # Per-bin classification, one uint8 per bin in the status 'codes' array.
 CODE_VALID = 0          # a real distance measurement
 CODE_BEYOND_LIMIT = 1   # 5.09: return from past the range limit (floor gone)
-CODE_NO_RETURN = 2      # 5.11: no reflection (dark floor / lighting / cliff)
+CODE_NO_RETURN = 2      # 5.11: no reflection (dark floor / sun light / deep cliff)
 CODE_OTHER_INVALID = 3  # zero, negative, non-finite, or an unknown code
 
 CODE_NAMES = {

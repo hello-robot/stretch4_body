@@ -99,6 +99,8 @@ class LineSensorLoop(Device):
             'calibration': {'loaded': [], 'rejected': {}, 'id': '',
                             'n_bins': self.n_bins}}
         self.status_aux = {}
+ 
+        self._tares = {}
         self.do_exit = Event()
         self.n_rate_log = 0
         self.rate_log={}
@@ -161,11 +163,15 @@ class LineSensorLoop(Device):
         base = self.calibration_base_dir()
         block = {'loaded': [], 'rejected': {}, 'n_bins': self.n_bins,
                  'base_dir': base}
+        self._tares = {}
         for idx, name in enumerate(self.params['sensor_names']):
             path = calibration_store.tare_path(base, name)
             try:
                 fp = calibration.config_fingerprint(name, idx, self.params)
                 tare = calibration_store.load_validated_tare(path, fp, self.n_bins)
+
+                self._tares[name] = (tare.offsets, tare.valid_mask,
+                                     tare.null_rate_per_bin)
                 entry = calibration.pack_tare(tare.offsets, tare.valid_mask,
                                               tare.null_rate_per_bin)
                 entry.update({
@@ -193,6 +199,35 @@ class LineSensorLoop(Device):
             self.logger.info('Line sensor calibration: %d/%d sensors loaded',
                              len(block['loaded']), len(self.params['sensor_names']))
         return block
+
+    # -- tare accessors ----------------------------------------------------
+    #
+    # Uses the same five names LineSensorLoopClient exposes for a tool
+    # driving this object directly ( with no body server) 
+
+    def calibrated_sensors(self):
+        """Names with a tare this loop accepted."""
+        return sorted(self._tares)
+
+    def uncalibrated_sensors(self):
+        """{name: why its tare was refused}."""
+        return dict((self.status.get('calibration') or {}).get('rejected', {}))
+
+    def bin_reliable(self):
+        """{name: bool array} -- bins whose tare is trustworthy."""
+        return {n: v[1] for n, v in self._tares.items()}
+
+    def bin_null_rate(self):
+        """{name: float array} -- per-bin no-return rate seen on clear floor."""
+        return {n: v[2] for n, v in self._tares.items()}
+
+    def apply_tare(self, ranges, sensor_name, codes=None):
+        """Tare one sensor's ranges. An uncalibrated sensor passes through."""
+        entry = self._tares.get(sensor_name)
+        if entry is None:
+            return np.asarray(ranges, dtype=np.float64)
+        offsets, valid_mask, _ = entry
+        return calibration.apply_tare_array(ranges, offsets, valid_mask, codes)
 
     def _manage_ctrlC(self, *args):
         # If you have multiple event processing processes, set each Event.

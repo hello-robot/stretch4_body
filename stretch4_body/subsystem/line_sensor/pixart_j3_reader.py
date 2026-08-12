@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import re
 import serial
 import time
 import numpy as np
@@ -40,6 +41,13 @@ class PixartJ3Reader():
     # reopening a port that is not there.
     REOPEN_BACKOFF_MIN_S = 0.5
     REOPEN_BACKOFF_MAX_S = 5.0
+
+    # Firmware at or above this version has the USB lockup fix and answers the
+    # '?' identity query. Older firmware never reads its RX side at all, so
+    # silence after the query is the version answer: too old.
+    MIN_FW_VERSION = (0, 1, 2, 1)
+    FW_UPDATE_CMD = 'REx_firmware_updater.py --install --pixart'
+    FW_QUERY_TIMEOUT_S = 2.0
 
     LOGGER_NAME = 'line_sensor_loop'
 
@@ -98,15 +106,20 @@ class PixartJ3Reader():
         self.streaming = True
         self.disabled = set()          # sensor indices turned off on purpose
         self._skip_keys = ()           # their JSON keys, matched pre-parse
+        self._flush_before_first_read = False
         self._reopen_backoff_s = self.REOPEN_BACKOFF_MIN_S
         self._reopen_at = 0.0
         self._reported_open_failure = False
 
         self._sensors_dead = ['sensor_%d' % i for i in range(6)]
 
+        self._fw_version_str = None    # firmware's reply to '?', once seen
+        self._fw_check_deadline = 0.0  # when silence becomes the answer
+        self._fw_warned = False
+
         self.status = {'frame_advance_err': 0, 'not_six_sensors_err': 0,
                        'frame_not_full_err': 0, 'decode_errors': 0,
-                       'reader_restarts': 0,
+                       'reader_restarts': 0, 'fw_version': '',
                        'rate_hz': 0, 'sensors_last_frame': [],
                        'last_frame_time': 0}
         for i in range(6):
@@ -127,7 +140,12 @@ class PixartJ3Reader():
             # and both corrupt. Make the second opener fail loudly instead.
             self.ser = serial.Serial(port=self.port_name, exclusive=True)
             self.verbose_print(f"Serial port {self.port_name} opened successfully.")
+            self.ser.reset_input_buffer()
+            self._flush_before_first_read = True
             self._reset_framing()
+            if self._fw_version_str is None:
+                self.ser.write(b'?')
+                self._fw_check_deadline = time.time() + self.FW_QUERY_TIMEOUT_S
             self.is_valid = True
             return True
         except serial.SerialException as e:
@@ -271,6 +289,24 @@ class PixartJ3Reader():
         if not self.ser.is_open:
             self._fail('serial port closed unexpectedly')
             return updated
+
+        if self._flush_before_first_read:
+            self._flush_before_first_read = False
+            try:
+                self.ser.reset_input_buffer()
+            except Exception:
+                pass
+            self._reset_framing()
+
+        if (self._fw_version_str is None and not self._fw_warned
+                and self._fw_check_deadline
+                and time.time() > self._fw_check_deadline):
+            self._fw_warned = True
+            self.logger.error(
+                'line sensor firmware did not answer the version query -- it '
+                'predates v0.1.2p1 and has the USB lockup bug. Update it with: %s',
+                self.FW_UPDATE_CMD)
+
         try:
             if not self.streaming:
                 # Paused: drain and discard, so the kernel buffer cannot fill
@@ -368,6 +404,9 @@ class PixartJ3Reader():
 
         frame_id = data.get("frameId")
         if frame_id is None:
+            if isinstance(data.get('status'), dict):
+                self._process_fw_status(data['status'])
+                return False
             self.status['decode_errors'] += 1
             self.debug_print("JSON line without frameId ignored:", json_line[:120])
             return False
@@ -393,6 +432,28 @@ class PixartJ3Reader():
         self.debug_print("JSON line with no known distances key:", json_line[:120])
         self.status['decode_errors'] += 1
         return False
+
+    @classmethod
+    def fw_is_current(cls, fw):
+        """Is this firmware version string at or above MIN_FW_VERSION?
+
+        """
+        m = re.search(r'v(\d+)\.(\d+)\.(\d+)(?:p(\d+))?', str(fw or ''))
+        if not m:
+            return False
+        return tuple(int(g or 0) for g in m.groups()) >= cls.MIN_FW_VERSION
+
+    def _process_fw_status(self, st):
+        """Reply to the '?' sent at port open: enforce MIN_FW_VERSION."""
+        fw = str(st.get('fw', ''))
+        self._fw_version_str = fw
+        self.status['fw_version'] = fw
+        if not self.fw_is_current(fw) and not self._fw_warned:
+            self._fw_warned = True
+            self.logger.error(
+                'line sensor firmware %s is older than required v%d.%d.%dp%d -- '
+                'update it with: %s',
+                fw or '(unknown)', *self.MIN_FW_VERSION, self.FW_UPDATE_CMD)
 
     def process_one_sensor(self, frame_id, sensor_index, ranges, codes):
         now = time.time()
@@ -488,7 +549,7 @@ class PixartJ3Reader():
 
     HEALTH_KEYS = ('rate_hz', 'last_frame_time', 'decode_errors',
                    'frame_advance_err', 'frame_not_full_err', 'not_six_sensors_err',
-                   'reader_restarts')
+                   'reader_restarts', 'fw_version')
 
     def health(self):
         """Subsystem-wide counters, separate from any one sensor's block.

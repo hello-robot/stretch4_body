@@ -24,7 +24,7 @@ import time
 
 import numpy as np
 
-from stretch4_body.subsystem.line_sensor import protocol
+from stretch4_body.subsystem.line_sensor import connect, protocol
 
 
 def _unbreak_qt():
@@ -104,32 +104,21 @@ def main() -> int:
                          'trustworthy tare are left raw and reported.')
     args = ap.parse_args()
 
-    # Import RobotClient FIRST: it pulls in cv2, which hijacks the Qt plugin
-    # path. Scrub that before matplotlib gets a chance to initialise Qt.
-    from stretch4_body.robot.robot_client import RobotClient
+    try:
+        conn = connect.open_line_sensors('stretch_line_sensor_ranges')
+    except connect.LineSensorUnavailable as exc:
+        print(exc.detail)
+        return 1
     _unbreak_qt()
+    print(conn.describe())
 
     import matplotlib
     if not os.environ.get('MPLBACKEND'):
-        # Tk is what the rest of the repo plots on (core/scope.py,
-        # hello_utils.py, the REx_* tools) and it does not go near Qt, so the
-        # cv2 plugin clash cannot arise at all. _unbreak_qt above still covers
-        # anyone who forces a Qt backend through MPLBACKEND.
         matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    client = RobotClient(client_id='stretch_line_sensor_ranges')
-    if not client.startup():
-        print('RobotClient startup failed: is the body server running?')
-        return 1
-    if not hasattr(client, 'line_sensor_loop'):
-        client.stop()
-        print('line_sensor_loop is not enabled on the robot server '
-              '(add it to the subsystems list in stretch_user_params.yaml)')
-        return 1
-
-    loop = client.line_sensor_loop
+    loop = conn.loop
     names = list(loop.params['sensor_names'])
     geom = loop.params.get('line_sensor_geometry', {}) or {}
     nbins = geom.get('pixart_report_num', 320)
@@ -275,7 +264,7 @@ def main() -> int:
                 time.sleep(0.02)
                 continue
 
-            client.pull_status()
+            conn.pull_status()
             status = loop.status
             # Liveness moved into the health block when status messages became
             dead = set((status.get('health') or {}).get('sensors_dead', ()))
@@ -358,7 +347,7 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        client.stop()
+        conn.close()
     return 0
 
 

@@ -33,6 +33,14 @@ def stretch_line_sensor_ranges():
     sys.argv[0] = "stretch_line_sensor_ranges"
     runpy.run_module("stretch4_body.tools.stretch_line_sensor_ranges", run_name="__main__")
 
+def stretch_line_sensor_z_band():
+    sys.argv[0] = "stretch_line_sensor_z_band"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_z_band", run_name="__main__")
+
+def stretch_line_sensor_hz_check():
+    sys.argv[0] = "stretch_line_sensor_hz_check"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_hz_check", run_name="__main__")
+
 def stretch_power_periph_scope():
     sys.argv[0] = "stretch_power_periph_scope"
     runpy.run_module("stretch4_body.tools.stretch_power_periph_scope", run_name="__main__")
