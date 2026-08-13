@@ -280,7 +280,7 @@ def run_left_right_ros(duration):
 
         for frame in frame_generator:
             if frame is not None and frame.right is not None:
-                timestamps_host.append(time.time())
+                timestamps_host.append(time.monotonic())
                 timestamps_sensor.append(frame.right.timestamp)
                 seq_nums.append(frame.right.frame_number)
             
@@ -409,7 +409,7 @@ def run_left_right_center_ros(duration):
      
         for frame in frame_generator:
             if frame is not None and frame.right is not None:
-                timestamps_host.append(time.time())
+                timestamps_host.append(time.monotonic())
                 timestamps_sensor.append(frame.right.timestamp)
                 seq_nums.append(frame.right.frame_number)
              
@@ -544,7 +544,7 @@ def run_left_rgbd_ros(duration):
 
         for frame in frame_generator:
             if frame is not None and frame.image_frame is not None:
-                timestamps_host.append(time.time())
+                timestamps_host.append(time.monotonic())
                 timestamps_sensor.append(frame.image_frame.timestamp)
                 seq_nums.append(frame.image_frame.frame_number)
             
@@ -686,7 +686,7 @@ def run_left_right_rgbd_ros(duration):
             if frame is not None:
                 active_frame = frame.right if frame.right is not None else frame.left
                 if active_frame is not None and active_frame.image_frame is not None:
-                    timestamps_host.append(time.time())
+                    timestamps_host.append(time.monotonic())
                     timestamps_sensor.append(active_frame.image_frame.timestamp)
                     seq_nums.append(active_frame.image_frame.frame_number)
             
@@ -827,7 +827,7 @@ def run_left_right_center_rgbd_ros(duration):
             if frame is not None:
                 active_frame = frame.right if frame.right is not None else (frame.left if frame.left is not None else frame.center)
                 if active_frame is not None and active_frame.image_frame is not None:
-                    timestamps_host.append(time.time())
+                    timestamps_host.append(time.monotonic())
                     timestamps_sensor.append(active_frame.image_frame.timestamp)
                     seq_nums.append(active_frame.image_frame.frame_number)
             
@@ -1013,7 +1013,7 @@ def run_gripper_ros(duration):
      
         for frame in frame_generator:
             if frame is not None and frame.right is not None:
-                timestamps_host.append(time.time())
+                timestamps_host.append(time.monotonic())
                 timestamps_sensor.append(frame.right.timestamp)
                 seq_nums.append(frame.right.frame_number)
              
