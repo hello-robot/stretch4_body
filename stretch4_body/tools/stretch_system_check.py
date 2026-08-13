@@ -413,10 +413,17 @@ def check_line_sensors():
 
     for sn in sensor_names:
         sensor_status = lss.get(sn, {})
-        frame_id = sensor_status.get('frame_id', 0) if isinstance(sensor_status, dict) else 0
-        print_result(frame_id > 0, f'Sensor {sn}: frame_id = {frame_id}')
-        if frame_id == 0:
+        if not isinstance(sensor_status, dict):
+            sensor_status = {}
+        # Per-sensor rate_hz is seeded only after the first frame arrives
+        s_rate = sensor_status.get('rate_hz', 0) or 0
+        frame_id = sensor_status.get('frame_id', 0)
+        p = s_rate > 0
+        print_result(p, f'Sensor {sn} rate: {s_rate:.2f} Hz')
+        if not p:
             all_pass = False
+        if args.verbose:
+            print_info(f'{sn} frame_id = {frame_id}')
 
     return all_pass
 
