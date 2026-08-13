@@ -145,6 +145,7 @@ class LineSensorLoop(Device):
 
         if timeout:
             self.logger.error('Timed out waiting for LineSensorLoop')
+            self._terminate_process()
         self.load_calibration()
         return not timeout
 
@@ -233,16 +234,31 @@ class LineSensorLoop(Device):
         # If you have multiple event processing processes, set each Event.
         self.do_exit.set()
 
+    JOIN_TIMEOUT_S = 2.0
+
+    def _terminate_process(self, timeout_s=None):
+
+        p = self.pjr_process
+        if p is None:
+            return
+        if timeout_s is None:
+            timeout_s = self.JOIN_TIMEOUT_S
+        p.join(timeout=timeout_s)
+        if p.is_alive():
+            self.logger.warning('LineSensorLoop did not exit on request -- terminating')
+            p.terminate()
+            p.join(timeout=1.0)
+        if p.is_alive():
+            self.logger.error('LineSensorLoop ignored SIGTERM -- killing')
+            p.kill()
+            p.join(timeout=1.0)
+        self.pjr_process = None
+
     def stop(self):
         original_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._manage_ctrlC)
         self.q_admin.put('exit')
-        if self.pjr_process is not None:
-            self.pjr_process.join()
-            self.pjr_process = None
-            
-
-            
+        self._terminate_process()
         signal.signal(signal.SIGINT, original_sigint)
 
     # -- runtime control ---------------------------------------------------
