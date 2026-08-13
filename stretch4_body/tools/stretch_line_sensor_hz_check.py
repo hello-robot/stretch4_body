@@ -109,8 +109,7 @@ def main():
 
     h = ls.status.get('health') or {}
     print(f"\nserver-reported rate_hz: {ls.status.get('rate_hz', 0):.1f}   "
-          f"decode_errors: {h.get('decode_errors')}   "
-          f"fw_version: {h.get('fw_version') or '(no reply -- old firmware?)'}")
+          f"decode_errors: {h.get('decode_errors')}")
     print("\nPASS: every sensor is streaming new (never repeated, never backwards) "
           "frames at >= %.0fHz" % args.min_hz if ok else
           "\nFAIL: at least one sensor is below rate or produced stale/backwards frames")
