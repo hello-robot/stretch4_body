@@ -32,13 +32,7 @@ def as_code_array(codes_raw, n_bins) -> np.ndarray:
 
 
 def measuring(codes: np.ndarray) -> np.ndarray:
-    """Bins carrying a real distance. The single validity test in the package.
-
-    Replaces `isfinite(r) & (r > 0) & (r < 4.0)`. The magnitude test could not
-    tell a status code from a distance once the tare had shifted it; this one
-    cannot be wrong because the classification happened at decode, before any
-    arithmetic touched the value.
-    """
+    """Bins carrying a real distance. The single validity test in the package. """
     return np.asarray(codes) == protocol.CODE_VALID
 
 
@@ -72,6 +66,17 @@ def items_to_xy(items, cls, projector=None, near_edge=False) -> np.ndarray:
                 continue
         points.append(pt[:2])
     return np.vstack(points) if points else np.zeros((0, 2))
+
+
+def items_to_z(items, cls) -> np.ndarray:
+    """The MEASURED height of every item `items_to_xy` would return, floor = 0.
+
+    Row-aligned with items_to_xy and items_to_ids.
+    """
+    wanted = cls if isinstance(cls, tuple) else (cls,)
+    zs = [float(pt[2]) for _sensor_idx, _bin_idx, item_cls, pt in items
+          if item_cls in wanted]
+    return np.asarray(zs, dtype=np.float64) if zs else np.zeros(0)
 
 
 def items_to_ids(items, cls) -> np.ndarray:

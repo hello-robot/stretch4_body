@@ -31,7 +31,8 @@ from collections import deque
 import numpy as np
 
 from .arrays import (
-    as_code_array, as_range_array, items_to_ids, items_to_xy, measuring)
+    as_code_array, as_range_array, items_to_ids, items_to_xy, items_to_z,
+    measuring)
 from .classify import classify_bin
 from .config import LineSensorConfig
 from .confirm import bin_confirmed, confirm_frames_for_bin
@@ -266,6 +267,11 @@ class LineSensorSource:
             deep_drop_xy=items_to_xy(promoted, BinClass.DEEP_DROP, **near),
             probable_cliff_xy=cliff_xy,
             degraded_xy=degraded_xy,
+            obstacle_z=items_to_z(promoted, OBSTACLE_FAMILY),
+            small_drop_z=items_to_z(promoted, BinClass.SMALL_DROP),
+            deep_drop_z=items_to_z(promoted, BinClass.DEEP_DROP),
+            probable_cliff_z=np.zeros(len(cliff_xy)),
+            degraded_z=np.zeros(len(degraded_xy)),
             obstacle_id=items_to_ids(promoted, OBSTACLE_FAMILY),
             small_drop_id=items_to_ids(promoted, BinClass.SMALL_DROP),
             deep_drop_id=items_to_ids(promoted, BinClass.DEEP_DROP),

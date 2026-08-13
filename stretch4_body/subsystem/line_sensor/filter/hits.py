@@ -70,6 +70,14 @@ class LineSensorHits:
     probable_cliff_xy: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))
     degraded_xy: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))
 
+    # --- measured height ------------------
+    # What the beam actually measured, in metres with the floor at 0. 
+    obstacle_z: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    small_drop_z: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    deep_drop_z: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    probable_cliff_z: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    degraded_z: np.ndarray = field(default_factory=lambda: np.zeros(0))
+
     # --- identity, row-aligned with the arrays above -------------------------
     # (sensor_idx, bin_idx) for every published point. Publish these as
     # PointFields: six identical 60 degree wedges tile the circle, so a
