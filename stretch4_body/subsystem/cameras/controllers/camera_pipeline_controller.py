@@ -604,7 +604,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
         
         try:
             from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
-            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_right, stream_gripper_stereo_points
+            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_right, stream_gripper_stereo_points, stream_gripper_left
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
 
@@ -639,11 +639,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
         pointcloud_generator = None
 
         if self.camera_type == RGBCameras.gripper_rgbd:
-            # The actual left gripper camera is on /cameras_gripper/left/image_raw
-            left_topic = "/cameras_gripper/left/image_raw"
-            self.stream_manager.add_image_topic(left_topic)
-            left_generator = self.stream_manager.create_topic_generator(left_topic)
-
+            left_generator = stream_gripper_left(stream_manager=self.stream_manager)
             right_generator = stream_gripper_right(stream_manager=self.stream_manager)
             depth_generator = stream_gripper_stereo(stream_manager=self.stream_manager)
             if self.enable_pointcloud:
