@@ -178,14 +178,7 @@ def create_rgbd_frame(camera_type:RGBCameras, frame:ImageFrame, pts_base:np.ndar
         depth_image=depth_img,
     )
 
-
-def get_nominal_transform(joint_name: str, urdf) -> np.ndarray:
-    for joint in urdf.robot.joints:
-        if joint.name == joint_name:
-            return np.eye(4) if joint.origin is None else joint.origin
-    return np.eye(4)
-
-def stream_rgbd(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False, is_rotate:bool=True, ai_models_to_use:list[AIModelWrapper]|None=None, detect_aruco_marker_size:float|None=None ) -> Generator[RGBDFrame, None, None]:
+def stream_rgbd(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False, is_rotate:bool=True,) -> Generator[RGBDFrame, None, None]:
     if camera_type.is_synced_camera_type():
         raise RuntimeError(f"{camera_type} is a synced camera, use stream_rgbd_synced()")
 
@@ -243,7 +236,7 @@ def stream_rgbd(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lid
         )
 
 
-def stream_rgbd_synced(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False, is_rotate:bool=True, ai_models_to_use:list[AIModelWrapper]|None=None, detect_aruco_marker_size:float|None=None ) -> Generator[SyncedRGBDFrame, None, None]:
+def stream_rgbd_synced(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lidar:bool=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False, is_rotate:bool=True) -> Generator[SyncedRGBDFrame, None, None]:
     
     if not camera_type.is_synced_camera_type():
         raise RuntimeError(f"{camera_type} is not a synced camera, use stream_rgbd()")
@@ -336,62 +329,52 @@ def stream_rgbd_synced(camera_type: RGBCameras, use_left_lidar:bool=True, use_ri
 
 
 
-def stream_left_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+def stream_left_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     yield from stream_rgbd(RGBCameras.left(), 
         use_left_lidar=use_left_lidar,
         use_right_lidar=use_right_lidar,
         use_ros_for_lidars=use_ros_for_lidars,
         use_ros_for_cameras=use_ros_for_cameras,
-        is_rotate=is_rotate,
-        ai_models_to_use=ai_models_to_use,
-        detect_aruco_marker_size=detect_aruco_marker_size)
+        is_rotate=is_rotate,)
 
 
-def stream_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+def stream_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     yield from stream_rgbd(RGBCameras.right(),
     use_left_lidar=use_left_lidar,
     use_right_lidar=use_right_lidar,
     use_ros_for_lidars=use_ros_for_lidars,
     use_ros_for_cameras=use_ros_for_cameras,
-    is_rotate=is_rotate,
-    ai_models_to_use=ai_models_to_use,
-    detect_aruco_marker_size=detect_aruco_marker_size)
+    is_rotate=is_rotate,)
 
 
-def stream_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+def stream_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     yield from stream_rgbd(RGBCameras.center(),
     use_left_lidar=use_left_lidar,
     use_right_lidar=use_right_lidar,
     use_ros_for_lidars=use_ros_for_lidars,
     use_ros_for_cameras=use_ros_for_cameras,
-    is_rotate=is_rotate,
-    ai_models_to_use=ai_models_to_use,
-    detect_aruco_marker_size=detect_aruco_marker_size)
+    is_rotate=is_rotate,)
 
 
-def stream_left_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
+def stream_left_right_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
     yield from stream_rgbd_synced(RGBCameras.synced_left_right(),
     use_left_lidar=use_left_lidar,
     use_right_lidar=use_right_lidar,
     use_ros_for_lidars=use_ros_for_lidars,
     use_ros_for_cameras=use_ros_for_cameras,
-    is_rotate=is_rotate,
-    ai_models_to_use=ai_models_to_use,
-    detect_aruco_marker_size=detect_aruco_marker_size)
+    is_rotate=is_rotate,)
 
 
-def stream_left_right_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None = None, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
+def stream_left_right_center_rgbd(*, is_rotate=True, use_left_lidar=True, use_right_lidar=True, use_ros_for_lidars:bool=False, use_ros_for_cameras:bool=False) -> Generator[SyncedRGBDFrame, None, None]:
     yield from stream_rgbd_synced(RGBCameras.synced_left_right_center(),
     use_left_lidar=use_left_lidar,
     use_right_lidar=use_right_lidar,
     use_ros_for_lidars=use_ros_for_lidars,
     use_ros_for_cameras=use_ros_for_cameras,
-    is_rotate=is_rotate,
-    ai_models_to_use=ai_models_to_use,
-    detect_aruco_marker_size=detect_aruco_marker_size)
+    is_rotate=is_rotate,)
 
 
-def stream_gripper_rgbd(*, is_rotate=True, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
+def stream_gripper_rgbd(*, is_rotate=True, use_ros_for_cameras:bool=False) -> Generator[RGBDFrame, None, None]:
     try:
         calib = RGBCameraCalibration.load_calibration_from_fleet_path(
             RGBCameras.gripper_right, is_flip_width_and_height=False
@@ -406,7 +389,7 @@ def stream_gripper_rgbd(*, is_rotate=True, ai_models_to_use: list[AIModelWrapper
             [0.0, 0.0, 1.0]
         ])
 
-    for synced_frame in stream_gripper_camera(is_rotate=is_rotate, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=False):
+    for synced_frame in stream_gripper_camera(is_rotate=is_rotate, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=False):
         if synced_frame is None:
             continue
         image_frame = synced_frame.right
