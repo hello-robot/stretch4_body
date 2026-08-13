@@ -1088,7 +1088,7 @@ def main():
     parser = argparse.ArgumentParser(description="Luxonis Camera Regression & Performance Benchmark")
     parser.add_argument("--duration", type=float, default=10.0, help="Duration in seconds to run each benchmark")
     parser.add_argument("--fps", type=int, default=30, help="Target frame rate (FPS) for the camera streams")
-    parser.add_argument("--type", type=str, choices=["all", "head", "gripper", "rgbd"], default="all", help="Which cameras to benchmark")
+    parser.add_argument("--type", type=str, choices=["all", "head", "gripper", "rgbd", "regression"], default="all", help="Which cameras to benchmark")
     parser.add_argument("--output", type=str, default="camera_regression_results.md", help="Path to save the performance comparison report")
     args = parser.parse_args()
 
@@ -1097,15 +1097,8 @@ def main():
     print("=" * 80)
     print(f"Starting Side-by-Side Performance Comparison (Duration: {args.duration}s, Target: {args.fps} FPS)")
     print("=" * 80)
-
     # 1. Benchmark Head Cameras
     if args.type in ["all", "head"]:
-        if os.path.exists(OLD_RGBD_PATH):
-            results["Head (stretch4_rgbd)"] = run_head_camera_old(args.duration, args.fps)
-            time.sleep(3.0)  # Power-cycle delay for USB stabilization
-        else:
-            print("stretch4_rgbd path not found, skipping Head (stretch4_rgbd) benchmark.")
-
         results["Head Left-Right Python (stretch4_body)"] = run_left_right_python(args.duration)
         time.sleep(3.0)
 
@@ -1120,16 +1113,26 @@ def main():
 
     # 2. Benchmark Gripper Cameras
     if args.type in ["all", "gripper"]:
+        results["Gripper Python (stretch4_body)"] = run_gripper_python(args.duration)
+        time.sleep(3.0)
+
+        results["Gripper ROS (stretch4_body)"] = run_gripper_ros(args.duration)
+
+
+    # 3. Regression
+    if args.type in ["all", "regression"]:
+        if os.path.exists(OLD_RGBD_PATH):
+            results["Head (stretch4_rgbd)"] = run_head_camera_old(args.duration, args.fps)
+            time.sleep(3.0)  # Power-cycle delay for USB stabilization
+        else:
+            print("stretch4_rgbd path not found, skipping Head (stretch4_rgbd) benchmark.")
+
         if os.path.exists(OLD_GRIPPER_PATH):
             results["Gripper (stretch4_gripper_modeling_and_control)"] = run_gripper_camera_old(args.duration, args.fps)
             time.sleep(3.0)
         else:
             print("stretch4_gripper_modeling_and_control path not found, skipping Gripper (stretch4_gripper_modeling_and_control) benchmark.")
 
-        results["Gripper Python (stretch4_body)"] = run_gripper_python(args.duration)
-        time.sleep(3.0)
-
-        results["Gripper ROS (stretch4_body)"] = run_gripper_ros(args.duration)
 
     # 3. Benchmark RGB-D Cameras
     if args.type in ["all", "rgbd"]:
