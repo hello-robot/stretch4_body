@@ -98,6 +98,7 @@ def transform_and_optionally_unify_clouds(left_pts: np.ndarray|None, right_pts: 
 
 
 def apply_shadow_filter(sparse_depth_image: np.ndarray, window_size: int=5, depth_threshold: float=0.3):
+    # From stretch4_rgbd
     if window_size <= 1:
         return sparse_depth_image, np.zeros_like(sparse_depth_image, dtype=bool)
     depth_inf = sparse_depth_image.copy()
@@ -117,6 +118,10 @@ def create_rgbd_frame(camera_type:RGBCameras, frame:ImageFrame, pts_base:np.ndar
     pts_base_valid = pts_base[valid_idx]
 
     depth_img = np.zeros(frame.image_raw.shape[:2], dtype=np.float32)
+
+    pts_cam = np.zeros((0, 3))
+    pts_world = np.zeros((0, 3))
+    cols = np.zeros((0, 3))
 
     if len(pts_cam_valid) > 0:
         rvec = np.zeros(3)
@@ -162,14 +167,6 @@ def create_rgbd_frame(camera_type:RGBCameras, frame:ImageFrame, pts_base:np.ndar
             v_filtered, u_filtered = np.where(valid_mask)
             colors_bgr = frame.image_raw[v_filtered, u_filtered]
             cols = colors_bgr[:, ::-1]  # BGR to RGB
-        else:
-            pts_cam = np.zeros((0, 3))
-            pts_world = np.zeros((0, 3))
-            cols = np.zeros((0, 3))
-    else:
-        pts_cam = np.zeros((0, 3))
-        pts_world = np.zeros((0, 3))
-        cols = np.zeros((0, 3))
 
     return RGBDFrame(
         timestamp=frame.timestamp,
@@ -332,7 +329,7 @@ def stream_rgbd_synced(camera_type: RGBCameras, use_left_lidar:bool=True, use_ri
 
         synced_rgbd.left = left_future.result()
         if camera_frame.center is not None:
-            synced_rgbd.center = center_future.result(1/30)
+            synced_rgbd.center = center_future.result()
         synced_rgbd.right = right_future.result()
         
         yield synced_rgbd
