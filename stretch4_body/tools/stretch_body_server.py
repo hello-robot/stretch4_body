@@ -13,6 +13,8 @@ import glob
 import tarfile
 from datetime import datetime
 import fcntl
+import json
+from importlib.metadata import distribution
 from pathlib import Path
 
 
@@ -218,11 +220,52 @@ def tail_log_file(log_file:str, n:int=50):
         except:
             pass
 
+def _is_editable() -> bool:
+    for name in ['hello-robot-stretch4-body', 'hello_robot_stretch4_body']:
+        try:
+            dist = distribution(name)
+            direct_url_text = dist.read_text('direct_url.json')
+            if direct_url_text:
+                data = json.loads(direct_url_text)
+                if data.get('dir_info', {}).get('editable', False):
+                    return True
+        except Exception:
+            pass
+    return False
+
+def _get_git_info():
+    import stretch4_body
+    pkg_dir = os.path.dirname(os.path.abspath(stretch4_body.__file__))
+    repo_dir = os.path.dirname(pkg_dir)
+    try:
+        branch = subprocess.check_output(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            cwd=repo_dir,
+            stderr=subprocess.DEVNULL
+        ).decode('utf-8').strip()
+        
+        commit_hash = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=repo_dir,
+            stderr=subprocess.DEVNULL
+        ).decode('utf-8').strip()
+        
+        commit_date = subprocess.check_output(
+            ['git', 'log', '-1', '--format=%ci'],
+            cwd=repo_dir,
+            stderr=subprocess.DEVNULL
+        ).decode('utf-8').strip()
+        
+        return branch, commit_hash, commit_date
+    except Exception:
+        return None
+
 def _parse_args():
 
     parser=argparse.ArgumentParser(description='Interact with the Stretch Body Server')
 
     group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument("--version", help="Show the version of stretch4_body", action="store_true")
     group.add_argument("--launch", help="Launch the server from CLI", action="store_true")
     
     group.add_argument("--ping", help="Ping a running server",action="store_true")
@@ -255,13 +298,30 @@ def is_server_active(robot_client:RobotClient, verbose:bool=False) -> bool:
 
 
 def main():
+    args = _parse_args()
+
+    if args.version:
+        import stretch4_body
+        editable = _is_editable()
+        if editable:
+            git_info = _get_git_info()
+            if git_info:
+                branch, commit_hash, commit_date = git_info
+                print(f"Active branch: {branch}")
+                print(f"Commit hash: {commit_hash}")
+                print(f"Commit date: {commit_date}")
+            else:
+                print(f"stretch4_body version: {stretch4_body.__version__}")
+        else:
+            print(f"stretch4_body version: {stretch4_body.__version__}")
+        return
+
     hu.print_stretch_re_use()
 
     if not is_user_in_group('users'):
         logging.error(f"Error: This user ({os.getlogin()}) is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
         return
 
-    args = _parse_args()
 
     if args.log_level:
         log_level_str = args.log_level.upper()
