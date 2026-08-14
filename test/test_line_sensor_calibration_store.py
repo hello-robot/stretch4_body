@@ -265,6 +265,87 @@ class TestValidationRefuses:
         with pytest.raises(store.TareRejected):
             load(path)
 
+    def test_auto_migration_missing_tare(self, tmp_path):
+        # 1. Create the base directory structure for the old format tare
+        base_dir = str(tmp_path)
+        sensor_name = 'sensor_0'
+        session_id = '20250101120000'
+        old_tare_dir = os.path.join(base_dir, sensor_name, session_id)
+        os.makedirs(old_tare_dir, exist_ok=True)
+        
+        old_tare_path = os.path.join(old_tare_dir, 'calibration_tare.yaml')
+        old_tare_data = {
+            'ideal_range_m': IDEAL,
+            'tare_offsets': [0.0] * NBINS,
+            'tare_valid_mask': [True] * NBINS,
+            'timestamp': '2025-01-01T12:00:00',
+        }
+        with open(old_tare_path, 'w') as f:
+            yaml.safe_dump(old_tare_data, f)
+            
+        # 2. Mock RobotParams.get_params to return PARAMS
+        from unittest.mock import patch
+        
+        with patch('stretch4_body.core.robot_params.RobotParams.get_params') as mock_params:
+            mock_params.return_value = ({}, PARAMS)
+            
+            # The new canonical path where load_validated_tare will look
+            canonical_path = store.tare_path(base_dir, sensor_name)
+            assert not os.path.exists(canonical_path)
+            
+            # Load validated tare (which should trigger auto-migration)
+            t = store.load_validated_tare(canonical_path, NBINS, FLIP, IDEAL)
+            
+            # Verify it migrated successfully
+            assert t.sensor_name == sensor_name
+            assert t.valid_mask.all()
+            assert t.offsets.size == NBINS
+            assert os.path.exists(canonical_path)
+
+    def test_auto_migration_legacy_tare(self, tmp_path):
+        # 1. Create the base directory structure for the old format tare
+        base_dir = str(tmp_path)
+        sensor_name = 'sensor_0'
+        session_id = '20250101120000'
+        old_tare_dir = os.path.join(base_dir, sensor_name, session_id)
+        os.makedirs(old_tare_dir, exist_ok=True)
+        
+        old_tare_path = os.path.join(old_tare_dir, 'calibration_tare.yaml')
+        old_tare_data = {
+            'ideal_range_m': IDEAL,
+            'tare_offsets': [0.05] * NBINS,
+            'tare_valid_mask': [True] * NBINS,
+            'timestamp': '2025-01-01T12:00:00',
+        }
+        with open(old_tare_path, 'w') as f:
+            yaml.safe_dump(old_tare_data, f)
+            
+        # 2. Create a legacy tare file at the canonical path (format_version = 1)
+        canonical_path = store.tare_path(base_dir, sensor_name)
+        os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
+        legacy_tare_data = {
+            'format_version': 1,
+            'sensor_name': sensor_name,
+            'ideal_range_m': IDEAL,
+            'tare_offsets': [0.01] * NBINS,
+            'tare_valid_mask': [True] * NBINS,
+        }
+        with open(canonical_path, 'w') as f:
+            yaml.safe_dump(legacy_tare_data, f)
+            
+        # 3. Mock RobotParams.get_params
+        from unittest.mock import patch
+        with patch('stretch4_body.core.robot_params.RobotParams.get_params') as mock_params:
+            mock_params.return_value = ({}, PARAMS)
+            
+            # Load validated tare (which should trigger auto-migration from the old_tare_path)
+            t = store.load_validated_tare(canonical_path, NBINS, FLIP, IDEAL)
+            
+            # Verify it migrated successfully and has updated offsets from the old source
+            assert t.sensor_name == sensor_name
+            assert t.valid_mask.all()
+            assert t.offsets[0] == 0.05
+
 
 if __name__ == '__main__':
     pytest.main([__file__])

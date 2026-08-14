@@ -220,10 +220,62 @@ def read_tare(path):
         return yaml.safe_load(f)
 
 
-def load_validated_tare(path, expected_n_bins, expected_flip, expected_ideal_m):
+def _attempt_auto_migration(path):
+    """Helper to auto-migrate a line sensor tare from legacy formats if present."""
+    base_dir = os.path.dirname(os.path.dirname(path))
+    sensor_name = os.path.basename(path).replace('_tare.yaml', '')
+
+    try:
+        # Deferred imports to avoid circular dependencies
+        from stretch4_body.core.robot_params import RobotParams
+        from stretch4_body.tools.factory import REx_line_sensor_migrate_tares
+
+        user_params, robot_params = RobotParams.get_params()
+        ls_params = robot_params.get('line_sensor_loop') or {}
+        if not ls_params:
+            if 'line_sensor_geometry' in robot_params:
+                ls_params = robot_params
+            else:
+                return
+
+        # Check if a source exists for this sensor before trying to migrate
+        src_path, kind = REx_line_sensor_migrate_tares.find_source(base_dir, sensor_name)
+        if src_path is None:
+            return
+
+        print(f"Auto-migrating legacy line sensor calibration for {sensor_name}...")
+        success, detail, advice_or_reason = REx_line_sensor_migrate_tares.migrate_single_sensor(
+            base_dir, sensor_name, ls_params, user_params
+        )
+        if success:
+            print(f"Successfully auto-migrated {sensor_name}: {detail}")
+        else:
+            print(f"Failed to auto-migrate {sensor_name}: {detail} - {advice_or_reason}")
+    except Exception as exc:
+        print(f"Warning: error during auto-migration for {sensor_name}: {exc}")
+
+
+def load_validated_tare(path, expected_n_bins, expected_flip, expected_ideal_m, allow_migrate=True):
     """Load a tare, or raise TareRejected. Never returns partially-valid data
     and never falls back to another file.
     """
+    if allow_migrate:
+        should_migrate = False
+        if not os.path.exists(path):
+            should_migrate = True
+        else:
+            try:
+                data = read_tare(path)
+                if isinstance(data, dict):
+                    version = data.get('format_version')
+                    if version is None or int(version) < TARE_FORMAT_VERSION:
+                        should_migrate = True
+            except Exception:
+                should_migrate = True
+
+        if should_migrate:
+            _attempt_auto_migration(path)
+
     if not os.path.exists(path):
         raise TareRejected(REJECT_MISSING,
                            f'no tare at {path}. {_REMEDIATE}')

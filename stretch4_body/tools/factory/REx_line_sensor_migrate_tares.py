@@ -263,10 +263,50 @@ def loads_now(base_dir, sensor_name, n_bins, flip, ideal):
     """Does the runtime already accept the tare at the canonical path?"""
     try:
         calibration_store.load_validated_tare(
-            calibration_store.tare_path(base_dir, sensor_name), n_bins, flip, ideal)
+            calibration_store.tare_path(base_dir, sensor_name), n_bins, flip, ideal, allow_migrate=False)
         return True
     except Exception:
         return False
+
+
+def migrate_single_sensor(base_dir, name, ls_params, user_params, force=False):
+    """Migrate a single line sensor's calibration tare if an old source is found."""
+    n_bins = int(ls_params['line_sensor_geometry']['pixart_report_num'])
+    flip = bool(ls_params['flip_range_ordering'])
+    ideal = calibration.ideal_range_m(ls_params)
+    thresholds = CalibrationThresholds()
+
+    if not force and loads_now(base_dir, name, n_bins, flip, ideal):
+        return True, "already current", []
+
+    path, kind = find_source(base_dir, name)
+    if path is None:
+        return False, "nothing to migrate", "no older tare or recording found"
+
+    index = int(name.rsplit('_', 1)[1])
+    try:
+        advice = []
+        if kind == 'recording':
+            tare, detail, advice = migrate_recording(
+                name, index, path, ls_params, n_bins, thresholds, user_params)
+        else:
+            doc, offsets, mask, null_rate, src_flip = assess(
+                path, ls_params, n_bins, thresholds, user_params)
+            tare = build_migrated_tare(name, index, doc, offsets, mask,
+                                       null_rate, src_flip, path,
+                                       n_bins, thresholds)
+            recorded = str(doc.get('timestamp', ''))[:19] or 'unknown date'
+            detail = (f'stored tare, recorded {recorded}, '
+                      f'{int(mask.sum())}/{n_bins} bins, '
+                      f'max |offset| {np.max(np.abs(offsets)):.3f} m')
+        
+        promote(tare, base_dir, name)
+        if not loads_now(base_dir, name, n_bins, flip, ideal):
+            return False, "validation failed", "runtime still refuses it after migration"
+        
+        return True, detail, advice
+    except Refused as exc:
+        return False, f"refused ({exc.reason})", exc.detail
 
 
 def main():
