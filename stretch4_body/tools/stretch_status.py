@@ -6,8 +6,23 @@ import argparse
 import sys
 import rerun as rr
 from colorama import Fore, Back, Style, init
+from datetime import datetime
 
 init(autoreset=True)
+
+def get_file_timestamp(filepath):
+    """
+    Get the timestamp of a log file.
+    Attempts to parse the timestamp from the filename (e.g., status_YYYYMMDD_HHMMSS.json)
+    to handle files copied/transferred across systems where mtime is overwritten.
+    Falls back to os.path.getmtime if parsing fails.
+    """
+    basename = os.path.basename(filepath)
+    try:
+        dt = datetime.strptime(basename, "status_%Y%m%d_%H%M%S.json")
+        return dt.timestamp()
+    except Exception:
+        return os.path.getmtime(filepath)
 
 from stretch4_body.robot.robot_client import RobotClient
 
@@ -427,7 +442,7 @@ def main():
         "--export",
         type=str,
         default=None,
-        help="Export history to a zip file in the specified directory. Requires --history.",
+        help="Export history to a zip file in the specified directory. Defaults to exporting all available history if --history is not specified.",
     )
     parser.add_argument(
         "--import",
@@ -437,6 +452,22 @@ def main():
         help="Import and replay a zip file of exported history.",
     )
     args = parser.parse_args()
+
+    if args.export is not None and args.history is None:
+        fleet_path = os.getenv("HELLO_FLEET_PATH", os.path.expanduser("~"))
+        log_dir = os.path.join(fleet_path, "log", "stretch_status")
+        if os.path.exists(log_dir):
+            files = [
+                os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".json")
+            ]
+            if files:
+                files.sort(key=get_file_timestamp)
+                oldest_file_timestamp = get_file_timestamp(files[0])
+                args.history = max(0.0, (time.time() - oldest_file_timestamp) / 60.0)
+            else:
+                args.history = 0.0
+        else:
+            args.history = 0.0
 
     def _start_rerun():
         rr.init("stretch_status", spawn=False)
@@ -499,11 +530,11 @@ def main():
         files = [
             os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".json")
         ]
-        files.sort(key=os.path.getmtime)
+        files.sort(key=get_file_timestamp)
 
         if files:
-            oldest_file_mtime = os.path.getmtime(files[0])
-            available_minutes = max(0.0, (time.time() - oldest_file_mtime) / 60.0)
+            oldest_file_timestamp = get_file_timestamp(files[0])
+            available_minutes = max(0.0, (time.time() - oldest_file_timestamp) / 60.0)
             print(f"Maximum available history: {available_minutes:.1f} minutes.")
             if args.history > available_minutes:
                 print(f"[!] Warning: You requested {args.history} minutes of history, but only {available_minutes:.1f} minutes are available.")
@@ -523,8 +554,8 @@ def main():
             print(f"Exporting data to {zip_path}...")
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for f in files:
-                    mtime = os.path.getmtime(f)
-                    if mtime < start_time - 60:
+                    file_timestamp = get_file_timestamp(f)
+                    if file_timestamp < start_time - 60:
                         continue
                     zf.write(f, os.path.basename(f))
             
@@ -533,8 +564,8 @@ def main():
             return
 
         for f in files:
-            mtime = os.path.getmtime(f)
-            if mtime < start_time - 60:
+            file_timestamp = get_file_timestamp(f)
+            if file_timestamp < start_time - 60:
                 continue
 
             with open(f, "r") as file:
