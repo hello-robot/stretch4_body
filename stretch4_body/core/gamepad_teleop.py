@@ -303,7 +303,7 @@ class GamePadTeleop(Device):
             self.manage_start_button(robot)
 
             if robot.is_homed():
-                if self.robot.power_periph.status['runstop_event']:
+                if self.robot.is_runstopped():
                     # If the robot is runstopped, vibrate
                     self.gamepad_controller.vibrate(duration_ms=100, strong_magnitude=1.0, weak_magnitude=1.0)
                     return False

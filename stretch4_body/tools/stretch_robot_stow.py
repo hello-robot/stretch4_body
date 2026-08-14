@@ -19,7 +19,7 @@ else:
 r = Robot()
 if r.startup():
     r.pull_status()
-    if not r.power_periph.status['runstop_event']:
+    if not r.is_runstopped():
         r.stow()
     else:
         r.logger.warning('Cannot stow while run-stopped')
