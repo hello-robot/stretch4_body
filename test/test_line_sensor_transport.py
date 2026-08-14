@@ -1,15 +1,4 @@
 """what the loop puts on the wire, and what a client gets back.
-
-Two things are load-bearing here and neither is visible by inspection:
-
-  * every status message must carry COMPLETE per-sensor state. q_status is a
-    CircularMultiprocessingQueue whose put() discards the oldest message when
-    full, so anything delta-encoded is lost for good when it overflows -- and
-    it does overflow, with the reader at 250 Hz and the control loop draining
-    at 48-71 Hz, three deep. The symptom would be one sensor frozen while the
-    others stream, i.e. indistinguishable from a hardware fault.
-  * the tare is quantised for the wire. If pack and unpack ever disagree the
-    robot silently drives on offsets that are wrong by a scale factor.
 """
 
 import queue
@@ -67,13 +56,6 @@ def test_pack_refuses_what_it_cannot_represent():
         calibration.pack_tare(np.full(n, 1.0), mask, null_rate)
     with pytest.raises(ValueError):                      # mask of another length
         calibration.pack_tare(np.zeros(n), np.ones(n - 1, bool), null_rate)
-
-
-def test_unpack_refuses_a_foreign_wire_version():
-    block = calibration.pack_tare(*_tare())
-    block['wire_version'] = calibration.WIRE_VERSION + 1
-    with pytest.raises(ValueError):
-        calibration.unpack_tare(block)
 
 
 def test_unpack_refuses_a_block_whose_arrays_contradict_its_bin_count():

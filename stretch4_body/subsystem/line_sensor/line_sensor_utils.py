@@ -228,16 +228,9 @@ class LineSensorCalibration:
             return self._base_dir
         return os.path.join(hu.get_fleet_directory(), 'calibration_line_sensors')
 
-    def fingerprint_for(self, sensor_name):
-        return calibration.config_fingerprint(
-            sensor_name, self.sensor_names.index(sensor_name), self.params)
-
     def compute_ideal_range(self):
-        """Flat-floor AXIAL DEPTH, constant across the fan.
-        """
-        geom = self.params['line_sensor_geometry']
-        h = geom['emitter_height_above_floor_mm'] / 1000.0
-        return h / np.sin(np.deg2rad(geom['sensor_angle_down_deg']))
+        """Flat-floor AXIAL DEPTH, constant across the fan."""
+        return calibration.ideal_range_m(self.params)
 
     # -- recording ---------------------------------------------------------
 
@@ -258,10 +251,6 @@ class LineSensorCalibration:
             requested_frames=int(n_frames),
             stretch_body_version=getattr(hu, '__version__', ''),
             loop_params_snapshot=_plain(self.params))
-        for name in targets:
-            fp = self.fingerprint_for(name)
-            session.fingerprints[name] = {
-                'fingerprint': fp, 'sha256': calibration.fingerprint_hash(fp)}
 
         buf = {n: {'ranges': [], 'codes': [], 'frame_id': [], 'ts': [],
                    'missed': []} for n in targets}
@@ -375,11 +364,13 @@ class LineSensorCalibration:
         targets = list(sensors) if sensors else list(self.sensor_names)
         base = self.get_calibration_base_dir()
         self.tares, self.rejected = {}, {}
+        flip = bool(self.params['flip_range_ordering'])
+        ideal = calibration.ideal_range_m(self.params)
         for name in targets:
             path = calibration_store.tare_path(base, name)
             try:
                 self.tares[name] = calibration_store.load_validated_tare(
-                    path, self.fingerprint_for(name), self.n_bins)
+                    path, self.n_bins, flip, ideal)
             except calibration_store.TareRejected as exc:
                 self.rejected[name] = exc
                 if verbose:

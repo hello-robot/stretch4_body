@@ -14,7 +14,6 @@ bin that mostly returns them is rejected rather than averaged in.
     REx_line_sensor_calibrate -s sensor_1 -s sensor_5 --print-per-bin
     REx_line_sensor_calibrate --all --dry-run
     REx_line_sensor_calibrate --all --inspect
-    REx_line_sensor_calibrate --recompute <session_id|path>   # no robot needed
 
 A full run also starts with the same quick inspection and refuses to record
 the long session on a floor that cannot pass (--no-preflight skips this).
@@ -55,9 +54,6 @@ def _parse_args():
                    help='DISTINCT frames to record per sensor (default 300)')
     p.add_argument('--timeout', type=float, default=None,
                    help='seconds to wait for those frames (default scales with --frames)')
-    p.add_argument('--recompute', metavar='SESSION',
-                   help='re-run the maths on a saved session (id or path) and '
-                        'promote the result; needs no robot')
     p.add_argument('--dry-run', action='store_true',
                    help='record and report, but never save a tare')
     p.add_argument('--inspect', action='store_true',
@@ -204,6 +200,7 @@ def _print_inspection(verdicts):
 
 def _score_session(session, ideal, thresholds, base_dir, out_dir, args, targets):
     """Compute, report and (unless refused) promote a tare for each sensor."""
+    flip_range_ordering = bool(session.loop_params_snapshot['flip_range_ordering'])
     report = {
         'format_version': calibration_store.TARE_FORMAT_VERSION,
         'session_id': session.session_id,
@@ -229,8 +226,6 @@ def _score_session(session, ideal, thresholds, base_dir, out_dir, args, targets)
             refused += 1
             continue
 
-        fp = session.fingerprints.get(name, {})
-        entry['config_fingerprint_sha256'] = fp.get('sha256', '')
         try:
             result = calibration.compute_sensor_tare(
                 rec.ranges, rec.codes, ideal, thresholds)
@@ -267,7 +262,7 @@ def _score_session(session, ideal, thresholds, base_dir, out_dir, args, targets)
         else:
             tare = calibration_store.build_tare_yaml(
                 name, rec.sensor_index, result, ideal, thresholds,
-                fp.get('fingerprint', {}), session_id=session.session_id,
+                flip_range_ordering, session_id=session.session_id,
                 stretch_body_version=session.stretch_body_version,
                 n_frames=rec.n_frames)
             path = calibration_store.write_tare(tare, out_dir, base_dir)
@@ -284,26 +279,6 @@ def _score_session(session, ideal, thresholds, base_dir, out_dir, args, targets)
     return saved, refused
 
 
-def _recompute(args, thresholds):
-    """Re-score a saved session. Uses the session's own params snapshot, so an
-    archived run reproduces its original numbers on any machine."""
-    from stretch4_body.core import hello_utils as hu
-    base_dir = os.path.join(hu.get_fleet_directory(), 'calibration_line_sensors')
-    path = (args.recompute if os.path.exists(args.recompute)
-            else calibration_store.session_dir(base_dir, args.recompute))
-    session = calibration_store.read_session(path)
-    geom = session.loop_params_snapshot['line_sensor_geometry']
-    ideal = (geom['emitter_height_above_floor_mm'] / 1000.0
-             / np.sin(np.deg2rad(geom['sensor_angle_down_deg'])))
-    targets = (args.sensor_name if args.sensor_name else list(session.recordings))
-    print(f'recomputing session {session.session_id}, recorded {session.started_at}')
-    print(f'ideal flat-floor range {ideal:.6f} m')
-    out_dir = calibration_store.session_dir(base_dir, session.session_id)
-    saved, refused = _score_session(session, ideal, thresholds, base_dir,
-                                    out_dir, args, targets)
-    return 1 if refused or (not args.dry_run and not saved) else 0
-
-
 def main():
     args = _parse_args()
     try:
@@ -314,9 +289,6 @@ def main():
     if args.frames <= 0:
         print('--frames must be positive', file=sys.stderr)
         return 2
-
-    if args.recompute:
-        return _recompute(args, thresholds)
 
     if not args.all and not args.sensor_name:
         print('choose --all or one or more -s <sensor>', file=sys.stderr)

@@ -249,6 +249,10 @@ def REx_line_sensor_calibrate():
     sys.argv[0] = "REx_line_sensor_calibrate"
     runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_calibrate", run_name="__main__")
 
+def REx_line_sensor_migrate_tares():
+    sys.argv[0] = "REx_line_sensor_migrate_tares"
+    runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_migrate_tares", run_name="__main__")
+
 def test_firmware_available():
     sys.argv[0] = "test_firmware_available"
     runpy.run_module("stretch4_body.tools.factory.test_firmware_available", run_name="__main__")

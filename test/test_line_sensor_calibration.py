@@ -7,10 +7,8 @@ from stretch4_body.subsystem.line_sensor import protocol
 from stretch4_body.subsystem.line_sensor.calibration import (
     CalibrationThresholds,
     apply_tare_array,
-    compare_fingerprints,
     compute_sensor_tare,
-    config_fingerprint,
-    fingerprint_hash,
+    ideal_range_m,
     tare_diagnostics,
 )
 
@@ -186,13 +184,13 @@ class TestRejectionGates:
         assert 4 in r.indices['implausible_offset']
 
     def test_verdict_uses_integer_counts(self):
-        # 16 bins, 0.95 -> ceil(15.2) = 16 accepted bins required
+        th = CalibrationThresholds(min_frames=10, min_accepted_bin_fraction=0.95)
         raw = np.full((NFRAMES, NBINS), IDEAL * 1000)
-        r = compute_sensor_tare(*decode_stack(raw), IDEAL, TH)
+        r = compute_sensor_tare(*decode_stack(raw), IDEAL, th)
         assert r.summary['required_accepted_bins'] == 16
         assert r.sufficient
         raw[:, 0] = protocol.MM_NO_DETECTION
-        r2 = compute_sensor_tare(*decode_stack(raw), IDEAL, TH)
+        r2 = compute_sensor_tare(*decode_stack(raw), IDEAL, th)
         assert not r2.sufficient
         assert '15/16' not in r2.insufficiency_reasons[0]
         assert '1/16 bins rejected' in r2.insufficiency_reasons[0]
@@ -264,56 +262,32 @@ PARAMS = {
 }
 
 
-class TestFingerprint:
-    def test_stable_across_calls(self):
-        a = config_fingerprint('sensor_0', 0, PARAMS)
-        b = config_fingerprint('sensor_0', 0, PARAMS)
-        assert fingerprint_hash(a) == fingerprint_hash(b)
-        assert compare_fingerprints(a, b) == []
+class TestIdealRange:
+    """The one geometric number a stored tare is checked against."""
 
-    def test_bus_map_change_is_detected_and_explained(self):
-        other = {**PARAMS, 'bus_sensor_map': [[0, 1], [2, 3], [4, 5]]}
-        a = config_fingerprint('sensor_0', 0, PARAMS)
-        b = config_fingerprint('sensor_0', 0, other)
-        assert fingerprint_hash(a) != fingerprint_hash(b)
-        diffs = compare_fingerprints(a, b)
-        assert any('bus_sensor_map' in d for d in diffs)
+    def test_matches_the_closed_form(self):
+        geom = PARAMS['line_sensor_geometry']
+        expect = (geom['emitter_height_above_floor_mm'] / 1000.0
+                  / np.sin(np.deg2rad(geom['sensor_angle_down_deg'])))
+        assert ideal_range_m(PARAMS) == pytest.approx(expect)
 
-    def test_flip_change_is_detected(self):
-        other = {**PARAMS, 'flip_range_ordering': False}
-        a = config_fingerprint('sensor_0', 0, PARAMS)
-        b = config_fingerprint('sensor_0', 0, other)
-        assert fingerprint_hash(a) != fingerprint_hash(b)
-
-    def test_geometry_change_names_the_parameter(self):
+    def test_emitter_height_moves_it(self):
         geom = {**PARAMS['line_sensor_geometry'],
-                'emitter_height_above_floor_mm': 92.0}
-        b = config_fingerprint('sensor_0', 0,
-                               {**PARAMS, 'line_sensor_geometry': geom})
-        diffs = compare_fingerprints(config_fingerprint('sensor_0', 0, PARAMS), b)
-        assert any('emitter_height_above_floor_mm' in d and '100.67' in d
-                   for d in diffs), diffs
+                'emitter_height_above_floor_mm': 110.0}
+        assert ideal_range_m({**PARAMS, 'line_sensor_geometry': geom}) \
+            != pytest.approx(ideal_range_m(PARAMS))
 
-    def test_sensor_identity_is_part_of_the_fingerprint(self):
-        a = config_fingerprint('sensor_0', 0, PARAMS)
-        b = config_fingerprint('sensor_1', 1, PARAMS)
-        assert fingerprint_hash(a) != fingerprint_hash(b)
+    def test_mounting_angle_moves_it(self):
+        geom = {**PARAMS['line_sensor_geometry'], 'sensor_angle_down_deg': 30.0}
+        assert ideal_range_m({**PARAMS, 'line_sensor_geometry': geom}) \
+            != pytest.approx(ideal_range_m(PARAMS))
 
-    def test_bool_is_not_canonicalised_as_int(self):
-        # bool subclasses int; ordering the isinstance checks wrongly would
-        # make flip_range_ordering=True hash the same as =1
-        a = config_fingerprint('sensor_0', 0, PARAMS)
-        b = config_fingerprint('sensor_0', 0, {**PARAMS, 'flip_range_ordering': 1})
-        assert a['flip_range_ordering'] is True
-        assert b['flip_range_ordering'] is True
-
-    def test_hash_is_insensitive_to_float_repr_drift(self):
+    def test_fan_shape_does_not_enter_it(self):
         geom = {**PARAMS['line_sensor_geometry'],
-                'sensor_angle_down_deg': 26.000000000000004}
-        b = config_fingerprint('sensor_0', 0,
-                               {**PARAMS, 'line_sensor_geometry': geom})
-        assert fingerprint_hash(config_fingerprint('sensor_0', 0, PARAMS)) == \
-            fingerprint_hash(b)
+                'sensor_horizontal_fov_degrees': 90.0,
+                'sensor_normals_deg': [0.0, 61.0, 121.0, 181.0, 241.0, 301.0]}
+        assert ideal_range_m({**PARAMS, 'line_sensor_geometry': geom}) \
+            == pytest.approx(ideal_range_m(PARAMS))
 
 
 if __name__ == '__main__':

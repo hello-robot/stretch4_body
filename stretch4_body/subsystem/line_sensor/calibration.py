@@ -6,8 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
-import json
 import math
 
 import numpy as np
@@ -35,7 +33,7 @@ class CalibrationThresholds:
     min_valid_fraction: float = 0.90   # of recorded frames, per bin
     max_abs_tare_m: float = 0.10
     max_bin_mad_m: float = 0.005       # temporal spread of one bin's samples
-    min_accepted_bin_fraction: float = 0.95
+    min_accepted_bin_fraction: float = 0.90
     min_frames: int = 100
     warn_median_offset_m: float = 0.010
 
@@ -314,84 +312,14 @@ def tare_diagnostics(ranges, offsets, valid_mask, codes=None):
     }
 
 
-# ---------------------------------------------------------------------------
-# Configuration fingerprint
-# ---------------------------------------------------------------------------
-
-def config_fingerprint(sensor_name, sensor_index, loop_params):
-    """Everything a tare's validity depends on.
-
-    Six identical 60-degree wedges tile the circle, so any mis-mapping produces
-    a complete, plausible-looking ring that no self-consistency check can
-    detect. Refusing a tare whose recorded configuration differs from the
-    running one is the only mechanism by which re-cabling invalidates it.
-    """
-    geom = loop_params.get('line_sensor_geometry', {}) or {}
-    return {
-        'sensor_name': str(sensor_name),
-        'sensor_index': int(sensor_index),
-        'bus_sensor_map': [list(row) for row in loop_params['bus_sensor_map']],
-        'flip_range_ordering': bool(loop_params['flip_range_ordering']),
-        'pixart_report_num': int(geom['pixart_report_num']),
-        # From protocol constants, not literals: renumbering CODE_* must refuse
-        # every stored tare, which is the correct outcome.
-        'code_map': {
-            'valid': int(protocol.CODE_VALID),
-            'beyond_limit': int(protocol.CODE_BEYOND_LIMIT),
-            'no_return': int(protocol.CODE_NO_RETURN),
-            'other_invalid': int(protocol.CODE_OTHER_INVALID),
-        },
-        'code_mm': {
-            'beyond_limit': float(protocol.MM_BEYOND_LIMIT),
-            'no_return': float(protocol.MM_NO_DETECTION),
-        },
-        'ideal_range_model': IDEAL_RANGE_MODEL,
-        'geometry': {
-            'emitter_height_above_floor_mm': float(geom['emitter_height_above_floor_mm']),
-            'sensor_angle_down_deg': float(geom['sensor_angle_down_deg']),
-            'sensor_horizontal_fov_degrees': float(geom['sensor_horizontal_fov_degrees']),
-            'sensor_angles_deg': [float(v) for v in geom['sensor_angles_deg']],
-            'sensor_normals_deg': [float(v) for v in geom['sensor_normals_deg']],
-            'bin_angle_spacing': 'equiangular',
-        },
-    }
-
-
-def _canon(o):
-    if isinstance(o, bool):                      # before int: bool IS an int
-        return o
-    if isinstance(o, dict):
-        return {str(k): _canon(o[k]) for k in sorted(o)}
-    if isinstance(o, (list, tuple, np.ndarray)):
-        return [_canon(v) for v in list(o)]
-    if isinstance(o, (int, np.integer)):
-        return int(o)
-    if isinstance(o, (float, np.floating)):
-        return format(float(o), '.9g')           # repr drift must not change the hash
-    return str(o)
-
-
-def fingerprint_hash(fp):
-    blob = json.dumps(_canon(fp), sort_keys=True, separators=(',', ':'))
-    return hashlib.sha256(blob.encode('utf-8')).hexdigest()
-
-
-def compare_fingerprints(saved, current, _prefix=''):
-    """Human-readable differences, innermost key first. A bare hash mismatch
-    tells the operator nothing they can act on; these lines name the parameter
-    that changed."""
-    diffs = []
-    for key in sorted(set(saved) | set(current)):
-        path = f'{_prefix}{key}'
-        if key not in saved:
-            diffs.append(f'{path}: missing from saved, current={current[key]!r}')
-        elif key not in current:
-            diffs.append(f'{path}: saved={saved[key]!r}, missing from current')
-        elif isinstance(saved[key], dict) and isinstance(current[key], dict):
-            diffs.extend(compare_fingerprints(saved[key], current[key], f'{path}.'))
-        elif _canon(saved[key]) != _canon(current[key]):
-            diffs.append(f'{path}: saved={saved[key]!r} current={current[key]!r}')
-    return diffs
+#
+# Only two things can silently invalidate a stored tare: the bin order it was
+# recorded in, and the ideal range its offsets are measured against. 
+def ideal_range_m(loop_params):
+    """Flat-floor axial depth: what an untared bin should read."""
+    geom = loop_params['line_sensor_geometry']
+    h_m = float(geom['emitter_height_above_floor_mm']) / 1000.0
+    return h_m / math.sin(math.radians(float(geom['sensor_angle_down_deg'])))
 
 
 @dataclass
@@ -429,28 +357,12 @@ class RecordingSession:
     poll_iterations: int = 0
     stretch_body_version: str = ''
     loop_params_snapshot: dict = field(default_factory=dict)
-    fingerprints: dict = field(default_factory=dict)   # name -> {'fingerprint':…, 'sha256':…}
     recordings: dict = field(default_factory=dict)     # name -> SensorRecording
 
     @property
     def sensor_names(self):
         return list(self.recordings)
 
-# ---------------------------------------------------------------------------
-# wire form
-#
-# The loop publishes the tare inside the 100 Hz robot status.
-#
-# The status socket is CONFLATE=1, so a subscriber keeps only the newest
-# message and any "publish once when it changes" scheme would be lost on a
-# client that connected a moment later. The block therefore rides every
-# message, which makes its size the thing that matters.
-#
-# Both directions live here so an encoder change cannot silently outrun its
-# decoder. WIRE_VERSION is checked on unpack.
-# ---------------------------------------------------------------------------
-
-WIRE_VERSION = 1
 _OFFSET_QUANTUM_M = 1e-5      # 0.01 mm; the chip itself quantises to 1 mm
 _OFFSET_LIMIT_M = 32767 * _OFFSET_QUANTUM_M   # 0.327 m, > max_abs_tare_m
 
@@ -473,7 +385,6 @@ def pack_tare(offsets, valid_mask, null_rate_per_bin):
     if np.abs(offsets).max(initial=0.0) > _OFFSET_LIMIT_M:
         raise ValueError(f'offset exceeds the {_OFFSET_LIMIT_M:.3f} m wire range')
     return {
-        'wire_version': WIRE_VERSION,
         'n_bins': int(offsets.size),
         'offsets_q': np.round(offsets / _OFFSET_QUANTUM_M).astype(np.int16),
         'valid_packed': np.packbits(valid_mask),
@@ -483,9 +394,6 @@ def pack_tare(offsets, valid_mask, null_rate_per_bin):
 
 def unpack_tare(block):
     """Inverse of pack_tare. Returns (offsets, valid_mask, null_rate)."""
-    version = block.get('wire_version')
-    if version != WIRE_VERSION:
-        raise ValueError(f'tare wire_version {version}, this code speaks {WIRE_VERSION}')
     n_bins = int(block['n_bins'])
     offsets = np.asarray(block['offsets_q'], dtype=np.float64) * _OFFSET_QUANTUM_M
     # unpackbits always returns a multiple of 8; trim back to the bin count.

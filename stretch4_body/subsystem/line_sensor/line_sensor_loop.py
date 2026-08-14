@@ -165,11 +165,13 @@ class LineSensorLoop(Device):
         block = {'loaded': [], 'rejected': {}, 'n_bins': self.n_bins,
                  'base_dir': base}
         self._tares = {}
-        for idx, name in enumerate(self.params['sensor_names']):
+        flip = bool(self.params['flip_range_ordering'])
+        ideal = calibration.ideal_range_m(self.params)
+        for name in self.params['sensor_names']:
             path = calibration_store.tare_path(base, name)
             try:
-                fp = calibration.config_fingerprint(name, idx, self.params)
-                tare = calibration_store.load_validated_tare(path, fp, self.n_bins)
+                tare = calibration_store.load_validated_tare(
+                    path, self.n_bins, flip, ideal)
 
                 self._tares[name] = (tare.offsets, tare.valid_mask,
                                      tare.null_rate_per_bin)
@@ -178,7 +180,6 @@ class LineSensorLoop(Device):
                 entry.update({
                     'timestamp': tare.timestamp,
                     'session_id': tare.session_id,
-                    'fingerprint_sha256': tare.fingerprint_sha256,
                     'ideal_range_m': float(np.mean(tare.ideal_range)),
                     'n_valid_bins': int(tare.valid_mask.sum()),
                 })
@@ -186,15 +187,14 @@ class LineSensorLoop(Device):
                 block['loaded'].append(name)
             except Exception as exc:
                 reason = getattr(exc, 'reason', exc.__class__.__name__)
-                block['rejected'][name] = f'{reason}: {exc}'
+                block['rejected'][name] = f'{reason}: {getattr(exc, "detail", exc)}'
                 if verbose:
                     self.logger.warning('%s: NO TARE (%s)', name, reason)
         # An id over what was actually loaded, so a client can cache the
         # unpacked arrays and notice a recalibration without diffing 320-point
         # arrays on every status message.
-        block['id'] = calibration.fingerprint_hash(
-            {n: block[n]['fingerprint_sha256'] + block[n]['timestamp']
-             for n in block['loaded']})
+        block['id'] = ';'.join(f'{n}@{block[n]["timestamp"]}'
+                               for n in block['loaded'])
         self.status['calibration'] = block
         if verbose:
             self.logger.info('Line sensor calibration: %d/%d sensors loaded',

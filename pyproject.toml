@@ -113,6 +113,7 @@ REx_stepper_calibration_run = "stretch4_body._cli_wrapper:REx_stepper_calibratio
 REx_stepper_jog = "stretch4_body._cli_wrapper:REx_stepper_jog"
 REx_firebase_jog = "stretch4_body._cli_wrapper:REx_firebase_jog"
 REx_line_sensor_calibrate = "stretch4_body._cli_wrapper:REx_line_sensor_calibrate"
+REx_line_sensor_migrate_tares = "stretch4_body._cli_wrapper:REx_line_sensor_migrate_tares"
 test_firmware_available = "stretch4_body._cli_wrapper:test_firmware_available"
 REx_stepper_gains_read = "stretch4_body._cli_wrapper:REx_stepper_gains_read"
 REx_monitor_robot_temp = "stretch4_body._cli_wrapper:REx_monitor_robot_temp"

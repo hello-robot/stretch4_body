@@ -692,8 +692,7 @@ class LineSensorLoopClient(SubsystemClient):
     """Client view of the six PixArt line sensors.
 
     The calibration the body loaded and validated arrives inside the status,
-    so a client -- including one on another machine with no fleet directory --
-    never opens a tare file or repeats the fingerprint check. Ask this class
+    so a client never opens a tare file or repeats its validation. Ask this class
     for the arrays instead of unpacking status['calibration'] by hand.
     """
 

@@ -32,30 +32,26 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import datetime
-import json
 import os
 
 import numpy as np
 import yaml
 
-from stretch4_body.subsystem.line_sensor.calibration import (
-    IDEAL_RANGE_MODEL,
-    RecordingSession,
-    SensorRecording,
-    compare_fingerprints,
-    fingerprint_hash,
-)
+from stretch4_body.subsystem.line_sensor.calibration import IDEAL_RANGE_MODEL
 
-SESSION_SCHEMA_VERSION = 2
 TARE_FORMAT_VERSION = 2
 
-# Why a stored tare was refused. 
+# An offsets-vs-ideal disagreement past this is a changed parameter, not the
+# rounding of a full-precision float.
+IDEAL_RANGE_TOL_M = 1e-3
+
+
 REJECT_MISSING = 'missing'
 REJECT_UNREADABLE = 'unreadable'
-REJECT_LEGACY_V1 = 'legacy_v1'
+REJECT_LEGACY = 'legacy_format'
 REJECT_BAD_SCHEMA = 'bad_schema'
-REJECT_NO_FINGERPRINT = 'no_fingerprint'
-REJECT_FINGERPRINT_MISMATCH = 'fingerprint_mismatch'
+REJECT_BIN_ORDER = 'bin_order_changed'
+REJECT_GEOMETRY = 'geometry_changed'
 REJECT_BIN_COUNT = 'bin_count_mismatch'
 REJECT_NONFINITE = 'nonfinite_offsets'
 REJECT_NO_VALID_BINS = 'no_valid_bins'
@@ -131,7 +127,7 @@ def write_session(session, base_dir):
     os.makedirs(out, exist_ok=True)
 
     meta = {
-        'schema_version': SESSION_SCHEMA_VERSION,
+        'tare_format_version': TARE_FORMAT_VERSION,
         'session_id': session.session_id,
         'started_at': session.started_at,
         'ended_at': session.ended_at,
@@ -139,7 +135,6 @@ def write_session(session, base_dir):
         'poll_iterations': int(session.poll_iterations),
         'stretch_body_version': session.stretch_body_version,
         'loop_params_snapshot': session.loop_params_snapshot,
-        'fingerprints': session.fingerprints,
         'sensors': {
             name: {'sensor_index': int(r.sensor_index), 'status': r.status,
                    'notes': list(r.notes), 'stats': dict(r.stats)}
@@ -147,11 +142,7 @@ def write_session(session, base_dir):
         },
     }
 
-    arrays = {
-        'schema_version': np.int64(SESSION_SCHEMA_VERSION),
-        'sensor_names': np.array(session.sensor_names, dtype='<U16'),
-        'meta_json': np.array(json.dumps(meta), dtype=object).astype(str),
-    }
+    arrays = {'sensor_names': np.array(session.sensor_names, dtype='<U16')}
     for name, rec in session.recordings.items():
         # A failed sensor still gets its arrays written, possibly zero-length:
         # the evidence for why a run failed is exactly what you want on disk.
@@ -167,44 +158,6 @@ def write_session(session, base_dir):
     return out
 
 
-def read_session(path):
-    """Load a session from its directory or its .npz. Needs no fleet dir."""
-    npz = path if path.endswith('.npz') else os.path.join(path, 'session.npz')
-    if not os.path.exists(npz):
-        raise FileNotFoundError(f'no session.npz at {npz}')
-    with np.load(npz, allow_pickle=False) as z:
-        meta = json.loads(str(z['meta_json']))
-        version = int(meta.get('schema_version', z['schema_version']))
-        if version > SESSION_SCHEMA_VERSION:
-            raise ValueError(f'session schema v{version} is newer than this '
-                             f'code understands (v{SESSION_SCHEMA_VERSION})')
-        session = RecordingSession(
-            session_id=meta['session_id'],
-            started_at=meta.get('started_at', ''),
-            ended_at=meta.get('ended_at', ''),
-            requested_frames=int(meta.get('requested_frames', 0)),
-            poll_iterations=int(meta.get('poll_iterations', 0)),
-            stretch_body_version=meta.get('stretch_body_version', ''),
-            loop_params_snapshot=meta.get('loop_params_snapshot', {}),
-            fingerprints=meta.get('fingerprints', {}),
-        )
-        for name in [str(n) for n in z['sensor_names']]:
-            per = meta.get('sensors', {}).get(name, {})
-            session.recordings[name] = SensorRecording(
-                sensor_name=name,
-                sensor_index=int(per.get('sensor_index', -1)),
-                ranges=z[f'{name}__ranges'],
-                codes=z[f'{name}__codes'],
-                frame_id=z[f'{name}__frame_id'],
-                ts=z[f'{name}__ts'],
-                missed_frames=z[f'{name}__missed_frames'],
-                status=per.get('status', 'OK'),
-                notes=list(per.get('notes', [])),
-                stats=dict(per.get('stats', {})),
-            )
-    return session
-
-
 def write_report(report, path):
     with open(path, 'w', encoding='utf-8') as f:
         yaml.safe_dump(report, f, sort_keys=False)
@@ -215,7 +168,7 @@ def write_report(report, path):
 # ---------------------------------------------------------------------------
 
 def build_tare_yaml(sensor_name, sensor_index, result, ideal_range_m,
-                    thresholds, fingerprint, session_id='',
+                    thresholds, flip_range_ordering, session_id='',
                     stretch_body_version='', timestamp=None, n_frames=0):
     """The single place a tare document is constructed. Every writer goes
     through here so the schema cannot drift between them."""
@@ -229,8 +182,7 @@ def build_tare_yaml(sensor_name, sensor_index, result, ideal_range_m,
         'timestamp': timestamp or datetime.datetime.now().isoformat(),
         'session_id': str(session_id),
         'stretch_body_version': str(stretch_body_version),
-        'config_fingerprint_sha256': fingerprint_hash(fingerprint),
-        'config_fingerprint': fingerprint,
+        'flip_range_ordering': bool(flip_range_ordering),
         'n_bins': int(result.offsets.size),
         'n_frames': int(n_frames),
         'ideal_range_m': float(ideal[0]),
@@ -268,9 +220,10 @@ def read_tare(path):
         return yaml.safe_load(f)
 
 
-def load_validated_tare(path, expected_fingerprint, expected_n_bins):
+def load_validated_tare(path, expected_n_bins, expected_flip, expected_ideal_m):
     """Load a tare, or raise TareRejected. Never returns partially-valid data
-    and never falls back to another file."""
+    and never falls back to another file.
+    """
     if not os.path.exists(path):
         raise TareRejected(REJECT_MISSING,
                            f'no tare at {path}. {_REMEDIATE}')
@@ -284,29 +237,32 @@ def load_validated_tare(path, expected_fingerprint, expected_n_bins):
     version = data.get('format_version')
     if version is None or int(version) < TARE_FORMAT_VERSION:
         raise TareRejected(
-            REJECT_LEGACY_V1,
-            f'{path} predates configuration fingerprinting, so it cannot prove '
-            f'which wiring and geometry it was recorded under. {_REMEDIATE}')
+            REJECT_LEGACY,
+            f'{path} is format v{version}, older than v{TARE_FORMAT_VERSION}. '
+            f'Adopt it with  REx_line_sensor_migrate_tares  or {_REMEDIATE.lower()}')
     if int(version) > TARE_FORMAT_VERSION:
         raise TareRejected(REJECT_BAD_SCHEMA,
                            f'{path}: format_version {version} is newer than this '
                            f'code understands ({TARE_FORMAT_VERSION})')
 
-    saved_fp = data.get('config_fingerprint')
-    saved_hash = data.get('config_fingerprint_sha256')
-    if not saved_fp or not saved_hash:
-        raise TareRejected(REJECT_NO_FINGERPRINT,
-                           f'{path} has no configuration fingerprint. {_REMEDIATE}')
-    if fingerprint_hash(saved_fp) != saved_hash:
-        raise TareRejected(REJECT_BAD_SCHEMA,
-                           f'{path}: fingerprint does not match its own hash; the '
-                           f'file has been edited by hand')
-    if saved_hash != fingerprint_hash(expected_fingerprint):
-        diffs = compare_fingerprints(saved_fp, expected_fingerprint)
+    if bool(data.get('flip_range_ordering')) != bool(expected_flip):
         raise TareRejected(
-            REJECT_FINGERPRINT_MISMATCH,
-            f'{path} was recorded under a different configuration:\n  '
-            + '\n  '.join(diffs) + f'\n{_REMEDIATE}')
+            REJECT_BIN_ORDER,
+            f'{path} was recorded with flip_range_ordering='
+            f'{bool(data.get("flip_range_ordering"))}, but the robot now runs '
+            f'{bool(expected_flip)} -- every offset would be mirrored. {_REMEDIATE}')
+
+    stored_ideal = data.get('ideal_range_m')
+    if stored_ideal is None:
+        raise TareRejected(REJECT_GEOMETRY,
+                           f'{path} records no ideal_range_m. {_REMEDIATE}')
+    if abs(float(stored_ideal) - float(expected_ideal_m)) > IDEAL_RANGE_TOL_M:
+        raise TareRejected(
+            REJECT_GEOMETRY,
+            f'{path} was recorded against an ideal range of '
+            f'{float(stored_ideal):.4f} m but the robot now computes '
+            f'{float(expected_ideal_m):.4f} m -- the emitter height or mounting '
+            f'angle has changed. {_REMEDIATE}')
 
     offsets = np.asarray(data.get('tare_offsets', []), dtype=np.float64)
     mask = np.asarray(data.get('tare_valid_mask', []), dtype=bool)
@@ -338,5 +294,4 @@ def load_validated_tare(path, expected_fingerprint, expected_n_bins):
         timestamp=data.get('timestamp', ''),
         session_id=data.get('session_id', ''),
         path=path,
-        fingerprint_sha256=saved_hash,
         summary=data.get('calibration_summary', {}) or {})
