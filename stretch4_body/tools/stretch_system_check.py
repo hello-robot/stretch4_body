@@ -377,34 +377,53 @@ def check_esp32():
 
     return True
 
+LINE_SENSOR_MIN_HZ = 25.0
+LINE_SENSOR_MEASURE_S = 2.0
+LINE_SENSOR_SETTLE_S = 3.0
+
 
 def check_line_sensors():
     print_section('Line Sensors (hello-pixart-j3)')
 
-    if r is None:
-        _SKIP_REASONS['Line Sensors'] = 'server offline'
-        print_warn('Server offline — cannot check line sensor status')
-        return None
+    from stretch4_body.subsystem.line_sensor import connect
 
-    # A feature that was never switched on is not a failure. Ask the server's
-    # own subsystem list rather than inferring from a missing attribute, which
-    # cannot tell "turned off in params" from "enabled but failed to start".
-    enabled = 'line_sensor_loop' in (r.params.get('server', {}).get('subsystems', []) or [])
-    line_sensor = getattr(r, 'line_sensor_loop', None)
+    subsystems = list(r.params.get('server', {}).get('subsystems', []) or []) if r is not None else []
+    line_sensor = getattr(r, 'line_sensor_loop', None) if r is not None else None
 
-    if not enabled:
-        _SKIP_REASONS['Line Sensors'] = 'disabled in params'
-        on = list(r.params.get('server', {}).get('subsystems', []) or [])
-        print_info('DISABLED: line_sensor_loop — no cliff or obstacle detection '
-                   'from the line sensors.')
-        print_info(f'Enabled server subsystems: {", ".join(on) if on else "none"}')
-        print_info('Enable it under server.subsystems in stretch_user_params.yaml.')
-        return None
-
-    if line_sensor is None:
+    if line_sensor is None and 'line_sensor_loop' in subsystems:
         print_result(False, 'line_sensor_loop is ENABLED in params but the client '
                             'has no handle for it — the subsystem failed to start')
         return False
+
+    opened_here = False
+    if line_sensor is not None:
+        # Reuse the loop the server is already running — opening the port a
+        # second time would just be refused by the one that has it.
+        conn = connect.LineSensorConnection(connect.SERVER, line_sensor,
+                                            lambda: None, r.pull_status)
+    else:
+        print_info('line_sensor_loop is not running as a server subsystem — '
+                   'reading the board directly for this check.')
+        print_info('If you want to use line sensors, enable line_sensor_loop under '
+                   'server.subsystems in stretch_user_params.yaml.')
+        try:
+            conn = connect.open_line_sensors('stretch_system_check', verbose=False)
+        except connect.LineSensorUnavailable as exc:
+            print_result(False, f'No route to the line sensors: {exc.detail}')
+            return False
+        opened_here = True
+
+    print_info(conn.describe())
+    try:
+        return _check_line_sensors_on(conn, just_opened=opened_here)
+    finally:
+        if opened_here:
+            conn.close()
+
+
+def _check_line_sensors_on(conn, just_opened):
+    line_sensor = conn.loop
+    conn.pull_status()
 
     all_pass = True
     lss = line_sensor.status
@@ -422,11 +441,6 @@ def check_line_sensors():
         print_warn('Streaming is OFF — cliff detection is disabled')
         all_pass = False
 
-    rate = health.get('rate_hz', lss.get('rate_hz', 0)) or 0
-    p = rate > 0
-    print_result(p, f'Line sensor loop running at {rate:.1f} Hz')
-    all_pass &= p
-
     # -- which sensors are actually alive ----------------------------------
     dead = list(health.get('sensors_dead', []))
     disabled = list(health.get('disabled_sensors', []))
@@ -440,6 +454,25 @@ def check_line_sensors():
     else:
         print_result(True, f'All {len(sensor_names)} sensors enabled (none disabled)')
 
+  
+    from stretch4_body.tools import stretch_line_sensor_hz_check as hz
+
+    active = [sn for sn in sensor_names if sn not in disabled]
+    rates, span = {}, 0.0
+    if not active:
+        print_warn('Every sensor is disabled — nothing to time')
+        all_pass = False
+    else:
+        if just_opened:
+            hz.settle(conn, active, max_s=LINE_SENSOR_SETTLE_S)
+        rates, span = hz.measure(conn, active, LINE_SENSOR_MEASURE_S)
+
+        slowest = min(rates[sn]['advance_hz'] for sn in active)
+        p = slowest >= LINE_SENSOR_MIN_HZ
+        print_result(p, f'Frame rate {slowest:.1f} Hz on the slowest sensor '
+                        f'(need >= {LINE_SENSOR_MIN_HZ:.0f} Hz, measured over {span:.1f} s)')
+        all_pass &= p
+
     # -- per sensor --------------------------------------------------------
     for sn in sensor_names:
         s = lss.get(sn, {})
@@ -450,12 +483,24 @@ def check_line_sensors():
         if sn in disabled:
             print_info(f'{sn}: disabled')
             continue
-        s_rate = s.get('rate_hz', 0) or 0
+        m = rates.get(sn, {})
+        s_rate = m.get('advance_hz', 0.0)
         missed = s.get('missed_frames', 0)
-        good = sn not in dead and s_rate > 0
-        print_result(good, f'{sn}: {s_rate:.1f} Hz, frame_id = {s.get("frame_id", 0)}'
-                           + (f', missed {missed} frames' if missed else ''))
+        good = sn not in dead and s_rate >= LINE_SENSOR_MIN_HZ and not m.get('backwards')
+        watched_every_frame = m.get('fresh_hz', 0.0) >= 0.9 * s_rate
+        print_result(good, f'{sn}: {s_rate:.1f} Hz'
+                           + (f', dropped {m["skips"]}x (longest gap {m["max_gap"]} frames)'
+                              if m.get('skips') and watched_every_frame else '')
+                           + (f', missed {missed} frames' if missed else '')
+                           + (f', frame_id went BACKWARDS {m["backwards"]}x' if m.get('backwards') else ''))
         all_pass &= good
+
+        fresh = m.get('fresh_hz', 0.0)
+        if s_rate >= LINE_SENSOR_MIN_HZ and fresh < LINE_SENSOR_MIN_HZ:
+            print_warn(f'{sn}: only {fresh:.1f} Hz of that reaches a reader — '
+                       f'status is being delivered slower than the sensor runs')
+        elif args.verbose:
+            print_info(f'{sn}: {fresh:.1f} Hz of new frames reaching a reader')
 
     # -- a sensor missing from every frame -----------------------------------
     # These climb together at the frame rate when a sensor is structurally

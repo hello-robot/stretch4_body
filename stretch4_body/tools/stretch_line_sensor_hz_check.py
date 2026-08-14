@@ -22,11 +22,15 @@ SETTLE_QUIET_S = 1.5     # this long with no jump == tracking the board
 SETTLE_JUMP = 2          # frame_id advance per sample that counts as a jump
 
 
-def settle(conn, ls, sensors):
-    """Block until frame_id advances smoothly, or SETTLE_MAX_S passes.
+def sensor_names(conn):
+    """The sensors this connection is actually reporting, in order."""
+    return sorted(k for k in conn.loop.status if k.startswith('sensor_'))
 
-    Returns (settled, seconds_waited). Not cosmetic: until this returns, the
-    ranges a tool reads are older than the floor in front of the robot.
+
+def settle(conn, sensors, max_s=SETTLE_MAX_S):
+    """Block until frame_id advances smoothly, or max_s passes.
+
+    Returns (settled, seconds_waited).
     """
     t0 = time.time()
     last = {}
@@ -35,16 +39,62 @@ def settle(conn, ls, sensors):
         conn.pull_status()
         now = time.time()
         for sn in sensors:
-            f = (ls.status.get(sn) or {}).get('frame_id', 0)
+            f = (conn.loop.status.get(sn) or {}).get('frame_id', 0)
             prev = last.get(sn)
             if prev is not None and f > prev + SETTLE_JUMP:
                 calm_since = now
             last[sn] = f
         if now - calm_since >= SETTLE_QUIET_S:
             return True, now - t0
-        if now - t0 >= SETTLE_MAX_S:
+        if now - t0 >= max_s:
             return False, now - t0
         time.sleep(0.003)
+
+
+def measure(conn, sensors, duration_s):
+    """Sample frame_id as fast as we can for duration_s. Returns (stats, span).
+
+    Two rates come out of the same window, and they answer different questions:
+
+      advance_hz  frame_id span / elapsed -- how fast the BOARD produces
+                  frames, whether or not we managed to look at each one.
+      fresh_hz    distinct frame_ids seen / elapsed -- how fast NEW data
+                  actually reaches a reader. Below advance_hz when status is
+                  published slower than the sensors run, or when we sample it
+                  too slowly.
+
+    Rates are per sensor because a single sensor can drop out of frames while
+    the rest of the board keeps up.
+    """
+    samples = []
+    t0 = time.time()
+    while time.time() - t0 < duration_s:
+        conn.pull_status()
+        samples.append((time.time(),
+                        {sn: (conn.loop.status.get(sn) or {}).get('frame_id', 0)
+                         for sn in sensors}))
+        time.sleep(0.003)
+
+    span = (samples[-1][0] - samples[0][0]) if len(samples) > 1 else 0.0
+    stats = {}
+    for sn in sensors:
+        fids = [row[1][sn] for row in samples]
+        uniq = sorted(set(fids))
+        gaps = [b - a for a, b in zip(uniq, uniq[1:])]
+        # Both counts are "after the first sample", so they divide by the same
+        # span: the frame sitting in status when we arrived is not new data.
+        new_frames = len(uniq) - 1
+        advance = fids[-1] - fids[0] if fids else 0
+        stats[sn] = {
+            'advance_hz': advance / span if span > 0 and advance > 0 else 0.0,
+            'fresh_hz': new_frames / span if span > 0 and new_frames > 0 else 0.0,
+            'new_frames': new_frames,
+            'skips': sum(1 for g in gaps if g > 1),
+            'max_gap': max(gaps) if gaps else 0,
+            'backwards': sum(1 for a, b in zip(fids, fids[1:]) if b < a),
+            'frame_id': fids[-1] if fids else 0,
+        }
+    return stats, span
 
 
 def main():
@@ -63,13 +113,13 @@ def main():
     ls = conn.loop
     conn.pull_status()
 
-    sensors = sorted(k for k in ls.status if k.startswith('sensor_'))
+    sensors = sensor_names(conn)
     if not sensors:
         conn.close()
         sys.exit("FAIL: no sensor_* entries in line_sensor_loop status")
-   
+
     print("settling ...")
-    settled, waited = settle(conn, ls, sensors)
+    settled, waited = settle(conn, sensors)
     if settled:
         print(f"  settled after {waited:.1f}s")
     else:
@@ -78,34 +128,21 @@ def main():
 
     print(f"measuring {len(sensors)} sensors for {args.duration:.0f}s ...")
 
-    samples = []
-    t0 = time.time()
-    while time.time() - t0 < args.duration:
-        conn.pull_status()
-        samples.append((time.time(),
-                        {sn: (ls.status.get(sn) or {}).get('frame_id', 0)
-                         for sn in sensors}))
-        time.sleep(0.003)
+    stats, span = measure(conn, sensors, args.duration)
     conn.close()
 
-    span = samples[-1][0] - samples[0][0]
     ok = True
-    print(f"\n{'sensor':<10} {'fresh Hz':>8} {'new frames':>10} {'skips':>6} "
-          f"{'max gap':>7} {'backwards':>9}")
+    print(f"\n{'sensor':<10} {'fresh Hz':>8} {'board Hz':>8} {'new frames':>10} "
+          f"{'skips':>6} {'max gap':>7} {'backwards':>9}")
     for sn in sensors:
-        fids = [r[1][sn] for r in samples]
-        uniq = sorted(set(fids))
-        gaps = [b - a for a, b in zip(uniq, uniq[1:])]
-        skips = sum(1 for g in gaps if g > 1)
-        max_gap = max(gaps) if gaps else 0
-        backwards = sum(1 for a, b in zip(fids, fids[1:]) if b < a)
-        hz = len(uniq) / span
+        m = stats[sn]
         flag = ''
-        if hz < args.min_hz or backwards:
+        if m['fresh_hz'] < args.min_hz or m['backwards']:
             ok = False
             flag = '  <-- PROBLEM'
-        print(f"{sn:<10} {hz:8.2f} {len(uniq):10d} {skips:6d} "
-              f"{max_gap:7d} {backwards:9d}{flag}")
+        print(f"{sn:<10} {m['fresh_hz']:8.2f} {m['advance_hz']:8.2f} "
+              f"{m['new_frames']:10d} {m['skips']:6d} "
+              f"{m['max_gap']:7d} {m['backwards']:9d}{flag}")
 
     h = ls.status.get('health') or {}
     print(f"\nserver-reported rate_hz: {ls.status.get('rate_hz', 0):.1f}   "
