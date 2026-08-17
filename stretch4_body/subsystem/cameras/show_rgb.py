@@ -8,6 +8,7 @@ from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller impo
     RGBPipelineControllerROS,
     RecordRgbShowImageIn,
 )
+from stretch4_body.subsystem.cameras.enums.recording_file_format import RecordingFileFormat
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
 def show_rgb():
@@ -22,6 +23,13 @@ def show_rgb():
         type=str,
         default=None,
         help="Directory used to record the data, if provided, images will be saved to disk in this directory.",
+    )
+    parser.add_argument(
+        "-f",
+        "--record_format",
+        type=str,
+        default=RecordingFileFormat.mp4.extension,
+        help=f"The file format to record in, only used with --recording_directory. One of: {', '.join(RecordingFileFormat.all_extensions())}. {RecordingFileFormat.mp4.extension} writes one video per camera, the image formats write one file per frame. Default: {RecordingFileFormat.mp4.extension}.",
     )
     parser.add_argument(
         "--rerun",
@@ -99,6 +107,11 @@ def show_rgb():
 
     recording_directory = args.recording_directory
 
+    try:
+        recording_file_format = RecordingFileFormat.from_string(args.record_format)
+    except ValueError as error:
+        parser.error(str(error))
+
     show_fps = args.show_fps
 
     camera_type = None
@@ -136,6 +149,9 @@ def show_rgb():
     else:
         controller_class = RGBPipelineController
 
+    if recording_directory is not None:
+        logger.info(f"Recording {camera_type.name} to {recording_directory} as {recording_file_format.extension} files.")
+
     rgb_pipeline_controller = controller_class(
         camera_type=camera_type,
         recording_directory=recording_directory,
@@ -145,6 +161,7 @@ def show_rgb():
         is_crop=is_crop,
         ai_models_to_use=[],
         detect_aruco_marker_size=detect_aruco_marker_size,
+        recording_file_format=recording_file_format,
     )
 
     loop_timer = LoopTimer()
@@ -155,14 +172,20 @@ def show_rgb():
         loop_timer.end_of_iteration()
         loop_timer.pretty_print(minimum=True)
         loop_timer.start_of_iteration()
-    if camera_type.is_synced_camera_type():
-        for _ in rgb_pipeline_controller.get_frame_synced(is_run_pipeline=True):
-            print_loop_timer()
-            pass # do nothing, the pipeline will handle the user's pipeline configs
-    else:
-        for _ in rgb_pipeline_controller.get_frame(is_run_pipeline=True):
-            print_loop_timer()
-            pass # do nothing, the pipeline will handle the user's pipeline configs
+    try:
+        if camera_type.is_synced_camera_type():
+            for _ in rgb_pipeline_controller.get_frame_synced(is_run_pipeline=True):
+                print_loop_timer()
+                pass # do nothing, the pipeline will handle the user's pipeline configs
+        else:
+            for _ in rgb_pipeline_controller.get_frame(is_run_pipeline=True):
+                print_loop_timer()
+                pass # do nothing, the pipeline will handle the user's pipeline configs
+    except KeyboardInterrupt:
+        logger.info("Stopping...")
+    finally:
+        # Quitting without stopping would kill the saver threads mid-write, truncating the recording.
+        rgb_pipeline_controller.stop()
 
 
 if __name__ == "__main__":

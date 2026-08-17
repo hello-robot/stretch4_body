@@ -19,8 +19,12 @@ stretch_camera_show --left --no-rotate # Display the left head camera without ro
 
 stretch_camera_show --gripper # Display the gripper camera feeds and the point cloud from the stereo depth in rerun
 
-stretch_camera_show --left --recording_directory ./recordings # Store images to disk (and display in rerun)
+stretch_camera_show --left --recording_directory ./recordings # Store the left head camera to disk as a video (and display in rerun)
+
+stretch_camera_show --left --recording_directory ./recordings --record_format .png # Store one .png per frame instead
 ```
+
+Recordings are written to `RECORDING_DIRECTORY/<camera>/<timestamp>/`. `--record_format` takes `.mp4` (the default), which writes one `video.mp4` per camera at the camera's configured frame rate, or `.png` and `.jpg`, which write one file per frame, named after the frame's timestamp.
 
 ## Using the Cameras with Python
 
