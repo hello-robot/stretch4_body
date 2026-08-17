@@ -5,11 +5,12 @@ stretch_system_check.py
 Comprehensive hardware and software diagnostic tool for the Stretch 4 robot.
 
 Usage:
-    stretch_system_check              # Full system check (requires server)
-    stretch_system_check --firmware   # Firmware version check (kills/restarts server)
-    stretch_system_check --sensors    # Lidar + camera check (no server needed)
-    stretch_system_check --verbose    # Show additional detail in all checks
-    stretch_system_check --direct     # Use Robot API directly instead of server client
+    stretch_system_check                  # Full system check (requires server)
+    stretch_system_check --firmware       # Firmware version check (kills/restarts server)
+    stretch_system_check --sensors        # Lidar + camera check (no server needed)
+    stretch_system_check --check_updates  # pip + firmware updates, with commands to run
+    stretch_system_check --verbose        # Show additional detail in all checks
+    stretch_system_check --direct         # Use Robot API directly instead of server client
 """
 import stretch4_body.core.hello_utils as hu
 hu.print_stretch_re_use()
@@ -42,6 +43,8 @@ parser.add_argument('-v', '--verbose',  help='Print additional detail',         
 parser.add_argument('-d', '--direct',   help='Use direct Robot API (no server)',          action='store_true')
 parser.add_argument('--firmware',       help='Kill server, check firmware, restart server', action='store_true')
 parser.add_argument('--sensors',        help='Check lidars and cameras',                 action='store_true')
+parser.add_argument('--check_updates',  help='Check pip + firmware updates and print the commands to run',
+                                                                                        action='store_true')
 args = parser.parse_args()
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
@@ -157,6 +160,42 @@ def _is_newer(candidate, installed):
         return False
 
 
+CORE_PIP = ('hello-robot-stretch4-body', 'hello-robot-stretch4-urdf')
+
+# Command shown to the user for applying pip updates (matches README)
+PIP_UPDATE_CMD = 'python3 -m pip install -U'
+
+
+def discover_pip_packages():
+    """
+    Return (core, extras): installed versions of the always-shown Stretch packages,
+    and of any other hello/stretch/hesai pip packages found in the environment.
+    """
+    core = {}
+    for name in CORE_PIP:
+        try:
+            core[name] = pkg_version(name)
+        except Exception:
+            core[name] = 'unknown'
+
+    extras = {}
+    try:
+        from importlib.metadata import distributions as _distributions
+        core_lc = {n.lower() for n in CORE_PIP}
+        for dist in _distributions():
+            name = (dist.metadata.get('Name') or '').strip()
+            name_lc = name.lower()
+            if not name or name_lc in core_lc:
+                continue
+            if 'hello' in name_lc or 'stretch' in name_lc or 'hesai' in name_lc:
+                if name not in extras:  # keep first occurrence
+                    extras[name] = (dist.metadata.get('Version') or 'unknown').strip()
+    except Exception:
+        pass
+
+    return core, extras
+
+
 def check_pypi_updates(installed):
     """
     Query PyPI for newer releases of the hello-robot-* packages in `installed`
@@ -189,42 +228,15 @@ def check_pypi_updates(installed):
 def print_software_versions():
     print_section('Software Versions')
 
-    # Always-shown core packages
-    CORE_PIP = {'hello-robot-stretch4-body', 'hello-robot-stretch4-urdf'}
-    try:
-        s4b_ver = pkg_version('hello-robot-stretch4-body')
-    except Exception:
-        s4b_ver = 'unknown'
-    try:
-        urdf_ver = pkg_version('hello-robot-stretch4-urdf')
-    except Exception:
-        urdf_ver = 'unknown'
+    core, pip_extras = discover_pip_packages()
     py_ver = f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'
 
-    # Additional pip packages — auto-discovered by name keyword
-    pip_extras = {}
-    try:
-        from importlib.metadata import distributions as _distributions
-        for dist in _distributions():
-            name = (dist.metadata.get('Name') or '').strip()
-            name_lc = name.lower()
-            if not name or name.lower() in {n.lower() for n in CORE_PIP}:
-                continue
-            if 'hello' in name_lc or 'stretch' in name_lc or 'hesai' in name_lc:
-                if name not in pip_extras:  # keep first occurrence
-                    pip_extras[name] = (dist.metadata.get('Version') or 'unknown').strip()
-    except Exception:
-        pass
-
     # Ask PyPI (once, concurrently) which hello-robot-* packages have newer releases
-    installed = {'hello-robot-stretch4-body': s4b_ver,
-                 'hello-robot-stretch4-urdf': urdf_ver,
-                 **pip_extras}
-    updates, pypi_reachable = check_pypi_updates(installed)
+    updates, pypi_reachable = check_pypi_updates({**core, **pip_extras})
 
-    print_version_info(f'hello-robot-stretch4-body : {s4b_ver}',
+    print_version_info(f'hello-robot-stretch4-body : {core["hello-robot-stretch4-body"]}',
                        updates.get('hello-robot-stretch4-body'))
-    print_version_info(f'hello-robot-stretch4-urdf : {urdf_ver}',
+    print_version_info(f'hello-robot-stretch4-urdf : {core["hello-robot-stretch4-urdf"]}',
                        updates.get('hello-robot-stretch4-urdf'))
     print_info(f'Python                    : {py_ver}')
 
@@ -241,7 +253,8 @@ def print_software_versions():
     if not pypi_reachable:
         print_warn('Could not reach PyPI — update availability not checked')
     elif updates:
-        print_info('Update with: pip install -U ' + ' '.join(sorted(updates)))
+        print_info(f'Update with: {PIP_UPDATE_CMD} ' + ' '.join(sorted(updates)))
+        print_info('Run with --check_updates for pip + firmware update commands')
 
     # ROS2 packages — auto-discovered via AMENT_PREFIX_PATH
     try:
@@ -301,18 +314,27 @@ def check_usb_devices():
     return all_pass
 
 
-def check_firmware_versions():
-    """Query installed firmware via FirmwareInstalled. Server must be stopped first."""
-    print_section('Firmware Versions')
+DEVICE_LABELS = {
+    'hello-motor-arm':    'Arm Stepper',
+    'hello-motor-lift':   'Lift Stepper',
+    'hello-motor-omni-0': 'Omni Wheel 0',
+    'hello-motor-omni-1': 'Omni Wheel 1',
+    'hello-motor-omni-2': 'Omni Wheel 2',
+    'hello-power-periph': 'Power Periph (pimu2)',
+    'hello-pixart-j3':    'PixArt J3 (line sensor)',
+    'hello-esp32':        'ESP32',
+}
 
+# Firmware version can't be read back from these boards
+UNQUERYABLE_FIRMWARE = ('hello-pixart-j3', 'hello-esp32')
+
+
+def firmware_use_device():
+    """Devices to query for firmware, honoring the SE4UNH (no arm) configuration."""
     from stretch4_body.core.device import Device
-    from stretch4_body.core.factory.firmware_installed import FirmwareInstalled
-    from stretch4_body.core.factory.firmware_recommended import FirmwareRecommended
-
     d = Device(req_params=False)
     is_unh = d.robot_params.get('robot', {}).get('model_name') == 'SE4UNH'
-
-    use_device = {
+    return {
         'hello-esp32':        True,
         'hello-motor-arm':    not is_unh,
         'hello-motor-lift':   True,
@@ -323,18 +345,19 @@ def check_firmware_versions():
         'hello-pixart-j3':    True,
     }
 
-    DEVICE_LABELS = {
-        'hello-motor-arm':    'Arm Stepper',
-        'hello-motor-lift':   'Lift Stepper',
-        'hello-motor-omni-0': 'Omni Wheel 0',
-        'hello-motor-omni-1': 'Omni Wheel 1',
-        'hello-motor-omni-2': 'Omni Wheel 2',
-        'hello-power-periph': 'Power Periph (pimu2)',
-        'hello-pixart-j3':    'PixArt J3 (line sensor)',
-        'hello-esp32':        'ESP32',
-    }
 
-    # Suppress all log/print output while querying firmware
+def query_firmware(use_device):
+    """
+    Query installed and recommended firmware with all SDK log/print output suppressed.
+    The robot server must be stopped first (exclusive USB access).
+
+    Returns (fw_installed, fw_recommended, error_str). fw_installed is None if the
+    query failed; fw_recommended is None if the available-firmware lookup failed
+    (e.g. no internet).
+    """
+    from stretch4_body.core.factory.firmware_installed import FirmwareInstalled
+    from stretch4_body.core.factory.firmware_recommended import FirmwareRecommended
+
     logging.disable(logging.CRITICAL)
     _old_stdout, _old_stderr = sys.stdout, sys.stderr
     sys.stdout = sys.stderr = io.StringIO()
@@ -343,14 +366,25 @@ def check_firmware_versions():
     except Exception as e:
         sys.stdout, sys.stderr = _old_stdout, _old_stderr
         logging.disable(logging.NOTSET)
-        print_warn(f'Could not query firmware: {e}')
-        return True
+        return None, None, str(e)
     try:
         fw_recommended = FirmwareRecommended(use_device, installed=fw_installed)
     except Exception:
         fw_recommended = None
     sys.stdout, sys.stderr = _old_stdout, _old_stderr
     logging.disable(logging.NOTSET)
+    return fw_installed, fw_recommended, None
+
+
+def check_firmware_versions():
+    """Query installed firmware via FirmwareInstalled. Server must be stopped first."""
+    print_section('Firmware Versions')
+
+    use_device = firmware_use_device()
+    fw_installed, fw_recommended, err = query_firmware(use_device)
+    if fw_installed is None:
+        print_warn(f'Could not query firmware: {err}')
+        return True
 
     all_pass = True
     for dev_name, enabled in use_device.items():
@@ -364,7 +398,7 @@ def check_firmware_versions():
             continue
 
         # ESP32 and PixArt J3 don't expose queryable firmware versions
-        if dev_name in ('hello-pixart-j3', 'hello-esp32'):
+        if dev_name in UNQUERYABLE_FIRMWARE:
             dev_present = os.path.exists(f'/dev/{dev_name}')
             status = 'present' if dev_present else 'not present'
             print_result(dev_present, f'{label}: {status} (firmware version not queryable)')
@@ -402,6 +436,141 @@ def check_firmware_versions():
             print_info(detail)
 
     return all_pass
+
+
+def collect_firmware_updates():
+    """
+    Delegate the firmware check to FirmwareRecommended — the same report and
+    recommendation that `REx_firmware_updater --recommended` produces — and capture
+    its output. The robot server must be stopped before calling this.
+
+    Returns a dict with:
+      table   : the recommended-firmware table as printed by the firmware tooling
+      command : the 'REx_firmware_updater --install ...' line it recommends, or None
+      error   : message if the check could not be run, else None
+    """
+    out = {'table': '', 'command': None, 'error': None}
+
+    use_device = firmware_use_device()
+    fw_installed, fw_recommended, err = query_firmware(use_device)
+    if fw_installed is None:
+        out['error'] = f'Could not query firmware: {err}'
+        return out
+    if fw_recommended is None:
+        out['error'] = ('Could not fetch the available firmware list — '
+                        'check the robot\'s internet connection')
+        return out
+
+    # Capture the tool's own report instead of re-deriving which boards need flashing
+    logging.disable(logging.CRITICAL)
+    _old_stdout, _old_stderr = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = buf = io.StringIO()
+    try:
+        fw_recommended.pretty_print()
+        fw_recommended.print_recommended_args()
+    except Exception as e:
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        logging.disable(logging.NOTSET)
+        out['error'] = f'Firmware recommendation failed: {e}'
+        return out
+    finally:
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        logging.disable(logging.NOTSET)
+
+    # print_recommended_args() emits 'REx_firmware_updater --install  --pimu ...' when an
+    # upgrade is recommended, or 'Firmware upgrade not necessary' when nothing is needed.
+    SKIP = ('Run recommended command', 'Collecting information', 'Firmware upgrade not necessary')
+    table = []
+    for line in buf.getvalue().splitlines():
+        stripped = line.strip()
+        if stripped.startswith('REx_firmware_updater'):
+            out['command'] = ' '.join(stripped.split())
+            continue
+        if stripped.startswith(SKIP):
+            continue
+        line = line.rstrip()
+        if not line and (not table or not table[-1]):
+            continue  # drop leading blanks and collapse blank runs
+        table.append(line)
+    out['table'] = '\n'.join(table).rstrip()
+
+    return out
+
+
+def _print_pip_row(name, current, latest, col, checked=True):
+    """Print one 'package : current → latest' row."""
+    if latest:
+        click.secho(f'    {name:<{col}} : {current}  →  {latest}', fg='yellow', nl=False)
+        click.secho('  (Update Available)', fg='yellow', bold=True)
+    else:
+        print_info(f'{name:<{col}} : {current}' + ('  (up to date)' if checked else '  (not checked)'))
+
+
+def check_updates():
+    """
+    Report pip and firmware updates, then print the exact commands to apply them.
+    Stops and restarts the robot server, since firmware queries need the USB devices.
+
+    Returns True if both checks completed — not whether updates were found.
+    """
+    click.secho('\n======== Update Check ========', fg='cyan', bold=True)
+
+    # ---- pip packages ------------------------------------------------------
+    print_section('Python / pip Packages')
+    core, extras = discover_pip_packages()
+    installed   = {**core, **extras}
+    hello_pkgs  = sorted(n for n in installed if n.lower().startswith('hello-robot-'))
+    pip_updates, pypi_reachable = check_pypi_updates(installed)
+
+    if not hello_pkgs:
+        print_warn('No hello-robot-* packages found in this environment')
+    else:
+        col = max(len(n) for n in hello_pkgs)
+        for name in hello_pkgs:
+            current = installed[name]
+            checked = pypi_reachable and current not in ('unknown', '')
+            _print_pip_row(name, current, pip_updates.get(name), col, checked)
+    if not pypi_reachable:
+        print_warn('Could not reach PyPI — pip update check incomplete')
+
+    # ---- firmware ----------------------------------------------------------
+    print_section('Firmware')
+    click.secho('  Firmware queries need exclusive access to the USB devices.', fg='yellow')
+    _kill_server()
+    fw = collect_firmware_updates()
+    _restart_server()
+
+    if fw['error']:
+        print_warn(fw['error'])
+    else:
+        # Printed unindented — the table is already 110 columns wide
+        for line in fw['table'].splitlines():
+            click.secho(line, fg='white')
+
+    # ---- copy-paste commands ----------------------------------------------
+    print_section('Commands To Run')
+    cmds = []
+    if pip_updates:
+        cmds.append(f'{PIP_UPDATE_CMD} ' + ' '.join(sorted(pip_updates)))
+    if fw['command']:
+        cmds.append(fw['command'])
+
+    if cmds:
+        click.echo()
+        for cmd in cmds:
+            click.secho(f'    {cmd}', fg='green', bold=True)
+        click.echo()
+        if len(cmds) > 1:
+            print_info('Run them in this order — a newer stretch4_body may recommend newer firmware.')
+        print_info('Re-run with --check_updates afterwards to confirm.')
+    elif not pypi_reachable or fw['error']:
+        print_warn('No updates found, but the check was incomplete (see warnings above)')
+    else:
+        click.secho('\n  Everything is up to date — no commands to run.', fg='green', bold=True)
+    click.echo()
+
+    # Exit status reflects whether both checks ran, not whether updates were found
+    return pypi_reachable and not fw['error']
 
 
 def check_power_periph():
@@ -1232,6 +1401,10 @@ _REQUIRE_SERVER = {
 def main():
     global r
     results = {}
+
+    if args.check_updates:
+        ok = check_updates()
+        sys.exit(0 if ok else 1)
 
     if args.firmware:
         click.secho('\n---- Firmware Check Mode ----', fg='cyan', bold=True)
