@@ -8,7 +8,8 @@ Usage:
     stretch_system_check                  # Full system check (requires server)
     stretch_system_check --firmware       # Firmware version check (kills/restarts server)
     stretch_system_check --sensors        # Lidar + camera check (no server needed)
-    stretch_system_check --check_updates  # pip + firmware updates, with commands to run
+    stretch_system_check --check_updates  # pip + firmware + workspace git updates, with commands to run
+    stretch_system_check --repos          # ROS2 workspace (~/ament_ws/src) git status only
     stretch_system_check --verbose        # Show additional detail in all checks
     stretch_system_check --direct         # Use Robot API directly instead of server client
 """
@@ -43,7 +44,9 @@ parser.add_argument('-v', '--verbose',  help='Print additional detail',         
 parser.add_argument('-d', '--direct',   help='Use direct Robot API (no server)',          action='store_true')
 parser.add_argument('--firmware',       help='Kill server, check firmware, restart server', action='store_true')
 parser.add_argument('--sensors',        help='Check lidars and cameras',                 action='store_true')
-parser.add_argument('--check_updates',  help='Check pip + firmware updates and print the commands to run',
+parser.add_argument('--check_updates',  help='Check pip + firmware + workspace git updates and print the commands to run',
+                                                                                        action='store_true')
+parser.add_argument('--repos',          help='Check the git status of the repos in ~/ament_ws/src',
                                                                                         action='store_true')
 args = parser.parse_args()
 
@@ -222,6 +225,232 @@ def check_pypi_updates(installed):
 
 
 # ==============================================================================
+# ROS2 workspace (~/ament_ws/src) git checks
+# ==============================================================================
+
+GIT_TIMEOUT_S = 10.0
+
+# Status codes reported per repo, and how each is rendered
+GIT_OK        = 'up to date'
+GIT_BEHIND    = 'behind'
+GIT_UPDATE    = 'update available'   # remote has commits that aren't in the local object store
+GIT_AHEAD     = 'ahead'
+GIT_DIVERGED  = 'diverged'
+GIT_DETACHED  = 'detached HEAD'
+GIT_NO_UPSTREAM = 'no upstream branch'
+GIT_NO_BRANCH   = 'branch not on remote'
+GIT_UNREACHABLE = 'remote unreachable'
+GIT_NOT_A_REPO  = 'not a git repo'
+
+# Statuses that mean the remote has work the local checkout doesn't
+GIT_NEEDS_PULL = (GIT_BEHIND, GIT_UPDATE)
+
+
+def ament_src_dir():
+    """
+    Path of the ROS2 workspace src directory.
+
+    Honors STRETCH_AMENT_WS, then the sourced workspace (COLCON_PREFIX_PATH),
+    then falls back to ~/ament_ws.
+    """
+    ws = os.environ.get('STRETCH_AMENT_WS', '')
+    if not ws:
+        prefix = os.environ.get('COLCON_PREFIX_PATH', '').split(':')[0]
+        ws = os.path.dirname(prefix) if prefix else ''
+    if not ws:
+        ws = os.path.expanduser('~/ament_ws')
+    return os.path.join(os.path.expanduser(ws), 'src')
+
+
+def _git(repo, *cmd, timeout=GIT_TIMEOUT_S):
+    """
+    Run a git command in `repo`. Returns (ok, stdout-stripped).
+
+    Credential and host-key prompts are disabled so an unauthenticated remote
+    fails immediately instead of blocking the check on stdin.
+    """
+    env = dict(os.environ,
+               GIT_TERMINAL_PROMPT='0',
+               GIT_ASKPASS='',
+               SSH_ASKPASS='',
+               GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new')
+    try:
+        res = subprocess.run(['git', '-C', repo, *cmd],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, timeout=timeout, env=env)
+        return res.returncode == 0, res.stdout.strip()
+    except Exception:
+        return False, ''
+
+
+def check_repo_git_status(repo):
+    """
+    Report the git state of a single workspace repo, and whether the remote has
+    a newer commit than the local checkout.
+
+    Read-only: queries the remote with `git ls-remote` rather than fetching, so
+    nothing in the repo is modified.
+
+    Returns a dict with name, branch, sha, dirty, status, detail and command.
+    """
+    out = {'name': os.path.basename(repo.rstrip('/')), 'branch': '', 'sha': '',
+           'dirty': False, 'status': GIT_NOT_A_REPO, 'detail': '', 'command': None}
+
+    ok, _ = _git(repo, 'rev-parse', '--git-dir')
+    if not ok:
+        return out
+
+    ok, out['sha'] = _git(repo, 'rev-parse', '--short', 'HEAD')
+    if not ok:
+        out['detail'] = 'no commits'
+        return out
+
+    _, porcelain = _git(repo, 'status', '--porcelain')
+    out['dirty'] = bool(porcelain)
+
+    _, branch = _git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')
+    out['branch'] = branch
+
+    if branch == 'HEAD':
+        out['status'] = GIT_DETACHED
+        return out
+
+    ok, upstream = _git(repo, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
+    if not ok or '/' not in upstream:
+        out['status'] = GIT_NO_UPSTREAM
+        return out
+
+    remote, remote_branch = upstream.split('/', 1)
+    ok, ls = _git(repo, 'ls-remote', '--heads', remote, remote_branch)
+    if not ok:
+        out['status'] = GIT_UNREACHABLE
+        out['detail'] = f'could not query {remote}'
+        return out
+    if not ls:
+        # The remote answered but has no such branch (deleted upstream, or never pushed)
+        out['status'] = GIT_NO_BRANCH
+        out['detail'] = f'{upstream} no longer exists'
+        return out
+
+    remote_sha = ls.split()[0]
+    _, local_sha = _git(repo, 'rev-parse', 'HEAD')
+
+    if remote_sha == local_sha:
+        out['status'] = GIT_OK
+        return out
+
+    # The remote commit is only comparable if it's already in the local object
+    # store (i.e. someone has fetched since it was pushed). If it isn't, the
+    # remote is simply ahead of anything we know about.
+    have_remote, _ = _git(repo, 'cat-file', '-e', f'{remote_sha}^{{commit}}')
+    if not have_remote:
+        out['status'] = GIT_UPDATE
+        out['detail'] = f'{upstream} at {remote_sha[:7]}'
+        out['command'] = f'git -C {repo} pull'
+        return out
+
+    behind, _ = _git(repo, 'merge-base', '--is-ancestor', local_sha, remote_sha)
+    ahead, _  = _git(repo, 'merge-base', '--is-ancestor', remote_sha, local_sha)
+    if behind:
+        _, n = _git(repo, 'rev-list', '--count', f'{local_sha}..{remote_sha}')
+        out['status'] = GIT_BEHIND
+        out['detail'] = f'{n} commit(s) behind {upstream}'
+        out['command'] = f'git -C {repo} pull'
+    elif ahead:
+        _, n = _git(repo, 'rev-list', '--count', f'{remote_sha}..{local_sha}')
+        out['status'] = GIT_AHEAD
+        out['detail'] = f'{n} unpushed commit(s) vs {upstream}'
+    else:
+        _, n_behind = _git(repo, 'rev-list', '--count', f'{local_sha}..{remote_sha}')
+        _, n_ahead  = _git(repo, 'rev-list', '--count', f'{remote_sha}..{local_sha}')
+        out['status'] = GIT_DIVERGED
+        out['detail'] = f'{n_ahead} ahead / {n_behind} behind {upstream}'
+
+    return out
+
+
+def check_workspace_repos():
+    """
+    Check every repo in the ROS2 workspace src directory, concurrently.
+
+    Returns (src_dir, [status dicts sorted by name]). The list is empty if the
+    workspace directory doesn't exist.
+    """
+    src = ament_src_dir()
+    if not os.path.isdir(src):
+        return src, []
+
+    repos = sorted(os.path.join(src, d) for d in os.listdir(src)
+                   if os.path.isdir(os.path.join(src, d)))
+    if not repos:
+        return src, []
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(8, len(repos))) as pool:
+            results = list(pool.map(check_repo_git_status, repos))
+    except Exception:
+        results = [check_repo_git_status(p) for p in repos]
+
+    return src, sorted(results, key=lambda x: x['name'].lower())
+
+
+def print_workspace_repos(repos, indent=4):
+    """Print one line per workspace repo: branch, sha and update state."""
+    col = max(len(x['name']) for x in repos)
+    pad = ' ' * indent
+    for x in repos:
+        if x['status'] == GIT_NOT_A_REPO:
+            click.secho(f'{pad}{x["name"]:<{col}} : {GIT_NOT_A_REPO}', fg='white')
+            continue
+
+        where = f'{x["branch"]} @ {x["sha"]}' if x['branch'] else f'@ {x["sha"]}'
+        if x['dirty']:
+            where += ' *'
+
+        if x['status'] in GIT_NEEDS_PULL:
+            click.secho(f'{pad}{x["name"]:<{col}} : {where}', fg='white', nl=False)
+            note = x['detail'] or x['status']
+            click.secho(f'  (Update Available: {note})', fg='yellow', bold=True)
+        elif x['status'] == GIT_OK:
+            click.secho(f'{pad}{x["name"]:<{col}} : {where}  (up to date)', fg='white')
+        else:
+            detail = f' — {x["detail"]}' if x['detail'] else ''
+            click.secho(f'{pad}{x["name"]:<{col}} : {where}  ({x["status"]}{detail})', fg='white')
+
+    if any(x['dirty'] for x in repos):
+        print_info('* = uncommitted local changes', indent=indent)
+
+
+def check_repos():
+    """Standalone --repos mode: report the git state of every workspace repo."""
+    print_section('ROS2 Workspace Repos')
+
+    src, repos = check_workspace_repos()
+    print_info(f'Workspace: {src}', indent=2)
+    if not repos:
+        print_warn(f'No repos found in {src}')
+        return False
+
+    print_workspace_repos(repos)
+
+    cmds = [x['command'] for x in repos if x['command']]
+    unreachable = [x['name'] for x in repos if x['status'] == GIT_UNREACHABLE]
+    if unreachable:
+        print_warn('Could not reach the remote for: ' + ', '.join(unreachable))
+    if cmds:
+        print_section('Commands To Run')
+        click.echo()
+        for cmd in cmds:
+            click.secho(f'    {cmd}', fg='green', bold=True)
+        click.echo()
+        print_info('Rebuild after pulling:  cd ~/ament_ws && colcon build --symlink-install')
+    else:
+        click.secho('\n  All workspace repos are up to date.', fg='green', bold=True)
+
+    return not unreachable
+
+
+# ==============================================================================
 # Check functions
 # ==============================================================================
 
@@ -284,6 +513,14 @@ def print_software_versions():
                 print_info(f'  {pkg:<{col}} : {ros2_pkgs[pkg]}')
     except Exception:
         pass
+
+    # ROS2 workspace repos — git branch/sha and whether the remote is ahead
+    src, repos = check_workspace_repos()
+    if repos:
+        click.secho(f'\n  ROS2 Workspace ({src}):', fg='white', bold=True)
+        print_workspace_repos(repos, indent=4)
+        if any(x['command'] for x in repos):
+            print_info('Run with --repos for the git commands to update them')
 
 
 def check_usb_devices():
@@ -533,6 +770,19 @@ def check_updates():
     if not pypi_reachable:
         print_warn('Could not reach PyPI — pip update check incomplete')
 
+    # ---- ROS2 workspace repos ---------------------------------------------
+    print_section('ROS2 Workspace Repos')
+    src, repos = check_workspace_repos()
+    git_unreachable = []
+    if not repos:
+        print_warn(f'No repos found in {src}')
+    else:
+        print_info(f'Workspace: {src}', indent=2)
+        print_workspace_repos(repos)
+        git_unreachable = [x['name'] for x in repos if x['status'] == GIT_UNREACHABLE]
+        if git_unreachable:
+            print_warn('Could not reach the remote for: ' + ', '.join(git_unreachable))
+
     # ---- firmware ----------------------------------------------------------
     print_section('Firmware')
     click.secho('  Firmware queries need exclusive access to the USB devices.', fg='yellow')
@@ -554,23 +804,30 @@ def check_updates():
         cmds.append(f'{PIP_UPDATE_CMD} ' + ' '.join(sorted(pip_updates)))
     if fw['command']:
         cmds.append(fw['command'])
+    git_cmds = [x['command'] for x in repos if x['command']]
 
-    if cmds:
+    if cmds or git_cmds:
         click.echo()
         for cmd in cmds:
             click.secho(f'    {cmd}', fg='green', bold=True)
+        if git_cmds:
+            if cmds:
+                click.echo()
+            for cmd in git_cmds:
+                click.secho(f'    {cmd}', fg='green', bold=True)
+            click.secho('    cd ~/ament_ws && colcon build --symlink-install', fg='green', bold=True)
         click.echo()
         if len(cmds) > 1:
             print_info('Run them in this order — a newer stretch4_body may recommend newer firmware.')
         print_info('Re-run with --check_updates afterwards to confirm.')
-    elif not pypi_reachable or fw['error']:
+    elif not pypi_reachable or fw['error'] or git_unreachable:
         print_warn('No updates found, but the check was incomplete (see warnings above)')
     else:
         click.secho('\n  Everything is up to date — no commands to run.', fg='green', bold=True)
     click.echo()
 
-    # Exit status reflects whether both checks ran, not whether updates were found
-    return pypi_reachable and not fw['error']
+    # Exit status reflects whether the checks ran, not whether updates were found
+    return pypi_reachable and not fw['error'] and not git_unreachable
 
 
 def check_power_periph():
@@ -1401,6 +1658,11 @@ _REQUIRE_SERVER = {
 def main():
     global r
     results = {}
+
+    if args.repos:
+        ok = check_repos()
+        click.echo()
+        sys.exit(0 if ok else 1)
 
     if args.check_updates:
         ok = check_updates()
