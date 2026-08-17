@@ -10,7 +10,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
+from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapter
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
 
@@ -97,6 +98,8 @@ class LuxonisCameraAdapter(CameraAdapter):
 
     @staticmethod
     def get_depthai_camera_socket(camera_type: RGBCameras):
+        # A compressed variant is the same physical sensor on the same socket.
+        camera_type = camera_type.base
         if camera_type == RGBCameras.head_left:
             return dai.CameraBoardSocket.CAM_C
         if camera_type == RGBCameras.head_right:

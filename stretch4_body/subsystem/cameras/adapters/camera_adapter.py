@@ -1,7 +1,8 @@
 from collections.abc import Generator
 
 import threading
-from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
+from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
 from stretch4_body.subsystem.cameras.adapters.camera_controls_mixin import CameraControlsMixin
 

@@ -225,23 +225,25 @@ def run_left_right_python(duration):
 
 
 def run_left_right_ros(duration):
-    """Benchmarks stream_left_right_camera(use_ros_for_cameras=True) from stretch4_body."""
+    """Benchmarks stream_left_right_camera_compressed(use_ros_for_cameras=True) from stretch4_body."""
     print("\n--- Benchmarking Head Camera stream_left_right_camera (stretch4_body ROS2) ---")
-    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"])
+    # use_center:=false so this measures the same two cameras the Python run opens. With the 12MP center
+    # camera enabled, publishing its frames alone drags left/right from 30 Hz down to ~12 Hz.
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=false"])
     if proc is None:
         print("Could not start ROS2 head camera launch file. Skipping ROS benchmark.")
         return None
 
     try:
         try:
-            from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_camera
+            from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_camera_compressed
         except ImportError as e:
             print(f"Failed to import stretch4_body camera modules: {e}")
             return None
 
         t_init_start = time.perf_counter()
         try:
-            frame_generator = stream_left_right_camera(use_ros_for_cameras=True)
+            frame_generator = stream_left_right_camera_compressed(use_ros_for_cameras=True)
         except Exception as e:
             print(f"Failed to initialize stream_left_right_camera ROS2: {e}")
             return None
@@ -354,7 +356,7 @@ def run_left_right_center_python(duration):
 
 
 def run_left_right_center_ros(duration):
-    """Benchmarks stream_left_right_center_camera(use_ros_for_cameras=True) from stretch4_body."""
+    """Benchmarks stream_left_right_center_camera_compressed(use_ros_for_cameras=True) from stretch4_body."""
     print("\n--- Benchmarking Head Camera stream_left_right_center_camera (stretch4_body ROS2) ---")
     proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"])
     if proc is None:
@@ -363,14 +365,14 @@ def run_left_right_center_ros(duration):
 
     try:
         try:
-            from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_center_camera
+            from stretch4_body.subsystem.cameras.stream_cameras import stream_left_right_center_camera_compressed
         except ImportError as e:
             print(f"Failed to import stretch4_body camera modules: {e}")
             return None
 
         t_init_start = time.perf_counter()
         try:
-            frame_generator = stream_left_right_center_camera(use_ros_for_cameras=True)
+            frame_generator = stream_left_right_center_camera_compressed(use_ros_for_cameras=True)
         except Exception as e:
             print(f"Failed to initialize stream_left_right_center_camera ROS2: {e}")
             return None
@@ -958,7 +960,7 @@ def run_gripper_python(duration):
 
 
 def run_gripper_ros(duration):
-    """Benchmarks stream_gripper_camera(use_ros_for_cameras=True) from stretch4_body."""
+    """Benchmarks stream_gripper_camera_compressed(use_ros_for_cameras=True) from stretch4_body."""
     print("\n--- Benchmarking Gripper Camera stream_gripper_camera (stretch4_body ROS2) ---")
     proc = start_ros_launch(["ros2", "launch", "stretch_core", "gripper_camera.launch.py"])
     if proc is None:
@@ -967,14 +969,14 @@ def run_gripper_ros(duration):
 
     try:
         try:
-            from stretch4_body.subsystem.cameras.stream_cameras import stream_gripper_camera
+            from stretch4_body.subsystem.cameras.stream_cameras import stream_gripper_camera_compressed
         except ImportError as e:
             print(f"Failed to import stretch4_body camera modules: {e}")
             return None
 
         t_init_start = time.perf_counter()
         try:
-            frame_generator = stream_gripper_camera(use_ros_for_cameras=True)
+            frame_generator = stream_gripper_camera_compressed(use_ros_for_cameras=True)
         except Exception as e:
             print(f"Failed to initialize stream_gripper_camera ROS2: {e}")
             return None
