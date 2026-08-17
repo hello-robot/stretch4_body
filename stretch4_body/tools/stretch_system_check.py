@@ -17,10 +17,14 @@ hu.print_stretch_re_use()
 import os
 import sys
 import io
+import re
+import json
 import fnmatch
 import argparse
 import subprocess
 import logging
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version as pkg_version
 
 import click
@@ -107,9 +111,75 @@ def print_warn(msg, indent=2):
 def print_info(msg, indent=4):
     click.secho(f'{" " * indent}{msg}', fg='white')
 
+def print_version_info(msg, update_ver=None, indent=4):
+    """Print a version line, appending '(Update Available: x.y.z)' when newer on PyPI."""
+    click.secho(f'{" " * indent}{msg}', fg='white', nl=False)
+    if update_ver:
+        click.secho(f'  (Update Available: {update_ver})', fg='yellow', bold=True)
+    else:
+        click.echo()
+
 def val_in_range(label, val, vmin, vmax):
     ok = vmin <= val <= vmax
     return ok, f'{label} = {val:.3f} (range [{vmin:.2f}, {vmax:.2f}])'
+
+
+# ==============================================================================
+# PyPI update checks
+# ==============================================================================
+
+PYPI_TIMEOUT_S = 3.0
+
+
+def _pypi_latest_version(pkg_name):
+    """Return the latest release version on PyPI, or None if it can't be determined."""
+    url = f'https://pypi.org/pypi/{pkg_name}/json'
+    try:
+        with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_S) as resp:
+            info = json.load(resp).get('info') or {}
+        return info.get('version')
+    except Exception:
+        return None
+
+
+def _is_newer(candidate, installed):
+    """True if candidate is a strictly newer version than installed."""
+    try:
+        from packaging.version import Version
+        return Version(candidate) > Version(installed)
+    except Exception:
+        pass
+    # Fallback: compare numeric components (versions here are date-based, e.g. 2026.6.25)
+    try:
+        to_tuple = lambda v: tuple(int(n) for n in re.findall(r'\d+', v))
+        return to_tuple(candidate) > to_tuple(installed)
+    except Exception:
+        return False
+
+
+def check_pypi_updates(installed):
+    """
+    Query PyPI for newer releases of the hello-robot-* packages in `installed`
+    ({name: version}). Queries run concurrently and fail silently (offline robot).
+
+    Returns (updates, reachable) where updates is {name: latest_version} for
+    packages with a newer release, and reachable is False if no query succeeded.
+    """
+    names = [n for n in installed if n.lower().startswith('hello-robot-')
+             and installed[n] not in (None, '', 'unknown')]
+    if not names:
+        return {}, True
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
+            latest = dict(zip(names, pool.map(_pypi_latest_version, names)))
+    except Exception:
+        return {}, False
+
+    reachable = any(v is not None for v in latest.values())
+    updates = {n: latest[n] for n in names
+               if latest[n] and _is_newer(latest[n], installed[n])}
+    return updates, reachable
 
 
 # ==============================================================================
@@ -131,18 +201,10 @@ def print_software_versions():
         urdf_ver = 'unknown'
     py_ver = f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'
 
-    print_info(f'hello-robot-stretch4-body : {s4b_ver}')
-    print_info(f'hello-robot-stretch4-urdf : {urdf_ver}')
-    print_info(f'Python                    : {py_ver}')
-
-    ros_distro = os.environ.get('ROS_DISTRO', '')
-    if ros_distro:
-        print_info(f'ROS2 Distro               : {ros_distro}')
-
     # Additional pip packages — auto-discovered by name keyword
+    pip_extras = {}
     try:
         from importlib.metadata import distributions as _distributions
-        pip_extras = {}
         for dist in _distributions():
             name = (dist.metadata.get('Name') or '').strip()
             name_lc = name.lower()
@@ -151,13 +213,35 @@ def print_software_versions():
             if 'hello' in name_lc or 'stretch' in name_lc or 'hesai' in name_lc:
                 if name not in pip_extras:  # keep first occurrence
                     pip_extras[name] = (dist.metadata.get('Version') or 'unknown').strip()
-        if pip_extras:
-            col = max(len(k) for k in pip_extras)
-            click.secho('\n  Python / pip:', fg='white', bold=True)
-            for name in sorted(pip_extras):
-                print_info(f'  {name:<{col}} : {pip_extras[name]}')
     except Exception:
         pass
+
+    # Ask PyPI (once, concurrently) which hello-robot-* packages have newer releases
+    installed = {'hello-robot-stretch4-body': s4b_ver,
+                 'hello-robot-stretch4-urdf': urdf_ver,
+                 **pip_extras}
+    updates, pypi_reachable = check_pypi_updates(installed)
+
+    print_version_info(f'hello-robot-stretch4-body : {s4b_ver}',
+                       updates.get('hello-robot-stretch4-body'))
+    print_version_info(f'hello-robot-stretch4-urdf : {urdf_ver}',
+                       updates.get('hello-robot-stretch4-urdf'))
+    print_info(f'Python                    : {py_ver}')
+
+    ros_distro = os.environ.get('ROS_DISTRO', '')
+    if ros_distro:
+        print_info(f'ROS2 Distro               : {ros_distro}')
+
+    if pip_extras:
+        col = max(len(k) for k in pip_extras)
+        click.secho('\n  Python / pip:', fg='white', bold=True)
+        for name in sorted(pip_extras):
+            print_version_info(f'  {name:<{col}} : {pip_extras[name]}', updates.get(name))
+
+    if not pypi_reachable:
+        print_warn('Could not reach PyPI — update availability not checked')
+    elif updates:
+        print_info('Update with: pip install -U ' + ' '.join(sorted(updates)))
 
     # ROS2 packages — auto-discovered via AMENT_PREFIX_PATH
     try:
