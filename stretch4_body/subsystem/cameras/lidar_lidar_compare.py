@@ -22,7 +22,6 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from stretch4_body.robot.robot_client import RobotClient
-from stretch4_body.subsystem.cameras.models.dual_lidar_calibration import DualLidarCalibration
 from stretch4_body.subsystem.cameras.detectors.detector_frame_settled import DetectFrameSettled
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import (
     get_high_intensity_points,
@@ -30,6 +29,9 @@ from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import (
     evaluate_lidar_rectangle,
 )
 from stretch4_body.subsystem.cameras.models.camera_calibration import DEFAULT_CALIBRATION_FOLDER_PATH
+from stretch4_urdf import get_urdf_from_robot_params
+from yourdfpy import URDF
+import io
 
 import rerun as rr
 import rerun.blueprint as rrb
@@ -84,6 +86,23 @@ def _parse_args():
         help="Enable manual mode to press Enter to capture, displaying joint positions on capture.",
     )
     return parser.parse_known_args()[0]
+
+
+def get_lidar_to_base_transform(is_right_lidar: bool, apply_calibration: bool) -> np.ndarray:
+    """Computes the transform from a lidar frame to base_link using the robot's URDF."""
+    urdf_contents = get_urdf_from_robot_params(apply_calibration=apply_calibration)
+    urdf = URDF.load(io.StringIO(urdf_contents))
+
+    def get_nominal_transform(joint_name):
+        for joint in urdf.robot.joints:
+            if joint.name == joint_name:
+                return np.eye(4) if joint.origin is None else joint.origin
+        return np.eye(4)
+
+    T_head_joint = get_nominal_transform("head_joint")
+    lidar_joint_name = "lidar_right_joint" if is_right_lidar else "lidar_left_joint"
+    T_lidar_joint = get_nominal_transform(lidar_joint_name)
+    return T_head_joint @ T_lidar_joint
 
 
 def get_angular_sort_indices(centroids_base: np.ndarray) -> np.ndarray:
@@ -203,15 +222,11 @@ class LidarLidarCompare:
             print("WARNING: This script is intended to be run with the 'eoa_wrist_dw4_tool_calibration' tool.")
             print("Make sure your tool parameter in your robot geometry is correctly set.")
 
-        # Load Dual Lidar Calibration transforms
-        self.dual_lidar_calib = DualLidarCalibration()
-        self.T_base_from_left_calibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=True)
-        self.T_base_from_right_calibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=True)
-        self.T_base_from_left_uncalibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=False)
-        self.T_base_from_right_uncalibrated = self.dual_lidar_calib.get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=False)
-        # Keep old aliases for backward compatibility
-        self.T_base_from_left = self.T_base_from_left_uncalibrated
-        self.T_base_from_right = self.T_base_from_right_uncalibrated
+        # Load lidar-to-base_link transforms from the calibrated and uncalibrated URDFs
+        self.T_base_from_left_calibrated = get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=True)
+        self.T_base_from_right_calibrated = get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=True)
+        self.T_base_from_left_uncalibrated = get_lidar_to_base_transform(is_right_lidar=False, apply_calibration=False)
+        self.T_base_from_right_uncalibrated = get_lidar_to_base_transform(is_right_lidar=True, apply_calibration=False)
 
         # Start lidar streams
         print("Connecting to Lidar Streams...", flush=True)
