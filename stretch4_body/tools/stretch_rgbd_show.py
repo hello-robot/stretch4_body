@@ -12,8 +12,7 @@ from stretch4_body.subsystem.cameras.emulated_rgbd import (
     stream_left_right_rgbd,
     stream_left_right_center_rgbd,
     stream_gripper_rgbd,
-    RGBDFrame,
-    EmulatedRGBDStreamer,
+    RGBDFrame
 )
 from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
 
@@ -69,14 +68,14 @@ def render_rgbd(c_name: str, frame: RGBDFrame):
     logger.log_image(f"Cameras/{c_name}_rotated", frame.image_frame.image)
     logger.log_image(f"Cameras/{c_name}/rgb_raw", frame.image_frame.image_raw)
     
-    if frame.depth_image is not None and frame.depth_image.shape[0] > 0:
-        logger.log_any(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
+    # if frame.depth_image is not None and frame.depth_image.shape[0] > 0:
+    #     logger.log_any(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
         
-    if len(frame.pointcloud) > 0:
-        logger.log_any(
-            f"Pointclouds/camera_frame/{c_name}",
-            rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
-        )
+    # if len(frame.pointcloud) > 0:
+    #     logger.log_any(
+    #         f"Pointclouds/camera_frame/{c_name}",
+    #         rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
+    #     )
     if len(frame.pointcloud_base) > 0:
         logger.log_any(
             f"Pointclouds/base_frame/{c_name}",
@@ -229,7 +228,6 @@ def main():
     finally:
         for logger in rerun_loggers.values():
             logger.stop()
-        EmulatedRGBDStreamer.get_instance().stop()
 
 
 if __name__ == "__main__":

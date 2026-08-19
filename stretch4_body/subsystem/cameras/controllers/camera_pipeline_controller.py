@@ -604,14 +604,21 @@ class RGBPipelineControllerROS(RGBPipelineController):
         
         try:
             from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
+            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_right, stream_gripper_stereo_points, stream_gripper_left
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
+
+        import rerun as rr
 
         if self.show_image_in is RecordRgbShowImageIn.RERUN:
             self._start_rerun()
 
-        left_pipeline_controller = self.copy_for(RGBCameras.left(), is_open_camera=False)
-        right_pipeline_controller = self.copy_for(RGBCameras.right(), is_open_camera=False)
+        if self.camera_type == RGBCameras.gripper_rgbd:
+            left_pipeline_controller = self.copy_for(RGBCameras.gripper_left, is_open_camera=False)
+            right_pipeline_controller = self.copy_for(RGBCameras.gripper_right, is_open_camera=False)
+        else:
+            left_pipeline_controller = self.copy_for(RGBCameras.left(), is_open_camera=False)
+            right_pipeline_controller = self.copy_for(RGBCameras.right(), is_open_camera=False)
         
         use_center = self.camera_type == RGBCameras.head_left_right_center
         center_pipeline_controller = None
@@ -628,11 +635,20 @@ class RGBPipelineControllerROS(RGBPipelineController):
         left_generator = None
         right_generator = None
         center_generator = None
+        depth_generator = None
+        pointcloud_generator = None
 
-        left_generator = stream_camera_left(stream_manager=self.stream_manager)
-        right_generator = stream_camera_right(stream_manager=self.stream_manager)
-        if use_center:
-            center_generator = stream_camera_center(stream_manager=self.stream_manager)
+        if self.camera_type == RGBCameras.gripper_rgbd:
+            left_generator = stream_gripper_left(stream_manager=self.stream_manager)
+            right_generator = stream_gripper_right(stream_manager=self.stream_manager)
+            depth_generator = stream_gripper_stereo(stream_manager=self.stream_manager)
+            if self.enable_pointcloud:
+                pointcloud_generator = stream_gripper_stereo_points(stream_manager=self.stream_manager)
+        else:
+            left_generator = stream_camera_left(stream_manager=self.stream_manager)
+            right_generator = stream_camera_right(stream_manager=self.stream_manager)
+            if use_center:
+                center_generator = stream_camera_center(stream_manager=self.stream_manager)
 
         self.generator = self.stream_manager.stream()
 
@@ -643,15 +659,22 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 left_ros_frame = self.stream_manager.get(left_generator)
                 right_ros_frame = self.stream_manager.get(right_generator)
-                center_ros_frame = self.stream_manager.get(center_generator)
+                center_ros_frame = self.stream_manager.get(center_generator) if center_generator is not None else None
+                depth_ros_frame = self.stream_manager.get(depth_generator) if depth_generator is not None else None
+                pointcloud_ros_frame = self.stream_manager.get(pointcloud_generator) if pointcloud_generator is not None else None
 
                 if left_ros_frame is None or right_ros_frame is None:
+                    continue
+                if self.camera_type == RGBCameras.gripper_rgbd and depth_ros_frame is None:
                     continue
 
                 frame = SyncedImageFrame(
                     timestamp=left_ros_frame.timestamp, 
                     left=ImageFrame(timestamp=left_ros_frame.timestamp, frame_number=self.frame_number, image=left_ros_frame.image),
                     right=ImageFrame(timestamp=right_ros_frame.timestamp, frame_number=self.frame_number, image=right_ros_frame.image),
+                    depth=depth_ros_frame.image if depth_ros_frame is not None else None,
+                    pointcloud=pointcloud_ros_frame.points if pointcloud_ros_frame is not None else None,
+                    pointcloud_color=pointcloud_ros_frame.colors if pointcloud_ros_frame is not None else None,
                 )
 
                 if self.camera_type == RGBCameras.head_left_right_center:
@@ -671,6 +694,22 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 if frame.center is not None and center_pipeline_controller is not None:
                     center_pipeline_controller.show_image(frame.center.image)
+
+                if frame.depth is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
+                    if self.rerun_logger is None:
+                        self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                    self.rerun_logger.log_any(
+                        f"Cameras/{self.camera_type.name}/depth",
+                        rr.DepthImage(frame.depth),
+                    )
+
+                if frame.pointcloud is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
+                    if self.rerun_logger is None:
+                        self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                    self.rerun_logger.log_any(
+                        f"Pointclouds/{self.camera_type.name}",
+                        rr.Points3D(frame.pointcloud, colors=frame.pointcloud_color, radii=[0.0025]),
+                    )
 
                 yield frame
 

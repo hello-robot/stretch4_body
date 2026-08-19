@@ -213,6 +213,35 @@ class RGBCameras(Enum):
             camera_type=self, is_flip_width_and_height=False
         )
 
+    def start_camera_stream(self, is_rotate:bool, use_ros_for_cameras:bool=False):
+        from stretch4_body.subsystem.cameras import (
+    stream_left_camera,
+    stream_right_camera,
+    stream_center_camera,
+    stream_left_right_camera,
+    stream_left_right_center_camera,
+    stream_gripper_camera,
+)
+        if self == RGBCameras.synced_left_right():
+            gen_fn = stream_left_right_camera
+        elif self == RGBCameras.synced_left_right_center():
+            gen_fn = stream_left_right_center_camera
+        elif self == RGBCameras.left():
+            gen_fn = stream_left_camera
+        elif self == RGBCameras.right():
+            gen_fn = stream_right_camera
+        elif self == RGBCameras.center():
+            gen_fn = stream_center_camera
+        elif self == RGBCameras.gripper_rgbd:
+            gen_fn = stream_gripper_camera
+        else:
+            raise ValueError(f"Unknown camera type: {self}")
+
+        return gen_fn(
+            is_rotate=is_rotate,
+            use_ros_for_cameras=use_ros_for_cameras
+        )
+
 
 if __name__ == "__main__":
     camera = RGBCameras.center().start()
