@@ -26,7 +26,7 @@ from stretch4_body.subsystem.cameras.cv_utils import (
 )
 from stretch4_body.subsystem.cameras.enums.recording_file_format import RecordingFileFormat
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
-from stretch4_body.subsystem.cameras.models.image_write_to_disk import RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
+from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS, RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
 from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
 
@@ -56,14 +56,19 @@ class RGBPipelineController:
         is_open_camera: bool = True,
         enable_pointcloud: bool = False,
         recording_file_format: RecordingFileFormat = RecordingFileFormat.png,
+        recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS,
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
 
         `recording_file_format`: The format frames are written to disk in, when `recording_directory` is provided.
+
+        `recording_chunk_seconds`: How long each file of a video recording is, so that an interrupted
+        recording stays playable up to the last completed chunk. 0 or None writes a single file.
         """
         self.recording_directory = recording_directory
         self.recording_file_format = recording_file_format
+        self.recording_chunk_seconds = recording_chunk_seconds
         self.camera_type = camera_type
         self.show_image_in = show_image_in
         self.is_rectify = is_rectify
@@ -110,6 +115,7 @@ class RGBPipelineController:
                 video_fps,
                 self.abandon_save_event,
                 self.save_finished_event,
+                self.recording_chunk_seconds,
             ),
             daemon=True,
         )
@@ -439,6 +445,7 @@ class RGBPipelineController:
             is_open_camera=is_open_camera,
             enable_pointcloud=self.enable_pointcloud,
             recording_file_format=self.recording_file_format,
+            recording_chunk_seconds=self.recording_chunk_seconds,
         )
         return copy
 
@@ -596,7 +603,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -609,6 +616,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_open_camera=False,
             enable_pointcloud=enable_pointcloud,
             recording_file_format=recording_file_format,
+            recording_chunk_seconds=recording_chunk_seconds,
         )
         
         try:
@@ -636,6 +644,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_open_camera=is_open_camera,
             enable_pointcloud=self.enable_pointcloud,
             recording_file_format=self.recording_file_format,
+            recording_chunk_seconds=self.recording_chunk_seconds,
         )
         return copy
 

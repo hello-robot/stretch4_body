@@ -22,9 +22,28 @@ stretch_camera_show --gripper # Display the gripper camera feeds and the point c
 stretch_camera_show --left --recording_directory ./recordings # Store the left head camera to disk as a video (and display in rerun)
 
 stretch_camera_show --left --recording_directory ./recordings --record_format .png # Store one .png per frame instead
+
+stretch_camera_show --recording_directory ./recordings --recording_chunk_seconds 60 # Split the videos into one-minute files
 ```
 
-Recordings are written to `RECORDING_DIRECTORY/<camera>/<timestamp>/`. `--record_format` takes `.mp4` (the default), which writes one `video.mp4` per camera at the camera's configured frame rate, or `.png` and `.jpg`, which write one file per frame, named after the frame's timestamp.
+Recordings are written to `RECORDING_DIRECTORY/<camera>/<timestamp>/`. `--record_format` takes `.mp4` (the default), which writes video per camera at the camera's configured frame rate, or `.png` and `.jpg`, which write one file per frame, named after the frame's timestamp.
+
+### Video recordings
+
+Video is encoded as HEVC (H.265), on the GPU when the machine has one that can encode it and on the CPU otherwise. This needs `ffmpeg` on the `PATH`; without it recording falls back to OpenCV's mpeg4 encoder, which produces files roughly ten times larger.
+
+A video recording is split into chunks of `--recording_chunk_seconds` (300 by default), named `video_0000.mp4`, `video_0001.mp4` and so on. Chunking matters because an mp4 that never gets closed has no index and will not play back at all, so without it an interrupted recording is lost entirely rather than just its last chunk. Pass `--recording_chunk_seconds 0` to write a single `video.mp4` instead.
+
+Chunks rotate on elapsed real time, not on the length of the recorded video. The two differ whenever a camera delivers below its configured frame rate, which the 12MP center camera routinely does: the video's own timeline then advances slower than the clock, and a chunk measured in recorded seconds would take proportionally longer to fill. Note that this also means the video plays back faster than real time when frames were dropped, because it is written at the camera's configured rate.
+
+Long recordings are practical at these settings. Measured on the 12MP center camera, HEVC writes about 10 Mbps where the mpeg4 encoder wrote 112 Mbps, so recording the left, right and center cameras together costs roughly 4.5 GB an hour instead of 63 GB.
+
+To play the chunks of a recording as one video:
+
+```bash
+printf "file '%s'\n" video_*.mp4 > chunks.txt
+ffmpeg -f concat -safe 0 -i chunks.txt -c copy whole_recording.mp4
+```
 
 ## Using the Cameras with Python
 

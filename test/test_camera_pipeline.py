@@ -5,6 +5,7 @@ import time
 from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import RGBPipelineController
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS
 
 def test_run_pipeline_rotation():
     controller = RGBPipelineController(
@@ -121,7 +122,7 @@ def test_show_rgb_cli_defaults(monkeypatch):
 
     # We mock parse_args to return custom values
     class MockArgs:
-        def __init__(self, left=False, right=False, center=False, left_right=False, left_right_center=False, gripper=False, camera_name=None, rerun=False, opencv=False, no_rotate=False, recording_directory=None, record_format=".mp4", show_fps=False, use_ros_for_cameras=False, rectify=False, crop=False, detect_aruco_marker_size=None):
+        def __init__(self, left=False, right=False, center=False, left_right=False, left_right_center=False, gripper=False, camera_name=None, rerun=False, opencv=False, no_rotate=False, recording_directory=None, record_format=".mp4", show_fps=False, use_ros_for_cameras=False, rectify=False, crop=False, detect_aruco_marker_size=None, recording_chunk_seconds=DEFAULT_RECORDING_CHUNK_SECONDS):
             self.left = left
             self.right = right
             self.center = center
@@ -138,6 +139,7 @@ def test_show_rgb_cli_defaults(monkeypatch):
             self.use_ros_for_cameras = use_ros_for_cameras
             self.rectify = rectify
             self.crop = crop
+            self.recording_chunk_seconds = recording_chunk_seconds
             self.detect_aruco_marker_size = detect_aruco_marker_size
 
     instantiated_args = []
@@ -231,6 +233,7 @@ def test_show_rgb_cli_recording_options(monkeypatch, tmp_path):
             self.detect_aruco_marker_size = None
             self.recording_directory = recording_directory
             self.record_format = record_format
+            self.recording_chunk_seconds = DEFAULT_RECORDING_CHUNK_SECONDS
 
     instantiated_args = []
 
@@ -293,7 +296,8 @@ def test_recording_file_formats_write_to_disk(tmp_path):
     for file_format, expected_filename in [
         (RecordingFileFormat.png, "1.000000.png"),
         (RecordingFileFormat.jpg, "1.000000.jpg"),
-        (RecordingFileFormat.mp4, "video.mp4"),
+        # A chunked recording numbers its files, the first chunk is 0000.
+        (RecordingFileFormat.mp4, "video_0000.mp4"),
     ]:
         save_rgb_queue = queue.Queue()
         for frame_number in range(3):
@@ -309,7 +313,7 @@ def test_recording_file_formats_write_to_disk(tmp_path):
 
         stop_event = threading.Event()
         stop_event.set()  # The saver drains the queue before it stops.
-        saver_thread(stop_event, save_rgb_queue, file_format, video_fps=30.0)
+        saver_thread(stop_event, save_rgb_queue, file_format, video_fps=30.0, chunk_seconds=300)
 
         written = tmp_path / expected_filename
         assert written.exists(), f"{file_format} did not write {written}"
@@ -349,7 +353,7 @@ def test_stop_writes_out_the_whole_recording(tmp_path):
 
     controller.stop()
 
-    videos = list(tmp_path.glob("*/*/video.mp4"))
+    videos = list(tmp_path.glob("*/*/video_0000.mp4"))
     assert len(videos) == 1
 
     capture = cv2.VideoCapture(str(videos[0]))
@@ -358,6 +362,155 @@ def test_stop_writes_out_the_whole_recording(tmp_path):
         frames_read += 1
     capture.release()
 
+    assert frames_read == number_of_frames
+
+
+def _write_frames_to_video(directory, number_of_frames, fps, chunk_seconds, size=(240, 320),
+                           feed_in_real_time=False):
+    """Encodes moving frames through a VideoFileWriter and returns the chunks it wrote."""
+    from stretch4_body.subsystem.cameras.models.image_write_to_disk import VideoFileWriter
+
+    writer = VideoFileWriter(str(directory / "video.mp4"), fps, chunk_seconds=chunk_seconds)
+    image = np.zeros((size[0], size[1], 3), dtype=np.uint8)
+    for frame_number in range(number_of_frames):
+        # The frames have to differ, or the encoder compresses the whole run into almost nothing.
+        image = np.roll(image, 7, axis=1)
+        image[:, :20] = frame_number % 256
+        writer.write(image)
+        if feed_in_real_time:
+            # Chunks rotate on elapsed real time, so a test of chunking has to spend it.
+            time.sleep(1 / fps)
+    writer.release()
+
+    return sorted(directory.glob("video_*.mp4")), directory / "video.mp4"
+
+
+def test_recording_is_split_into_chunks(tmp_path):
+    """A long recording is written as chunks, so an interruption does not cost the whole file."""
+    fps = 20
+    chunk_seconds = 1
+    expected_chunks = 3
+    number_of_frames = fps * chunk_seconds * expected_chunks
+
+    chunks, single_file = _write_frames_to_video(
+        tmp_path, number_of_frames, fps, chunk_seconds, feed_in_real_time=True
+    )
+
+    assert not single_file.exists(), "the unchunked name should not be written when chunking"
+    # Feeding frames costs a little more than the sleep, so the last chunk may only just have opened.
+    assert expected_chunks <= len(chunks) <= expected_chunks + 1, [c.name for c in chunks]
+    assert [c.name for c in chunks] == [f"video_{i:04d}.mp4" for i in range(len(chunks))]
+
+    frames_read_in_total = 0
+    for chunk in chunks:
+        capture = cv2.VideoCapture(str(chunk))
+        frames_read = 0
+        while capture.read()[0]:
+            frames_read += 1
+        capture.release()
+        # Every chunk has to be playable on its own, that is the point of chunking.
+        assert frames_read > 0, f"{chunk.name} is empty"
+        frames_read_in_total += frames_read
+
+    assert frames_read_in_total == number_of_frames
+
+
+def test_recording_chunks_rotate_on_real_time_not_recorded_time(tmp_path):
+    """A camera running below its configured rate still gets chunks of the requested length.
+
+    ffmpeg's own segmenting measures the recording's timeline, so a camera delivering a third of its
+    configured rate produced chunks three times longer than asked for - or, over a short run, one
+    unsplit file.
+    """
+    configured_fps = 30
+    delivered_fps = 10
+    chunk_seconds = 1
+    seconds_to_record = 3
+    number_of_frames = delivered_fps * seconds_to_record
+
+    from stretch4_body.subsystem.cameras.models.image_write_to_disk import VideoFileWriter
+
+    writer = VideoFileWriter(str(tmp_path / "video.mp4"), configured_fps, chunk_seconds=chunk_seconds)
+    image = np.zeros((240, 320, 3), dtype=np.uint8)
+    for frame_number in range(number_of_frames):
+        image = np.roll(image, 7, axis=1)
+        image[:, :20] = frame_number % 256
+        writer.write(image)
+        time.sleep(1 / delivered_fps)
+    writer.release()
+
+    chunks = sorted(tmp_path.glob("video_*.mp4"))
+    assert len(chunks) >= seconds_to_record, (
+        f"{seconds_to_record}s at {chunk_seconds}s chunks should not fit in {len(chunks)} file(s)"
+    )
+
+
+def test_recording_chunk_seconds_of_zero_writes_a_single_file(tmp_path):
+    number_of_frames = 20
+    chunks, single_file = _write_frames_to_video(tmp_path, number_of_frames, 10, chunk_seconds=0)
+
+    assert chunks == [], "chunking should be off"
+    assert single_file.exists()
+
+    capture = cv2.VideoCapture(str(single_file))
+    frames_read = 0
+    while capture.read()[0]:
+        frames_read += 1
+    capture.release()
+    assert frames_read == number_of_frames
+
+
+def test_recording_is_encoded_far_smaller_than_the_old_mpeg4_encoder(tmp_path):
+    """The reason for moving off OpenCV's mpeg4: it wrote ~112 Mbps for the 12MP center camera."""
+    fps = 10
+    number_of_frames = 40
+    height, width = 480, 640
+
+    rng = np.random.default_rng(0)
+    frames = []
+    image = rng.integers(0, 255, (height, width, 3), dtype=np.uint8)
+    for _ in range(number_of_frames):
+        image = np.roll(image, 7, axis=1)
+        frames.append(image.copy())
+
+    from stretch4_body.subsystem.cameras.models.image_write_to_disk import VideoFileWriter
+
+    writer = VideoFileWriter(str(tmp_path / "video.mp4"), fps, chunk_seconds=0)
+    for frame in frames:
+        writer.write(frame)
+    writer.release()
+    new_size = (tmp_path / "video.mp4").stat().st_size
+
+    mpeg4 = cv2.VideoWriter(
+        str(tmp_path / "mpeg4.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+    )
+    assert mpeg4.isOpened()
+    for frame in frames:
+        mpeg4.write(frame)
+    mpeg4.release()
+    mpeg4_size = (tmp_path / "mpeg4.mp4").stat().st_size
+
+    assert new_size < mpeg4_size, f"{new_size} bytes is not smaller than mpeg4's {mpeg4_size}"
+
+
+def test_frames_below_the_hardware_encoders_minimum_still_record(tmp_path):
+    """The GPU refuses frames under 128 pixels, which a heavily cropped image can hit."""
+    from stretch4_body.subsystem.cameras.models.image_write_to_disk import (
+        MINIMUM_HARDWARE_ENCODER_DIMENSION,
+    )
+
+    size = (MINIMUM_HARDWARE_ENCODER_DIMENSION // 2, MINIMUM_HARDWARE_ENCODER_DIMENSION // 2)
+    number_of_frames = 20
+    _, single_file = _write_frames_to_video(
+        tmp_path, number_of_frames, 10, chunk_seconds=0, size=size
+    )
+
+    assert single_file.exists()
+    capture = cv2.VideoCapture(str(single_file))
+    frames_read = 0
+    while capture.read()[0]:
+        frames_read += 1
+    capture.release()
     assert frames_read == number_of_frames
 
 

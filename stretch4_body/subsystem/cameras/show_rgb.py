@@ -10,6 +10,7 @@ from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller impo
 )
 from stretch4_body.subsystem.cameras.enums.recording_file_format import RecordingFileFormat
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS
 
 def show_rgb():
 
@@ -30,6 +31,12 @@ def show_rgb():
         type=str,
         default=RecordingFileFormat.mp4.extension,
         help=f"The file format to record in, only used with --recording_directory. One of: {', '.join(RecordingFileFormat.all_extensions())}. {RecordingFileFormat.mp4.extension} writes one video per camera, the image formats write one file per frame. Default: {RecordingFileFormat.mp4.extension}.",
+    )
+    parser.add_argument(
+        "--recording_chunk_seconds",
+        type=float,
+        default=DEFAULT_RECORDING_CHUNK_SECONDS,
+        help=f"Split a video recording into files of this many seconds, so that an interrupted recording stays playable up to the last completed chunk. Only used with --recording_directory and a video format. 0 writes a single file. Default: {DEFAULT_RECORDING_CHUNK_SECONDS:g}.",
     )
     parser.add_argument(
         "--rerun",
@@ -149,6 +156,10 @@ def show_rgb():
     else:
         controller_class = RGBPipelineController
 
+    recording_chunk_seconds = args.recording_chunk_seconds
+    if recording_chunk_seconds < 0:
+        parser.error("--recording_chunk_seconds cannot be negative.")
+
     if recording_directory is not None:
         logger.info(f"Recording {camera_type.name} to {recording_directory} as {recording_file_format.extension} files.")
 
@@ -162,6 +173,7 @@ def show_rgb():
         ai_models_to_use=[],
         detect_aruco_marker_size=detect_aruco_marker_size,
         recording_file_format=recording_file_format,
+        recording_chunk_seconds=recording_chunk_seconds,
     )
 
     loop_timer = LoopTimer()
