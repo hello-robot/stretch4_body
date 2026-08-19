@@ -1,4 +1,7 @@
 
+import logging
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 import glob
 import os
@@ -64,9 +67,7 @@ def saver_thread(
 
     while not stop_event.is_set() or not save_rgb_queue.empty():
         if stop_event.is_set():
-            print(
-                f"record_rgb: Stop event has been set, waiting to finish writing data. {save_rgb_queue.qsize()} left."
-            )
+            logger.info(f"record_rgb: Stop event has been set, waiting to finish writing data. {save_rgb_queue.qsize()} left.")
         try:
             rgb_image_to_write = save_rgb_queue.get(timeout=1 / 30)
 
@@ -80,9 +81,7 @@ def saver_thread(
             )
 
             if rgb_image_to_write.frame_number % 10 == 0:
-                print(
-                    f"Camera {rgb_image_to_write.camera_type.name} capture: {rgb_image_to_write.frame_number} {save_rgb_queue.qsize()=}"
-                )
+                logger.info(f"Camera {rgb_image_to_write.camera_type.name} capture: {rgb_image_to_write.frame_number} {save_rgb_queue.qsize()=}")
         except queue.Empty:
             ...
 

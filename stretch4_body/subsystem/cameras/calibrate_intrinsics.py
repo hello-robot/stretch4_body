@@ -10,6 +10,9 @@ You can run this file to do manual calibration. This script assumes it is runnin
 You could also use `calibrate_intrinsics_robot_move.py` to control the robot while doing calibration.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
 import argparse
 import datetime
 import glob
@@ -212,11 +215,11 @@ class CalibrateIntrinsics:
 
     def log_message(self, text: str, level: LogLevels):
         self.visualizer.log_message(text, level.value)
-        print(f"{level}: {text}")
+        logger.info(f"{level}: {text}")
 
     def log_instructions(self, text: str):
         self.visualizer.log_instructions(text)
-        print(f"{text}")
+        logger.info(f"{text}")
 
     def print_calibration_results(
         self, calibration_results: CalibrateCameraResults | None = None
@@ -921,14 +924,14 @@ Interactive Controls:
             .lower()
         )
         if key == "s":
-            print("Saving...")
+            logger.info("Saving...")
             calibration.save_calibration()
-            print("Saved!")
+            logger.info("Saved!")
             return
         elif key == "c":
             calibration.request_capture()
         else:
-            print("Unknown command:", key)
+            logger.info("Unknown command:", key)
 
     def keyboard_listener():
         while True:
@@ -1089,5 +1092,6 @@ def REx_calibrate_intrinsics(interactive: bool):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     params = _parse_args()
     _calibrate_intrinsics(*params)

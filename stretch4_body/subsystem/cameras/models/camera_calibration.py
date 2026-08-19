@@ -5,6 +5,7 @@ import numpy as np
 import yaml
 from enum import Enum, auto
 import logging
+logger = logging.getLogger(__name__)
 import cv2
 import cv2.aruco as aruco
 import rerun as rr
@@ -236,7 +237,7 @@ class CameraPoseVisualizer:
                 rr.spawn(memory_limit="4GB")
                 self.is_initialized = True
             except Exception as e:
-                print(f"Failed to initialize rerun: {e}")
+                logger.info(f"Failed to initialize rerun: {e}")
 
     def update_pointcloud(
         self,
@@ -327,7 +328,7 @@ class CameraPoseVisualizer:
                 # )
 
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def show_detected_corners(self, image: np.ndarray):
         if not self.is_initialized:
@@ -345,7 +346,7 @@ class CameraPoseVisualizer:
                     rr.Image(image_array, color_model="BGR").compress(),
                 )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def show_dropped_frame(self):
         if not self.is_initialized:
@@ -368,7 +369,7 @@ class CameraPoseVisualizer:
                 rr.Image(image, color_model="BGR").compress(),
             )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def show_last_saved(self, image: np.ndarray):
         if not self.is_initialized:
@@ -386,7 +387,7 @@ class CameraPoseVisualizer:
                     rr.Image(image_array, color_model="BGR").compress(),
                 )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def log_instructions(self, text: str):
         if not self.is_initialized:
@@ -398,7 +399,7 @@ class CameraPoseVisualizer:
                 rr.TextDocument(text, media_type=rr.MediaType.MARKDOWN),
             )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def log_message(self, text: str, level: str = "INFO"):
         if not self.is_initialized:
@@ -407,7 +408,7 @@ class CameraPoseVisualizer:
         try:
             rr.log(f"Console\\ {self.camera_name}", rr.TextLog(text, level=level))
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def log_capture_status(self, is_auto: bool, is_capture_requested: bool):
         if not self.is_initialized:
@@ -428,7 +429,7 @@ class CameraPoseVisualizer:
                 rr.TextDocument(text, media_type=rr.MediaType.MARKDOWN),
             )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     @staticmethod
     def setup_blueprint(camera_names: list[str]):
@@ -475,7 +476,7 @@ class CameraPoseVisualizer:
         try:
             rr.send_blueprint(blueprint)
         except Exception as e:
-            print(f"Failed to send blueprint: {e}")
+            logger.info(f"Failed to send blueprint: {e}")
 
 
 def calculate_per_view_reprojection_error(

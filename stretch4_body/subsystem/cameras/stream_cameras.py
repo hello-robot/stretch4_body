@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from collections.abc import Generator
 
 from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import RGBPipelineController, RGBPipelineControllerROS
@@ -64,32 +67,32 @@ def stream_gripper_camera(*, is_rotate:bool=True, is_rectify:bool=False, is_crop
 
 
 if __name__ == "__main__":
-
-    print("Stream only the left camera.")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logger.info("Stream only the left camera.")
     for image_frame in stream_left_camera():
         if image_frame is None: 
-            print("No frame returned")
+            logger.info("No frame returned")
             continue
-        print(f"Got image: {image_frame.image.shape=}, {image_frame.timestamp=}")
+        logger.info(f"Got image: {image_frame.image.shape=}, {image_frame.timestamp=}")
         break
 
 
-    print("Stream both the left and right cameras.")
+    logger.info("Stream both the left and right cameras.")
     for image_frame in stream_left_right_camera():
         if image_frame is None: 
-            print("No frame returned")
+            logger.info("No frame returned")
             continue
-        print(f"Got left image: {image_frame.left.image.shape=}, {image_frame.left.timestamp=}")
-        print(f"Got right image: {image_frame.right.image.shape=}, {image_frame.right.timestamp=}")
+        logger.info(f"Got left image: {image_frame.left.image.shape=}, {image_frame.left.timestamp=}")
+        logger.info(f"Got right image: {image_frame.right.image.shape=}, {image_frame.right.timestamp=}")
         break
 
 
-    print("Stream from the gripper RGBD camera.")
+    logger.info("Stream from the gripper RGBD camera.")
     for image_frame in stream_gripper_camera():
         if image_frame is None: 
-            print("No frame returned")
+            logger.info("No frame returned")
             continue
-        print(f"Got left image: {image_frame.left.image.shape=}, {image_frame.left.timestamp=}")
+        logger.info(f"Got left image: {image_frame.left.image.shape=}, {image_frame.left.timestamp=}")
         if image_frame.pointcloud is not None:
-            print(f"Got pointcloud image: {image_frame.pointcloud.shape=}")
+            logger.info(f"Got pointcloud image: {image_frame.pointcloud.shape=}")
         break

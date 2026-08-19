@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import logging
 import time
 import math
 import click
@@ -13,6 +14,8 @@ from stretch4_body.utils.stretch_pose_models import RobotJoints, RobotPose
 class KeyframePlayer:
     """As a safety precaution, only joints in the `joints_allowed_to_move` param will move."""
     def __init__(self, *, joints_allowed_to_move:list[RobotJoints], motion_profile:MotionProfile, robot: rc.RobotClient|None = None, ):
+        self.logger = logging.getLogger(__name__)
+
         if robot:
             self.robot = robot
         else:
@@ -34,14 +37,14 @@ class KeyframePlayer:
                 data = yaml.safe_load(f)
             self.poses = [RobotPose.from_dict(p) for p in data]
             self.current_pose_index = 0
-            print(f"Loaded {len(self.poses)} poses from {filename}")
-            print(f"Note: Only the following joints will move from the pre-recorded poses: {[j.name for j in self.joints_allowed_to_move]}")
+            self.logger.info(f"Loaded {len(self.poses)} poses from {filename}")
+            self.logger.info(f"Note: Only the following joints will move from the pre-recorded poses: {[j.name for j in self.joints_allowed_to_move]}")
         except FileNotFoundError:
-            print(f"File {filename} not found.")
+            self.logger.error(f"File {filename} not found.")
             self.poses = []
 
     def play_pose(self, pose: RobotPose):
-        print(f"Moving to pose: {pose.name}")
+        self.logger.info(f"Moving to pose: {pose.name}")
 
         self.last_pose = pose
         
@@ -80,7 +83,7 @@ class KeyframePlayer:
         diff = pose.delay_before_start
 
         if diff > 0.0:
-            print(f"Waiting {diff:.2f}s")
+            self.logger.info(f"Waiting {diff:.2f}s")
             time.sleep(diff)
         
         self.play_pose(pose)
@@ -105,13 +108,13 @@ class KeyframePlayer:
 
     def play_next(self, loop:bool = False, wait_until_frame_start_time:bool=False):
         if not self.poses:
-            print("No poses loaded.")
+            self.logger.warning("No poses loaded.")
             return False
 
         if self.current_pose_index >= len(self.poses):
             if not loop:
                 return False
-            print("All poses played. Resetting index.")
+            self.logger.info("All poses played. Resetting index.")
             self.current_pose_index = 0
             
         pose = self.poses[self.current_pose_index]

@@ -175,7 +175,14 @@ class GamePadController(Device):
         self.device_path = None
         self.dev: InputDevice | None = None
         self.is_gamepad_active = False
-        
+
+        # Scanning for a dongle involves opening every /dev/input device to check
+        # its capabilities, which is too slow to run inline in the 25Hz poll loop
+        # (was blowing its timing budget while unplugged). Runs in its own thread
+        # instead, decoupled from the loop that LoopStats tracks.
+        self.DONGLE_POLL_INTERVAL_S = 0.5
+        self.dongle_scan_thread = None
+
         self._last_vibrated_tags = {}
 
         # Filtering parameters
@@ -195,15 +202,21 @@ class GamePadController(Device):
         if self.thread is not None:
             self.thread_shutdown_flag.set()
             self.thread.join(1)
+            self.dongle_scan_thread.join(1)
         self.thread_stats = hello_utils.LoopStats(loop_name='{0}_thread'.format(self.name), target_loop_rate=self.thread_rate_hz)
+        self.thread_shutdown_flag.clear()
+
         self.thread = threading.Thread(target=self._thread_target)
         self.thread.daemon = True
-        self.thread_shutdown_flag.clear()
         self.thread.start()
+
+        self.dongle_scan_thread = threading.Thread(target=self._dongle_scan_target)
+        self.dongle_scan_thread.daemon = True
+        self.dongle_scan_thread.start()
 
         if not ignore_singleton_check and not check_gamepad_teleop_singleton():
             raise RuntimeError("Gamepad teleop is already running!")
-        
+
         self.logger.warning("Waiting for Gamepad Dongle...")
 
         return True
@@ -218,10 +231,21 @@ class GamePadController(Device):
                 time.sleep(self.thread_stats.get_loop_sleep_time())
         self.logger.info('Shutting down {0}'.format(self.thread_stats.loop_name))
 
+    def _dongle_scan_target(self):
+        # Runs on its own thread/cadence so the expensive device-enumeration work
+        # in poll_till_gamepad_dongle_present() never counts against the 25Hz
+        # loop's timing budget in _thread_target.
+        while not self.thread_shutdown_flag.is_set():
+            if not self.is_gamepad_active:
+                self.poll_till_gamepad_dongle_present()
+            self.thread_shutdown_flag.wait(self.DONGLE_POLL_INTERVAL_S)
+
     def stop(self):
         self.thread_shutdown_flag.set()
         if self.thread is not None:
             self.thread.join(1)
+        if self.dongle_scan_thread is not None:
+            self.dongle_scan_thread.join(1)
         super().stop()
         try:
             self.dev.close()
@@ -269,7 +293,6 @@ class GamePadController(Device):
 
     def update(self):
         if not self.is_gamepad_active:
-            self.poll_till_gamepad_dongle_present()
             return
 
         try:

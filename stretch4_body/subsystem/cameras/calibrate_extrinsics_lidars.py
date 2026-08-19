@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 import argparse
 import time
 import cv2
@@ -409,7 +412,7 @@ def average_transforms(T_list):
             valid_T_list.append(T)
         else:
             msg = f"Warning: Discarding outlier transform with translation distance {dist:.3f}m from median."
-            print(msg)
+            logger.info(msg)
             try:
                 import rerun as rr
                 rr.log(
@@ -529,7 +532,7 @@ class CalibrateLidarToCamera:
         self.saved_poses = 0
 
         if self.is_replaying:
-            print(f"Replaying from folder: {self.replay_folder}")
+            logger.info(f"Replaying from folder: {self.replay_folder}")
             self.replay_poses = sorted([int(d) for d in os.listdir(self.replay_folder) if d.isdigit()])
             self.replay_idx = 0
             
@@ -589,7 +592,7 @@ class CalibrateLidarToCamera:
                 else stream_lidar_left()
             )
 
-        print(f"Using Camera: {self.camera_name}, Lidar: {self.lidar_name}")
+        logger.info(f"Using Camera: {self.camera_name}, Lidar: {self.lidar_name}")
 
         # Ensure output file path
         self.calib_file = calib_file
@@ -608,7 +611,7 @@ class CalibrateLidarToCamera:
                     "Calibration file not provided using --calib_file, and HELLO_FLEET_PATH/HELLO_FLEET_ID environment variables are missing."
                 )
 
-        print(f"Calibration results will be saved to: {self.calib_file}")
+        logger.info(f"Calibration results will be saved to: {self.calib_file}")
 
         # Load Calibration Class
         self.base_calibration = DualLidarCalibration() # Base for floor_to_base and lidar_to_base
@@ -621,7 +624,7 @@ class CalibrateLidarToCamera:
                 self.use_right_lidar
             )
         except Exception as e:
-            print(f"Warning: could not get T_world: {e}")
+            logger.warning(f"could not get T_world: {e}")
 
         key = f"transform_{self.lidar_name}_lidar_to_{self.camera.name}"
         if key in self.calibration.data and "data" in self.calibration.data[key]:
@@ -675,7 +678,7 @@ class CalibrateLidarToCamera:
         if poses_file.exists():
             self.keyframe_player.load_from_file(poses_file)
         else:
-            print(f"Warning: poses file {poses_file} does not exist!")
+            logger.warning(f"poses file {poses_file} does not exist!")
 
         self.frame_settled_detector = DetectFrameSettled()
 
@@ -1014,12 +1017,13 @@ class CalibrateLidarToCamera:
 
         import select
         def keyboard_poller():
-            print("\n" + "="*50)
-            print("Keyboard commands enabled:")
-            print("  Press 'x' + Enter to capture/unpause")
-            print("  Press 's' + Enter to save average and exit")
-            print("  Press 'q' + Enter to quit without saving")
-            print("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to capture/unpause")
+  Press 's' + Enter to save average and exit")
+  Press 'q' + Enter to quit without saving")
+{'='*50}\n""")
             
             while not self.quit_requested.is_set():
                 try:
@@ -1035,16 +1039,16 @@ class CalibrateLidarToCamera:
                                 else:
                                     if is_paused.is_set():
                                         rr.log("Logs/action", rr.TextLog("Keyboard 'x': Unpaused. Automatic movement will start!", level="INFO"))
-                                        print("Unpaused via keyboard 'x'!")
+                                        logger.info("Unpaused via keyboard 'x'!")
                                         is_paused.clear()
                                         move_to_next_pose()
                                     else:
                                         request_capture()
                             elif char.lower() == 's':
-                                print("Save requested via keyboard 's'!")
+                                logger.info("Save requested via keyboard 's'!")
                                 request_save()
                             elif char.lower() == 'q':
-                                print("Quit requested via keyboard 'q'!")
+                                logger.info("Quit requested via keyboard 'q'!")
                                 self.quit_requested.set()
                 except Exception as e:
                     time.sleep(0.1)
@@ -1101,12 +1105,12 @@ class CalibrateLidarToCamera:
             if self.move_robot_mode == MoveRobotMode.ARM_POSES:
                 if self.is_replaying:
                     if self.replay_idx >= len(self.replay_poses):
-                        print("Finished replaying all poses. Saving and exiting.")
+                        logger.info("Finished replaying all poses. Saving and exiting.")
                         self.save()
                         break
                 else:
                     if self.keyframe_player.current_pose_index >= len(self.keyframe_player.poses):
-                        print("Finished replaying all poses. Saving and exiting.")
+                        logger.info("Finished replaying all poses. Saving and exiting.")
                         self.save()
                         break
                     
@@ -1122,7 +1126,7 @@ class CalibrateLidarToCamera:
                 latest_lidar_frame = lidar_frame_tmp
 
             if latest_cam_frame is None or latest_lidar_frame is None:
-                print("lidar and camera frames are both None")
+                logger.info("lidar and camera frames are both None")
                 continue
 
             if not self.is_replaying:
@@ -1160,7 +1164,7 @@ class CalibrateLidarToCamera:
 
             if self.is_capture_requested:
                 if not self.waiting_for_settled_printed:
-                    print("Waiting for camera frame to settle...")
+                    logger.info("Waiting for camera frame to settle...")
                     rr.log(
                         "Logs/action",
                         rr.TextLog("Waiting for camera frame to settle...", level="INFO"),
@@ -1168,7 +1172,7 @@ class CalibrateLidarToCamera:
                     self.waiting_for_settled_printed = True
 
                 if is_frame_settled:
-                    print("Frame settled!")
+                    logger.info("Frame settled!")
                     rr.log(
                         "Logs/action",
                         rr.TextLog("Frame settled!", level="INFO"),
@@ -1198,7 +1202,7 @@ class CalibrateLidarToCamera:
                         self.is_capture_requested = False
 
                         if self.move_robot_mode == MoveRobotMode.ARM_POSES:
-                            print("This pose did not have a valid frame! Skipping to next pose.")
+                            logger.info("This pose did not have a valid frame! Skipping to next pose.")
                             move_to_next_pose()
                         continue
 
@@ -1262,7 +1266,7 @@ class CalibrateLidarToCamera:
                     Current Transform: {t_str}
                     Average Transform: {np.array2string(T_avg, formatter={"float_kind": lambda x: "%.4f" % x})}
                     Total: {len(self.captured_transforms)}"""
-                    print(msg)
+                    logger.info(msg)
                     rr.log(
                         f"Logs/capture",
                         rr.TextLog(msg, level="INFO"),
@@ -1324,63 +1328,63 @@ class CalibrateLidarToCamera:
 
             if is_capture_frame and not did_capture_this_frame:
                 msg = "Capture requested, but failed! (Board not fully visible to both Camera and Lidar)"
-                print(msg)
+                logger.info(msg)
                 rr.log("Logs/error", rr.TextLog(msg, level="WARN"))
 
 
 
-        print("Quitting...")
+        logger.info("Quitting...")
         self.cleanup()
 
     def cleanup(self):
         if hasattr(self, '_cleanup_done') and self._cleanup_done:
             return
         self._cleanup_done = True
-        print("Cleaning up CalibrateLidarToCamera...")
+        logger.info("Cleaning up CalibrateLidarToCamera...")
 
         self.quit_requested.set()
 
         # 1. Stop poller threads
         if hasattr(self, 'gamepad_thread'):
-            print("Stopping gamepad poller...")
+            logger.info("Stopping gamepad poller...")
             self.gamepad_thread.join(timeout=0.2)
         if hasattr(self, 'keyboard_thread'):
-            print("Stopping keyboard poller...")
+            logger.info("Stopping keyboard poller...")
             self.keyboard_thread.join(timeout=0.2)
 
         # 2. Stop gamepad teleop subsystem (and its secondary robot client)
         if hasattr(self, 'gamepad_teleop') and self.gamepad_teleop is not None:
             try:
-                print("Stopping GamePadTeleop...")
+                logger.info("Stopping GamePadTeleop...")
                 self.gamepad_teleop.stop()
             except Exception as e:
-                print(f"Warning: error stopping gamepad_teleop: {e}")
+                logger.warning(f"error stopping gamepad_teleop: {e}")
 
         # 3. Close lidar stream
         if hasattr(self, 'lidar_stream') and self.lidar_stream is not None:
             try:
-                print(f"Closing lidar stream for {self.lidar_name}...")
+                logger.info(f"Closing lidar stream for {self.lidar_name}...")
                 self.lidar_stream.close()
             except Exception as e:
-                print(f"Warning: error closing lidar_stream: {e}")
+                logger.warning(f"error closing lidar_stream: {e}")
 
         # 4. Stop camera adapter
         if hasattr(self, 'camera_adapter') and self.camera_adapter is not None:
             try:
-                print(f"Stopping camera adapter for {self.camera.name}...")
+                logger.info(f"Stopping camera adapter for {self.camera.name}...")
                 self.camera_adapter.stop()
             except Exception as e:
-                print(f"Warning: error stopping camera_adapter: {e}")
+                logger.warning(f"error stopping camera_adapter: {e}")
 
         # 5. Stop primary robot client
         if hasattr(self, 'robot') and self.robot is not None:
             try:
-                print("Stopping RobotClient...")
+                logger.info("Stopping RobotClient...")
                 self.robot.stop()
             except Exception as e:
-                print(f"Warning: error stopping robot: {e}")
+                logger.warning(f"error stopping robot: {e}")
         
-        print("Cleanup complete.")
+        logger.info("Cleanup complete.")
 
     def save(self):
         if len(self.captured_transforms) == 0:
@@ -1413,7 +1417,7 @@ class CalibrateLidarToCamera:
             p = Path(out_yaml)
             backup_path = p.with_name(f"{p.stem}_backup_{mod_time}{p.suffix}")
             shutil.copy2(out_yaml, backup_path)
-            print(f"Backed up {out_yaml} to {backup_path}")
+            logger.info(f"Backed up {out_yaml} to {backup_path}")
 
         if os.path.exists(out_yaml):
             with open(out_yaml, "r") as f:
@@ -1433,7 +1437,7 @@ class CalibrateLidarToCamera:
             
             
             
-        print(f"Saved transform {key} to {out_yaml}")
+        logger.info(f"Saved transform {key} to {out_yaml}")
 
         self.record_to_centralized_yaml()
 
@@ -1443,7 +1447,7 @@ class CalibrateLidarToCamera:
                 / "models/calibration_poses_extrinsics.yaml"
             )
             self.keyframe_recorder.save_to_file(poses_file)
-            print(f"Saved poses to {poses_file}")
+            logger.info(f"Saved poses to {poses_file}")
             rr.log(
                 "Logs/action",
                 rr.TextLog(
@@ -1487,7 +1491,7 @@ class CalibrateLidarToCamera:
             
             record_joint_calibration(camera_joint_name, xyz, rpy, "head_link", child_link_name, os.environ.get("HELLO_FLEET_ID", ""))
         except Exception as e:
-            print(f"Warning: Failed to record joint calibration to centralized YAML: {e}")
+            logger.warning(f"Failed to record joint calibration to centralized YAML: {e}")
 
 
 def calibrate_extrinsics_camera_lidar(
@@ -1627,4 +1631,5 @@ def REx_calibrate_extrinsics_lidars(interactive: bool):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     calibrate_extrinsics_camera_lidar()

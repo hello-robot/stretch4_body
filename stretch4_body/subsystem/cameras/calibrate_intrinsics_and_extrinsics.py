@@ -6,6 +6,9 @@ At the end of this, the camera-camera and camera-lidar extrinsics are calibrated
 Requires lidar-lidar calibration to be performed first.
 Requires the camera calibration tool to be mounted on the robot.
 """
+import logging
+
+logger = logging.getLogger(__name__)
 import sys
 import time
 
@@ -14,7 +17,13 @@ from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import REx_cali
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import REx_calibrate_extrinsics_cameras
 from stretch4_body.subsystem.cameras.camera_intrinsics_validate_l2_distance import REx_validate_intrinsics
 
-def calibrate_intrinsics_and_extrinsics_not_interactive():
+def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.WARNING):
+    # Device (imported above) configures the root logger via logging.config.dictConfig()
+    # at import time, which installs handlers. logging.basicConfig() is then a no-op
+    # (it only takes effect when the root logger has no handlers), so the level must be
+    # set directly on the root logger instead.
+    logging.getLogger().setLevel(loggin_level)
+
     print("""
     This script performs the full camera calibration pipeline for the robot.
     The user answers the first prompt, and leaves the robot for 20 minutes to perform calibration.
@@ -41,18 +50,21 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
         print("Calibration cancelled.")
         return
 
+    def _print_title(title:str):
+        print(f"""
+====================================
+{title}
+====================================
+""")
+
     try:
-        print("====================================")
-        print("Starting Intrinsics Calibration")
-        print("====================================")
+        _print_title("Starting Intrinsics Calibration")
         REx_calibrate_intrinsics_robot_move(interactive=False)
 
-        print("====================================")
-        print("Starting Intrinsics Validation")
-        print("====================================")
-        
+        _print_title("Starting Intrinsics Validation")
         validation_passed = False
-        for retry in range(3): 
+        errors = None
+        for retry in range(3):
             time.sleep(3) # wait for the camera device to come back on the USB bus after we closed it at the end of the last step
             try:
                 errors = REx_validate_intrinsics(interactive=False)
@@ -60,30 +72,24 @@ def calibrate_intrinsics_and_extrinsics_not_interactive():
                     validation_passed = True
                     break
             except Exception as e:
-                print(f"Intrinsics validation failed: {e=}")
+                logger.error(f"Intrinsics validation failed: {e=}")
             
-            print(f"Retrying intrinsics validation. Try {retry+1}/3.")
+            logger.warning(f"Retrying intrinsics validation. Try {retry+1}/3.")
 
         if not validation_passed:
             raise Exception(f"Intrinsic calibration failed! Distance errors ({errors}) are above 0.1m. (inf = no detection)")
 
-        print("====================================")
-        print("Starting Extrinsics Camera-Camera Calibration")
-        print("====================================")
+        _print_title("Starting Extrinsics Camera-Camera Calibration")
         REx_calibrate_extrinsics_cameras(interactive=False)
         
-        print("====================================")
-        print("Starting Extrinsics Camera-Lidar Calibration")
-        print("====================================")
+        _print_title("Starting Extrinsics Camera-Lidar Calibration")
         REx_calibrate_extrinsics_lidars(interactive=False)
         
-        print("====================================")
-        print("Finished Intrinsics and Extrinsics Calibration")
-        print("====================================")
+        _print_title("Finished Intrinsics and Extrinsics Calibration")
 
         exit(0)
     except KeyboardInterrupt:
-        print("\nCalibration sequence aborted by user.")
+        logger.error("\nCalibration sequence aborted by user.")
         raise
 
 if __name__ == "__main__":
