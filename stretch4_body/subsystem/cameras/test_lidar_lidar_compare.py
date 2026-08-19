@@ -26,6 +26,10 @@ import queue
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 from stretch4_body.robot.robot_client import RobotClient
 from stretch4_body.subsystem.cameras.detectors.detector_frame_settled import DetectFrameSettled
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_lidars import (
@@ -143,6 +147,21 @@ def average_points_with_outlier_rejection(points_list, outlier_threshold: float 
     return averaged.reshape(original_shape)
 
 
+def compute_stats(values) -> dict:
+    """Descriptive statistics (count, mean, std, min, max, median) for a list of scalar values."""
+    if len(values) == 0:
+        return {'n': 0, 'mean_m': None, 'std_m': None, 'min_m': None, 'max_m': None, 'median_m': None}
+    arr = np.asarray(values, dtype=float)
+    return {
+        'n': int(arr.size),
+        'mean_m': float(np.mean(arr)),
+        'std_m': float(np.std(arr)),
+        'min_m': float(np.min(arr)),
+        'max_m': float(np.max(arr)),
+        'median_m': float(np.median(arr)),
+    }
+
+
 def reorder_sample_to_reference(sample: dict, reference: dict) -> dict:
     """
     Reorders a capture's corner arrays (nearest-neighbor match against reference's
@@ -198,6 +217,85 @@ def build_result_block(avg_left_corners, avg_right_corners, avg_left_center, avg
         },
     }
     return block, corner_errors, mean_corner_error, center_error
+
+
+def save_comparison_plot(
+    pose_results: list,
+    overall_corner_errors_cal: list,
+    overall_corner_errors_uncal: list,
+    overall_center_errors_cal: list,
+    overall_center_errors_uncal: list,
+    plot_path: str,
+):
+    """Saves a summary figure: per-pose mean corner/center error (with repeat-to-repeat std
+    error bars, when available) plus a boxplot of the pooled corner-error distribution."""
+    successful = [p for p in pose_results if p.get('status') == 'SUCCESS']
+    if not successful:
+        print("No successful poses to plot.")
+        return
+
+    def _repeat_std_mm(pose, space, key):
+        rep = pose.get('repeatability')
+        if rep is None:
+            return 0.0
+        return rep[space][key]['std_m'] * 1000.0
+
+    pose_nums = [p['pose_number'] for p in successful]
+    x = np.arange(len(pose_nums))
+    width = 0.35
+
+    mean_corner_cal_mm = [p['calibrated']['errors_m']['mean_corner_error'] * 1000.0 for p in successful]
+    mean_corner_uncal_mm = [p['uncalibrated']['errors_m']['mean_corner_error'] * 1000.0 for p in successful]
+    corner_std_cal_mm = [_repeat_std_mm(p, 'calibrated', 'mean_corner_error') for p in successful]
+    corner_std_uncal_mm = [_repeat_std_mm(p, 'uncalibrated', 'mean_corner_error') for p in successful]
+
+    center_cal_mm = [p['calibrated']['errors_m']['center_error'] * 1000.0 for p in successful]
+    center_uncal_mm = [p['uncalibrated']['errors_m']['center_error'] * 1000.0 for p in successful]
+    center_std_cal_mm = [_repeat_std_mm(p, 'calibrated', 'center_error') for p in successful]
+    center_std_uncal_mm = [_repeat_std_mm(p, 'uncalibrated', 'center_error') for p in successful]
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 13))
+
+    ax = axes[0]
+    ax.bar(x - width / 2, mean_corner_cal_mm, width, yerr=corner_std_cal_mm, capsize=3, label='Calibrated', color='#2a9d8f')
+    ax.bar(x + width / 2, mean_corner_uncal_mm, width, yerr=corner_std_uncal_mm, capsize=3, label='Uncalibrated', color='#e76f51')
+    ax.set_xticks(x)
+    ax.set_xticklabels(pose_nums)
+    ax.set_xlabel('Pose Number')
+    ax.set_ylabel('Mean Corner Error (mm)')
+    ax.set_title('Mean Corner Error by Pose (error bars = repeat-to-repeat std)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    ax.bar(x - width / 2, center_cal_mm, width, yerr=center_std_cal_mm, capsize=3, label='Calibrated', color='#2a9d8f')
+    ax.bar(x + width / 2, center_uncal_mm, width, yerr=center_std_uncal_mm, capsize=3, label='Uncalibrated', color='#e76f51')
+    ax.set_xticks(x)
+    ax.set_xticklabels(pose_nums)
+    ax.set_xlabel('Pose Number')
+    ax.set_ylabel('Center Error (mm)')
+    ax.set_title('Center Error by Pose (error bars = repeat-to-repeat std)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[2]
+    box_data = [
+        np.array(overall_corner_errors_cal) * 1000.0,
+        np.array(overall_corner_errors_uncal) * 1000.0,
+        np.array(overall_center_errors_cal) * 1000.0,
+        np.array(overall_center_errors_uncal) * 1000.0,
+    ]
+    box_labels = ['Corner\nCalibrated', 'Corner\nUncalibrated', 'Center\nCalibrated', 'Center\nUncalibrated']
+    if all(len(d) > 0 for d in box_data):
+        ax.boxplot(box_data, tick_labels=box_labels, showmeans=True)
+    ax.set_ylabel('Error (mm)')
+    ax.set_title('Distribution of All Corner/Center Error Measurements')
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved summary plot to: {plot_path}")
 
 
 def get_angular_sort_indices(centroids_base: np.ndarray) -> np.ndarray:
@@ -1080,24 +1178,26 @@ class LidarLidarCompare:
                     final_left_corners_uncal, final_right_corners_uncal, final_left_center_uncal, final_right_center_uncal
                 )
 
+                # Full descriptive stats (n/mean/std/min/max/median) of the per-repeat scalar
+                # error metrics -- how much the aggregate error varied repeat-to-repeat.
                 repeatability = {
                     'calibrated': {
-                        'mean_corner_error_std_m': float(np.std([r['calibrated']['errors_m']['mean_corner_error'] for r in successful])),
-                        'center_error_std_m': float(np.std([r['calibrated']['errors_m']['center_error'] for r in successful])),
+                        'mean_corner_error': compute_stats([r['calibrated']['errors_m']['mean_corner_error'] for r in successful]),
+                        'center_error': compute_stats([r['calibrated']['errors_m']['center_error'] for r in successful]),
                     },
                     'uncalibrated': {
-                        'mean_corner_error_std_m': float(np.std([r['uncalibrated']['errors_m']['mean_corner_error'] for r in successful])),
-                        'center_error_std_m': float(np.std([r['uncalibrated']['errors_m']['center_error'] for r in successful])),
+                        'mean_corner_error': compute_stats([r['uncalibrated']['errors_m']['mean_corner_error'] for r in successful]),
+                        'center_error': compute_stats([r['uncalibrated']['errors_m']['center_error'] for r in successful]),
                     },
                 }
-                overall_repeatability_corner_std_cal.append(repeatability['calibrated']['mean_corner_error_std_m'])
-                overall_repeatability_center_std_cal.append(repeatability['calibrated']['center_error_std_m'])
-                overall_repeatability_corner_std_uncal.append(repeatability['uncalibrated']['mean_corner_error_std_m'])
-                overall_repeatability_center_std_uncal.append(repeatability['uncalibrated']['center_error_std_m'])
+                overall_repeatability_corner_std_cal.append(repeatability['calibrated']['mean_corner_error']['std_m'])
+                overall_repeatability_center_std_cal.append(repeatability['calibrated']['center_error']['std_m'])
+                overall_repeatability_corner_std_uncal.append(repeatability['uncalibrated']['mean_corner_error']['std_m'])
+                overall_repeatability_center_std_uncal.append(repeatability['uncalibrated']['center_error']['std_m'])
 
                 print(f"\n=== Final Results for Pose {idx+1} (averaged over {len(successful)}/{num_repeats} repeats) ===", flush=True)
-                print(f"  [Calibrated]   Mean Corner Error: {final_mean_corner_error_cal*1000.0:.2f} mm | Center Error: {final_center_error_cal*1000.0:.2f} mm | Repeat StdDev (corner/center): {repeatability['calibrated']['mean_corner_error_std_m']*1000.0:.2f}/{repeatability['calibrated']['center_error_std_m']*1000.0:.2f} mm")
-                print(f"  [Uncalibrated] Mean Corner Error: {final_mean_corner_error_uncal*1000.0:.2f} mm | Center Error: {final_center_error_uncal*1000.0:.2f} mm | Repeat StdDev (corner/center): {repeatability['uncalibrated']['mean_corner_error_std_m']*1000.0:.2f}/{repeatability['uncalibrated']['center_error_std_m']*1000.0:.2f} mm", flush=True)
+                print(f"  [Calibrated]   Mean Corner Error: {final_mean_corner_error_cal*1000.0:.2f} mm | Center Error: {final_center_error_cal*1000.0:.2f} mm | Repeat StdDev (corner/center): {repeatability['calibrated']['mean_corner_error']['std_m']*1000.0:.2f}/{repeatability['calibrated']['center_error']['std_m']*1000.0:.2f} mm")
+                print(f"  [Uncalibrated] Mean Corner Error: {final_mean_corner_error_uncal*1000.0:.2f} mm | Center Error: {final_center_error_uncal*1000.0:.2f} mm | Repeat StdDev (corner/center): {repeatability['uncalibrated']['mean_corner_error']['std_m']*1000.0:.2f}/{repeatability['uncalibrated']['center_error']['std_m']*1000.0:.2f} mm", flush=True)
 
                 overall_corner_errors_cal.extend(final_corner_errors_cal)
                 overall_center_errors_cal.append(final_center_error_cal)
@@ -1118,24 +1218,25 @@ class LidarLidarCompare:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         fleet_id = os.environ.get("HELLO_FLEET_ID", "unknown")
 
+        # Full descriptive stats (n/mean/std/min/max/median) pooled across all poses/corners.
         overall_summary = {
             'calibrated': {
-                'overall_mean_corner_error_m': float(np.mean(overall_corner_errors_cal)) if len(overall_corner_errors_cal) > 0 else None,
-                'overall_mean_center_error_m': float(np.mean(overall_center_errors_cal)) if len(overall_center_errors_cal) > 0 else None,
-                'max_corner_error_m': float(np.max(overall_corner_errors_cal)) if len(overall_corner_errors_cal) > 0 else None,
+                'corner_error': compute_stats(overall_corner_errors_cal),
+                'center_error': compute_stats(overall_center_errors_cal),
             },
             'uncalibrated': {
-                'overall_mean_corner_error_m': float(np.mean(overall_corner_errors_uncal)) if len(overall_corner_errors_uncal) > 0 else None,
-                'overall_mean_center_error_m': float(np.mean(overall_center_errors_uncal)) if len(overall_center_errors_uncal) > 0 else None,
-                'max_corner_error_m': float(np.max(overall_corner_errors_uncal)) if len(overall_corner_errors_uncal) > 0 else None,
-            }
+                'corner_error': compute_stats(overall_corner_errors_uncal),
+                'center_error': compute_stats(overall_center_errors_uncal),
+            },
         }
 
         if not self.manual and len(overall_repeatability_corner_std_cal) > 0:
-            overall_summary['calibrated']['mean_repeatability_corner_std_m'] = float(np.mean(overall_repeatability_corner_std_cal))
-            overall_summary['calibrated']['mean_repeatability_center_std_m'] = float(np.mean(overall_repeatability_center_std_cal))
-            overall_summary['uncalibrated']['mean_repeatability_corner_std_m'] = float(np.mean(overall_repeatability_corner_std_uncal))
-            overall_summary['uncalibrated']['mean_repeatability_center_std_m'] = float(np.mean(overall_repeatability_center_std_uncal))
+            # Stats OF the per-pose repeatability std itself: how consistent repeatability was
+            # across poses (e.g. a high max here flags one pose with unusually poor repeatability).
+            overall_summary['calibrated']['repeatability_corner_error_std'] = compute_stats(overall_repeatability_corner_std_cal)
+            overall_summary['calibrated']['repeatability_center_error_std'] = compute_stats(overall_repeatability_center_std_cal)
+            overall_summary['uncalibrated']['repeatability_corner_error_std'] = compute_stats(overall_repeatability_corner_std_uncal)
+            overall_summary['uncalibrated']['repeatability_center_error_std'] = compute_stats(overall_repeatability_center_std_uncal)
 
         output_data = {
             'timestamp': timestamp,
@@ -1158,15 +1259,29 @@ class LidarLidarCompare:
         with open(self.output_file, 'w') as f:
             yaml.dump(output_data, f, default_flow_style=False)
 
+        def _fmt(stats, key):
+            val = stats.get(key)
+            return f"{val*1000.0:.2f} mm" if val is not None else "N/A"
+
         print(f"\n====================================")
         print(f"Lidar-Lidar Comparison Complete!")
         print(f"--- Calibrated Results (apply_calibration=True) ---")
-        print(f"Overall Mean Corner Error: {overall_summary['calibrated']['overall_mean_corner_error_m']*1000.0 if overall_summary['calibrated']['overall_mean_corner_error_m'] else 0.0:.2f} mm")
-        print(f"Overall Mean Center Error: {overall_summary['calibrated']['overall_mean_center_error_m']*1000.0 if overall_summary['calibrated']['overall_mean_center_error_m'] else 0.0:.2f} mm")
+        print(f"Corner Error -- mean: {_fmt(overall_summary['calibrated']['corner_error'], 'mean_m')} | std: {_fmt(overall_summary['calibrated']['corner_error'], 'std_m')} | min: {_fmt(overall_summary['calibrated']['corner_error'], 'min_m')} | max: {_fmt(overall_summary['calibrated']['corner_error'], 'max_m')} | median: {_fmt(overall_summary['calibrated']['corner_error'], 'median_m')}")
+        print(f"Center Error -- mean: {_fmt(overall_summary['calibrated']['center_error'], 'mean_m')} | std: {_fmt(overall_summary['calibrated']['center_error'], 'std_m')} | min: {_fmt(overall_summary['calibrated']['center_error'], 'min_m')} | max: {_fmt(overall_summary['calibrated']['center_error'], 'max_m')} | median: {_fmt(overall_summary['calibrated']['center_error'], 'median_m')}")
         print(f"--- Uncalibrated Results (apply_calibration=False) ---")
-        print(f"Overall Mean Corner Error: {overall_summary['uncalibrated']['overall_mean_corner_error_m']*1000.0 if overall_summary['uncalibrated']['overall_mean_corner_error_m'] else 0.0:.2f} mm")
-        print(f"Overall Mean Center Error: {overall_summary['uncalibrated']['overall_mean_center_error_m']*1000.0 if overall_summary['uncalibrated']['overall_mean_center_error_m'] else 0.0:.2f} mm")
+        print(f"Corner Error -- mean: {_fmt(overall_summary['uncalibrated']['corner_error'], 'mean_m')} | std: {_fmt(overall_summary['uncalibrated']['corner_error'], 'std_m')} | min: {_fmt(overall_summary['uncalibrated']['corner_error'], 'min_m')} | max: {_fmt(overall_summary['uncalibrated']['corner_error'], 'max_m')} | median: {_fmt(overall_summary['uncalibrated']['corner_error'], 'median_m')}")
+        print(f"Center Error -- mean: {_fmt(overall_summary['uncalibrated']['center_error'], 'mean_m')} | std: {_fmt(overall_summary['uncalibrated']['center_error'], 'std_m')} | min: {_fmt(overall_summary['uncalibrated']['center_error'], 'min_m')} | max: {_fmt(overall_summary['uncalibrated']['center_error'], 'max_m')} | median: {_fmt(overall_summary['uncalibrated']['center_error'], 'median_m')}")
         print(f"Saved results to: {self.output_file}")
+
+        plot_path = os.path.splitext(self.output_file)[0] + "_summary_plot.png"
+        save_comparison_plot(
+            pose_results,
+            overall_corner_errors_cal,
+            overall_corner_errors_uncal,
+            overall_center_errors_cal,
+            overall_center_errors_uncal,
+            plot_path,
+        )
         print(f"====================================\n")
 
         return output_data
