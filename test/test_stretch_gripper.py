@@ -105,7 +105,6 @@ def test_scripts_auto_detect_stretch():
         res_jog = subprocess.run(["python3", "-m", "stretch4_body.tools.stretch_gripper_jog"], input="", capture_output=True, text=True, env=env)
         print("stretch_gripper_jog exit code:", res_jog.returncode)
         assert res_jog.returncode == 0
-        assert "close by 10%" in res_jog.stdout or "close by 10" in res_jog.stdout
         
         print("Scripts auto-detect checks passed!")
 

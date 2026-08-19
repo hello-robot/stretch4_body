@@ -47,33 +47,16 @@ def get_gripper_instance(direct=False, ip_address=None):
     is_parallel = gripper_type == 'parallel_gripper' or 'parallel' in gripper_type.lower() or 'jaw' in gripper_type.lower()
     
     if not direct:
-        if gripper_type == 'parallel_gripper':
-            from stretch4_body.robot.robot_client import ParallelGripperClient as Gripper
-            g = Gripper(ip_address=ip_address)
-        elif gripper_type == 'stretch_gripper':
-            from stretch4_body.robot.robot_client import StretchGripperClient as Gripper
-            g = Gripper(ip_address=ip_address)
-        else:
-            _, robot_params = RobotParams.get_params()
-            tool_name = robot_params.get('robot', {}).get('tool')
-            if tool_name and tool_name in robot_params:
-                tool_params = robot_params[tool_name]
-                client_module = tool_params.get('client_module_name')
-                client_class = tool_params.get('client_class_name')
-                
-                add_user_tool_to_sys_path(tool_name)
-                
-                if client_module and client_class:
-                    module = RobotParams.import_user_tool_module(tool_name, client_module, is_server=False)
-                    ToolClient = getattr(module, client_class)
-                    try:
-                        g = ToolClient(ip_address=ip_address)
-                    except TypeError:
-                        g = ToolClient()
-                else:
-                    raise ValueError(f"Custom tool params for {tool_name} must specify client_module_name and client_class_name")
-            else:
-                raise ValueError(f"Custom tool {tool_name} params not found in robot_params")
+        from stretch4_body.utils.gripper_metadata import get_tool_metadata
+        try:
+            meta = get_tool_metadata(gripper_type)
+            ClientClass = meta.client_class
+            try:
+                g = ClientClass(ip_address=ip_address)
+            except TypeError:
+                g = ClientClass()
+        except Exception as e:
+            raise ValueError(f"Failed to instantiate client for tool '{gripper_type}': {e}")
     else:
         if gripper_type == 'parallel_gripper':
             from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper as Gripper

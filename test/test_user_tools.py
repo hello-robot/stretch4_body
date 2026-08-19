@@ -5,6 +5,7 @@ import sys
 import unittest
 import shutil
 
+
 class TestUserTools(unittest.TestCase):
     def setUp(self):
         # Setup a temporary custom tool inside stretch_user/user_tools
@@ -87,6 +88,98 @@ class TestUserTools(unittest.TestCase):
         finally:
             if os.path.exists(split_tool_dir):
                 shutil.rmtree(split_tool_dir)
+
+    def test_builtin_tool_metadata(self):
+        from stretch4_body.utils.gripper_metadata import (
+            get_tool_metadata,
+            StretchGripperMetadata,
+            ParallelGripperMetadata,
+        )
+
+        sg_meta = get_tool_metadata("stretch_gripper")
+        self.assertIsInstance(sg_meta, StretchGripperMetadata)
+        self.assertEqual(sg_meta.primary_joint, "gripper_finger_left_joint")
+        self.assertEqual(sg_meta.tool_joints, ["gripper_finger_left_joint", "gripper_finger_right_joint"])
+
+        pg_meta = get_tool_metadata("parallel_gripper")
+        self.assertIsInstance(pg_meta, ParallelGripperMetadata)
+        self.assertEqual(pg_meta.primary_joint, "finger_left_joint")
+        self.assertEqual(pg_meta.tool_joints, ["finger_left_joint", "finger_right_joint"])
+
+    def test_user_tool_metadata_valid(self):
+        valid_tool_name = "user_eoa_validtool"
+        valid_tool_dir = os.path.join(self.user_tools_dir, valid_tool_name)
+        os.makedirs(valid_tool_dir, exist_ok=True)
+
+        with open(os.path.join(valid_tool_dir, f"{valid_tool_name}.py"), 'w') as f:
+            f.write("class UserEoaValidtool:\n    def __init__(self):\n        pass\n")
+
+        with open(os.path.join(valid_tool_dir, f"{valid_tool_name}_client.py"), 'w') as f:
+            f.write("class UserEoaValidtoolClient:\n    def __init__(self, ip_address=None):\n        self.poses = {'close': 0.0, 'open': 100.0}\n")
+
+        with open(os.path.join(valid_tool_dir, "tool_params.yaml"), 'w') as f:
+            f.write("""
+tool_joints: ['joint_left', 'joint_right']
+primary_joint: 'joint_left'
+tool_links: ['link_left', 'link_right']
+actuator_command_range: [0.0, 100.0]
+aperture_range: [0.0, 0.08]
+urdf_to_actuator_scale: 100.0
+client_module_name: user_eoa_validtool_client
+client_class_name: UserEoaValidtoolClient
+""")
+
+        for mod in list(sys.modules.keys()):
+            if 'robot_params' in mod:
+                del sys.modules[mod]
+
+        from stretch4_body.core.robot_params import RobotParams
+        _user_params, _robot_params = RobotParams.get_params()
+
+        from stretch4_body.utils.gripper_metadata import get_tool_metadata, UserToolMetadata
+
+        try:
+            meta = get_tool_metadata(valid_tool_name)
+            self.assertIsInstance(meta, UserToolMetadata)
+            self.assertEqual(meta.primary_joint, "joint_left")
+            self.assertEqual(meta.tool_joints, ["joint_left", "joint_right"])
+            self.assertEqual(meta.tool_links, ["link_left", "link_right"])
+            self.assertEqual(meta.actuator_command_range, (0.0, 100.0))
+            self.assertEqual(meta.aperture_range, (0.0, 0.08))
+
+            # Test conversions
+            self.assertAlmostEqual(meta.normalized_to_actuator(0.5), 50.0)
+            self.assertAlmostEqual(meta.actuator_to_aperture(50.0), 0.04)
+        finally:
+            if os.path.exists(valid_tool_dir):
+                shutil.rmtree(valid_tool_dir)
+
+    def test_user_tool_metadata_fail_fast(self):
+        invalid_tool_name = "user_eoa_invalidtool"
+        invalid_tool_dir = os.path.join(self.user_tools_dir, invalid_tool_name)
+        os.makedirs(invalid_tool_dir, exist_ok=True)
+
+        with open(os.path.join(invalid_tool_dir, f"{invalid_tool_name}.py"), 'w') as f:
+            f.write("class UserEoaInvalidtool:\n    def __init__(self):\n        pass\n")
+
+        # Missing actuator_command_range and aperture_range
+        with open(os.path.join(invalid_tool_dir, "tool_params.yaml"), 'w') as f:
+            f.write("tool_joints: ['joint_a']\ntool_links: ['link_a']\nclient_module_name: dummy\nclient_class_name: Dummy\n")
+
+        for mod in list(sys.modules.keys()):
+            if 'robot_params' in mod:
+                del sys.modules[mod]
+
+        from stretch4_body.core.robot_params import RobotParams
+        from stretch4_body.utils.gripper_metadata import get_tool_metadata, ToolConfigurationError
+
+        try:
+            with self.assertRaises(ToolConfigurationError):
+                get_tool_metadata(invalid_tool_name)
+        finally:
+            if os.path.exists(invalid_tool_dir):
+                shutil.rmtree(invalid_tool_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

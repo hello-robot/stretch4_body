@@ -5,7 +5,15 @@ from functools import cache, cached_property
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
-from stretch4_body.utils.gripper_metadata import GRIPPER_MODELS, GripperMetadata
+from stretch4_body.utils.tool_metadata import (
+    BUILTIN_TOOL_MODELS,
+    ToolConfigurationError,
+    ToolMetadata,
+    get_tool_metadata,
+)
+
+# Backwards compatibility alias for tests patching GRIPPER_MODELS
+GRIPPER_MODELS = BUILTIN_TOOL_MODELS
 
 
 @dataclass
@@ -95,11 +103,15 @@ class RobotJoints(Enum):
 
     @classmethod
     def get_joint_by_name(cls, name: str) -> "RobotJoints | None":
-        """Looks up a joint by its enum name or its `value` (e.g. the configured gripper name), or None if not found."""
+        """Looks up a joint by its enum name, alias, configured tool name, or URDF tool joints."""
         if name in cls.__members__:
             return cls[name]
+        if name in ["gripper", "parallel_gripper", "stretch_gripper"]:
+            return cls.gripper
         for joint in cls:
             if joint.value == name:
+                return joint
+            if joint == cls.gripper and (name == joint.gripper_name or name in joint.tool_joints):
                 return joint
         return None
 
@@ -113,30 +125,50 @@ class RobotJoints(Enum):
 
     @property
     def value(self) -> str | None:
-        """Returns the robot_params key for this joint, or the configured gripper name for the gripper joint (None if unconfigured)."""
+        """Returns the robot_params key for this joint, or the configured gripper joint name for the gripper joint (None if unconfigured)."""
         if self.name == "gripper":
+            if self.gripper_model:
+                return self.gripper_model.joint_name
             return self.gripper_name
         else:
             return self.name
 
     @property
-    def gripper_model(self) -> GripperMetadata | None:
-        """Returns the GripperMetadata for this joint, or None if this isn't the gripper joint or none is configured."""
-        if self.name == "gripper" and self.value is not None:
-            return GRIPPER_MODELS.get(self.value)
+    def gripper_model(self) -> ToolMetadata | None:
+        """Returns the ToolMetadata for this joint, or None if this isn't the gripper joint or none is configured."""
+        if self.name == "gripper":
+            try:
+                return get_tool_metadata()
+            except Exception:
+                return None
         return None
+
+    @property
+    def tool_model(self) -> ToolMetadata | None:
+        """Alias for gripper_model."""
+        return self.gripper_model
+
+    @property
+    def tool_joints(self) -> list[str]:
+        """Returns the URDF joint names for this tool, or [] if no tool model."""
+        model = self.tool_model
+        return model.tool_joints if model else []
 
     @property
     def finger_joints(self) -> list[str]:
         """Returns the URDF finger joint names for this joint, or [] if no gripper model."""
-        model = self.gripper_model
-        return model.finger_joints if model else []
+        return self.tool_joints
+
+    @property
+    def tool_links(self) -> list[str]:
+        """Returns the URDF link names for this tool, or [] if no tool model."""
+        model = self.tool_model
+        return model.tool_links if model else []
 
     @property
     def finger_links(self) -> list[str]:
         """Returns the URDF finger link names for this joint, or [] if no gripper model."""
-        model = self.gripper_model
-        return model.finger_links if model else []
+        return self.tool_links
 
     @property
     def gripper_client(self) -> ParallelGripperClient | StretchGripperClient | None:
@@ -146,12 +178,9 @@ class RobotJoints(Enum):
 
     @cached_property
     def gripper_name(self) -> str | None:
-        """Returns the configured gripper's robot_params name, or None if no gripper is configured."""
+        """Returns the configured tool's robot_params name, or None if no tool is configured."""
         _, robot_params = RobotParams.get_params()
-        for name in GRIPPER_MODELS:
-            if name in robot_params:
-                return name
-        return None
+        return robot_params.get("robot", {}).get("tool")
 
     @property
     def poses(self) -> dict[str, float] | None:
@@ -163,22 +192,32 @@ class RobotJoints(Enum):
         return None
 
     @property
+    def actuator_command_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) in actuator command units for this joint, or None if no tool model."""
+        model = self.tool_model
+        return model.actuator_command_range if model else None
+
+    @property
     def subsystem_range(self) -> tuple[float, float] | None:
         """Returns (close, open) in subsystem units for this joint, or None if no gripper model."""
-        model = self.gripper_model
-        return model.subsystem_range if model else None
+        return self.actuator_command_range
 
     @property
     def urdf_range(self) -> tuple[float, float] | None:
         """Returns (close, open) in URDF units for this joint, or None if no gripper model."""
-        model = self.gripper_model
+        model = self.tool_model
         return model.urdf_range if model else None
 
     @property
+    def aperture_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) fingertip aperture for this joint, or None if no gripper model."""
+        model = self.tool_model
+        return model.aperture_range if model else None
+
+    @property
     def aperture_range_m(self) -> tuple[float, float] | None:
-        """Returns (min, max) fingertip aperture in meters for this joint, or None if no gripper model."""
-        model = self.gripper_model
-        return model.aperture_range_m if model else None
+        """Returns (min, max) fingertip aperture for this joint, or None if no gripper model."""
+        return self.aperture_range
 
     @cache
     def get_joint_params(self, profile: MotionProfile) -> tuple[float, float]:
@@ -237,7 +276,7 @@ class RobotJoints(Enum):
                 f"Method {method} is not implemented for joint {self.name}"
             )
 
-    def get_gripper_model(self, method: str | None = None) -> GripperMetadata:
+    def get_gripper_model(self, method: str | None = None) -> ToolMetadata:
         """Returns this joint's GripperMetadata, or raises if this isn't the gripper joint or none is configured."""
         method = method if method is not None else "get_gripper_model"
         self.raise_joint_specific_warning(method=method, expected_joints=["gripper"])
