@@ -435,7 +435,6 @@ def average_transforms(T_list):
     return T_avg
 
 
-
 def log_to_rerun(
     camera_name: str,
     lidar_name: str,
