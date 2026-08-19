@@ -229,7 +229,7 @@ def run_left_right_ros(duration):
     print("\n--- Benchmarking Head Camera stream_left_right_camera (stretch4_body ROS2) ---")
     # use_center:=false so this measures the same two cameras the Python run opens. With the 12MP center
     # camera enabled, publishing its frames alone drags left/right from 30 Hz down to ~12 Hz.
-    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=false"])
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=false", "use_system_timestamp:=false"])
     if proc is None:
         print("Could not start ROS2 head camera launch file. Skipping ROS benchmark.")
         return None
@@ -358,7 +358,7 @@ def run_left_right_center_python(duration):
 def run_left_right_center_ros(duration):
     """Benchmarks stream_left_right_center_camera_compressed(use_ros_for_cameras=True) from stretch4_body."""
     print("\n--- Benchmarking Head Camera stream_left_right_center_camera (stretch4_body ROS2) ---")
-    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"])
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true", "use_system_timestamp:=false"])
     if proc is None:
         print("Could not start ROS2 head camera launch file. Skipping ROS benchmark.")
         return None
@@ -492,7 +492,7 @@ def run_left_rgbd_ros(duration):
     proc_driver = None
     proc_lidar = None
     try:
-        proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"], wait_seconds=0.0)
+        proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true", "use_system_timestamp:=false"], wait_seconds=0.0)
         proc_driver = start_ros_launch(["ros2", "launch", "stretch_core", "stretch_driver.launch.py"], wait_seconds=8.0)
         proc_lidar = start_ros_launch(["ros2", "launch", "stretch_core", "dual_hesai.launch.py"], wait_seconds=8.0)
         if proc_camera is None or proc_lidar is None or proc_driver is None:
@@ -631,7 +631,7 @@ def run_left_right_rgbd_ros(duration):
     proc_camera = None
     proc_lidar = None
     try:
-        proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"], wait_seconds=0.0)
+        proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true", "use_system_timestamp:=false"], wait_seconds=0.0)
         proc_lidar = start_ros_launch(["ros2", "launch", "stretch_core", "dual_hesai.launch.py"], wait_seconds=8.0)
         if proc_camera is None or proc_lidar is None:
             print("Could not start ROS2 launch files. Skipping ROS benchmark.")
@@ -772,7 +772,7 @@ def run_left_right_center_rgbd_ros(duration):
     proc_camera = None
     proc_lidar = None
     try:
-        proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true"], wait_seconds=0.0)
+        proc_camera = start_ros_launch(["ros2", "launch", "stretch_core", "luxonis.launch.py", "use_center:=true", "use_system_timestamp:=false"], wait_seconds=0.0)
         proc_lidar = start_ros_launch(["ros2", "launch", "stretch_core", "dual_hesai.launch.py"], wait_seconds=8.0)
         if proc_camera is None or proc_lidar is None:
             print("Could not start ROS2 launch files. Skipping ROS benchmark.")
@@ -962,7 +962,7 @@ def run_gripper_python(duration):
 def run_gripper_ros(duration):
     """Benchmarks stream_gripper_camera_compressed(use_ros_for_cameras=True) from stretch4_body."""
     print("\n--- Benchmarking Gripper Camera stream_gripper_camera (stretch4_body ROS2) ---")
-    proc = start_ros_launch(["ros2", "launch", "stretch_core", "gripper_camera.launch.py"])
+    proc = start_ros_launch(["ros2", "launch", "stretch_core", "gripper_camera.launch.py", "use_system_timestamp:=false"])
     if proc is None:
         print("Could not start ROS2 gripper camera launch file. Skipping ROS benchmark.")
         return None
