@@ -26,12 +26,17 @@ def show_rgb():
     parser.add_argument(
         "--rerun",
         action="store_true",
-        help="Display the recording in a rerun window. Note: this may adversly affect performance. Default: False.",
+        help="Display the recording in a rerun window. Note: this may adversely affect performance. (Default)",
     )
     parser.add_argument(
         "--opencv",
         action="store_true",
-        help="Display the recording in an opencv window. Note: this may adversly affect performance. Default: False.",
+        help="Display the recording in an opencv window. Note: this may adversely affect performance.",
+    )
+    parser.add_argument(
+        "--no-rotate",
+        action="store_true",
+        help="Do not rotate the image. Default: False (images are rotated).",
     )
     parser.add_argument(
         "-l", "--left", action="store_true", help="Use the left RGB camera."
@@ -52,7 +57,7 @@ def show_rgb():
         "-lrc",
         "--left_right_center",
         action="store_true",
-        help="Use the synced RGB left and right cameras with the center camera.",
+        help="Use the synced RGB left and right cameras with the center camera. (Default)",
     )
     parser.add_argument(
         "-g", "--gripper", action="store_true", help="Use the gripper camera."
@@ -112,24 +117,19 @@ def show_rgb():
     elif args.gripper:
         camera_type = RGBCameras.gripper_rgbd
     else:
-        raise Exception(
-            "You must specify one of --left, --right, --center, --left_right, --left_right_center, --gripper, or --camera_name to specify the rgb camera to record."
-        )
-    is_record_to_rerun = args.rerun
+        camera_type = RGBCameras.synced_left_right_center()
     is_record_to_cvimshow = args.opencv
+    is_record_to_rerun = not is_record_to_cvimshow
     is_crop = args.crop
     is_rectify = args.rectify
+    is_rotate = not args.no_rotate
 
     detect_aruco_marker_size = args.detect_aruco_marker_size
 
-    show_image_in = None
-    if is_record_to_rerun:
-        show_image_in = RecordRgbShowImageIn.RERUN
-    elif is_record_to_cvimshow:
+    if is_record_to_cvimshow:
         show_image_in = RecordRgbShowImageIn.CVIMSHOW
-    
-    if not is_record_to_rerun and not is_record_to_cvimshow and not recording_directory:
-        raise Exception("You should specify one of the following: --opencv, --rerun or --recording_directory to specify an output destination for the camera stream.")
+    else:
+        show_image_in = RecordRgbShowImageIn.RERUN
 
     if args.use_ros_for_cameras:
         controller_class = RGBPipelineControllerROS
@@ -140,7 +140,7 @@ def show_rgb():
         camera_type=camera_type,
         recording_directory=recording_directory,
         show_image_in=show_image_in,
-        is_rotate=True,
+        is_rotate=is_rotate,
         is_rectify=is_rectify,
         is_crop=is_crop,
         ai_models_to_use=[],
