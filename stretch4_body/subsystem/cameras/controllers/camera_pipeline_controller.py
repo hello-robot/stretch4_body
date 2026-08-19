@@ -7,6 +7,7 @@ from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapte
 from enum import Enum
 import queue
 import threading
+import time
 from collections.abc import Generator
 import numpy as np
 from stretch4_body.subsystem.cameras.detectors.detector_ai_models import AIModelWrapper, do_object_detection
@@ -23,8 +24,9 @@ from stretch4_body.subsystem.cameras.cv_utils import (
     get_recify_maps,
     rectify,
 )
+from stretch4_body.subsystem.cameras.enums.recording_file_format import RecordingFileFormat
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
-from stretch4_body.subsystem.cameras.models.image_write_to_disk import RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
+from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS, RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
 from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
 
@@ -52,12 +54,21 @@ class RGBPipelineController:
         ai_models_to_use: list[AIModelWrapper],
         detect_aruco_marker_size: float|None,
         is_open_camera: bool = True,
-        enable_pointcloud: bool = False
+        enable_pointcloud: bool = False,
+        recording_file_format: RecordingFileFormat = RecordingFileFormat.png,
+        recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS,
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
+
+        `recording_file_format`: The format frames are written to disk in, when `recording_directory` is provided.
+
+        `recording_chunk_seconds`: How long each file of a video recording is, so that an interrupted
+        recording stays playable up to the last completed chunk. 0 or None writes a single file.
         """
         self.recording_directory = recording_directory
+        self.recording_file_format = recording_file_format
+        self.recording_chunk_seconds = recording_chunk_seconds
         self.camera_type = camera_type
         self.show_image_in = show_image_in
         self.is_rectify = is_rectify
@@ -85,11 +96,35 @@ class RGBPipelineController:
 
         self.stop_event = threading.Event()
 
+        # Set when the user quits again rather than waiting for the queued frames to be written.
+        self.abandon_save_event = threading.Event()
+
+        # Set by the saver thread once every recording file has been closed.
+        self.save_finished_event = threading.Event()
+
+        # Synced camera types have no configuration of their own, but their save threads are never
+        # started either - the per-camera copies made in get_frame_synced() do the writing.
+        video_fps = 30.0 if self.camera_type.is_synced_camera_type() else float(self.camera_type.config.fps)
+
         self.save_thread = threading.Thread(
-            target=saver_thread, args=(self.stop_event, self.save_rgb_queue), daemon=True
+            target=saver_thread,
+            args=(
+                self.stop_event,
+                self.save_rgb_queue,
+                self.recording_file_format,
+                video_fps,
+                self.abandon_save_event,
+                self.save_finished_event,
+                self.recording_chunk_seconds,
+            ),
+            daemon=True,
         )
 
         self.rerun_logger: RerunAsyncLogger | None = None
+
+        # get_frame_synced() records through one controller per camera. They are kept here so that
+        # stopping this controller also stops them and waits for their recordings to be written out.
+        self.child_pipeline_controllers: list["RGBPipelineController"] = []
 
         self.save_directory = None
         if self.recording_directory:
@@ -198,6 +233,7 @@ class RGBPipelineController:
             rgb_timestamp=rgb_timestamp,
             frame_number=self.frame_number,
             save_rgb_queue=self.save_rgb_queue,
+            file_format=self.recording_file_format,
         )
 
     def run_pipeline(self, frame: ImageFrame):
@@ -308,6 +344,12 @@ class RGBPipelineController:
             center_pipeline_controller = self.copy_for(center, is_open_camera=False)
             center_pipeline_controller.is_crop = False # Hack / baked in logic - we don't normally want to crop center image.
 
+        self.child_pipeline_controllers = [
+            pipeline_controller
+            for pipeline_controller in (left_pipeline_controller, right_pipeline_controller, center_pipeline_controller)
+            if pipeline_controller is not None
+        ]
+
         if self.recording_directory is not None:
             left_pipeline_controller.save_thread.start()
             right_pipeline_controller.save_thread.start()
@@ -401,7 +443,9 @@ class RGBPipelineController:
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
             is_open_camera=is_open_camera,
-            enable_pointcloud=self.enable_pointcloud
+            enable_pointcloud=self.enable_pointcloud,
+            recording_file_format=self.recording_file_format,
+            recording_chunk_seconds=self.recording_chunk_seconds,
         )
         return copy
 
@@ -495,12 +539,62 @@ class RGBPipelineController:
         """
         self.camera.set_sharpness(value)
 
+    def wait_for_recording_to_be_written(self, poll_period_s: float = 0.1, abandon_timeout_s: float = 10.0):
+        """Blocks until every captured frame has been written to disk.
+
+        Quitting while frames are still queued kills the saver thread mid-write, which leaves a video
+        file without its index, and therefore unplayable.
+
+        Interrupting the wait drops whatever is still queued, but still gives the saver thread a
+        moment to close its files so that what was captured before the interrupt stays playable.
+
+        The wait polls instead of joining the thread, because a `Thread.join()` that is interrupted by
+        a KeyboardInterrupt leaves the thread's state unreliable to query afterwards.
+        """
+        if not self.save_thread.is_alive():
+            return
+
+        frames_left = self.save_rgb_queue.qsize()
+        if frames_left:
+            logger.info(f"{self.camera_type.name}: finishing writing {frames_left} frames to disk, please wait...")
+
+        time_of_last_log = time.monotonic()
+
+        while not self.save_finished_event.is_set():
+            try:
+                time.sleep(poll_period_s)
+            except KeyboardInterrupt:
+                logger.warning(
+                    f"{self.camera_type.name}: interrupted, dropping {self.save_rgb_queue.qsize()} frames that were not written yet."
+                )
+                self.abandon_save_event.set()
+                self._wait_for_save_to_be_abandoned(poll_period_s, abandon_timeout_s)
+                return
+
+            if time.monotonic() - time_of_last_log >= 1.0:
+                time_of_last_log = time.monotonic()
+                frames_left = self.save_rgb_queue.qsize()
+                if frames_left:
+                    logger.info(f"{self.camera_type.name}: {frames_left} frames left to write...")
+
+    def _wait_for_save_to_be_abandoned(self, poll_period_s: float, timeout_s: float):
+        """Waits for the saver thread to close its files after it was told to drop the queued frames."""
+        deadline = time.monotonic() + timeout_s
+
+        while not self.save_finished_event.is_set() and time.monotonic() < deadline:
+            try:
+                time.sleep(poll_period_s)
+            except KeyboardInterrupt:
+                logger.warning(f"{self.camera_type.name}: the recording may be incomplete or unplayable.")
+                return
+
     def stop(self):
         self.stop_event.set()
         if self._camera is not None:
             self._camera.stop()
-        if self.save_thread.is_alive():
-            self.save_thread.join(timeout=5)
+        for child_pipeline_controller in self.child_pipeline_controllers:
+            child_pipeline_controller.stop()
+        self.wait_for_recording_to_be_written()
         if self.rerun_logger is not None:
             self.rerun_logger.stop()
 
@@ -509,7 +603,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -520,7 +614,9 @@ class RGBPipelineControllerROS(RGBPipelineController):
             ai_models_to_use=ai_models_to_use,
             detect_aruco_marker_size=detect_aruco_marker_size,
             is_open_camera=False,
-            enable_pointcloud=enable_pointcloud
+            enable_pointcloud=enable_pointcloud,
+            recording_file_format=recording_file_format,
+            recording_chunk_seconds=recording_chunk_seconds,
         )
         
         try:
@@ -546,7 +642,9 @@ class RGBPipelineControllerROS(RGBPipelineController):
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
             is_open_camera=is_open_camera,
-            enable_pointcloud=self.enable_pointcloud
+            enable_pointcloud=self.enable_pointcloud,
+            recording_file_format=self.recording_file_format,
+            recording_chunk_seconds=self.recording_chunk_seconds,
         )
         return copy
 
@@ -633,8 +731,6 @@ class RGBPipelineControllerROS(RGBPipelineController):
                 self.frame_number += 1
         finally:
             self.stop()
-            if self.save_thread.is_alive():
-                self.save_thread.join(timeout=5)
 
     def get_frame_synced(self, is_run_pipeline: bool) -> Generator[SyncedImageFrame, None, None]:
         if not self.camera_type.is_synced_camera_type():
@@ -668,6 +764,12 @@ class RGBPipelineControllerROS(RGBPipelineController):
             center = self.camera_type.matching_variant_of(RGBCameras.center())
             center_pipeline_controller = self.copy_for(center, is_open_camera=False)
             center_pipeline_controller.is_crop = False
+
+        self.child_pipeline_controllers = [
+            pipeline_controller
+            for pipeline_controller in (left_pipeline_controller, right_pipeline_controller, center_pipeline_controller)
+            if pipeline_controller is not None
+        ]
 
         if self.recording_directory is not None:
             left_pipeline_controller.save_thread.start()
@@ -760,17 +862,8 @@ class RGBPipelineControllerROS(RGBPipelineController):
                     center_pipeline_controller.frame_number += 1
 
         finally:
+            # stop() stops the per-camera controllers and waits for their recordings to be written.
             self.stop()
-            left_pipeline_controller.stop()
-            right_pipeline_controller.stop()
-            if center_pipeline_controller is not None:
-                center_pipeline_controller.stop()
-            if left_pipeline_controller.save_thread.is_alive():
-                left_pipeline_controller.save_thread.join(timeout=5)
-            if right_pipeline_controller.save_thread.is_alive():
-                right_pipeline_controller.save_thread.join(timeout=5)
-            if center_pipeline_controller is not None and center_pipeline_controller.save_thread.is_alive():
-                center_pipeline_controller.save_thread.join(timeout=5)
 
     def stop(self):
         super().stop()

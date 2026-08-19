@@ -235,6 +235,10 @@ class RGBCameras(Enum):
 
     @property
     def recording_folder_name(self) -> str:
+        if self.base == RGBCameras.gripper_left:
+            return "rgb_camera_gripper_left"
+        if self.base == RGBCameras.gripper_right:
+            return "rgb_camera_gripper_right"
         if self.is_center():
             return "rgb_camera_center"
         if self.is_left():
