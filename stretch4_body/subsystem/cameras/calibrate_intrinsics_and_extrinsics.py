@@ -18,9 +18,13 @@ from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import REx_cal
 from stretch4_body.subsystem.cameras.camera_intrinsics_validate_l2_distance import REx_validate_intrinsics
 
 def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.WARNING):
-    logging.basicConfig(level=loggin_level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    # Device (imported above) configures the root logger via logging.config.dictConfig()
+    # at import time, which installs handlers. logging.basicConfig() is then a no-op
+    # (it only takes effect when the root logger has no handlers), so the level must be
+    # set directly on the root logger instead.
+    logging.getLogger().setLevel(loggin_level)
 
-    logger.info("""
+    print("""
     This script performs the full camera calibration pipeline for the robot.
     The user answers the first prompt, and leaves the robot for 20 minutes to perform calibration.
     At the end of this, the camera-camera and camera-lidar extrinsics are calibrated.
@@ -43,11 +47,11 @@ def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.W
     """)
     ans = input("The robot will move for 20 minutes to perform calibration. Proceed? [y/N]: ")
     if ans.lower() != 'y':
-        logger.info("Calibration cancelled.")
+        print("Calibration cancelled.")
         return
 
     def _print_title(title:str):
-        logger.info(f"""
+        print(f"""
 ====================================
 {title}
 ====================================
@@ -67,9 +71,9 @@ def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.W
                     validation_passed = True
                     break
             except Exception as e:
-                logger.info(f"Intrinsics validation failed: {e=}")
+                logger.error(f"Intrinsics validation failed: {e=}")
             
-            logger.info(f"Retrying intrinsics validation. Try {retry+1}/3.")
+            logger.warning(f"Retrying intrinsics validation. Try {retry+1}/3.")
 
         if not validation_passed:
             raise Exception(f"Intrinsic calibration failed! Distance errors ({errors}) are above 0.1m. (inf = no detection)")
@@ -84,7 +88,7 @@ def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.W
 
         exit(0)
     except KeyboardInterrupt:
-        logger.info("\nCalibration sequence aborted by user.")
+        logger.error("\nCalibration sequence aborted by user.")
         raise
 
 if __name__ == "__main__":
