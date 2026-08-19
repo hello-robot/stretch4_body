@@ -130,6 +130,9 @@ class RGBCameraCalibration:
         with open(stretch_user_calibration_file_path, "r") as f:
             calibration = yaml.load(f, Loader=yaml.FullLoader)
             if not camera_type.name in calibration:
+                if "gripper" in camera_type.name:
+                    raise ValueError(
+                        f"{camera_type.name} was not found in {stretch_user_calibration_file_path}. Please run `REx_camera_calibrate --gripper` first.")
                 raise ValueError(
                     f"{camera_type.name} was not found in {stretch_user_calibration_file_path}. Please run `REx_camera_calibrate --intrinsics` first."
                 )

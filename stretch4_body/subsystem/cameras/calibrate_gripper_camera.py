@@ -2,7 +2,6 @@
 import logging
 
 logger = logging.getLogger(__name__)
-import argparse
 import datetime
 import os
 import shutil
@@ -53,11 +52,6 @@ def save_to_user_yaml(calibration: CalibrateCameraResults, camera_type: RGBCamer
 
 
 def REx_gripper_camera_calibration():
-    parser = argparse.ArgumentParser(
-        description="Calibrate gripper camera by reading on-device factory intrinsics and saving them."
-    )
-    args = parser.parse_args()
-
     logger.info("Reading gripper configurations...")
     left_config = RGBCameras.gripper_left.config
     right_config = RGBCameras.gripper_right.config
