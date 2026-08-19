@@ -35,7 +35,7 @@ class RoutineHome(routine.Routine):
         self.robot.sentry_manager.unpause(sentry_to_pause)
 
     def run(self, cmd_id, *args, **kwargs):
-        if hasattr(self.robot, 'power_periph') and self.robot.power_periph.status['runstop_event']:
+        if hasattr(self.robot, 'power_periph') and self.robot.is_runstopped():
             self.logger.warning('Not able to home %s. Robot is runstopped' % self.name.capitalize())
             return False
 

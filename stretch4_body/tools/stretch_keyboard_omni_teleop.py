@@ -54,7 +54,7 @@ def keyboard_control(key:str|None, robot):
     robot.push_command()
 
 def check_runstop(robot):
-    while robot.power_periph.status['runstop_event']:
+    while robot.is_runstopped():
         click.secho("The robot is runstopped", fg="red")
         sleep(1)
 

@@ -151,6 +151,15 @@ class RobotClient(SubsystemClient):
         else:
             self.logger.info('Stowing routine started with ID: %d'%rid)
 
+    def trigger_runstop(self):
+        return self.power_periph.trigger_runstop()
+    
+    def clear_runstop(self):
+        return self.power_periph.clear_runstop()
+    
+    def is_runstopped(self):
+        return self.power_periph.is_runstopped()
+
     def is_homed(self):
         """
         Check if the robot is homed.
@@ -520,6 +529,9 @@ class PowerPeriphClient(SubsystemClient):
 
     def trigger_runstop(self):
         self._queue_command(subsystem="power_periph", command="trigger_runstop")
+
+    def is_runstopped(self):
+        return self.status['runstop_event']
 
     def set_fan_on(self):
         """

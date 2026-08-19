@@ -110,6 +110,15 @@ class RobotCore(Device):
                 ready = ready and s.is_homed()  
         return ready
 
+    def trigger_runstop(self):
+        return self.power_periph.trigger_runstop()
+    
+    def clear_runstop(self):
+        return self.power_periph.clear_runstop()
+    
+    def is_runstopped(self):
+        return self.power_periph.is_runstopped()
+
     def wait_command(self, timeout=15.0, use_motion_generator=True):
         raise NotImplementedError('RobotCore::wait_command method not implemented')
 

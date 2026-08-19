@@ -1343,6 +1343,10 @@ class PowerPeriph(PowerPeriphBase):
             self.pull_status()
         return self.hw_valid
 
+    
+    def is_runstopped(self):
+        return self.status['runstop_event']
+
 if __name__ == '__main__':
     p=PowerPeriph()
     p.startup()

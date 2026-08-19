@@ -295,7 +295,7 @@ class RobotMovementController:
                 time.sleep(1 / 10)
                 continue
                 
-            if self.robot.power_periph.status['runstop_event']:
+            if self.robot.is_runstopped():
                 self.calibration.log_message(
                     f"Runstop event triggered, pausing automatic movement.", LogLevels.INFO
                 )
