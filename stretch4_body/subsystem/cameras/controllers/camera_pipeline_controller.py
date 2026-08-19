@@ -236,7 +236,7 @@ class RGBPipelineController:
         import rerun.blueprint as rrb
         from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
-        if self.camera_type == RGBCameras.gripper_rgbd:
+        if self.camera_type.base == RGBCameras.gripper_rgbd:
              blueprint = rrb.Blueprint(
                 rrb.Horizontal(
                     rrb.Spatial2DView(name="Gripper Depth", origin="Cameras/gripper_rgbd/depth"),
@@ -244,7 +244,7 @@ class RGBPipelineController:
                 ),
                 collapse_panels=True
             )
-        elif self.camera_type == RGBCameras.head_left_right:
+        elif self.camera_type.base == RGBCameras.head_left_right:
             blueprint = rrb.Blueprint(
                 rrb.Horizontal(
                     rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
@@ -252,7 +252,7 @@ class RGBPipelineController:
                 ),
                 collapse_panels=True
             )
-        elif self.camera_type == RGBCameras.head_left_right_center:
+        elif self.camera_type.base == RGBCameras.head_left_right_center:
             blueprint = rrb.Blueprint(
                 rrb.Horizontal(
                     rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
@@ -296,13 +296,13 @@ class RGBPipelineController:
         right = RGBCameras.right()
         center = RGBCameras.center()
 
-        if self.camera_type is RGBCameras.gripper_rgbd:
+        if self.camera_type.base == RGBCameras.gripper_rgbd:
             left = RGBCameras.gripper_left
             right = RGBCameras.gripper_right
 
         left_pipeline_controller = self.copy_for(left, is_open_camera=False)
         right_pipeline_controller = self.copy_for(right, is_open_camera=False)
-        use_center = self.camera_type == RGBCameras.head_left_right_center
+        use_center = self.camera_type.base == RGBCameras.head_left_right_center
         center_pipeline_controller = None
         if use_center:
             center_pipeline_controller = self.copy_for(center, is_open_camera=False)
@@ -322,13 +322,13 @@ class RGBPipelineController:
             if is_run_pipeline and frame is not None:
                 left_pipeline_controller.run_pipeline(frame.left)
                 right_pipeline_controller.run_pipeline(frame.right)
-                if frame.center is not None:
+                if frame.center is not None and center_pipeline_controller is not None:
                     center_pipeline_controller.run_pipeline(frame.center)
 
             left_pipeline_controller.show_image(frame.left.image)
             right_pipeline_controller.show_image(frame.right.image)
 
-            if frame.center is not None:
+            if frame.center is not None and center_pipeline_controller is not None:
                 center_pipeline_controller.show_image(frame.center.image)
 
             if frame.depth is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
@@ -527,8 +527,11 @@ class RGBPipelineControllerROS(RGBPipelineController):
             from stretch_python_bridge.stream_manager import StreamManager
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
-            
-        self.stream_manager = StreamManager()
+
+        # Only the controller that actually reads topics needs a StreamManager. The per-camera copies
+        # made by get_frame_synced() just post-process frames, and spinning up a ROS node plus an
+        # executor thread for each of them would compete with this one for the GIL.
+        self.stream_manager = StreamManager() if is_open_camera else None
 
         self.generator = None
 
@@ -547,30 +550,65 @@ class RGBPipelineControllerROS(RGBPipelineController):
         )
         return copy
 
+    def _to_image_frame(self, ros_frame) -> ImageFrame:
+        """Wraps a frame from the bridge, preserving the sensor's sequence number when the publisher sent one.
+
+        ROS 2 has no `header.seq`, so the camera node appends the device sequence number to
+        `CompressedImage.format`. When it is missing (the raw `Image` topics have nowhere to carry it)
+        we fall back to this controller's own frame counter, which cannot detect dropped frames.
+        """
+        frame_number = ros_frame.frame_number if getattr(ros_frame, "frame_number", None) is not None else self.frame_number
+
+        return ImageFrame(
+            timestamp=ros_frame.timestamp,
+            frame_number=frame_number,
+            image=ros_frame.image,
+            compression_format=getattr(ros_frame, "compression_format", ""),
+        )
+
+    def _camera_stream(self, camera_type: "RGBCameras"):
+        """The bridge generator for `camera_type`, subscribing to its compressed topic when it is a compressed variant."""
+        if self.stream_manager is None:
+            raise RuntimeError("This controller was created with is_open_camera=False and cannot read camera topics.")
+
+        try:
+            from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
+            from stretch_python_bridge import stream_camera_left_compressed, stream_camera_right_compressed, stream_camera_center_compressed
+            from stretch_python_bridge import stream_gripper_left, stream_gripper_right, stream_gripper_stereo
+            from stretch_python_bridge import stream_gripper_left_compressed, stream_gripper_right_compressed
+        except ImportError:
+            raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
+
+        is_compressed = camera_type.is_compressed_variant
+        is_gripper = camera_type.base in (RGBCameras.gripper_left, RGBCameras.gripper_right)
+
+        if is_gripper:
+            if camera_type.base == RGBCameras.gripper_left:
+                stream = stream_gripper_left_compressed if is_compressed else stream_gripper_left
+            else:
+                stream = stream_gripper_right_compressed if is_compressed else stream_gripper_right
+        elif camera_type.is_left():
+            stream = stream_camera_left_compressed if is_compressed else stream_camera_left
+        elif camera_type.is_right():
+            stream = stream_camera_right_compressed if is_compressed else stream_camera_right
+        elif camera_type.is_center():
+            stream = stream_camera_center_compressed if is_compressed else stream_camera_center
+        else:
+            raise NotImplementedError(f"Camera {camera_type} is not supported.")
+
+        return stream(stream_manager=self.stream_manager)
+
     def get_frame(self, is_run_pipeline: bool) -> Generator[ImageFrame, None, None]:
         if self.camera_type.is_synced_camera_type():
             raise RuntimeError(f"{self.camera_type} is a synced camera, use get_frame_synced() instead.")
-        
-        try:
-            from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
-        except ImportError:
-            raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
-        
+
         if self.show_image_in is RecordRgbShowImageIn.RERUN:
             self._start_rerun()
 
         if self.recording_directory is not None:
             self.save_thread.start()
 
-        camera_generator = None
-        if self.camera_type.is_left():
-            camera_generator = stream_camera_left(stream_manager=self.stream_manager)
-        elif self.camera_type.is_right():
-            camera_generator = stream_camera_right(stream_manager=self.stream_manager)
-        elif self.camera_type.is_center():
-            camera_generator = stream_camera_center(stream_manager=self.stream_manager)
-        else:
-            raise NotImplementedError(f"Camera {self.camera_type} is not supported.")
+        camera_generator = self._camera_stream(self.camera_type)
 
         self.generator = self.stream_manager.stream()
 
@@ -584,7 +622,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
                     logger.info("ros_frame is None in get_frame")
                     continue
 
-                frame = ImageFrame(timestamp=ros_frame.timestamp, frame_number=self.frame_number, image=ros_frame.image, timestamp_system=ros_frame.timestamp)
+                frame = self._to_image_frame(ros_frame)
 
                 if is_run_pipeline:
                     self.run_pipeline(frame)
@@ -603,8 +641,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
             raise Exception("get_frame_synced() can only be called for a synced camera type. Use get_frame() instead.")
         
         try:
-            from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
-            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_right, stream_gripper_stereo_points, stream_gripper_left
+            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_stereo_points
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
 
@@ -613,42 +650,45 @@ class RGBPipelineControllerROS(RGBPipelineController):
         if self.show_image_in is RecordRgbShowImageIn.RERUN:
             self._start_rerun()
 
-        if self.camera_type == RGBCameras.gripper_rgbd:
-            left_pipeline_controller = self.copy_for(RGBCameras.gripper_left, is_open_camera=False)
-            right_pipeline_controller = self.copy_for(RGBCameras.gripper_right, is_open_camera=False)
+        is_gripper = self.camera_type.base == RGBCameras.gripper_rgbd
+        if is_gripper:
+            left = self.camera_type.matching_variant_of(RGBCameras.gripper_left)
+            right = self.camera_type.matching_variant_of(RGBCameras.gripper_right)
         else:
-            left_pipeline_controller = self.copy_for(RGBCameras.left(), is_open_camera=False)
-            right_pipeline_controller = self.copy_for(RGBCameras.right(), is_open_camera=False)
-        
-        use_center = self.camera_type == RGBCameras.head_left_right_center
+            left = self.camera_type.matching_variant_of(RGBCameras.left())
+            right = self.camera_type.matching_variant_of(RGBCameras.right())
+
+        left_pipeline_controller = self.copy_for(left, is_open_camera=False)
+        right_pipeline_controller = self.copy_for(right, is_open_camera=False)
+
+        use_center = self.camera_type.base == RGBCameras.head_left_right_center
         center_pipeline_controller = None
+        center = None
         if use_center:
-            center_pipeline_controller = self.copy_for(RGBCameras.center(), is_open_camera=False)
-            center_pipeline_controller.is_crop = False 
+            center = self.camera_type.matching_variant_of(RGBCameras.center())
+            center_pipeline_controller = self.copy_for(center, is_open_camera=False)
+            center_pipeline_controller.is_crop = False
 
         if self.recording_directory is not None:
             left_pipeline_controller.save_thread.start()
             right_pipeline_controller.save_thread.start()
             if center_pipeline_controller is not None:
                 center_pipeline_controller.save_thread.start()
-        
-        left_generator = None
-        right_generator = None
+
         center_generator = None
         depth_generator = None
         pointcloud_generator = None
 
-        if self.camera_type == RGBCameras.gripper_rgbd:
-            left_generator = stream_gripper_left(stream_manager=self.stream_manager)
-            right_generator = stream_gripper_right(stream_manager=self.stream_manager)
+        left_generator = self._camera_stream(left)
+        right_generator = self._camera_stream(right)
+
+        if is_gripper:
+            # The depth map is 16-bit and never MJPEG encoded, so it always comes off the raw topic.
             depth_generator = stream_gripper_stereo(stream_manager=self.stream_manager)
             if self.enable_pointcloud:
                 pointcloud_generator = stream_gripper_stereo_points(stream_manager=self.stream_manager)
-        else:
-            left_generator = stream_camera_left(stream_manager=self.stream_manager)
-            right_generator = stream_camera_right(stream_manager=self.stream_manager)
-            if use_center:
-                center_generator = stream_camera_center(stream_manager=self.stream_manager)
+        elif use_center and center is not None:
+            center_generator = self._camera_stream(center)
 
         self.generator = self.stream_manager.stream()
 
@@ -665,23 +705,23 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 if left_ros_frame is None or right_ros_frame is None:
                     continue
-                if self.camera_type == RGBCameras.gripper_rgbd and depth_ros_frame is None:
+                if is_gripper and depth_ros_frame is None:
                     continue
 
                 frame = SyncedImageFrame(
-                    timestamp=left_ros_frame.timestamp, 
-                    left=ImageFrame(timestamp=left_ros_frame.timestamp, frame_number=self.frame_number, image=left_ros_frame.image),
-                    right=ImageFrame(timestamp=right_ros_frame.timestamp, frame_number=self.frame_number, image=right_ros_frame.image),
+                    timestamp=left_ros_frame.timestamp,
+                    left=self._to_image_frame(left_ros_frame),
+                    right=self._to_image_frame(right_ros_frame),
                     depth=depth_ros_frame.image if depth_ros_frame is not None else None,
                     pointcloud=pointcloud_ros_frame.points if pointcloud_ros_frame is not None else None,
                     pointcloud_color=pointcloud_ros_frame.colors if pointcloud_ros_frame is not None else None,
                 )
 
-                if self.camera_type == RGBCameras.head_left_right_center:
-                    if center_ros_frame is not None:
-                        frame.center = ImageFrame(timestamp=center_ros_frame.timestamp, frame_number=self.frame_number, image=center_ros_frame.image)
-                    else:
-                        continue 
+                # The center camera runs at its own (much lower) frame rate, so a synced frame without a
+                # fresh center image is still a good left/right frame. Leave center as None rather than
+                # throttling left/right down to the center camera's rate.
+                if use_center and center_ros_frame is not None:
+                    frame.center = self._to_image_frame(center_ros_frame)
 
                 if is_run_pipeline:
                     left_pipeline_controller.run_pipeline(frame.left)

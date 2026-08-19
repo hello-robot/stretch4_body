@@ -8,7 +8,8 @@ logger = logging.getLogger(__name__)
 import depthai as dai
 
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
-from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
+from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.adapters.luxonis_camera_adapter import LuxonisCameraAdapter, clear_device_cache
 from stretch4_body.subsystem.cameras.adapters.synced_camera import SyncedCamera
 from stretch4_body.subsystem.cameras.models.image_frame import SyncedImageFrame, ImageFrame

@@ -10,6 +10,12 @@ from stretch4_body.subsystem.cameras.stream_cameras import (
     stream_left_right_camera,
     stream_left_right_center_camera,
     stream_gripper_camera,
+    stream_left_camera_compressed,
+    stream_right_camera_compressed,
+    stream_center_camera_compressed,
+    stream_left_right_camera_compressed,
+    stream_left_right_center_camera_compressed,
+    stream_gripper_camera_compressed,
 )
 
 from stretch4_body.subsystem.cameras.emulated_rgbd import RGBDFrame, SyncedRGBDFrame

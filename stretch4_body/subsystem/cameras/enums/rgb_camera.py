@@ -1,5 +1,4 @@
 import threading
-from dataclasses import dataclass
 from enum import Enum, auto
 
 from typing import TYPE_CHECKING
@@ -7,48 +6,30 @@ from typing import TYPE_CHECKING
 import cv2
 
 from stretch4_body.core.device import Device
-from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import CAMERA_CONFIGS, RGBCameraConfig
 
 if TYPE_CHECKING:
     from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapter
     from stretch4_body.subsystem.cameras.adapters.synced_camera import SyncedCamera
 
-@dataclass
-class RGBCameraConfig:
-    camera_device: str
-    image_size: tuple[int, int]
-    fps: int
-    camera_type: "RGBCameras"
-    distortion_model:DistortionModels|None = None
-    rotate_number_of_times: int = 0
-    buffer_size: int = 1
-    is_compressed: bool = True
-    is_lossless: bool = False # Only used if is_compressed is true
-    jpeg_quality: int = 90 # Only used if is_compressed is true and is_lossless is False
-    sensor_pixel_size_mm: float|None = None
-    use_auto_exposure: bool = True
-    limit_max: int | None = None
-    exposure_time: int | None = None
-    iso: int | None = None
-    sync_threshold_ms: int = 15
-    stereo_max_range_mm: int = 10000
+COMPRESSED_SUFFIX = "_compressed"
+"""Names of the compressed camera variants end with this, e.g. RGBCameras.head_left_compressed."""
+
 
 class CameraDevice(Device):
-    """Sets up a Stretch Body camera device to pull params from robot params."""
+    """Deprecated. Camera configuration now lives in `CAMERA_CONFIGS` / `RGBCameras.get_config()`.
+
+    Kept so that existing callers keep working, and so that importing this module still applies the
+    fleet logging configuration that `Device` sets up.
+    """
     def __init__(self):
-        Device.__init__(self, 'cameras')
+        Device.__init__(self, 'cameras', req_params=False)
 
     def startup(self): return True
     def stop(self): return True
 
     def get_config(self, camera_type: "RGBCameras") -> "RGBCameraConfig":
-        config_dict = self.params[camera_type.name]["config"]
-        config_dict["camera_type"] = camera_type
-
-        config = RGBCameraConfig(**config_dict)
-        config.distortion_model = DistortionModels[config_dict["distortion_model"].replace("DistortionModels.", "")] if config_dict["distortion_model"] is not None else None
-        
-        return config
+        return camera_type.config
 
 class RGBCameras(Enum):
     """
@@ -62,10 +43,16 @@ class RGBCameras(Enum):
     1. `RGBCameras.my_camera.config` -> this has information on image size, number of rotations to perform, camera path, etc..
     2. `RGBCameras.my_camera.start()` -> Opens the capture device using the specified driver in the `start()` method.
 
+    Every camera also has a `*_compressed` variant. It is the same camera with the same optics and
+    calibration, but the device encodes the stream to MJPEG on-chip, so frames arrive as JPEG
+    bitstreams (`ImageFrame.is_compressed()`) instead of raw BGR. Use them when the frames have to
+    cross a process boundary (e.g. ROS 2 topics) where moving raw megabytes is the bottleneck.
+
     To add a new camera, please do the following:
-    1. Add the camera's name to the end of this enum, e.g. "my_camera = auto()"
-    2. Update the `config()` method with your new enum.
-    3. Update the `start()` method with the driver to use. 
+    1. Add the camera's name to the end of this enum, e.g. "my_camera = auto()", and its compressed
+       variant, e.g. "my_camera_compressed = auto()".
+    2. Add its configuration to `CAMERA_CONFIGS` (keyed by the uncompressed name).
+    3. Update the `start()` method with the driver to use.
         NOTE: if you are adding a stereo camera, you should edit `start_synced()`.
     4. You can now use your new camera with most scripts that use RGBCameras.
     """
@@ -78,6 +65,17 @@ class RGBCameras(Enum):
     gripper_left = auto()
     gripper_right = auto()
     gripper_rgbd = auto()
+
+    # On-device MJPEG variants of the cameras above. See the class docstring.
+    head_left_compressed = auto()
+    head_center_compressed = auto()
+    head_right_compressed = auto()
+    head_left_right_compressed = auto()
+    head_left_right_center_compressed = auto()
+
+    gripper_left_compressed = auto()
+    gripper_right_compressed = auto()
+    gripper_rgbd_compressed = auto()
 
     @staticmethod
     def center():
@@ -105,12 +103,60 @@ class RGBCameras(Enum):
         return RGBCameras.head_left_right_center
     
     @property
+    def is_compressed_variant(self) -> bool:
+        """True for the `*_compressed` members, whose frames arrive as JPEG bitstreams."""
+        return self.name.endswith(COMPRESSED_SUFFIX)
+
+    @property
+    def base(self) -> "RGBCameras":
+        """The uncompressed camera this member derives from. Returns itself when already uncompressed.
+
+        Use this whenever you need the camera's identity rather than its transport, e.g. to look up
+        calibration, a DepthAI board socket, or a recording folder.
+        """
+        if self.is_compressed_variant:
+            return RGBCameras[self.name[: -len(COMPRESSED_SUFFIX)]]
+        return self
+
+    @property
+    def compressed(self) -> "RGBCameras":
+        """The MJPEG variant of this camera. Returns itself when already compressed."""
+        if self.is_compressed_variant:
+            return self
+        return RGBCameras[self.name + COMPRESSED_SUFFIX]
+
+    def matching_variant_of(self, camera_type: "RGBCameras") -> "RGBCameras":
+        """`camera_type` in the same transport (compressed or not) as this camera.
+
+        Lets a synced camera hand its own compressedness down to the cameras it is composed of.
+        """
+        return camera_type.compressed if self.is_compressed_variant else camera_type.base
+
+    def get_config(self) -> "RGBCameraConfig":
+        """The capture configuration for this camera, from `CAMERA_CONFIGS`.
+
+        Synced camera types have no configuration of their own; ask the cameras they are composed of.
+        """
+        config_dict = CAMERA_CONFIGS.get(self.base.name)
+        if config_dict is None:
+            raise NotImplementedError(
+                f"{self.name} has no configuration in CAMERA_CONFIGS. Synced camera types read the "
+                f"configuration of the cameras they are composed of; see start_synced()."
+            )
+
+        config = RGBCameraConfig(**config_dict, camera_type=self)
+        if self.is_compressed_variant:
+            config.is_compressed = True
+
+        return config
+
+    @property
     def config(self):
-        return CameraDevice().get_config(self)
+        return self.get_config()
 
     def start(self, stop_event: threading.Event | None = None) -> "CameraAdapter":
         """Use `start()` to capture from one camera device. Use `start_synced()` for synced or dual camera setups."""
-        if self in [
+        if self.base in [
             RGBCameras.head_left,
             RGBCameras.head_right,
             RGBCameras.head_center,
@@ -140,28 +186,28 @@ class RGBCameras(Enum):
             SyncedCameraLuxonis, # import here to avoid circular import
         )
 
-        if self == RGBCameras.head_left_right:
+        if self.base == RGBCameras.head_left_right:
             return SyncedCameraLuxonis(
-                RGBCameras.head_left.config,
-                RGBCameras.head_right.config,
+                self.matching_variant_of(RGBCameras.head_left).config,
+                self.matching_variant_of(RGBCameras.head_right).config,
                 center=None,
                 do_sync_frames=True,
                 stop_event=stop_event,
             )
 
-        if self == RGBCameras.head_left_right_center:
+        if self.base == RGBCameras.head_left_right_center:
             return SyncedCameraLuxonis(
-                RGBCameras.head_left.config,
-                RGBCameras.head_right.config,
-                center=RGBCameras.head_center.config,
+                self.matching_variant_of(RGBCameras.head_left).config,
+                self.matching_variant_of(RGBCameras.head_right).config,
+                center=self.matching_variant_of(RGBCameras.head_center).config,
                 do_sync_frames=True,
                 stop_event=stop_event,
             )
-        
-        if self == RGBCameras.gripper_rgbd:
+
+        if self.base == RGBCameras.gripper_rgbd:
             return GripperCameraLuxonis(
-                RGBCameras.gripper_left.config,
-                RGBCameras.gripper_right.config,
+                self.matching_variant_of(RGBCameras.gripper_left).config,
+                self.matching_variant_of(RGBCameras.gripper_right).config,
                 enable_pointcloud=enable_pointcloud,
             )
 
@@ -169,31 +215,31 @@ class RGBCameras(Enum):
 
     def is_left(self):
         """Is the right camera. WARNING: this only works if the RGBCameras.right() static definition is updated with this camera."""
-        return self == RGBCameras.left()
-    
+        return self.base == RGBCameras.left()
+
     def is_right(self):
         """Is the right camera. WARNING: this only works if the RGBCameras.right() static definition is updated with this camera."""
-        return self == RGBCameras.right()
+        return self.base == RGBCameras.right()
 
     def is_center(self):
         """Is the center camera. WARNING: this only works if the RGBCameras.center() static definition is updated with this camera."""
-        return self == RGBCameras.center()
+        return self.base == RGBCameras.center()
 
     def is_synced_camera_type(self):
         """Is the synced camera. WARNING: this only works if the `RGBCameras.synced_left_right()` and `RGBCameras.synced_left_right_center()` static definition is updated with this camera."""
-        return (
-            self == RGBCameras.synced_left_right()
-            or self == RGBCameras.synced_left_right_center()
-            or self == RGBCameras.gripper_rgbd
+        return self.base in (
+            RGBCameras.synced_left_right(),
+            RGBCameras.synced_left_right_center(),
+            RGBCameras.gripper_rgbd,
         )
 
     @property
     def recording_folder_name(self) -> str:
-        if self == RGBCameras.center():
+        if self.is_center():
             return "rgb_camera_center"
-        if self == RGBCameras.left():
+        if self.is_left():
             return "rgb_camera_left"
-        if self == RGBCameras.right():
+        if self.is_right():
             return "rgb_camera_right"
 
         raise NotImplementedError(f"{self}'s recoding folder name is not implemented.")
@@ -221,19 +267,26 @@ class RGBCameras(Enum):
     stream_left_right_camera,
     stream_left_right_center_camera,
     stream_gripper_camera,
+    stream_left_camera_compressed,
+    stream_right_camera_compressed,
+    stream_center_camera_compressed,
+    stream_left_right_camera_compressed,
+    stream_left_right_center_camera_compressed,
+    stream_gripper_camera_compressed,
 )
-        if self == RGBCameras.synced_left_right():
-            gen_fn = stream_left_right_camera
-        elif self == RGBCameras.synced_left_right_center():
-            gen_fn = stream_left_right_center_camera
-        elif self == RGBCameras.left():
-            gen_fn = stream_left_camera
-        elif self == RGBCameras.right():
-            gen_fn = stream_right_camera
-        elif self == RGBCameras.center():
-            gen_fn = stream_center_camera
-        elif self == RGBCameras.gripper_rgbd:
-            gen_fn = stream_gripper_camera
+        is_compressed = self.is_compressed_variant
+        if self.base == RGBCameras.synced_left_right():
+            gen_fn = stream_left_right_camera_compressed if is_compressed else stream_left_right_camera
+        elif self.base == RGBCameras.synced_left_right_center():
+            gen_fn = stream_left_right_center_camera_compressed if is_compressed else stream_left_right_center_camera
+        elif self.is_left():
+            gen_fn = stream_left_camera_compressed if is_compressed else stream_left_camera
+        elif self.is_right():
+            gen_fn = stream_right_camera_compressed if is_compressed else stream_right_camera
+        elif self.is_center():
+            gen_fn = stream_center_camera_compressed if is_compressed else stream_center_camera
+        elif self.base == RGBCameras.gripper_rgbd:
+            gen_fn = stream_gripper_camera_compressed if is_compressed else stream_gripper_camera
         else:
             raise ValueError(f"Unknown camera type: {self}")
 

@@ -185,7 +185,10 @@ def stream_rgbd(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lid
     def _lidar_camera_stream():
         lidar_stream = get_lidar_stream(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
 
-        camera_stream = camera_type.start_camera_stream(use_ros_for_cameras=use_ros_for_cameras, is_rotate=is_rotate)
+        # Over ROS 2 the camera node publishes MJPEG, so ask for the compressed variant instead of
+        # making the node decode frames back to raw just to serve this subscriber.
+        stream_camera_type = camera_type.compressed if use_ros_for_cameras else camera_type
+        camera_stream = stream_camera_type.start_camera_stream(use_ros_for_cameras=use_ros_for_cameras, is_rotate=is_rotate)
 
         yield from zip(lidar_stream, camera_stream)
 
@@ -244,7 +247,10 @@ def stream_rgbd_synced(camera_type: RGBCameras, use_left_lidar:bool=True, use_ri
     def _lidar_camera_stream():
         lidar_stream = get_lidar_stream(use_left_lidar=use_left_lidar, use_right_lidar=use_right_lidar, use_ros_for_lidars=use_ros_for_lidars)
 
-        camera_stream = camera_type.start_camera_stream(use_ros_for_cameras=use_ros_for_cameras, is_rotate=is_rotate)
+        # Over ROS 2 the camera node publishes MJPEG, so ask for the compressed variant instead of
+        # making the node decode frames back to raw just to serve this subscriber.
+        stream_camera_type = camera_type.compressed if use_ros_for_cameras else camera_type
+        camera_stream = stream_camera_type.start_camera_stream(use_ros_for_cameras=use_ros_for_cameras, is_rotate=is_rotate)
 
         yield from zip(lidar_stream, camera_stream)
 

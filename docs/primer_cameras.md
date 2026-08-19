@@ -71,6 +71,23 @@ for image_frame in stream_gripper_camera():
         print(f"Got pointcloud image: {image_frame.pointcloud.shape=}")
 ```
 
+### Compressed streams
+
+Every stream function has a `*_compressed()` twin (`stream_left_camera_compressed()`, `stream_left_right_camera_compressed()`, `stream_gripper_camera_compressed()`, and so on). They open the same cameras, but the camera MJPEG-encodes frames on-chip, so a head frame costs a couple hundred kilobytes instead of ~7 MB. Use them whenever frames have to leave the process; the head cameras are 1920x1200 and the center camera is 12MP, so raw pixels saturate a transport long before the sensors do.
+
+The default `is_run_pipeline=True` decodes frames for you, so `image` is ordinary BGR and the compressed variants are a drop-in replacement:
+
+```python
+from stretch4_body.subsystem.cameras import *
+
+for image_frame in stream_left_right_camera_compressed():
+    print(f"Got left image: {image_frame.left.image.shape=}")
+```
+
+Pass `is_run_pipeline=False` to keep the JPEG bitstream instead. `ImageFrame.is_compressed()` then returns True, `image` is a 1-D buffer, and `uncompress()` decodes it when you actually need pixels. This is what the ROS 2 camera node does: it forwards the bitstream to the compressed topics without ever decoding it.
+
+Camera configuration (resolution, frame rate, JPEG quality, rotation, exposure) lives in `CAMERA_CONFIGS` in [rgb_camera_config.py](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/models/rgb_camera_config.py) and is read through `RGBCameras.<camera>.config`. A compressed variant reuses its base camera's entry with compression forced on, and `RGBCameras.<camera>.base` gets you back to the camera it derives from.
+
 ## Preview RGBD Cameras from the command line
 
 Run `stretch_rgbd_show --help` for all the available options.

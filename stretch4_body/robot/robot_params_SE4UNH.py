@@ -601,62 +601,6 @@ nominal_params={
         'n_samples_per_file':100,
         'duration_limit_minutes':10.0
     },
-    'cameras': {
-        'head_left': {
-            "config": {
-                "camera_device": "OAK-FFC-3P",
-                "image_size": (1200, 1920),
-                "fps": 30,
-                "rotate_number_of_times": 1,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
-                "sensor_pixel_size_mm": 3.0/1000.0,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-        'head_right': {
-            "config": {
-                "camera_device": "OAK-FFC-3P",
-                "image_size": (1200, 1920),
-                "fps": 30,
-                "rotate_number_of_times": -1,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
-                "sensor_pixel_size_mm": 3.0/1000.0,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-      'head_center': {
-            "config": {
-                "camera_device": "OAK-FFC-3P",
-                "image_size": (3040, 4056),  # Full 12MP resolution
-                "fps": 10,
-                "rotate_number_of_times": -1,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": "DistortionModels.wide_angle",
-                "sensor_pixel_size_mm": 1.55/1000.0,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-    },
     'self_collision_mujoco':{
         'SE4UNH':{'k_brake_distance': {'lift': 1.1},
                'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link'],

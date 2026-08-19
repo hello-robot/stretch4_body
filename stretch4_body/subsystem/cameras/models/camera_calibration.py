@@ -122,6 +122,8 @@ class RGBCameraCalibration:
         camera_type: "RGBCameras", is_flip_width_and_height: bool
     ) -> "RGBCameraCalibration":
         """Loads a camera's calibration from ~/stretch_user/stretch-se4-xxxx/calibration_cameras/calibration_rgb_head_camera.yaml"""
+        # Compressed variants share the optics, and therefore the calibration, of the camera they derive from.
+        camera_type = camera_type.base
         stretch_user_calibration_file_path = (
             RGBCameraCalibrationFile.USER.get_camera_calibration_file_path()
         )
