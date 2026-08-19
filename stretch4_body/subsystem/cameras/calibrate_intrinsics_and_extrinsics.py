@@ -63,7 +63,8 @@ def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.W
 
         _print_title("Starting Intrinsics Validation")
         validation_passed = False
-        for retry in range(3): 
+        errors = None
+        for retry in range(3):
             time.sleep(3) # wait for the camera device to come back on the USB bus after we closed it at the end of the last step
             try:
                 errors = REx_validate_intrinsics(interactive=False)

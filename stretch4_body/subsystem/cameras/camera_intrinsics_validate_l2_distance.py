@@ -305,12 +305,24 @@ Press CTRL+C in the terminal to go to the next pose or abort.
             known_dists = pose['known_distance_m'] # [left, center, right]
             cam_order = [RGBCameras.left().name, RGBCameras.center().name, RGBCameras.right().name]
 
-            # Gather and average multiple frames for robustness
+            # Gather and average multiple frames for robustness.
+            # The center camera runs at 10fps while left/right run at 30fps and are
+            # not hardware-synced with center, so most yielded frames have center=None;
+            # skip those and keep drawing until we get 5 frames with a synced center image.
             logger.info("Capturing frames for measurement...")
             frame_gen = self.pipeline.get_frame_synced(is_run_pipeline=False)
-            for _ in range(5):
+            collected = 0
+            attempts = 0
+            max_attempts = 50
+            while collected < 5 and attempts < max_attempts:
                 f = next(frame_gen)
+                attempts += 1
+                if f is None or f.center is None:
+                    continue
                 self.process_frame(f)
+                collected += 1
+            if collected < 5:
+                logger.warning(f"Only collected {collected}/5 frames with a synced center image after {attempts} attempts.")
             
             logger.info(f"--- Results for Pose {idx+1} ---")
             for c_idx, cam_name in enumerate(cam_order):
