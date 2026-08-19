@@ -53,7 +53,7 @@ from stretch4_body.robot.robot_client import RobotClient
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
 
 
-from stretch4_body.subsystem.cameras.models.dual_lidar_calibration import DualLidarCalibration
+
 
 
 @dataclass
@@ -594,43 +594,30 @@ class CalibrateLidarToCamera:
 
         logger.info(f"Using Camera: {self.camera_name}, Lidar: {self.lidar_name}")
 
-        # Ensure output file path
-        self.calib_file = calib_file
-        if not self.calib_file:
-            fleet_path = os.environ.get("HELLO_FLEET_PATH", "")
-            fleet_id = os.environ.get("HELLO_FLEET_ID", "")
-            if fleet_path and fleet_id:
-                self.calib_file = os.path.join(
-                    fleet_path,
-                    fleet_id,
-                    "calibration_dual_lidar",
-                    "camera_lidar_extrinsic_transform.yaml",
-                )
-            else:
-                raise ValueError(
-                    "Calibration file not provided using --calib_file, and HELLO_FLEET_PATH/HELLO_FLEET_ID environment variables are missing."
-                )
+        # Load URDF for calibration
+        urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+        from yourdfpy import URDF
+        import io
+        self.urdf = URDF.load(io.StringIO(urdf_contents))
 
-        logger.info(f"Calibration results will be saved to: {self.calib_file}")
-
-        # Load Calibration Class
-        self.base_calibration = DualLidarCalibration() # Base for floor_to_base and lidar_to_base
-        self.calibration = DualLidarCalibration(self.calib_file)
+        def get_nominal_transform(joint_name):
+            for joint in self.urdf.robot.joints:
+                if joint.name == joint_name:
+                    return np.eye(4) if joint.origin is None else joint.origin
+            return np.eye(4)
 
         # World transform
         self.T_world = None
         try:
-            self.T_world = self.base_calibration.get_world_transform_for_lidar(
-                self.use_right_lidar
-            )
+            T_base_ref = get_nominal_transform("base_ref")
+            T_joint_head = get_nominal_transform("joint_head")
+            if self.use_right_lidar:
+                T_lidar_joint = get_nominal_transform("lidar_right_joint")
+            else:
+                T_lidar_joint = get_nominal_transform("lidar_left_joint")
+            self.T_world = T_base_ref @ T_joint_head @ T_lidar_joint
         except Exception as e:
             logger.warning(f"could not get T_world: {e}")
-
-        key = f"transform_{self.lidar_name}_lidar_to_{self.camera.name}"
-        if key in self.calibration.data and "data" in self.calibration.data[key]:
-            self.current_average_transform = np.array(
-                self.calibration.data[key]["data"]
-            )
 
         self.charuco_board = CharucoBoards[
             charuco_board_name
@@ -1425,7 +1412,7 @@ Keyboard commands enabled:")
         else:
             existing_data = {}
 
-        # Use the format expected by DualLidarCalibration just in case, but store it in camera_extrinsics
+
         existing_data[key] = {
             "data": self.current_average_transform.tolist(),
             "robot_id": os.environ.get("HELLO_FLEET_ID", ""),
