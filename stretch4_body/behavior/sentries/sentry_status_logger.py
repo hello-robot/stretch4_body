@@ -54,17 +54,8 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
             if "timestamp" not in rs:
                 rs["timestamp"] = time.time()
 
-            # Filter out raw line sensor arrays
-            if 'line_sensor_loop' in rs and isinstance(rs['line_sensor_loop'], dict):
-                ls_status = rs['line_sensor_loop'].copy()
-                for i in range(6):
-                    sensor_key = f'sensor_{i}'
-                    if sensor_key in ls_status and isinstance(ls_status[sensor_key], dict):
-                        sensor_dict = ls_status[sensor_key].copy()
-                        sensor_dict.pop('ranges', None)
-                        sensor_dict.pop('codes', None)
-                        ls_status[sensor_key] = sensor_dict
-                rs['line_sensor_loop'] = ls_status
+            # Drop line sensor data entirely for now
+            rs.pop('line_sensor_loop', None)
 
             batch.append(rs)
 
