@@ -3,7 +3,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
 from functools import cache, cached_property
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
@@ -31,7 +31,7 @@ class RobotPose:
     name: str
     timestamp: float
     joints: Dict[str, JointPose] = field(default_factory=dict)
-    base: Optional[BasePose] = None
+    base: BasePose | None = None
     delay_before_start: float = 0.0
 
     def to_dict(self):
@@ -103,7 +103,7 @@ class RobotJoints(Enum):
 
 
     @classmethod
-    def get_joint_by_name(cls, name: str) -> Optional['RobotJoints']:
+    def get_joint_by_name(cls, name: str) -> 'RobotJoints | None':
         if name in cls.__members__:
             return cls[name]
         for joint in cls:
@@ -154,9 +154,97 @@ class RobotJoints(Enum):
                 return name
         return None
 
-    def to_subsystem_units(self, position: float) -> float:
+    @property
+    def poses(self) -> Dict[str, float] | None:
+        if self.name == 'gripper' and self.gripper_model:
+            client = self.gripper_client
+            if client and hasattr(client, 'poses'):
+                return {k: self.subsystem_to_urdf(v) for k, v in client.poses.items()}
+        return None
+
+    @property
+    def subsystem_range(self) -> tuple[float, float] | None:
         model = self.gripper_model
-        return model.to_subsystem_units(position) if model else position
+        return model.subsystem_range if model else None
+
+    @property
+    def urdf_range(self) -> tuple[float, float] | None:
+        model = self.gripper_model
+        return model.urdf_range if model else None
+
+    @property
+    def aperture_range_m(self) -> tuple[float, float] | None:
+        model = self.gripper_model
+        return model.aperture_range_m if model else None
+
+
+    def to_subsystem_units(self, position: float) -> float:
+        """Alias for `urdf_to_subsystem`, kept for non-gripper joints where "subsystem"/"standard" are the more familiar terms."""
+        return self.urdf_to_subsystem(position)
+
+    def to_standard_units(self, position: float) -> float:
+        """Alias for `subsystem_to_urdf`, kept for non-gripper joints where "subsystem"/"standard" are the more familiar terms."""
+        return self.subsystem_to_urdf(position)
+
+    def urdf_to_subsystem(self, urdf: float) -> float:
+        """Converts URDF units (radians/meters) to subsystem units (percentage/meters); unchanged if no gripper model."""
+        model = self.gripper_model
+        return model.urdf_to_subsystem(urdf) if model else urdf
+
+    def subsystem_to_urdf(self, subsystem: float) -> float:
+        """Converts subsystem units (percentage/meters) to URDF units (radians/meters); unchanged if no gripper model."""
+        model = self.gripper_model
+        return model.subsystem_to_urdf(subsystem) if model else subsystem
+
+    def normalized_to_subsystem(self, normalized: float) -> float | None:
+        """Converts a normalized scale (0.0=closed, 1.0=open) to subsystem units, or None if no gripper model."""
+        model = self.gripper_model
+        return model.normalized_to_subsystem(normalized) if model else None
+
+    def subsystem_to_normalized(self, subsystem: float) -> float | None:
+        """Converts subsystem units to a normalized scale (0.0=closed, 1.0=open), or None if no gripper model."""
+        model = self.gripper_model
+        return model.subsystem_to_normalized(subsystem) if model else None
+
+    def urdf_to_normalized(self, urdf: float) -> float | None:
+        """Converts URDF units to a normalized scale (0.0=closed, 1.0=open), or None if no gripper model."""
+        model = self.gripper_model
+        return model.urdf_to_normalized(urdf) if model else None
+
+    def normalized_to_urdf(self, normalized: float) -> float | None:
+        """Converts a normalized scale (0.0=closed, 1.0=open) to URDF units, or None if no gripper model."""
+        model = self.gripper_model
+        return model.normalized_to_urdf(normalized) if model else None
+
+    def aperture_to_normalized(self, aperture_m: float) -> float | None:
+        """Converts fingertip aperture (meters) to a normalized scale (0.0=closed, 1.0=open), or None if no gripper model."""
+        model = self.gripper_model
+        return model.aperture_to_normalized(aperture_m) if model else None
+
+    def normalized_to_aperture(self, normalized: float) -> float | None:
+        """Converts a normalized scale (0.0=closed, 1.0=open) to fingertip aperture (meters), or None if no gripper model."""
+        model = self.gripper_model
+        return model.normalized_to_aperture(normalized) if model else None
+
+    def aperture_to_subsystem(self, aperture_m: float) -> float | None:
+        """Converts fingertip aperture (meters) to subsystem units, or None if no gripper model."""
+        model = self.gripper_model
+        return model.aperture_to_subsystem(aperture_m) if model else None
+
+    def subsystem_to_aperture(self, subsystem: float) -> float | None:
+        """Converts subsystem units to fingertip aperture (meters), or None if no gripper model."""
+        model = self.gripper_model
+        return model.subsystem_to_aperture(subsystem) if model else None
+
+    def urdf_to_aperture(self, urdf: float) -> float | None:
+        """Converts URDF units to fingertip aperture (meters), or None if no gripper model."""
+        model = self.gripper_model
+        return model.urdf_to_aperture(urdf) if model else None
+
+    def aperture_to_urdf(self, aperture_m: float) -> float | None:
+        """Converts fingertip aperture (meters) to URDF units, or None if no gripper model."""
+        model = self.gripper_model
+        return model.aperture_to_urdf(aperture_m) if model else None
 
     @cache
     def get_joint_params(self, profile: MotionProfile) -> tuple[float, float]:
