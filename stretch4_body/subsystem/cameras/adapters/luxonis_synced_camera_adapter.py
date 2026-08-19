@@ -1,7 +1,7 @@
 """
 Adapter for connecting to and controlling the Luxonis head cameras using the DepthAI API for the Luxonis OAK-FFC 3P board.
 """
-
+import datetime
 import time
 import threading
 import logging
@@ -30,19 +30,50 @@ class SyncedCameraLuxonis(SyncedCamera):
         self.pipeline, self.device = LuxonisCameraAdapter.create_pipeline(left.camera_device or right.camera_device)
         self.camera = self.pipeline
 
-        self.left_camera_node, node_left = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=left)
-        self.right_camera_node, node_right = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=right)
+        self.left_camera_node, node_left, node_left_compressed = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=left)
+        self.right_camera_node, node_right, node_right_compressed = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=right)
    
+        node_center = None
+        node_center_compressed = None
         if center is not None:
-            self.center_camera_node, node_center = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=center)
-            self.center_output = node_center.createOutputQueue(maxSize=1)
+            self.center_camera_node, node_center, node_center_compressed = LuxonisCameraAdapter.create_camera_node(pipeline=self.pipeline, camera_config=center)
             self.center_input_queue = self.center_camera_node.inputControl.createInputQueue()
         
-        self.left_output = node_left.createOutputQueue(maxSize=1)
-        self.right_output = node_right.createOutputQueue(maxSize=1)
-
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
+
+        output_node_left = node_left_compressed if node_left_compressed is not None else node_left
+        output_node_right = node_right_compressed if node_right_compressed is not None else node_right
+        output_node_center = node_center_compressed if node_center_compressed is not None else node_center
+
+        self.center_output = None
+        if self.do_sync_frames:
+            sync = self.pipeline.create(dai.node.Sync)
+            sync.setSyncThreshold(datetime.timedelta(milliseconds=int(self.left.sync_threshold_ms)))
+
+            sync.inputs["left"].setMaxSize(self.left.buffer_size)
+            sync.inputs["left"].setBlocking(False)
+            output_node_left.link(sync.inputs["left"])
+
+            sync.inputs["right"].setMaxSize(self.right.buffer_size)
+            sync.inputs["right"].setBlocking(False)
+            output_node_right.link(sync.inputs["right"])
+
+            # sync.inputs["center"].setMaxSize(self.center.buffer_size)
+            # sync.inputs["center"].setBlocking(False)
+            
+            # output_node_center.link(sync.inputs["center"])
+
+            # CENTER is NOT in the sync pipeline to keep it at its own 10fps while left/right are at 30fps
+            if center is not None:
+                self.center_output = output_node_center.createOutputQueue(maxSize=self.center.buffer_size, blocking=False)
+
+            self.q_sync = sync.out.createOutputQueue(maxSize= self.left.buffer_size, blocking=False)
+        else:
+            if center is not None:
+                self.center_output = output_node_center.createOutputQueue(maxSize=self.center.buffer_size, blocking=False)
+            self.left_output = output_node_left.createOutputQueue(maxSize=self.left.buffer_size, blocking=False)
+            self.right_output = output_node_right.createOutputQueue(maxSize=self.right.buffer_size, blocking=False)
 
         try:
             self.pipeline.start()
@@ -57,36 +88,40 @@ class SyncedCameraLuxonis(SyncedCamera):
         if not self.is_open():
             raise RuntimeError("Camera is not running.")
 
-        while True:
-            if self.stop_event is not None and self.stop_event.is_set():
-                return
+        if self.do_sync_frames:
+            while True:
+                if self.stop_event is not None and self.stop_event.is_set():
+                    return
+                msg_group = self.q_sync.get()
+                left_msg = msg_group["left"]
+                right_msg = msg_group["right"]
+                center_msg = msg_group["center"] if "center" in msg_group else None
 
-            left_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.left_output, stop_event=self.stop_event))
-            right_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.right_output, stop_event=self.stop_event))
+                left_frame = LuxonisCameraAdapter.dai_message_to_image_frame(left_msg)
+                right_frame = LuxonisCameraAdapter.dai_message_to_image_frame(right_msg)
 
-            center_frame = None
-            if self.center is not None:
-                center_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
+                center_frame = None
+                # if center_msg is not None:
+                #     c_frame = LuxonisCameraAdapter.dai_message_to_image_frame(center_msg)
+                if self.center_output:
+                    c_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
+                    if c_frame:
+                        lr_timestamp = left_msg.getTimestamp().total_seconds()
+                        diff = abs(c_frame.timestamp - lr_timestamp)
+                        if diff < 1/self.center.fps:
+                            center_frame = c_frame
 
-            synced_image = SyncedImageFrame(timestamp=time.time(), left=left_frame, right=right_frame, center=center_frame)
+                yield SyncedImageFrame(timestamp=time.time(), left=left_frame, right=right_frame, center=center_frame)
+        else:
+            while True:
+                left_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.left_output))
+                right_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue(self.right_output))
 
-            if not self.do_sync_frames:
-                # If the user is not requesting synced images, return them as is.
-                yield synced_image
+                center_frame = None
+                if self.center is not None:
+                    center_frame = next(LuxonisCameraAdapter.get_frame_from_output_queue_no_block(self.center_output))
 
-            # sync the left and right images, otherwise drop the frame if they are not synced.
-            left_right_diff = abs(left_frame.frame_number - right_frame.frame_number)
-            if left_right_diff <= 4:
-                if synced_image.center is not None:
-                    # sync left and center based on timestamp
-                    left_center_diff = abs(left_frame.timestamp - synced_image.center.timestamp)
-                    if left_center_diff > 1.5/self.center.fps: # A looser tolerance for left-center sync to account for the different requested FPS's
-                        logging.warning(f"Center frame is not synced, ignoring center frame. Off by {left_center_diff:.3f}s")
-                        synced_image.center = None
-                        
-                yield synced_image
-            else:
-                logging.warn(f"Left and Right frames are not synced, dropping synced frame. Off by {left_right_diff} frames.")
+                yield SyncedImageFrame(timestamp=time.time(), left=left_frame, right=right_frame, center=center_frame)
 
     def stop(self):
         try:

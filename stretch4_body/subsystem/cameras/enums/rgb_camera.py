@@ -30,6 +30,8 @@ class RGBCameraConfig:
     limit_max: int | None = None
     exposure_time: int | None = None
     iso: int | None = None
+    sync_threshold_ms: int = 15
+    stereo_max_range_mm: int = 10000
 
 class CameraDevice(Device):
     """Sets up a Stretch Body camera device to pull params from robot params."""
@@ -45,7 +47,7 @@ class CameraDevice(Device):
 
         config = RGBCameraConfig(**config_dict)
         config.distortion_model = DistortionModels[config_dict["distortion_model"].replace("DistortionModels.", "")] if config_dict["distortion_model"] is not None else None
-
+        
         return config
 
 class RGBCameras(Enum):
@@ -129,7 +131,7 @@ class RGBCameras(Enum):
 
         raise NotImplementedError(f"{self}'s start() method is not implemented.")
 
-    def start_synced(self, stop_event: "threading.Event | None" = None) -> "SyncedCamera":
+    def start_synced(self, stop_event: threading.Event | None = None, enable_pointcloud: bool = False) -> "SyncedCamera":
         """Use `start_synced()` to start sync'd frame grabbing."""
         from stretch4_body.subsystem.cameras.adapters.luxonis_gripper_camera_adapter import (
             GripperCameraLuxonis # import here to avoid circular import
@@ -160,6 +162,7 @@ class RGBCameras(Enum):
             return GripperCameraLuxonis(
                 RGBCameras.gripper_left.config,
                 RGBCameras.gripper_right.config,
+                enable_pointcloud=enable_pointcloud,
             )
 
         raise NotImplementedError(f"{self}'s start_synced() method is not implemented.")

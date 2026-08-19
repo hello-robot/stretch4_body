@@ -19,5 +19,6 @@ from stretch4_body.subsystem.cameras.emulated_rgbd import (
     stream_right_rgbd,
     stream_center_rgbd,
     stream_left_right_rgbd,
-    stream_left_right_center_rgbd
+    stream_left_right_center_rgbd,
+    stream_gripper_rgbd
 )

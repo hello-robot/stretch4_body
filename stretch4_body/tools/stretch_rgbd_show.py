@@ -11,9 +11,18 @@ from stretch4_body.subsystem.cameras.emulated_rgbd import (
     stream_center_rgbd,
     stream_left_right_rgbd,
     stream_left_right_center_rgbd,
+    stream_gripper_rgbd,
     RGBDFrame,
     EmulatedRGBDStreamer,
 )
+from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
+
+rerun_loggers: dict[str, RerunAsyncLogger] = {}
+
+def get_rerun_logger(c_name: str) -> RerunAsyncLogger:
+    if c_name not in rerun_loggers:
+        rerun_loggers[c_name] = RerunAsyncLogger(camera_name=c_name)
+    return rerun_loggers[c_name]
 
 
 def _parse_args():
@@ -27,6 +36,7 @@ def _parse_args():
     parser.add_argument("-c", "--center", action="store_true", help="Display RGBD stream from center camera")
     parser.add_argument("-lr", "--left_right", action="store_true", help="Display RGBD streams from left and right cameras")
     parser.add_argument("-lrc", "--left_right_center", action="store_true", help="Display RGBD streams from all cameras")
+    parser.add_argument("-g", "--gripper", action="store_true", help="Display RGBD stream from gripper camera")
 
     # Lidar selection flags
     parser.add_argument("--lidar_left", action="store_true", help="Use left lidar")
@@ -54,19 +64,21 @@ def _parse_args():
 
 
 def render_rgbd(c_name: str, frame: RGBDFrame):
-    rr.log(f"Cameras/{c_name}_rotated", rr.Image(frame.image_frame.image, color_model="BGR").compress())
-    rr.log(f"Cameras/{c_name}/rgb_raw", rr.Image(frame.image_frame.image_raw, color_model="BGR").compress())
+    logger = get_rerun_logger(c_name)
+    
+    logger.log_image(f"Cameras/{c_name}_rotated", frame.image_frame.image)
+    logger.log_image(f"Cameras/{c_name}/rgb_raw", frame.image_frame.image_raw)
     
     if frame.depth_image is not None and frame.depth_image.shape[0] > 0:
-        rr.log(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
+        logger.log_any(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
         
     if len(frame.pointcloud) > 0:
-        rr.log(
+        logger.log_any(
             f"Pointclouds/camera_frame/{c_name}",
             rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
         )
     if len(frame.pointcloud_base) > 0:
-        rr.log(
+        logger.log_any(
             f"Pointclouds/base_frame/{c_name}",
             rr.Points3D(frame.pointcloud_base, colors=frame.pointcloud_colors, radii=[0.0025]),
         )
@@ -83,11 +95,12 @@ def main():
     use_center = args.center
     use_left_right = args.left_right
     use_left_right_center = args.left_right_center
+    use_gripper = args.gripper
 
     use_ros_for_cameras = args.use_ros_for_cameras
     use_ros_for_lidars = args.use_ros_for_lidars
 
-    if not (use_left or use_right or use_center or use_left_right or use_left_right_center):
+    if not (use_left or use_right or use_center or use_left_right or use_left_right_center or use_gripper):
         use_left_right = True
 
     # Resolve lidar flags (both by default)
@@ -145,13 +158,15 @@ def main():
             camera_name = "center"
         elif use_right:
             camera_name = "right"
+        elif use_gripper:
+            camera_name = "gripper"
         blueprint = rrb.Blueprint(
             rrb.Horizontal(
                 rrb.Vertical(
                 rrb.Spatial2DView(name="Camera Rotated", origin=f"Cameras/{camera_name}_rotated"),
                 rrb.Spatial2DView(name="Depth Camera", origin=f"Cameras/{camera_name}"),
                 ),
-                rrb.Spatial3DView(name="Base Frame", origin="/", contents=["+ Pointclouds/base_frame/**"]),
+                rrb.Spatial3DView(name="Base Frame", origin="/", contents=["+ Pointclouds/base_frame/**", "+ Pointclouds/camera_frame/**"]),
             column_shares=[1,5]
             ),
             collapse_panels=True
@@ -200,6 +215,11 @@ def main():
                 render_rgbd("center", frame)
                 print_loop_timer()
 
+        elif use_gripper:
+            for frame in stream_gripper_rgbd(use_ros_for_cameras=use_ros_for_cameras):
+                render_rgbd("gripper", frame)
+                print_loop_timer()
+
     except KeyboardInterrupt:
         print("Stopping... (Force quitting due to background threads)")
         os._exit(0)
@@ -207,6 +227,8 @@ def main():
         print(f"Stopping due to error: {e=}")
         raise e
     finally:
+        for logger in rerun_loggers.values():
+            logger.stop()
         EmulatedRGBDStreamer.get_instance().stop()
 
 

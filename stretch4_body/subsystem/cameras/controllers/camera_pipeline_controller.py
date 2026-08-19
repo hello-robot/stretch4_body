@@ -23,6 +23,9 @@ from stretch4_body.subsystem.cameras.cv_utils import (
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.models.image_write_to_disk import RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
+from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
+
+
 
 
 class RecordRgbShowImageIn(Enum):
@@ -45,7 +48,8 @@ class RGBPipelineController:
         is_crop: bool,
         ai_models_to_use: list[AIModelWrapper],
         detect_aruco_marker_size: float|None,
-        is_open_camera: bool = True
+        is_open_camera: bool = True,
+        enable_pointcloud: bool = False
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
@@ -59,6 +63,7 @@ class RGBPipelineController:
         self.detect_aruco_marker_size = detect_aruco_marker_size
         self.detect_aruco_dictionaries_to_detect = ArucoDictionary.all_1000()
         self.is_rotate = is_rotate
+        self.enable_pointcloud = enable_pointcloud
 
         self.ai_models: list[AIModelWrapper] = []
         self.rectify_maps: "RectifyMaps | None" = None
@@ -81,6 +86,8 @@ class RGBPipelineController:
             target=saver_thread, args=(self.stop_event, self.save_rgb_queue), daemon=True
         )
 
+        self.rerun_logger: RerunAsyncLogger | None = None
+
         self.save_directory = None
         if self.recording_directory:
              if not self.camera_type.is_synced_camera_type():
@@ -96,7 +103,7 @@ class RGBPipelineController:
 
     def open_camera(self):
         if self.camera_type.is_synced_camera_type():
-            self._camera = self.camera_type.start_synced(stop_event=self.stop_event)
+            self._camera = self.camera_type.start_synced(stop_event=self.stop_event,enable_pointcloud=self.enable_pointcloud)
         else:
             self._camera = self.camera_type.start(stop_event=self.stop_event)
 
@@ -107,10 +114,10 @@ class RGBPipelineController:
         return self._camera
 
     def _show_rererun(self, color_image: np.ndarray):
-        rr.log(
-            f"{self.camera_type.name.upper()} Camera",
-            rr.Image(color_image, color_model="BGR").compress(),
-        )
+        if self.rerun_logger is None:
+             self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+        
+        self.rerun_logger.log_image(f"Cameras/{self.camera_type.name}/image", color_image)
 
     def _show_cvimshow(self, color_image: np.ndarray):
         cv2.namedWindow(self.camera_type.name, cv2.WINDOW_NORMAL)
@@ -222,21 +229,38 @@ class RGBPipelineController:
     def _start_rerun(self):
         rr.init(self.camera_type.name, spawn=False)
         rr.spawn(memory_limit="4GB")
-
+        
         import rerun.blueprint as rrb
+        from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
-        if self.camera_type.is_synced_camera_type():
+        if self.camera_type == RGBCameras.gripper_rgbd:
+             blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial2DView(name="Gripper Depth", origin="Cameras/gripper_rgbd/depth"),
+                    rrb.Spatial2DView(name="Gripper Right", origin="Cameras/gripper_right/image"),
+                ),
+                collapse_panels=True
+            )
+        elif self.camera_type == RGBCameras.head_left_right:
             blueprint = rrb.Blueprint(
                 rrb.Horizontal(
-                    rrb.Spatial2DView(name="Left Camera", origin="HEAD_LEFT Camera"),
-                    rrb.Spatial2DView(name="Center Camera", origin="HEAD_CENTER Camera"),
-                    rrb.Spatial2DView(name="Right Camera", origin="HEAD_RIGHT Camera"),
+                    rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
+                    rrb.Spatial2DView(name="Head Right", origin="Cameras/head_right/image"),
+                ),
+                collapse_panels=True
+            )
+        elif self.camera_type == RGBCameras.head_left_right_center:
+            blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
+                    rrb.Spatial2DView(name="Head Center", origin="Cameras/head_center/image"),
+                    rrb.Spatial2DView(name="Head Right", origin="Cameras/head_right/image"),
                 ),
                 collapse_panels=True
             )
         else:
             blueprint = rrb.Blueprint(
-                rrb.Spatial2DView(name=f"{self.camera_type.name} Camera", origin=f"{self.camera_type.name.upper()} Camera"),
+                rrb.Spatial2DView(name=self.camera_type.name.upper(), origin=f"Cameras/{self.camera_type.name}/image"),
                 collapse_panels=True
             )
         rr.send_blueprint(blueprint)
@@ -305,19 +329,20 @@ class RGBPipelineController:
                 center_pipeline_controller.show_image(frame.center.image)
 
             if frame.depth is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
-                rr.log(
-                    f"{self.camera_type.name}/depth",
+                if self.rerun_logger is None:
+                    self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                self.rerun_logger.log_any(
+                    f"Cameras/{self.camera_type.name}/depth",
                     rr.DepthImage(frame.depth),
                 )
 
             if frame.pointcloud is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
-                rr.log(
-                    f"{self.camera_type.name}/pcl",
-                    rr.Transform3D(
-                        rotation=rr.RotationAxisAngle(axis=[0, 0, 1], angle=rr.Angle(rad=np.pi)),
-                    )
+                if self.rerun_logger is None:
+                    self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                self.rerun_logger.log_any(
+                    f"Pointclouds/{self.camera_type.name}",
+                    rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
                 )
-                rr.log(f"{self.camera_type.name}/pcl", rr.Points3D(frame.pointcloud, colors=frame.pointcloud_color, radii=[0.002]))
 
             yield frame
 
@@ -372,7 +397,8 @@ class RGBPipelineController:
             is_crop=self.is_crop,
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
-            is_open_camera=is_open_camera
+            is_open_camera=is_open_camera,
+            enable_pointcloud=self.enable_pointcloud
         )
         return copy
 
@@ -472,13 +498,15 @@ class RGBPipelineController:
             self._camera.stop()
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
+        if self.rerun_logger is not None:
+            self.rerun_logger.stop()
 
 class RGBPipelineControllerROS(RGBPipelineController):
     """
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -488,7 +516,8 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_crop=is_crop,
             ai_models_to_use=ai_models_to_use,
             detect_aruco_marker_size=detect_aruco_marker_size,
-            is_open_camera=False
+            is_open_camera=False,
+            enable_pointcloud=enable_pointcloud
         )
         
         try:
@@ -510,7 +539,8 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_crop=self.is_crop,
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
-            is_open_camera=is_open_camera
+            is_open_camera=is_open_camera,
+            enable_pointcloud=self.enable_pointcloud
         )
         return copy
 
