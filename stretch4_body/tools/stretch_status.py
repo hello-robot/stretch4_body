@@ -6,8 +6,34 @@ import argparse
 import sys
 import rerun as rr
 from colorama import Fore, Back, Style, init
+from collections import defaultdict
+from datetime import datetime
 
 init(autoreset=True)
+
+def is_field_selected(path, selected_fields):
+    if not selected_fields or 'all' in selected_fields:
+        return True
+    for sf in selected_fields:
+        if sf == 'all':
+            return True
+        if path == sf or path.startswith(sf + '.'):
+            return True
+    return False
+
+def get_file_timestamp(filepath):
+    """
+    Get the timestamp of a log file.
+    Attempts to parse the timestamp from the filename (e.g., status_YYYYMMDD_HHMMSS.json)
+    to handle files copied/transferred across systems where mtime is overwritten.
+    Falls back to os.path.getmtime if parsing fails.
+    """
+    basename = os.path.basename(filepath)
+    try:
+        dt = datetime.strptime(basename, "status_%Y%m%d_%H%M%S.json")
+        return dt.timestamp()
+    except Exception:
+        return os.path.getmtime(filepath)
 
 from stretch4_body.robot.robot_client import RobotClient
 
@@ -394,12 +420,15 @@ def validate_selected_fields_or_exit(rs, selected_fields):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize Stretch status.")
-    parser.add_argument(
-        "--history",
-        type=float,
-        default=None,
-        help="Read from offline logs. Specify how many minutes ago to show.",
+    parser = argparse.ArgumentParser(
+        description=(
+            "Visualize Stretch status.\n\n"
+            "This tool allows you to visualize, replay, and export robot telemetry data.\n"
+            "To replay saved telemetry runs, use --import <zip_file>. You can also filter the replay window\n"
+            "from the start and end of the import using --start_seconds_offset and --end_seconds_offset.\n"
+            "If --rerun is specified with --import, the whole file is imported and dumped into Rerun."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "--rate",
@@ -427,7 +456,7 @@ def main():
         "--export",
         type=str,
         default=None,
-        help="Export history to a zip file in the specified directory. Requires --history.",
+        help="Export all available telemetry history to a zip file in the specified directory.",
     )
     parser.add_argument(
         "--import",
@@ -436,7 +465,58 @@ def main():
         default=None,
         help="Import and replay a zip file of exported history.",
     )
+    parser.add_argument(
+        "--start_seconds_offset",
+        type=float,
+        default=None,
+        help="Start offset in seconds relative to the beginning of the imported file (only works with --import).",
+    )
+    parser.add_argument(
+        "--end_seconds_offset",
+        type=float,
+        default=None,
+        help="End offset in seconds relative to the end of the imported file (only works with --import).",
+    )
     args = parser.parse_args()
+
+    if (args.start_seconds_offset is not None or args.end_seconds_offset is not None) and args.import_file is None:
+        parser.error("The --start_seconds_offset and --end_seconds_offset flags can only be used when --import is specified.")
+
+    if args.export is not None and args.import_file is None:
+        fleet_path = os.getenv("HELLO_FLEET_PATH", os.path.expanduser("~"))
+        log_dir = os.path.join(fleet_path, "log", "stretch_status")
+        if not os.path.exists(log_dir):
+            print(f"Log directory {log_dir} does not exist.")
+            return
+
+        files = [
+            os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".json")
+        ]
+        files.sort(key=get_file_timestamp)
+
+        if not files:
+            print(f"No status log files found in {log_dir} to export.")
+            return
+
+        import zipfile
+        from datetime import datetime
+        export_dir = os.path.expanduser(args.export)
+        if not os.path.isdir(export_dir):
+            print(f"Error: Export directory {export_dir} does not exist.")
+            return
+        
+        iso_time = datetime.now().isoformat().replace(':', '-')
+        zip_filename = f"stretch_status_{iso_time}.zip"
+        zip_path = os.path.join(export_dir, zip_filename)
+        
+        print(f"Exporting data to {zip_path}...")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                zf.write(f, os.path.basename(f))
+        
+        size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+        print(f"Export complete: {zip_path} ({size_mb:.2f} MB)")
+        return
 
     def _start_rerun():
         rr.init("stretch_status", spawn=False)
@@ -452,19 +532,96 @@ def main():
             print(f"Error: Import file {zip_path} does not exist.")
             return
 
-        print(f"Importing history from {zip_path}...")
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            class tqdm:
+                def __init__(self, iterable=None, total=None, desc="", unit="", **kwargs):
+                    self.iterable = iterable
+                    self.total = total or (len(iterable) if iterable else None)
+                    self.desc = desc
+                    self.n = 0
+
+                def __iter__(self):
+                    if self.iterable is not None:
+                        for item in self.iterable:
+                            yield item
+                            self.n += 1
+                    print()
+
         with zipfile.ZipFile(zip_path, 'r') as zf:
             file_names = sorted([n for n in zf.namelist() if n.endswith('.json')])
+            if not file_names:
+                print("Error: No status log files found in the import archive.")
+                return
+
+            min_ts = None
+            max_ts = None
+
+            # Find min_ts from the first file with data
             for f_name in file_names:
+                try:
+                    with zf.open(f_name) as file:
+                        batch = json.loads(file.read().decode('utf-8'))
+                        if batch and isinstance(batch, list):
+                            for rs in batch:
+                                min_ts = rs.get("timestamp")
+                                if min_ts is not None:
+                                    break
+                            if min_ts is not None:
+                                break
+                except Exception:
+                    pass
+
+            # Find max_ts from the last file with data
+            for f_name in reversed(file_names):
+                try:
+                    with zf.open(f_name) as file:
+                        batch = json.loads(file.read().decode('utf-8'))
+                        if batch and isinstance(batch, list):
+                            for rs in reversed(batch):
+                                max_ts = rs.get("timestamp")
+                                if max_ts is not None:
+                                    break
+                            if max_ts is not None:
+                                break
+                except Exception:
+                    pass
+
+            start_time_ts = None
+            end_time_ts = None
+            if min_ts is not None and args.start_seconds_offset is not None:
+                start_time_ts = min_ts + args.start_seconds_offset
+            if max_ts is not None and args.end_seconds_offset is not None:
+                end_time_ts = max_ts - args.end_seconds_offset
+
+            if args.rerun:
+                print("Warning: Rerun has a memory cap of 5GB. For very large imported logs, older frames may be evicted by Rerun's memory manager.")
+
+            print(f"Importing history from {zip_path}...")
+
+            times_by_field = defaultdict(list)
+            values_by_field = defaultdict(list)
+
+            imported_count = 0
+            for f_name in tqdm(file_names, desc="Importing status files", unit="file"):
                 with zf.open(f_name) as file:
                     try:
                         batch = json.loads(file.read().decode('utf-8'))
                         for rs in batch:
+                            t = rs.get("timestamp", 0.0)
+                            if start_time_ts is not None and t < start_time_ts:
+                                continue
+                            if end_time_ts is not None and t > end_time_ts:
+                                continue
+
                             if not menu_shown:
                                 if selected_fields:
                                     validate_selected_fields_or_exit(rs, selected_fields)
                                 elif args.interactive:
                                     selected_fields = build_recursive_menu(rs)
+                                elif args.rerun:
+                                    selected_fields = ['all']
                                 else:
                                     selected_fields = get_default_fields(rs)
 
@@ -474,17 +631,42 @@ def main():
 
                                 menu_shown = True
                                 
-                            print("\n=== Status ===")
-                            filtered_rs = filter_dict_by_fields(rs, selected_fields)
-                            print_status_pretty(filtered_rs)
-
                             if args.rerun:
                                 t = rs.get("timestamp", time.time())
-                                rr.set_time("log_time", timestamp=t)
                                 flat_status = flatten_status(rs)
-                                log_selected_fields(flat_status, selected_fields)
+                                for path, value in flat_status.items():
+                                    if is_field_selected(path, selected_fields):
+                                        if isinstance(value, bool):
+                                            val = 1.0 if value else 0.0
+                                        elif isinstance(value, (int, float)):
+                                            val = float(value)
+                                        else:
+                                            continue
+                                        times_by_field[path].append(t)
+                                        values_by_field[path].append(val)
+                            else:
+                                print("\n=== Status ===")
+                                filtered_rs = filter_dict_by_fields(rs, selected_fields)
+                                print_status_pretty(filtered_rs)
+
+                            imported_count += 1
                     except Exception as e:
                         print(f"Error reading {f_name} from zip: {e}")
+
+        if args.rerun and times_by_field:
+            print(f"\nBulk-sending {len(times_by_field)} signals across {imported_count} frames to Rerun...")
+            import numpy as np
+            for path, vals in values_by_field.items():
+                if not vals:
+                    continue
+                rr_path = path.replace('.', '/')
+                ts = np.array(times_by_field[path], dtype=np.float64)
+                vs = np.array(vals, dtype=np.float64)
+                time_col = rr.TimeColumn('log_time', timestamp=ts)
+                scalars_col = rr.Scalars.columns(scalars=vs)
+                rr.send_columns(rr_path, indexes=[time_col], columns=scalars_col)
+            print(f"Successfully bulk-logged {imported_count} status frames to Rerun.")
+
         print("Finished reading imported history.")
     elif args.history is not None:
         fleet_path = os.getenv("HELLO_FLEET_PATH", os.path.expanduser("~"))
@@ -499,11 +681,11 @@ def main():
         files = [
             os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".json")
         ]
-        files.sort(key=os.path.getmtime)
+        files.sort(key=get_file_timestamp)
 
         if files:
-            oldest_file_mtime = os.path.getmtime(files[0])
-            available_minutes = max(0.0, (time.time() - oldest_file_mtime) / 60.0)
+            oldest_file_timestamp = get_file_timestamp(files[0])
+            available_minutes = max(0.0, (time.time() - oldest_file_timestamp) / 60.0)
             print(f"Maximum available history: {available_minutes:.1f} minutes.")
             if args.history > available_minutes:
                 print(f"[!] Warning: You requested {args.history} minutes of history, but only {available_minutes:.1f} minutes are available.")
@@ -523,8 +705,8 @@ def main():
             print(f"Exporting data to {zip_path}...")
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for f in files:
-                    mtime = os.path.getmtime(f)
-                    if mtime < start_time - 60:
+                    file_timestamp = get_file_timestamp(f)
+                    if file_timestamp < start_time - 60:
                         continue
                     zf.write(f, os.path.basename(f))
             
@@ -533,8 +715,8 @@ def main():
             return
 
         for f in files:
-            mtime = os.path.getmtime(f)
-            if mtime < start_time - 60:
+            file_timestamp = get_file_timestamp(f)
+            if file_timestamp < start_time - 60:
                 continue
 
             with open(f, "r") as file:
