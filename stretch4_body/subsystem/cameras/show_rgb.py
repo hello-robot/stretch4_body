@@ -41,12 +41,12 @@ def show_rgb():
     parser.add_argument(
         "--rerun",
         action="store_true",
-        help="Display the recording in a rerun window. Note: this may adversely affect performance. (Default)",
+        help="Display the recording in a rerun window. (True by default, unless --recording_directory is used.)",
     )
     parser.add_argument(
         "--opencv",
         action="store_true",
-        help="Display the recording in an opencv window. Note: this may adversely affect performance.",
+        help="Display the recording in an opencv window.",
     )
     parser.add_argument(
         "--no-rotate",
@@ -138,15 +138,17 @@ def show_rgb():
         camera_type = RGBCameras.gripper_rgbd
     else:
         camera_type = RGBCameras.synced_left_right_center()
-    is_record_to_cvimshow = args.opencv
-    is_record_to_rerun = not is_record_to_cvimshow
     is_crop = args.crop
     is_rectify = args.rectify
     is_rotate = not args.no_rotate
 
     detect_aruco_marker_size = args.detect_aruco_marker_size
 
-    if is_record_to_cvimshow:
+    is_display_requested = args.rerun or args.opencv
+
+    if recording_directory is not None and not is_display_requested:
+        show_image_in = None
+    elif args.opencv:
         show_image_in = RecordRgbShowImageIn.CVIMSHOW
     else:
         show_image_in = RecordRgbShowImageIn.RERUN
@@ -162,6 +164,12 @@ def show_rgb():
 
     if recording_directory is not None:
         logger.info(f"Recording {camera_type.name} to {recording_directory} as {recording_file_format.extension} files.")
+
+        if show_image_in is None:
+            logger.info(
+                "Not displaying the imagery, so that recording keeps up with the cameras. "
+                "Pass --rerun or --opencv to display it anyway, at the cost of dropped frames."
+            )
 
     rgb_pipeline_controller = controller_class(
         camera_type=camera_type,

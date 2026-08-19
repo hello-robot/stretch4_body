@@ -514,5 +514,67 @@ def test_frames_below_the_hardware_encoders_minimum_still_record(tmp_path):
     assert frames_read == number_of_frames
 
 
+def test_recording_turns_the_display_off(monkeypatch, tmp_path):
+    """Rerun cannot keep up with the head cameras, so recording must not pay for a preview.
+
+    Left unchecked it backpressures the pipeline feeding it and the synced pair drops from 30 fps to
+    around 11 within a few minutes.
+    """
+    import argparse
+    from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import (
+        RecordRgbShowImageIn,
+    )
+    from stretch4_body.subsystem.cameras.show_rgb import show_rgb
+
+    instantiated_args = []
+
+    class MockController:
+        def __init__(self, **kwargs):
+            instantiated_args.append(kwargs)
+        def get_frame_synced(self, is_run_pipeline=True):
+            return []
+        def get_frame(self, is_run_pipeline=True):
+            return []
+        def stop(self):
+            ...
+
+    monkeypatch.setattr(
+        "stretch4_body.subsystem.cameras.show_rgb.RGBPipelineController", MockController
+    )
+
+    class Args:
+        def __init__(self, recording_directory=None, rerun=False, opencv=False):
+            self.left = self.right = self.center = False
+            self.left_right = self.left_right_center = self.gripper = False
+            self.camera_name = None
+            self.rerun = rerun
+            self.opencv = opencv
+            self.no_rotate = self.rectify = self.crop = self.show_fps = False
+            self.use_ros_for_cameras = False
+            self.detect_aruco_marker_size = None
+            self.record_format = ".mp4"
+            self.recording_chunk_seconds = DEFAULT_RECORDING_CHUNK_SECONDS
+            self.recording_directory = recording_directory
+
+    def run(**kwargs):
+        instantiated_args.clear()
+        monkeypatch.setattr(
+            argparse.ArgumentParser, "parse_args", lambda self: Args(**kwargs)
+        )
+        show_rgb()
+        return instantiated_args[0]["show_image_in"]
+
+    # Recording is what the run is for, so it is not slowed down to draw the imagery as well.
+    assert run(recording_directory=str(tmp_path)) is None
+
+    # Asking for a display explicitly still gets one, dropped frames and all.
+    assert run(recording_directory=str(tmp_path), rerun=True) is RecordRgbShowImageIn.RERUN
+    assert run(recording_directory=str(tmp_path), opencv=True) is RecordRgbShowImageIn.CVIMSHOW
+
+    # Without a recording there is nothing to protect, so rerun stays the default.
+    assert run() is RecordRgbShowImageIn.RERUN
+    assert run(opencv=True) is RecordRgbShowImageIn.CVIMSHOW
+
+
 if __name__ == '__main__':
     pytest.main([__file__])
