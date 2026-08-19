@@ -1,94 +1,321 @@
 #!/usr/bin/env python3
+import logging
 import serial
 import time
 import numpy as np
 import json
 
+from stretch4_body.subsystem.line_sensor import protocol
+
 
 class PixartJ3Reader():
     """
-    PixartJ3Reader reads firehose of line sensor ranges for 6 Pixart sensors
-    It parses incoming data and updates the status dictionary.
-    The step() method polls the serial port, should be called as fast as possible (~1khz)
+    Reads the firehose of range reports for the 6 PixArt line sensors from the
+    hello-pixart-j3 USB serial port and updates the status dictionary.
+    step() polls the serial port and should be called as fast as possible
+    (~250 Hz or better); each sensor reports at ~30 Hz.
 
+    Per sensor, status['sensor_N'] carries:
+        ranges          np.ndarray float64, meters; NaN wherever the bin is
+                        not a distance measurement (see protocol.py)
+        codes           np.ndarray uint8, per-bin protocol.CODE_* class --
+                        the authoritative answer to "was this 5.09 or 5.11",
+                        one integer compare, no float tolerances
+        n_no_return     count of 5.11 no-return bins in this report
+        n_beyond_limit  count of 5.09 beyond-range bins in this report
+        missed_frames   consecutive frames this sensor failed to report;
+                        0 while healthy (see dead_sensors())
+        frame_id, ts_last_read, rate_hz
+
+    Bin ordering (flip_range_ordering) and sentinel classification are both
+    applied here at decode, once; downstream code must never re-derive them.
     """
-    def __init__(self,port_name='/dev/hello-pixart-j3',verbose=False,bus_sensor_map=None):
 
-        # Sensor 0: Bus 2, dev 0
-        # Sensor 1: Bus 2, dev 1
-        # Sensor 2: Bus 1, dev 0
-        # Sensor 3: Bus 1, dev 1
-        # Sensor 4: Bus 3, dev 0
-        # Sensor 5: Bus 3, dev 1
-        # Map is indexed by [bus - 1][device number]
-        if bus_sensor_map is None:
-            self.bus_sensor_map = [ [ 2, 3 ],[ 0, 1 ],[ 4, 5 ] ]
+    # A sensor missing this many consecutive frames is reported dead. At ~30 Hz
+    # that is ~0.17 s, long enough to ride out a single dropped report.
+    DEAD_AFTER_MISSED_FRAMES = 5
+
+    # Reopen schedule after a serial failure. Starts quick because most faults
+    # are transient, backs off so an unplugged sensor does not spin the CPU
+    # reopening a port that is not there.
+    REOPEN_BACKOFF_MIN_S = 0.5
+    REOPEN_BACKOFF_MAX_S = 5.0
+    WRITE_TIMEOUT_S = 0.25
+
+    LOGGER_NAME = 'line_sensor_loop'
+
+    def __init__(self, port_name='/dev/hello-pixart-j3', verbose=False,
+                 bus_sensor_map=None, flip_range_ordering=None, report_num=None,
+                 _params=None):
+ 
+        self.logger = logging.getLogger(self.LOGGER_NAME)
+
+        needs_params = (bus_sensor_map is None or flip_range_ordering is None
+                        or report_num is None)
+        if _params is not None:
+            ls_params = _params
+        elif needs_params:
+            from stretch4_body.core.robot_params import RobotParams
+            ls_params = RobotParams.get_params()[1].get('line_sensor_loop', {})
         else:
-            self.bus_sensor_map=bus_sensor_map
+            ls_params = {}
+        if bus_sensor_map is None:
+            bus_sensor_map = ls_params.get('bus_sensor_map')
+        if bus_sensor_map is None:
+            raise ValueError(
+                'PixartJ3Reader: bus_sensor_map not passed in and not found in '
+                'robot params (line_sensor_loop.bus_sensor_map)')
+        if flip_range_ordering is None:
+            # No silent default: getting bin order wrong mirrors every reading
+            # left-to-right, and nothing downstream can detect it.
+            flip_range_ordering = ls_params.get('flip_range_ordering')
+        if flip_range_ordering is None:
+            raise ValueError(
+                'PixartJ3Reader: flip_range_ordering not passed in and not found '
+                'in robot params (line_sensor_loop.flip_range_ordering)')
+        flip_range_ordering = bool(flip_range_ordering)
+        if report_num is None:
+            report_num = ls_params.get('line_sensor_geometry', {}).get(
+                'pixart_report_num', 320)
 
+        self.bus_sensor_map = bus_sensor_map
+        self.key_table = protocol.build_key_table(bus_sensor_map)
+        self.flip_range_ordering = flip_range_ordering
+        self.PIXART_REPORT_NUM = report_num
 
-        self.port_name=port_name
+        self.port_name = port_name
         self.DEBUG_ENABLED = False
-        self.verbose=verbose
-        self.reader_thread=None
+        self.verbose = verbose
 
-        self.sensors_seen={}
-        self.step_count=0
-        self.last_frame_id=None
-        self.last_second = 0
-        self.last_hz = 0
-        self.frames_this_sec = 0
-        self.PIXART_REPORT_NUM = 320
-        self.sensors_this_frame = 0
-        self.msg = "\n"
+        self.sensors_seen = {}
+        self.last_frame_id = None
         self.json_line = ""
         self.oob_line = ""
         self.line_count = 0
+        self._warned_report_len = False
+        self._resyncing = True
 
-        self.status = {'frame_advance_err':0,'not_six_sensors_err':0,'frame_not_full_err':0,'rate_hz':0,'sensors_last_frame':[],'last_frame_time':0}
+        # Runtime control. Both default ON at construction and are never
+        # persisted
+        self.streaming = True
+        self.disabled = set()          # sensor indices turned off on purpose
+        self._skip_keys = ()           # their JSON keys, matched pre-parse
+        self._flush_before_first_read = False
+        self._reopen_backoff_s = self.REOPEN_BACKOFF_MIN_S
+        self._reopen_at = 0.0
+        self._reported_open_failure = False
+
+        self._sensors_dead = ['sensor_%d' % i for i in range(6)]
+
+        self.status = {'frame_advance_err': 0, 'not_six_sensors_err': 0,
+                       'frame_not_full_err': 0, 'decode_errors': 0,
+                       'reader_restarts': 0,
+                       'rate_hz': 0, 'sensors_last_frame': [],
+                       'last_frame_time': 0}
         for i in range(6):
-            self.status['sensor_%d'%i]={'ts_last_read':0,'frame_id':0,'rate_hz':0,'ranges':[]}
-        self.is_valid=False
-    
-    def startup(self):
+            self.status['sensor_%d' % i] = {
+                'ts_last_read': 0, 'frame_id': 0, 'rate_hz': 0,
+                'ranges': np.zeros(0, dtype=np.float64),
+                'codes': np.zeros(0, dtype=np.uint8),
+                'n_no_return': 0, 'n_beyond_limit': 0, 'enabled': True,
+                # Never reported yet counts as missing, so a sensor that never
+                # comes up at all is reported dead.
+                'missed_frames': self.DEAD_AFTER_MISSED_FRAMES}
+        self.is_valid = False
+
+    def startup(self, quiet=False):
         try:
             self.debug_print("Attempting to open", self.port_name)
-            # Open the serial port
-            self.ser = serial.Serial(port=self.port_name)
+            # Exclusive: two readers on one port each get half the byte stream
+            # and both corrupt. Make the second opener fail loudly instead.
+            self.ser = serial.Serial(port=self.port_name, exclusive=True,
+                                     write_timeout=self.WRITE_TIMEOUT_S)
             self.verbose_print(f"Serial port {self.port_name} opened successfully.")
-            self.json_line = ""
-            self.oob_line = ""
-            self.line_count = 0;
-            self.is_valid=True
+            self.ser.reset_input_buffer()
+            self._flush_before_first_read = True
+            self._reset_framing()
+            self.is_valid = True
             return True
         except serial.SerialException as e:
-            print(f"PixartJ3Reader: Error opening or communicating with serial port: {e}")
-            #time.sleep(0.20)    ## TODO: REMOVE ME
+            if not quiet:
+                self.logger.warning('Error opening or communicating with serial port: %s', e)
             return False
         except Exception as e:
-            print(f"PixartJ3Reader: An unexpected error occurred: {e}")
+            # OSError/FileNotFoundError land here: on a USB replug the device
+            # node itself disappears, which is not a SerialException.
+            if not quiet:
+                self.logger.warning('Unexpected error opening the serial port: %s', e)
             return False
 
+    def _reset_framing(self):
+        """Drop any half-assembled line and resync on the next newline.
+
+        Needed after a reopen and after a streaming pause, both of which leave
+        us mid-report. The existing line_count checks already tolerate a
+        stream that begins in the middle.
+
+        _resyncing marks the frame we join part-way through. Its missing
+        sensors are an artifact of when we started reading, not a fault, so
+        the first partial frame after this is flushed without counting.
+        """
+        self.json_line = ""
+        self.oob_line = ""
+        self.line_count = 0
+        self.sensors_seen = {}
+        self.last_frame_id = None
+        self._resyncing = True
+
+    def _close_port(self):
+        """Close without ever raising. The port is opened exclusive=True, so a
+        leaked descriptor makes every later reopen fail with 'device busy' --
+        which is what turned a transient fault into permanent death."""
+        try:
+            if getattr(self, 'ser', None) is not None and self.ser.is_open:
+                self.ser.close()
+        except Exception:
+            pass
+
+    def _fail(self, message):
+        """Take the reader out of service and schedule a reopen."""
+        # ERROR: every sensor is blind until a reopen succeeds, and this is
+        # the event a field log has to show.
+        self.logger.error('%s -- all sensors reported dead until the port recovers',
+                          message)
+        self.is_valid = False
+        self._close_port()
+        self._reopen_at = time.time() + self._reopen_backoff_s
+    
+        for i in range(6):
+            if i in self.disabled:
+                continue
+            self.status['sensor_%d' % i]['missed_frames'] = \
+                self.DEAD_AFTER_MISSED_FRAMES
+        self._sensors_dead = sorted(
+            'sensor_%d' % i for i in range(6) if i not in self.disabled)
+
+    def _try_reopen(self):
+        """Retry the port on a backoff. Called from step() while out of
+        service."""
+        now = time.time()
+        if now < self._reopen_at:
+            return False
+        if self.startup(quiet=self._reported_open_failure):
+            self.status['reader_restarts'] += 1
+            self._reopen_backoff_s = self.REOPEN_BACKOFF_MIN_S
+            self._reported_open_failure = False
+         
+            self.logger.warning('serial port recovered (restart #%d)',
+                                self.status['reader_restarts'])
+            return True
+        self._reported_open_failure = True
+        self._reopen_backoff_s = min(self._reopen_backoff_s * 2.0,
+                                     self.REOPEN_BACKOFF_MAX_S)
+        self._reopen_at = now + self._reopen_backoff_s
+        return False
+
+    # -- runtime control ---------------------------------------------------
+
+    def set_streaming(self, on):
+        """Pause or resume decoding.
+
+        While paused the port is still READ and the bytes thrown away. Letting
+        it fill instead would back up the kernel buffer and hand us a corrupt
+        part-report the moment we resumed.
+        """
+        on = bool(on)
+        if on == self.streaming:
+            return self.streaming
+        self.streaming = on
+        if on:
+            self._reset_framing()
+        self.logger.warning('streaming %s', 'ON' if on else 'OFF (cliff detection is off)')
+        return self.streaming
+
+    def _sensor_index(self, name):
+        if isinstance(name, int):
+            idx = name
+        else:
+            try:
+                idx = int(str(name).rsplit('_', 1)[1])
+            except (IndexError, ValueError):
+                raise ValueError(f'not a sensor name: {name!r}')
+        if not 0 <= idx < 6:
+            raise ValueError(f'sensor index out of range: {name!r}')
+        return idx
+
+    def set_sensor_enabled(self, name, on):
+        """Turn one sensor's decoding on or off.
+
+        A disabled sensor is skipped BEFORE json.loads.
+        """
+        idx = self._sensor_index(name)
+        on = bool(on)
+        if on:
+            self.disabled.discard(idx)
+        else:
+            self.disabled.add(idx)
+        self._skip_keys = tuple(f'"{k}"' for k, i in self.key_table.items()
+                                if i in self.disabled)
+        s = self.status['sensor_%d' % idx]
+        s['enabled'] = on
+        if not on:
+            # Blank it. Leaving the last scan in place would let a consumer
+            # keep steering on a reading that is now arbitrarily old.
+            s['ranges'] = np.zeros(0, dtype=np.float64)
+            s['codes'] = np.zeros(0, dtype=np.uint8)
+            s['n_no_return'] = 0
+            s['n_beyond_limit'] = 0
+            s['missed_frames'] = 0     # off on purpose is not dead
+        self.logger.warning('sensor_%d %s', idx, 'ENABLED' if on else 'DISABLED')
+        return on
+
     def step(self):
-        #Return true if status is updated with new sensor data
-        updated=False
+        # Return true if status is updated with new sensor data
+        updated = False
 
         if not self.is_valid:
+            # Out of service: keep trying to come back rather than staying
+            # dead until someone restarts the robot server.
+            self._try_reopen()
             return updated
-        
+
         if not self.ser.is_open:
-            self.startup()
+            self._fail('serial port closed unexpectedly')
             return updated
+
+        if self._flush_before_first_read:
+            self._flush_before_first_read = False
+            try:
+                self.ser.reset_input_buffer()
+            except Exception:
+                pass
+            self._reset_framing()
+
         try:
+            if not self.streaming:
+                # Paused: drain and discard, so the kernel buffer cannot fill
+                # and hand us a corrupt part-report when we resume.
+                if self.ser.in_waiting > 0:
+                    self.ser.read(self.ser.in_waiting)
+                return updated
             while self.ser.in_waiting > 0:
                 if not self.ser.is_open:
-                    self.is_valid=False
+                    self._fail('serial port closed mid-read')
                     return updated
                 lines = self.ser.read(self.ser.in_waiting).decode('utf-8').splitlines(True)
                 for line in lines:
                     ## Accumulate text line (segment(s)) into JSON line, or out of band line.
                     if self.json_line:
-                        self.json_line += line.rstrip("\n")
+                        # A segment starting with '{' can only be a new report:
+                        # the payload has no nested objects, so the sole '{' is
+                        # at offset 0. 
+                        if line.startswith("{"):
+                            self.status['decode_errors'] += 1
+                            self.debug_print("Truncated report discarded:",
+                                             self.json_line[:80])
+                            self.json_line = line.rstrip("\n")
+                        else:
+                            self.json_line += line.rstrip("\n")
                     else:
                         if self.oob_line:
                             self.oob_line += line.rstrip("\n")
@@ -101,7 +328,7 @@ class PixartJ3Reader():
 
                     ## Process full line of JSON or OOB
                     if not line.endswith("\n"):
-                        continue;
+                        continue
                     self.line_count += 1
                     if self.oob_line:
                         if self.line_count > 1 or not self.oob_line.endswith("}"):
@@ -109,8 +336,9 @@ class PixartJ3Reader():
                             self.debug_print("OOB:", self.oob_line)
                         self.oob_line = ""
                         if self.json_line:
-                            print("SCRIPT ERROR: Expected blank JSON line")
-                            self.is_valid = False
+                            self.logger.debug('Expected blank JSON line')
+                            self.json_line = ""
+                            self.status['decode_errors'] += 1
                         continue
                     if not self.json_line.endswith("}"):
                         if self.line_count > 1:
@@ -118,145 +346,216 @@ class PixartJ3Reader():
                             self.debug_print("JSON line didn't find expected close curly brace before newline. Ignoring. Line:", self.json_line)
                         self.json_line = ""
                     else:
-                        #self.debug_print(self.json_line)
-                        data = json.loads(self.json_line)
-                        frame_id = "UNKNOWN"
-                        if "frameId" in data:
-                            frame_id = data.get("frameId")
-                        if self.last_frame_id==None:
-                            self.last_frame_id=frame_id-1 #Init first time
-                        foundMatch = False
-                        for bus_number in range(1, 4):
-                            for sensor_number in range(2):
-                                key = f"distances{bus_number:1d}{sensor_number:1d}"
-                                if key in data:
-                                    ranges = np.array(data.get(key, self.PIXART_REPORT_NUM), dtype=float)/1000.0
-                                    global_sensor_index_number = self.bus_sensor_to_index_number(bus_number, sensor_number)
-                                    if len(ranges) != self.PIXART_REPORT_NUM:
-                                        self.debug_print("Found", len(ranges), "elements, expected", self.PIXART_REPORT_NUM)
-                                        self.debug_print("line:", line)
-                                        #self.debug_print("DecodedData:", decodedData)
-                                    else:
-                                        self.process_one_sensor(frame_id, global_sensor_index_number, ranges)
-                                        updated=True
-                                    foundMatch = True
-                                    if frame_id > self.last_frame_id:
-                                        self.last_frame_id = frame_id
-                                        if (self.sensors_this_frame != 6):
-                                            self.debug_print("** Received", self.sensors_this_frame, "this frame")
-                                        self.debug_print("New FrameId:", frame_id, "sensor:", global_sensor_index_number)
-                                        self.sensors_this_frame = 1
-                                    else:
-                                        if frame_id == self.last_frame_id:
-                                            self.sensors_this_frame += 1
-                                        else:
-                                            self.debug_print("*******OUT OF ORDER FrameId:", frame_id, "sensor:", global_sensor_index_number)
-                                            self.is_valid = False
-                                    break
-                            if foundMatch:
-                                break
+                        # Disabled sensors are dropped here, BEFORE json.loads to save compute
+                        if self._skip_keys and any(k in self.json_line
+                                                   for k in self._skip_keys):
+                            self.json_line = ""
+                            self.oob_line = ""
+                            continue
+                        if self.process_json_line(self.json_line):
+                            updated = True
                         self.json_line = ""
                         self.oob_line = ""
         except serial.SerialException as e:
-            print(f"PixartJ3Reader: Error opening or communicating with serial port: {e}")
-            self.is_valid = False
-            #time.sleep(0.50) ### TODO: REMOVE ME
-            self.ser.close()
+            self._fail(f'serial error: {e}')
         except Exception as e:
-            print(f"PixartJ3Reader: An unexpected error occurred: {e}")
-            self.is_valid = False
+            self._fail(f'unexpected error: {e}')
         return updated
 
-    def debug_print(self,*args, **kwargs):
-        if self.DEBUG_ENABLED:
-            print("PixartJ3Reader(d):", *args, **kwargs)
-    def verbose_print(self,*args, **kwargs):
-        if self.verbose:
-            print("PixartJ3Reader(v):", *args, **kwargs)
-    def bus_sensor_to_index_number(self,bus, sensor):
-        return self.bus_sensor_map[(bus - 1)][sensor]
+    def process_json_line(self, json_line):
+        """Decode one complete JSON line (one sensor report). Returns True if
+        a sensor's status was updated. Malformed lines are counted and skipped
+        rather than killing the reader."""
+        try:
+            data = json.loads(json_line)
+        except ValueError:
+            self.status['decode_errors'] += 1
+            # If the newline between two reports was lost to dropped bytes,
+            # both arrive as one unparsable string. The tail after the last
+            # '{' is usually an intact report -- recover it, so a corrupt
+            # report does not take its neighbour down with it.
+            cut = json_line.rfind("{")
+            if cut <= 0:
+                self.debug_print("Bad JSON ignored:", json_line[:120])
+                return False
+            try:
+                data = json.loads(json_line[cut:])
+            except ValueError:
+                self.debug_print("Bad JSON ignored:", json_line[:120])
+                return False
+            self.debug_print("Recovered report after lost newline:",
+                             json_line[:cut][:80])
+
+        frame_id = data.get("frameId")
+        if frame_id is None:
+            if isinstance(data.get('status'), dict):
+                return False
+            self.status['decode_errors'] += 1
+            self.debug_print("JSON line without frameId ignored:", json_line[:120])
+            return False
+
+        for key, sensor_index in self.key_table.items():
+            if key not in data:
+                continue
+            payload = data[key]
+            if len(payload) != self.PIXART_REPORT_NUM:
+                if not self._warned_report_len:
+                    self.logger.error(
+                        'firmware sent %d range elements but pixart_report_num=%d; '
+                        'these reports are being dropped -- fix line_sensor_geometry params',
+                        len(payload), self.PIXART_REPORT_NUM)
+                    self._warned_report_len = True
+                self.status['decode_errors'] += 1
+                return False
+            ranges, codes = protocol.decode_distances_mm(
+                payload, flip=self.flip_range_ordering)
+            self.process_one_sensor(frame_id, sensor_index, ranges, codes)
+            return True
+
+        self.debug_print("JSON line with no known distances key:", json_line[:120])
+        self.status['decode_errors'] += 1
+        return False
+
+    def process_one_sensor(self, frame_id, sensor_index, ranges, codes):
+        now = time.time()
+
+        if frame_id != self.last_frame_id:
+            if self.last_frame_id is not None and frame_id != self.last_frame_id + 1:
+                # Skipped ahead or went backwards (dropped data / uC restart).
+                # Count it and resync on the new frame id rather than dying.
+                self.verbose_print(f"** FrameId did not advance by 1: {self.last_frame_id} -> {frame_id}")
+                self.status['frame_advance_err'] += 1
+            if self.sensors_seen:
+                # Flush the previous, partial frame. 
+                if self._resyncing:
+                    self.process_frame(now, expected_partial=True)
+                else:
+                    self.status['frame_not_full_err'] += 1
+                    self.process_frame(now)
+            self.last_frame_id = frame_id
+
+        self.sensors_seen[sensor_index] = self.sensors_seen.get(sensor_index, 0) + 1
+
+        sn = 'sensor_%d' % sensor_index
+        s = self.status[sn]
+        dt = now - s['ts_last_read']
+        if dt > 0:
+            s['rate_hz'] = 1.0 / dt  # Jitters around 30hz; uC sensor order varies frame to frame
+        s['ts_last_read'] = now
+        s['ranges'] = ranges
+        s['codes'] = codes
+        s['n_no_return'] = int(np.count_nonzero(codes == protocol.CODE_NO_RETURN))
+        s['n_beyond_limit'] = int(np.count_nonzero(codes == protocol.CODE_BEYOND_LIMIT))
+        s['frame_id'] = frame_id
+
+        if len(self.sensors_seen) == 6 - len(self.disabled):
+            self.process_frame(now)
+
+    def process_frame(self, now=None, expected_partial=False):
+        if not self.sensors_seen:
+            return
+        if now is None:
+            now = time.time()
+        # Any frame boundary means we are now tracking whole frames.
+        self._resyncing = False
+        # A disabled sensor is expected to be absent, so it must not count
+        # against the frame or it would raise this error on every frame.
+        if not expected_partial and len(self.sensors_seen) != 6 - len(self.disabled):
+            self.status['not_six_sensors_err'] += 1
+        # Per-sensor liveness: a sensor that stops reporting keeps its last
+        # ranges in status forever, so without this a dead sensor is
+        # indistinguishable from one staring at an unchanging floor.
+        dead = []
+        for i in range(6):
+            s = self.status['sensor_%d' % i]
+            if i in self.disabled:
+                # Off on purpose.
+                s['missed_frames'] = 0
+                continue
+            if i in self.sensors_seen:
+                s['missed_frames'] = 0
+            else:
+                s['missed_frames'] += 1
+            if s['missed_frames'] >= self.DEAD_AFTER_MISSED_FRAMES:
+                dead.append('sensor_%d' % i)
+        self._sensors_dead = dead
+        last = self.status['last_frame_time']
+        if last and now > last:
+            self.status['rate_hz'] = 1.0 / (now - last)
+        self.status['last_frame_time'] = now
+        self.status['sensors_last_frame'] = self.sensors_seen
+
+        self.verbose_print(f"FrameId: {self.last_frame_id} rate: {self.status['rate_hz']:.2f}hz "
+                           f"Sensors seen: {list(self.sensors_seen.keys())} {self.error_check_sensor_list(self.sensors_seen)}")
+        self.sensors_seen = {}
 
     def error_check_sensor_list(self, sensor_dict):
         err_str = "  "
         err_count = 0
         for i in range(6):
-            if not i in sensor_dict or sensor_dict[i] != 1:
+            if i not in sensor_dict or sensor_dict[i] != 1:
                 err_count += 1
                 if err_count > 1:
                     err_str += ", "
-                if not i in sensor_dict:
+                if i not in sensor_dict:
                     err_str += f"missing {i}"
                 else:
                     err_str += f"extra {i}"
         return err_str
 
-    def process_frame(self):
-        if len(self.sensors_seen) == 0:
-            # Nothing to publish
-            return
-        if len(self.sensors_seen) != 6:
-            self.status['not_six_sensors_err'] += 1
-        now = time.time()
-        self.status['rate_hz'] = 1 / (now - self.status['last_frame_time'])
-        self.status['last_frame_time'] = now
-        self.status['sensors_last_frame'] = self.sensors_seen
+    def debug_print(self, *args, **kwargs):
+        if self.DEBUG_ENABLED:
+            self.logger.debug(' '.join(str(a) for a in args))
 
-        self.verbose_print(f"FrameId: {self.last_frame_id} last hz: {self.last_hz/6:.2f}({self.status['rate_hz']:.2f}), now: {time.time():.3f}  Sensors seen: {self.sensors_seen.keys()} {self.error_check_sensor_list(self.sensors_seen)}")
+    def verbose_print(self, *args, **kwargs):
+        if self.verbose:
+            self.logger.debug(' '.join(str(a) for a in args))
 
+    def bus_sensor_to_index_number(self, bus, sensor):
+        return self.bus_sensor_map[(bus - 1)][sensor]
 
-        # Reset everything
-        self.sensors_seen = {}
+    HEALTH_KEYS = ('rate_hz', 'last_frame_time', 'decode_errors',
+                   'frame_advance_err', 'frame_not_full_err', 'not_six_sensors_err',
+                   'reader_restarts')
 
+    def health(self):
+        """Subsystem-wide counters, separate from any one sensor's block.
 
-    def process_one_sensor(self, frame_id, sensor_index, ranges):
-        self.step_count = self.step_count + 1
-        # print("Dq#", self.step_count, "FrameId:", frame_id, "sensor:", sensor_index)
-        self.verbose_print("Dq#", self.step_count, "FrameId:", frame_id, "sensor:", sensor_index)
+        `streaming` and `disabled_sensors` are stated loudly because turning
+        line sensors off removes cliff detection: a consumer must be able to
+        see that it is steering with fewer eyes than it thinks.
+        """
+        h = {k: self.status[k] for k in self.HEALTH_KEYS}
+        # The only place sensors_dead is published.
+        h['sensors_dead'] = list(self._sensors_dead)
+        h['port_open'] = bool(self.is_valid)
+        h['streaming'] = bool(self.is_valid and self.streaming)
+        h['disabled_sensors'] = sorted('sensor_%d' % i for i in self.disabled)
+        return h
 
-        if frame_id != self.last_frame_id:
-            if frame_id != (self.last_frame_id + 1):
-                self.verbose_print(f"** FrameId did not advance by 1: {self.last_frame_id} -> {frame_id}")
-                self.status['frame_advance_err'] = self.status['frame_advance_err'] + 1
-            if len(self.sensors_seen):
-                self.status['frame_not_full_err'] += 1
-                # Flush out any previous sensor data:
-                self.process_frame()
+    def dead_sensors(self):
+        """Names of sensors that have stopped reporting (or never started)."""
+        return list(self._sensors_dead)
 
-            self.last_frame_id = frame_id
-
-        # Track which sensors are in the current frame
-        if sensor_index in self.sensors_seen:
-            self.sensors_seen[sensor_index] += 1
-        else:
-            self.sensors_seen[sensor_index] = 1
-
-        # Assimilate new data into status
-        sn = 'sensor_%d' % sensor_index
-        dt = time.time() - self.status[sn]['ts_last_read']
-        self.status[sn]['ts_last_read'] = time.time()
-        self.status[sn]['rate_hz'] = 1 / dt #This may have jitter around 30hz as the order sensor sent from uC may vary frame to frame
-        self.status[sn]['ranges'] = ranges
-        self.status[sn]['frame_id'] = frame_id
-
-
-        ## track number of frames each second
-        this_second = int(time.time())
-        if self.last_second != this_second:
-            self.last_second = this_second
-            self.last_hz = self.frames_this_sec
-            self.frames_this_sec = 0
-        self.frames_this_sec += 1
-
-        if len(self.sensors_seen) == 6:
-            ## All sensors have been seen, publish
-            self.process_frame()
+    def blind_sensors(self, min_fraction=0.9):
+        """Names of sensors that ARE reporting but see almost nothing --
+        every bin a no-return. Distinct from dead: the link is fine, the
+        sensor just cannot see the floor (very dark surface, or a void)."""
+        out = []
+        for i in range(6):
+            sn = 'sensor_%d' % i
+            s = self.status[sn]
+            n = len(s['codes'])
+            if n and s['missed_frames'] == 0:
+                if (s['n_no_return'] + s['n_beyond_limit']) >= min_fraction * n:
+                    out.append(sn)
+        return out
 
     def stop(self):
-        # Close the serial port if it was opened
-        if 'ser' in locals() and self.ser.is_open:
-            self.ser.close()
+        if hasattr(self, 'ser') and self.ser.is_open:
+            self._close_port()
             self.verbose_print("Serial port closed.")
-        self.debug_print("Exposer/reader process done")
+        self.debug_print("Reader done")
 
 
 if __name__ == '__main__':
@@ -264,18 +563,20 @@ if __name__ == '__main__':
     try:
         if pjr.startup():
             while True:
-                tt=time.time()
                 pjr.step()
-                dt=time.time()-tt
                 time.sleep(.004)
-                #print('------%f----------'%(dt*1000))
+                dead, blind = pjr.dead_sensors(), pjr.blind_sensors()
                 for i in range(6):
-                    print('Rate sensor %d:'%i,pjr.status['sensor_%d'%i]['rate_hz'])
-                # print('---')
-                # print('Rate hz',lsr.status['rate_hz'])
-                # print('Frame advance error',lsr.status['frame_advance_err'])
-                # print('Frame not full error',lsr.status['frame_not_full_err'])
-                # print('Not six sensors error',lsr.status['not_six_sensors_err'])
+                    sn = 'sensor_%d' % i
+                    s = pjr.status[sn]
+                    state = 'DEAD ' if sn in dead else ('BLIND' if sn in blind else 'ok   ')
+                    print(f"{sn}: {state} rate {s['rate_hz']:6.2f}hz  "
+                          f"no_return(5.11) {s['n_no_return']:3d}  "
+                          f"beyond_limit(5.09) {s['n_beyond_limit']:3d}")
+                print(f"frame rate {pjr.status['rate_hz']:.2f}hz  "
+                      f"decode_errors {pjr.status['decode_errors']}  "
+                      f"dead {dead or 'none'}")
+                print('---')
     except KeyboardInterrupt:
         pass
     pjr.stop()

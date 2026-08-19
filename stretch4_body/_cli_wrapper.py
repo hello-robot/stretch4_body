@@ -29,6 +29,18 @@ def stretch_line_sensor_viz_3d():
     sys.argv[0] = "stretch_line_sensor_viz_3d"
     runpy.run_module("stretch4_body.tools.stretch_line_sensor_viz_3d", run_name="__main__")
 
+def stretch_line_sensor_ranges():
+    sys.argv[0] = "stretch_line_sensor_ranges"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_ranges", run_name="__main__")
+
+def stretch_line_sensor_z_band():
+    sys.argv[0] = "stretch_line_sensor_z_band"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_z_band", run_name="__main__")
+
+def stretch_line_sensor_hz_check():
+    sys.argv[0] = "stretch_line_sensor_hz_check"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_hz_check", run_name="__main__")
+
 def stretch_power_periph_scope():
     sys.argv[0] = "stretch_power_periph_scope"
     runpy.run_module("stretch4_body.tools.stretch_power_periph_scope", run_name="__main__")
@@ -201,10 +213,6 @@ def REx_stepper_gains_YAML_to_flash():
     sys.argv[0] = "REx_stepper_gains_YAML_to_flash"
     runpy.run_module("stretch4_body.tools.factory.REx_stepper_gains_YAML_to_flash", run_name="__main__")
 
-def REx_line_sensor_display():
-    sys.argv[0] = "REx_line_sensor_display"
-    runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_display", run_name="__main__")
-
 def REx_omnibase_calibrate_imu_collect():
     sys.argv[0] = "REx_omnibase_calibrate_imu_collect"
     runpy.run_module("stretch4_body.tools.factory.REx_omnibase_calibrate_imu_collect", run_name="__main__")
@@ -240,6 +248,10 @@ def REx_firebase_jog():
 def REx_line_sensor_calibrate():
     sys.argv[0] = "REx_line_sensor_calibrate"
     runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_calibrate", run_name="__main__")
+
+def REx_line_sensor_migrate_tares():
+    sys.argv[0] = "REx_line_sensor_migrate_tares"
+    runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_migrate_tares", run_name="__main__")
 
 def test_firmware_available():
     sys.argv[0] = "test_firmware_available"

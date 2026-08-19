@@ -53,6 +53,10 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
             rs = r.status.copy()
             if "timestamp" not in rs:
                 rs["timestamp"] = time.time()
+
+            # Drop line sensor data entirely for now
+            rs.pop('line_sensor_loop', None)
+
             batch.append(rs)
 
             # Batch for 1 minute
