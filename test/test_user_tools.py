@@ -90,7 +90,7 @@ class TestUserTools(unittest.TestCase):
                 shutil.rmtree(split_tool_dir)
 
     def test_builtin_tool_metadata(self):
-        from stretch4_body.utils.gripper_metadata import (
+        from stretch4_body.utils.tool_metadata import (
             get_tool_metadata,
             StretchGripperMetadata,
             ParallelGripperMetadata,
@@ -136,7 +136,7 @@ client_class_name: UserEoaValidtoolClient
         from stretch4_body.core.robot_params import RobotParams
         _user_params, _robot_params = RobotParams.get_params()
 
-        from stretch4_body.utils.gripper_metadata import get_tool_metadata, UserToolMetadata
+        from stretch4_body.utils.tool_metadata import get_tool_metadata, UserToolMetadata
 
         try:
             meta = get_tool_metadata(valid_tool_name)
@@ -171,7 +171,7 @@ client_class_name: UserEoaValidtoolClient
                 del sys.modules[mod]
 
         from stretch4_body.core.robot_params import RobotParams
-        from stretch4_body.utils.gripper_metadata import get_tool_metadata, ToolConfigurationError
+        from stretch4_body.utils.tool_metadata import get_tool_metadata, ToolConfigurationError
 
         try:
             with self.assertRaises(ToolConfigurationError):

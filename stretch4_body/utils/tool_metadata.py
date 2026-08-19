@@ -3,7 +3,6 @@
 from abc import ABC, abstractmethod
 
 from stretch4_body.core.hello_utils import deg_to_rad
-from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
 from stretch4_body.utils.user_tool_utils import add_user_tool_to_sys_path
 
@@ -59,7 +58,12 @@ class ToolMetadata(ABC):
     @property
     @abstractmethod
     def client_class(self) -> type:
-        """RobotClient subclass for controlling this tool."""
+        """RobotClient subclass for controlling this tool remotely."""
+
+    @property
+    @abstractmethod
+    def driver_class(self) -> type:
+        """Subsystem driver subclass for controlling this tool directly."""
 
     @property
     @abstractmethod
@@ -193,6 +197,11 @@ class ParallelGripperMetadata(ToolMetadata):
         return ParallelGripperClient
 
     @property
+    def driver_class(self) -> type:
+        from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
+        return ParallelGripper
+
+    @property
     def actuator_command_range(self) -> tuple[float, float]:
         client = self.client_class()
         return client.poses['close'], client.poses['open']
@@ -230,6 +239,11 @@ class StretchGripperMetadata(ToolMetadata):
     @property
     def client_class(self) -> type:
         return StretchGripperClient
+
+    @property
+    def driver_class(self) -> type:
+        from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
+        return StretchGripper
 
     @property
     def actuator_command_range(self) -> tuple[float, float]:
@@ -281,7 +295,6 @@ class UserToolMetadata(ToolMetadata):
     def _validate_and_load_parameters(self) -> None:
         """Strictly validates all required YAML keys for user tools."""
         from stretch4_body.core.robot_params import RobotParams
-
         # 1. Joints and Links
         joints = self.tool_params.get('tool_joints', self.tool_params.get('finger_joints'))
         if not joints:
@@ -351,6 +364,26 @@ class UserToolMetadata(ToolMetadata):
         return self._client_class
 
     @property
+    def driver_class(self) -> type:
+        from stretch4_body.core.robot_params import RobotParams
+        device_params = self.tool_params.get('devices', {}).get(self.joint_name, {})
+        py_module = device_params.get('py_module_name') or self.tool_params.get('server_module_name') or self.tool_params.get('py_module_name')
+        py_class = device_params.get('py_class_name') or self.tool_params.get('server_class_name') or self.tool_params.get('py_class_name')
+        
+        if not py_module or not py_class:
+            raise ToolConfigurationError(
+                f"Direct driver configuration for tool '{self.tool_name}' must specify 'py_module_name' and 'py_class_name'."
+            )
+        add_user_tool_to_sys_path(self.tool_name)
+        try:
+            module = RobotParams.import_user_tool_module(self.tool_name, py_module, is_server=True)
+            return getattr(module, py_class)
+        except Exception as e:
+            raise ToolConfigurationError(
+                f"Failed to import driver class '{py_class}' from module '{py_module}' for tool '{self.tool_name}': {e}"
+            )
+
+    @property
     def actuator_command_range(self) -> tuple[float, float]:
         return self._actuator_command_range
 
@@ -381,9 +414,14 @@ class UserToolMetadata(ToolMetadata):
         return ap_low + norm * (ap_high - ap_low)
 
 
+_sg_meta = StretchGripperMetadata()
+_pg_meta = ParallelGripperMetadata()
+
 BUILTIN_TOOL_MODELS: dict[str, ToolMetadata] = {
-    'parallel_gripper': ParallelGripperMetadata(),
-    'stretch_gripper': StretchGripperMetadata(),
+    'parallel_gripper': _pg_meta,
+    'stretch_gripper': _sg_meta,
+    'eoa_wrist_dw4_tool_sg4': _sg_meta,
+    'eoa_wrist_dw4_tool_pg4': _pg_meta,
 }
 
 
@@ -391,10 +429,11 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     """
     Factory function to resolve and return the ToolMetadata instance for the active tool.
 
-    1. Checks built-in grippers ('stretch_gripper', 'parallel_gripper').
+    1. Checks built-in grippers ('stretch_gripper', 'parallel_gripper') and standard tool aliases.
     2. Checks for custom metadata class in user_tools (metadata_module_name/metadata_class_name).
     3. Uses explicit UserToolMetadata for YAML-configured tools (failing fast if required keys are missing).
     """
+    from stretch4_body.core.robot_params import RobotParams
     _, robot_params = RobotParams.get_params()
 
     if tool_name is None:
@@ -406,12 +445,12 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     # 1. Built-in Tool Check
     if tool_name in BUILTIN_TOOL_MODELS:
         return BUILTIN_TOOL_MODELS[tool_name]
-    if 'sg4' in tool_name or tool_name == 'stretch_gripper' or 'stretch_gripper' in robot_params.get(tool_name, {}).get('devices', {}):
-        return BUILTIN_TOOL_MODELS['stretch_gripper']
-    if 'pg4' in tool_name or tool_name == 'parallel_gripper' or 'parallel_gripper' in robot_params.get(tool_name, {}).get('devices', {}):
-        return BUILTIN_TOOL_MODELS['parallel_gripper']
 
     tool_params = robot_params.get(tool_name, {})
+    for device_name in tool_params.get('devices', {}):
+        if device_name in BUILTIN_TOOL_MODELS:
+            return BUILTIN_TOOL_MODELS[device_name]
+
     if not tool_params:
         raise ToolConfigurationError(f"Tool '{tool_name}' is not defined in robot_params.")
 

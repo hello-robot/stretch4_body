@@ -172,13 +172,9 @@ class GamePadTeleop(Device):
             self.wrist_roll_command = gamepad_joints.CommandWristRoll(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['gripper']:
             if self.custom_gamepad_command_position_class is not None:
-                self.gripper = self.custom_gamepad_command_position_class(motion_profile=self.motion_profile.get_name() )
-            elif self.gripper_name == 'parallel_gripper':
-                self.gripper = gamepad_joints.CommandParallelGripperPosition(motion_profile=self.motion_profile.get_name() )
-            elif self.gripper_name == 'stretch_gripper':
-                self.gripper = gamepad_joints.CommandStretchGripperPosition(motion_profile=self.motion_profile.get_name() )
+                self.gripper = self.custom_gamepad_command_position_class(motion_profile=self.motion_profile.get_name())
             else:
-                raise NotImplementedError(f"Gripper {self.gripper_name} is not supported.")
+                self.gripper = gamepad_joints.CommandToolPosition(name=self.gripper_name, motion_profile=self.motion_profile.get_name())
 
 
     def cycle_motion_profile(self):

@@ -106,13 +106,19 @@ class RobotJoints(Enum):
         """Looks up a joint by its enum name, alias, configured tool name, or URDF tool joints."""
         if name in cls.__members__:
             return cls[name]
-        if name in ["gripper", "parallel_gripper", "stretch_gripper"]:
+        if name in ["gripper", "tool"]:
             return cls.gripper
         for joint in cls:
             if joint.value == name:
                 return joint
-            if joint == cls.gripper and (name == joint.gripper_name or name in joint.tool_joints):
-                return joint
+            if joint == cls.gripper:
+                if (joint.gripper_name and name == joint.gripper_name) or name in joint.tool_joints:
+                    return joint
+                try:
+                    if get_tool_metadata(name) is not None:
+                        return joint
+                except Exception:
+                    pass
         return None
 
     @classmethod
@@ -138,7 +144,7 @@ class RobotJoints(Enum):
         """Returns the ToolMetadata for this joint, or None if this isn't the gripper joint or none is configured."""
         if self.name == "gripper":
             try:
-                return get_tool_metadata()
+                return get_tool_metadata(self.gripper_name)
             except Exception:
                 return None
         return None
