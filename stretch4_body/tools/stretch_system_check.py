@@ -5,11 +5,13 @@ stretch_system_check.py
 Comprehensive hardware and software diagnostic tool for the Stretch 4 robot.
 
 Usage:
-    stretch_system_check              # Full system check (requires server)
-    stretch_system_check --firmware   # Firmware version check (kills/restarts server)
-    stretch_system_check --sensors    # Lidar + camera check (no server needed)
-    stretch_system_check --verbose    # Show additional detail in all checks
-    stretch_system_check --direct     # Use Robot API directly instead of server client
+    stretch_system_check                  # Full system check (requires server)
+    stretch_system_check --firmware       # Firmware version check (kills/restarts server)
+    stretch_system_check --sensors        # Lidar + camera check (no server needed)
+    stretch_system_check --check_updates  # pip + firmware + workspace git updates, with commands to run
+    stretch_system_check --repos          # ROS2 workspace (~/ament_ws/src) git status only
+    stretch_system_check --verbose        # Show additional detail in all checks
+    stretch_system_check --direct         # Use Robot API directly instead of server client
 """
 import stretch4_body.core.hello_utils as hu
 hu.print_stretch_re_use()
@@ -17,10 +19,14 @@ hu.print_stretch_re_use()
 import os
 import sys
 import io
+import re
+import json
 import fnmatch
 import argparse
 import subprocess
 import logging
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version as pkg_version
 
 import click
@@ -38,6 +44,10 @@ parser.add_argument('-v', '--verbose',  help='Print additional detail',         
 parser.add_argument('-d', '--direct',   help='Use direct Robot API (no server)',          action='store_true')
 parser.add_argument('--firmware',       help='Kill server, check firmware, restart server', action='store_true')
 parser.add_argument('--sensors',        help='Check lidars and cameras',                 action='store_true')
+parser.add_argument('--check_updates',  help='Check pip + firmware + workspace git updates and print the commands to run',
+                                                                                        action='store_true')
+parser.add_argument('--repos',          help='Check the git status of the repos in ~/ament_ws/src',
+                                                                                        action='store_true')
 args = parser.parse_args()
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
@@ -107,9 +117,337 @@ def print_warn(msg, indent=2):
 def print_info(msg, indent=4):
     click.secho(f'{" " * indent}{msg}', fg='white')
 
+def print_version_info(msg, update_ver=None, indent=4):
+    """Print a version line, appending '(Update Available: x.y.z)' when newer on PyPI."""
+    click.secho(f'{" " * indent}{msg}', fg='white', nl=False)
+    if update_ver:
+        click.secho(f'  (Update Available: {update_ver})', fg='yellow', bold=True)
+    else:
+        click.echo()
+
 def val_in_range(label, val, vmin, vmax):
     ok = vmin <= val <= vmax
     return ok, f'{label} = {val:.3f} (range [{vmin:.2f}, {vmax:.2f}])'
+
+
+# ==============================================================================
+# PyPI update checks
+# ==============================================================================
+
+PYPI_TIMEOUT_S = 3.0
+
+
+def _pypi_latest_version(pkg_name):
+    """Return the latest release version on PyPI, or None if it can't be determined."""
+    url = f'https://pypi.org/pypi/{pkg_name}/json'
+    try:
+        with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_S) as resp:
+            info = json.load(resp).get('info') or {}
+        return info.get('version')
+    except Exception:
+        return None
+
+
+def _is_newer(candidate, installed):
+    """True if candidate is a strictly newer version than installed."""
+    try:
+        from packaging.version import Version
+        return Version(candidate) > Version(installed)
+    except Exception:
+        pass
+    # Fallback: compare numeric components (versions here are date-based, e.g. 2026.6.25)
+    try:
+        to_tuple = lambda v: tuple(int(n) for n in re.findall(r'\d+', v))
+        return to_tuple(candidate) > to_tuple(installed)
+    except Exception:
+        return False
+
+
+CORE_PIP = ('hello-robot-stretch4-body', 'hello-robot-stretch4-urdf')
+
+# Command shown to the user for applying pip updates (matches README)
+PIP_UPDATE_CMD = 'python3 -m pip install -U'
+
+
+def discover_pip_packages():
+    """
+    Return (core, extras): installed versions of the always-shown Stretch packages,
+    and of any other hello/stretch/hesai pip packages found in the environment.
+    """
+    core = {}
+    for name in CORE_PIP:
+        try:
+            core[name] = pkg_version(name)
+        except Exception:
+            core[name] = 'unknown'
+
+    extras = {}
+    try:
+        from importlib.metadata import distributions as _distributions
+        core_lc = {n.lower() for n in CORE_PIP}
+        for dist in _distributions():
+            name = (dist.metadata.get('Name') or '').strip()
+            name_lc = name.lower()
+            if not name or name_lc in core_lc:
+                continue
+            if 'hello' in name_lc or 'stretch' in name_lc or 'hesai' in name_lc:
+                if name not in extras:  # keep first occurrence
+                    extras[name] = (dist.metadata.get('Version') or 'unknown').strip()
+    except Exception:
+        pass
+
+    return core, extras
+
+
+def check_pypi_updates(installed):
+    """
+    Query PyPI for newer releases of the hello-robot-* packages in `installed`
+    ({name: version}). Queries run concurrently and fail silently (offline robot).
+
+    Returns (updates, reachable) where updates is {name: latest_version} for
+    packages with a newer release, and reachable is False if no query succeeded.
+    """
+    names = [n for n in installed if n.lower().startswith('hello-robot-')
+             and installed[n] not in (None, '', 'unknown')]
+    if not names:
+        return {}, True
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
+            latest = dict(zip(names, pool.map(_pypi_latest_version, names)))
+    except Exception:
+        return {}, False
+
+    reachable = any(v is not None for v in latest.values())
+    updates = {n: latest[n] for n in names
+               if latest[n] and _is_newer(latest[n], installed[n])}
+    return updates, reachable
+
+
+# ==============================================================================
+# ROS2 workspace (~/ament_ws/src) git checks
+# ==============================================================================
+
+GIT_TIMEOUT_S = 10.0
+
+# Status codes reported per repo, and how each is rendered
+GIT_OK        = 'up to date'
+GIT_BEHIND    = 'behind'
+GIT_UPDATE    = 'update available'   # remote has commits that aren't in the local object store
+GIT_AHEAD     = 'ahead'
+GIT_DIVERGED  = 'diverged'
+GIT_DETACHED  = 'detached HEAD'
+GIT_NO_UPSTREAM = 'no upstream branch'
+GIT_NO_BRANCH   = 'branch not on remote'
+GIT_UNREACHABLE = 'remote unreachable'
+GIT_NOT_A_REPO  = 'not a git repo'
+
+# Statuses that mean the remote has work the local checkout doesn't
+GIT_NEEDS_PULL = (GIT_BEHIND, GIT_UPDATE)
+
+
+def ament_src_dir():
+    """
+    Path of the ROS2 workspace src directory.
+
+    Honors STRETCH_AMENT_WS, then the sourced workspace (COLCON_PREFIX_PATH),
+    then falls back to ~/ament_ws.
+    """
+    ws = os.environ.get('STRETCH_AMENT_WS', '')
+    if not ws:
+        prefix = os.environ.get('COLCON_PREFIX_PATH', '').split(':')[0]
+        ws = os.path.dirname(prefix) if prefix else ''
+    if not ws:
+        ws = os.path.expanduser('~/ament_ws')
+    return os.path.join(os.path.expanduser(ws), 'src')
+
+
+def _git(repo, *cmd, timeout=GIT_TIMEOUT_S):
+    """
+    Run a git command in `repo`. Returns (ok, stdout-stripped).
+
+    Credential and host-key prompts are disabled so an unauthenticated remote
+    fails immediately instead of blocking the check on stdin.
+    """
+    env = dict(os.environ,
+               GIT_TERMINAL_PROMPT='0',
+               GIT_ASKPASS='',
+               SSH_ASKPASS='',
+               GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new')
+    try:
+        res = subprocess.run(['git', '-C', repo, *cmd],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True, timeout=timeout, env=env)
+        return res.returncode == 0, res.stdout.strip()
+    except Exception:
+        return False, ''
+
+
+def check_repo_git_status(repo):
+    """
+    Report the git state of a single workspace repo, and whether the remote has
+    a newer commit than the local checkout.
+
+    Read-only: queries the remote with `git ls-remote` rather than fetching, so
+    nothing in the repo is modified.
+
+    Returns a dict with name, branch, sha, dirty, status, detail and command.
+    """
+    out = {'name': os.path.basename(repo.rstrip('/')), 'branch': '', 'sha': '',
+           'dirty': False, 'status': GIT_NOT_A_REPO, 'detail': '', 'command': None}
+
+    ok, _ = _git(repo, 'rev-parse', '--git-dir')
+    if not ok:
+        return out
+
+    ok, out['sha'] = _git(repo, 'rev-parse', '--short', 'HEAD')
+    if not ok:
+        out['detail'] = 'no commits'
+        return out
+
+    _, porcelain = _git(repo, 'status', '--porcelain')
+    out['dirty'] = bool(porcelain)
+
+    _, branch = _git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')
+    out['branch'] = branch
+
+    if branch == 'HEAD':
+        out['status'] = GIT_DETACHED
+        return out
+
+    ok, upstream = _git(repo, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
+    if not ok or '/' not in upstream:
+        out['status'] = GIT_NO_UPSTREAM
+        return out
+
+    remote, remote_branch = upstream.split('/', 1)
+    ok, ls = _git(repo, 'ls-remote', '--heads', remote, remote_branch)
+    if not ok:
+        out['status'] = GIT_UNREACHABLE
+        out['detail'] = f'could not query {remote}'
+        return out
+    if not ls:
+        # The remote answered but has no such branch (deleted upstream, or never pushed)
+        out['status'] = GIT_NO_BRANCH
+        out['detail'] = f'{upstream} no longer exists'
+        return out
+
+    remote_sha = ls.split()[0]
+    _, local_sha = _git(repo, 'rev-parse', 'HEAD')
+
+    if remote_sha == local_sha:
+        out['status'] = GIT_OK
+        return out
+
+    # The remote commit is only comparable if it's already in the local object
+    # store (i.e. someone has fetched since it was pushed). If it isn't, the
+    # remote is simply ahead of anything we know about.
+    have_remote, _ = _git(repo, 'cat-file', '-e', f'{remote_sha}^{{commit}}')
+    if not have_remote:
+        out['status'] = GIT_UPDATE
+        out['detail'] = f'{upstream} at {remote_sha[:7]}'
+        out['command'] = f'git -C {repo} pull'
+        return out
+
+    behind, _ = _git(repo, 'merge-base', '--is-ancestor', local_sha, remote_sha)
+    ahead, _  = _git(repo, 'merge-base', '--is-ancestor', remote_sha, local_sha)
+    if behind:
+        _, n = _git(repo, 'rev-list', '--count', f'{local_sha}..{remote_sha}')
+        out['status'] = GIT_BEHIND
+        out['detail'] = f'{n} commit(s) behind {upstream}'
+        out['command'] = f'git -C {repo} pull'
+    elif ahead:
+        _, n = _git(repo, 'rev-list', '--count', f'{remote_sha}..{local_sha}')
+        out['status'] = GIT_AHEAD
+        out['detail'] = f'{n} unpushed commit(s) vs {upstream}'
+    else:
+        _, n_behind = _git(repo, 'rev-list', '--count', f'{local_sha}..{remote_sha}')
+        _, n_ahead  = _git(repo, 'rev-list', '--count', f'{remote_sha}..{local_sha}')
+        out['status'] = GIT_DIVERGED
+        out['detail'] = f'{n_ahead} ahead / {n_behind} behind {upstream}'
+
+    return out
+
+
+def check_workspace_repos():
+    """
+    Check every repo in the ROS2 workspace src directory, concurrently.
+
+    Returns (src_dir, [status dicts sorted by name]). The list is empty if the
+    workspace directory doesn't exist.
+    """
+    src = ament_src_dir()
+    if not os.path.isdir(src):
+        return src, []
+
+    repos = sorted(os.path.join(src, d) for d in os.listdir(src)
+                   if os.path.isdir(os.path.join(src, d)))
+    if not repos:
+        return src, []
+
+    try:
+        with ThreadPoolExecutor(max_workers=min(8, len(repos))) as pool:
+            results = list(pool.map(check_repo_git_status, repos))
+    except Exception:
+        results = [check_repo_git_status(p) for p in repos]
+
+    return src, sorted(results, key=lambda x: x['name'].lower())
+
+
+def print_workspace_repos(repos, indent=4):
+    """Print one line per workspace repo: branch, sha and update state."""
+    col = max(len(x['name']) for x in repos)
+    pad = ' ' * indent
+    for x in repos:
+        if x['status'] == GIT_NOT_A_REPO:
+            click.secho(f'{pad}{x["name"]:<{col}} : {GIT_NOT_A_REPO}', fg='white')
+            continue
+
+        where = f'{x["branch"]} @ {x["sha"]}' if x['branch'] else f'@ {x["sha"]}'
+        if x['dirty']:
+            where += ' *'
+
+        if x['status'] in GIT_NEEDS_PULL:
+            click.secho(f'{pad}{x["name"]:<{col}} : {where}', fg='white', nl=False)
+            note = x['detail'] or x['status']
+            click.secho(f'  (Update Available: {note})', fg='yellow', bold=True)
+        elif x['status'] == GIT_OK:
+            click.secho(f'{pad}{x["name"]:<{col}} : {where}  (up to date)', fg='white')
+        else:
+            detail = f' — {x["detail"]}' if x['detail'] else ''
+            click.secho(f'{pad}{x["name"]:<{col}} : {where}  ({x["status"]}{detail})', fg='white')
+
+    if any(x['dirty'] for x in repos):
+        print_info('* = uncommitted local changes', indent=indent)
+
+
+def check_repos():
+    """Standalone --repos mode: report the git state of every workspace repo."""
+    print_section('ROS2 Workspace Repos')
+
+    src, repos = check_workspace_repos()
+    print_info(f'Workspace: {src}', indent=2)
+    if not repos:
+        print_warn(f'No repos found in {src}')
+        return False
+
+    print_workspace_repos(repos)
+
+    cmds = [x['command'] for x in repos if x['command']]
+    unreachable = [x['name'] for x in repos if x['status'] == GIT_UNREACHABLE]
+    if unreachable:
+        print_warn('Could not reach the remote for: ' + ', '.join(unreachable))
+    if cmds:
+        print_section('Commands To Run')
+        click.echo()
+        for cmd in cmds:
+            click.secho(f'    {cmd}', fg='green', bold=True)
+        click.echo()
+        print_info('Rebuild after pulling:  cd ~/ament_ws && colcon build --symlink-install')
+    else:
+        click.secho('\n  All workspace repos are up to date.', fg='green', bold=True)
+
+    return not unreachable
 
 
 # ==============================================================================
@@ -119,45 +457,33 @@ def val_in_range(label, val, vmin, vmax):
 def print_software_versions():
     print_section('Software Versions')
 
-    # Always-shown core packages
-    CORE_PIP = {'hello-robot-stretch4-body', 'hello-robot-stretch4-urdf'}
-    try:
-        s4b_ver = pkg_version('hello-robot-stretch4-body')
-    except Exception:
-        s4b_ver = 'unknown'
-    try:
-        urdf_ver = pkg_version('hello-robot-stretch4-urdf')
-    except Exception:
-        urdf_ver = 'unknown'
+    core, pip_extras = discover_pip_packages()
     py_ver = f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'
 
-    print_info(f'hello-robot-stretch4-body : {s4b_ver}')
-    print_info(f'hello-robot-stretch4-urdf : {urdf_ver}')
+    # Ask PyPI (once, concurrently) which hello-robot-* packages have newer releases
+    updates, pypi_reachable = check_pypi_updates({**core, **pip_extras})
+
+    print_version_info(f'hello-robot-stretch4-body : {core["hello-robot-stretch4-body"]}',
+                       updates.get('hello-robot-stretch4-body'))
+    print_version_info(f'hello-robot-stretch4-urdf : {core["hello-robot-stretch4-urdf"]}',
+                       updates.get('hello-robot-stretch4-urdf'))
     print_info(f'Python                    : {py_ver}')
 
     ros_distro = os.environ.get('ROS_DISTRO', '')
     if ros_distro:
         print_info(f'ROS2 Distro               : {ros_distro}')
 
-    # Additional pip packages — auto-discovered by name keyword
-    try:
-        from importlib.metadata import distributions as _distributions
-        pip_extras = {}
-        for dist in _distributions():
-            name = (dist.metadata.get('Name') or '').strip()
-            name_lc = name.lower()
-            if not name or name.lower() in {n.lower() for n in CORE_PIP}:
-                continue
-            if 'hello' in name_lc or 'stretch' in name_lc or 'hesai' in name_lc:
-                if name not in pip_extras:  # keep first occurrence
-                    pip_extras[name] = (dist.metadata.get('Version') or 'unknown').strip()
-        if pip_extras:
-            col = max(len(k) for k in pip_extras)
-            click.secho('\n  Python / pip:', fg='white', bold=True)
-            for name in sorted(pip_extras):
-                print_info(f'  {name:<{col}} : {pip_extras[name]}')
-    except Exception:
-        pass
+    if pip_extras:
+        col = max(len(k) for k in pip_extras)
+        click.secho('\n  Python / pip:', fg='white', bold=True)
+        for name in sorted(pip_extras):
+            print_version_info(f'  {name:<{col}} : {pip_extras[name]}', updates.get(name))
+
+    if not pypi_reachable:
+        print_warn('Could not reach PyPI — update availability not checked')
+    elif updates:
+        print_info(f'Update with: {PIP_UPDATE_CMD} ' + ' '.join(sorted(updates)))
+        print_info('Run with --check_updates for pip + firmware update commands')
 
     # ROS2 packages — auto-discovered via AMENT_PREFIX_PATH
     try:
@@ -188,6 +514,14 @@ def print_software_versions():
     except Exception:
         pass
 
+    # ROS2 workspace repos — git branch/sha and whether the remote is ahead
+    src, repos = check_workspace_repos()
+    if repos:
+        click.secho(f'\n  ROS2 Workspace ({src}):', fg='white', bold=True)
+        print_workspace_repos(repos, indent=4)
+        if any(x['command'] for x in repos):
+            print_info('Run with --repos for the git commands to update them')
+
 
 def check_usb_devices():
     print_section('USB Devices')
@@ -217,18 +551,27 @@ def check_usb_devices():
     return all_pass
 
 
-def check_firmware_versions():
-    """Query installed firmware via FirmwareInstalled. Server must be stopped first."""
-    print_section('Firmware Versions')
+DEVICE_LABELS = {
+    'hello-motor-arm':    'Arm Stepper',
+    'hello-motor-lift':   'Lift Stepper',
+    'hello-motor-omni-0': 'Omni Wheel 0',
+    'hello-motor-omni-1': 'Omni Wheel 1',
+    'hello-motor-omni-2': 'Omni Wheel 2',
+    'hello-power-periph': 'Power Periph (pimu2)',
+    'hello-pixart-j3':    'PixArt J3 (line sensor)',
+    'hello-esp32':        'ESP32',
+}
 
+# Firmware version can't be read back from these boards
+UNQUERYABLE_FIRMWARE = ('hello-pixart-j3', 'hello-esp32')
+
+
+def firmware_use_device():
+    """Devices to query for firmware, honoring the SE4UNH (no arm) configuration."""
     from stretch4_body.core.device import Device
-    from stretch4_body.core.factory.firmware_installed import FirmwareInstalled
-    from stretch4_body.core.factory.firmware_recommended import FirmwareRecommended
-
     d = Device(req_params=False)
     is_unh = d.robot_params.get('robot', {}).get('model_name') == 'SE4UNH'
-
-    use_device = {
+    return {
         'hello-esp32':        True,
         'hello-motor-arm':    not is_unh,
         'hello-motor-lift':   True,
@@ -239,18 +582,19 @@ def check_firmware_versions():
         'hello-pixart-j3':    True,
     }
 
-    DEVICE_LABELS = {
-        'hello-motor-arm':    'Arm Stepper',
-        'hello-motor-lift':   'Lift Stepper',
-        'hello-motor-omni-0': 'Omni Wheel 0',
-        'hello-motor-omni-1': 'Omni Wheel 1',
-        'hello-motor-omni-2': 'Omni Wheel 2',
-        'hello-power-periph': 'Power Periph (pimu2)',
-        'hello-pixart-j3':    'PixArt J3 (line sensor)',
-        'hello-esp32':        'ESP32',
-    }
 
-    # Suppress all log/print output while querying firmware
+def query_firmware(use_device):
+    """
+    Query installed and recommended firmware with all SDK log/print output suppressed.
+    The robot server must be stopped first (exclusive USB access).
+
+    Returns (fw_installed, fw_recommended, error_str). fw_installed is None if the
+    query failed; fw_recommended is None if the available-firmware lookup failed
+    (e.g. no internet).
+    """
+    from stretch4_body.core.factory.firmware_installed import FirmwareInstalled
+    from stretch4_body.core.factory.firmware_recommended import FirmwareRecommended
+
     logging.disable(logging.CRITICAL)
     _old_stdout, _old_stderr = sys.stdout, sys.stderr
     sys.stdout = sys.stderr = io.StringIO()
@@ -259,14 +603,25 @@ def check_firmware_versions():
     except Exception as e:
         sys.stdout, sys.stderr = _old_stdout, _old_stderr
         logging.disable(logging.NOTSET)
-        print_warn(f'Could not query firmware: {e}')
-        return True
+        return None, None, str(e)
     try:
         fw_recommended = FirmwareRecommended(use_device, installed=fw_installed)
     except Exception:
         fw_recommended = None
     sys.stdout, sys.stderr = _old_stdout, _old_stderr
     logging.disable(logging.NOTSET)
+    return fw_installed, fw_recommended, None
+
+
+def check_firmware_versions():
+    """Query installed firmware via FirmwareInstalled. Server must be stopped first."""
+    print_section('Firmware Versions')
+
+    use_device = firmware_use_device()
+    fw_installed, fw_recommended, err = query_firmware(use_device)
+    if fw_installed is None:
+        print_warn(f'Could not query firmware: {err}')
+        return True
 
     all_pass = True
     for dev_name, enabled in use_device.items():
@@ -280,7 +635,7 @@ def check_firmware_versions():
             continue
 
         # ESP32 and PixArt J3 don't expose queryable firmware versions
-        if dev_name in ('hello-pixart-j3', 'hello-esp32'):
+        if dev_name in UNQUERYABLE_FIRMWARE:
             dev_present = os.path.exists(f'/dev/{dev_name}')
             status = 'present' if dev_present else 'not present'
             print_result(dev_present, f'{label}: {status} (firmware version not queryable)')
@@ -318,6 +673,161 @@ def check_firmware_versions():
             print_info(detail)
 
     return all_pass
+
+
+def collect_firmware_updates():
+    """
+    Delegate the firmware check to FirmwareRecommended — the same report and
+    recommendation that `REx_firmware_updater --recommended` produces — and capture
+    its output. The robot server must be stopped before calling this.
+
+    Returns a dict with:
+      table   : the recommended-firmware table as printed by the firmware tooling
+      command : the 'REx_firmware_updater --install ...' line it recommends, or None
+      error   : message if the check could not be run, else None
+    """
+    out = {'table': '', 'command': None, 'error': None}
+
+    use_device = firmware_use_device()
+    fw_installed, fw_recommended, err = query_firmware(use_device)
+    if fw_installed is None:
+        out['error'] = f'Could not query firmware: {err}'
+        return out
+    if fw_recommended is None:
+        out['error'] = ('Could not fetch the available firmware list — '
+                        'check the robot\'s internet connection')
+        return out
+
+    # Capture the tool's own report instead of re-deriving which boards need flashing
+    logging.disable(logging.CRITICAL)
+    _old_stdout, _old_stderr = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = buf = io.StringIO()
+    try:
+        fw_recommended.pretty_print()
+        fw_recommended.print_recommended_args()
+    except Exception as e:
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        logging.disable(logging.NOTSET)
+        out['error'] = f'Firmware recommendation failed: {e}'
+        return out
+    finally:
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        logging.disable(logging.NOTSET)
+
+    # print_recommended_args() emits 'REx_firmware_updater --install  --pimu ...' when an
+    # upgrade is recommended, or 'Firmware upgrade not necessary' when nothing is needed.
+    SKIP = ('Run recommended command', 'Collecting information', 'Firmware upgrade not necessary')
+    table = []
+    for line in buf.getvalue().splitlines():
+        stripped = line.strip()
+        if stripped.startswith('REx_firmware_updater'):
+            out['command'] = ' '.join(stripped.split())
+            continue
+        if stripped.startswith(SKIP):
+            continue
+        line = line.rstrip()
+        if not line and (not table or not table[-1]):
+            continue  # drop leading blanks and collapse blank runs
+        table.append(line)
+    out['table'] = '\n'.join(table).rstrip()
+
+    return out
+
+
+def _print_pip_row(name, current, latest, col, checked=True):
+    """Print one 'package : current → latest' row."""
+    if latest:
+        click.secho(f'    {name:<{col}} : {current}  →  {latest}', fg='yellow', nl=False)
+        click.secho('  (Update Available)', fg='yellow', bold=True)
+    else:
+        print_info(f'{name:<{col}} : {current}' + ('  (up to date)' if checked else '  (not checked)'))
+
+
+def check_updates():
+    """
+    Report pip and firmware updates, then print the exact commands to apply them.
+    Stops and restarts the robot server, since firmware queries need the USB devices.
+
+    Returns True if both checks completed — not whether updates were found.
+    """
+    click.secho('\n======== Update Check ========', fg='cyan', bold=True)
+
+    # ---- pip packages ------------------------------------------------------
+    print_section('Python / pip Packages')
+    core, extras = discover_pip_packages()
+    installed   = {**core, **extras}
+    hello_pkgs  = sorted(n for n in installed if n.lower().startswith('hello-robot-'))
+    pip_updates, pypi_reachable = check_pypi_updates(installed)
+
+    if not hello_pkgs:
+        print_warn('No hello-robot-* packages found in this environment')
+    else:
+        col = max(len(n) for n in hello_pkgs)
+        for name in hello_pkgs:
+            current = installed[name]
+            checked = pypi_reachable and current not in ('unknown', '')
+            _print_pip_row(name, current, pip_updates.get(name), col, checked)
+    if not pypi_reachable:
+        print_warn('Could not reach PyPI — pip update check incomplete')
+
+    # ---- ROS2 workspace repos ---------------------------------------------
+    print_section('ROS2 Workspace Repos')
+    src, repos = check_workspace_repos()
+    git_unreachable = []
+    if not repos:
+        print_warn(f'No repos found in {src}')
+    else:
+        print_info(f'Workspace: {src}', indent=2)
+        print_workspace_repos(repos)
+        git_unreachable = [x['name'] for x in repos if x['status'] == GIT_UNREACHABLE]
+        if git_unreachable:
+            print_warn('Could not reach the remote for: ' + ', '.join(git_unreachable))
+
+    # ---- firmware ----------------------------------------------------------
+    print_section('Firmware')
+    click.secho('  Firmware queries need exclusive access to the USB devices.', fg='yellow')
+    _kill_server()
+    fw = collect_firmware_updates()
+    _restart_server()
+
+    if fw['error']:
+        print_warn(fw['error'])
+    else:
+        # Printed unindented — the table is already 110 columns wide
+        for line in fw['table'].splitlines():
+            click.secho(line, fg='white')
+
+    # ---- copy-paste commands ----------------------------------------------
+    print_section('Commands To Run')
+    cmds = []
+    if pip_updates:
+        cmds.append(f'{PIP_UPDATE_CMD} ' + ' '.join(sorted(pip_updates)))
+    if fw['command']:
+        cmds.append(fw['command'])
+    git_cmds = [x['command'] for x in repos if x['command']]
+
+    if cmds or git_cmds:
+        click.echo()
+        for cmd in cmds:
+            click.secho(f'    {cmd}', fg='green', bold=True)
+        if git_cmds:
+            if cmds:
+                click.echo()
+            for cmd in git_cmds:
+                click.secho(f'    {cmd}', fg='green', bold=True)
+            click.secho('    cd ~/ament_ws && colcon build --symlink-install', fg='green', bold=True)
+        click.echo()
+        if len(cmds) > 1:
+            print_info('Run them in this order — a newer stretch4_body may recommend newer firmware.')
+        print_info('Re-run with --check_updates afterwards to confirm.')
+    elif not pypi_reachable or fw['error'] or git_unreachable:
+        print_warn('No updates found, but the check was incomplete (see warnings above)')
+    else:
+        click.secho('\n  Everything is up to date — no commands to run.', fg='green', bold=True)
+    click.echo()
+
+    # Exit status reflects whether the checks ran, not whether updates were found
+    return pypi_reachable and not fw['error'] and not git_unreachable
 
 
 def check_power_periph():
@@ -1148,6 +1658,15 @@ _REQUIRE_SERVER = {
 def main():
     global r
     results = {}
+
+    if args.repos:
+        ok = check_repos()
+        click.echo()
+        sys.exit(0 if ok else 1)
+
+    if args.check_updates:
+        ok = check_updates()
+        sys.exit(0 if ok else 1)
 
     if args.firmware:
         click.secho('\n---- Firmware Check Mode ----', fg='cyan', bold=True)
