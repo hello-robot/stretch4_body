@@ -12,6 +12,7 @@ from pathlib import Path
 import datetime
 import shutil
 from dataclasses import dataclass
+from stretch4_urdf import record_joint_calibration, get_urdf_from_robot_params
 
 
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
@@ -1430,7 +1431,11 @@ class CalibrateLidarToCamera:
         with open(out_yaml, "w") as f:
             yaml.dump(existing_data, f, default_flow_style=False)
             
-        print(f"Saved transform {l_key} <-> {c_key} to {out_yaml}")
+            
+            
+        print(f"Saved transform {key} to {out_yaml}")
+
+        self.record_to_centralized_yaml()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             poses_file = str(
@@ -1446,6 +1451,43 @@ class CalibrateLidarToCamera:
                     level="INFO",
                 ),
             )
+
+    def record_to_centralized_yaml(self):
+        """Write the calibrated camera transform to the centralized stretch_calibration_values.yaml."""
+        try:
+            urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+            from yourdfpy import URDF
+            import io
+            urdf = URDF.load(io.StringIO(urdf_contents))
+            
+            def get_nominal_transform(joint_name):
+                for joint in urdf.robot.joints:
+                    if joint.name == joint_name:
+                        return joint.origin
+                return np.eye(4)
+
+            camera_joint_name = f"camera_{self.camera_name}_joint"
+            child_link_name = f"camera_{self.camera_name}_link"
+            camera_optical_joint_name = f"camera_{self.camera_name}_optical_joint"
+
+            T_head_lidar = get_nominal_transform(f"lidar_{self.lidar_name}_joint")
+
+            # T_head_camera_optical = T_head_lidar * T_camera_optical_to_lidar
+            # T_head_camera_optical = T_head_lidar * inv(T_lidar_to_camera_optical)
+            T_camera_link_to_optical = get_nominal_transform(camera_optical_joint_name)
+            T_head_camera_optical = T_head_lidar @ np.linalg.inv(self.current_average_transform)
+            T_head_camera = T_head_camera_optical @ np.linalg.inv(T_camera_link_to_optical)
+
+            # T_head_camera = T_head_lidar * T_camera_to_lidar
+            # T_head_camera = T_head_lidar * inv(T_lidar_to_camera)
+            # T_head_camera = T_head_lidar @ np.linalg.inv(self.current_average_transform)
+            
+            xyz = " ".join([f"{x:.18f}" for x in T_head_camera[:3, 3]])
+            rpy = " ".join([f"{x:.18f}" for x in Rotation.from_matrix(T_head_camera[:3, :3]).as_euler('xyz')])
+            
+            record_joint_calibration(camera_joint_name, xyz, rpy, "head_link", child_link_name, os.environ.get("HELLO_FLEET_ID", ""))
+        except Exception as e:
+            print(f"Warning: Failed to record joint calibration to centralized YAML: {e}")
 
 
 def calibrate_extrinsics_camera_lidar(
@@ -1549,6 +1591,7 @@ def calibrate_extrinsics_camera_lidar(
         help="Replay from a specific timestamp folder inside calibration_lidar_points",
     )
     parser.add_argument(
+        "-last",
         "--replay_last",
         action="store_true",
         help="Replay from the last recorded timestamp folder inside calibration_lidar_points",
