@@ -331,7 +331,7 @@ class RoutinesClient(SubsystemClient):
         """
         Run a specified routine.
         
-        do_push & do_pull are useful to disable when you're running Stretch Body II
+        do_push & do_pull are useful to disable when you're running Stretch4 Body
         in a multithreaded environment and don't want threads that aren't "main thread"
         to push_command() or pull_status(). E.g. in the ROS2 driver, homing and stowing
         are services by callback threads, so do_push/pull are set to False.
@@ -351,9 +351,10 @@ class RoutinesClient(SubsystemClient):
         Returns
         -------
         bool, rid
-            True if routine completed, False if either:
+            True if routine succeeded, False if either:
              - input arg wait_on_completion=False
              - or timed out before routine completed
+             - or routine completed but failed
             rid is the id of the routine that was/is running
         """
         rid=self._queue_command(subsystem="routines", command=routine_name)
