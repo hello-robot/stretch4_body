@@ -27,7 +27,7 @@ dependencies = [
     "colorama",
     "open3d",
     "psutil",
-    "opencv-contrib-python",
+    "opencv-contrib-python==4.14.0.94",
     "aioserial",
     "pyserial",
     "pyusb",
