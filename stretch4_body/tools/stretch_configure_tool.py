@@ -272,27 +272,8 @@ def main(quick, auto_detect, add_user_tool):
             print('Waiting for stretch_body_server to come back online...')
 
         # Reload RobotParams in-place to ensure the new tool settings are loaded from disk
-        import stretch4_body.core.robot_params
-        
-        # Save old class reference
-        old_robot_params_class = stretch4_body.core.robot_params.RobotParams
-        
-        # Reload the module to parse new yaml
-        importlib.reload(stretch4_body.core.robot_params)
-        
-        # Get the new reloaded class and its loaded params
-        new_robot_params_class = stretch4_body.core.robot_params.RobotParams
-        new_user, new_robot = new_robot_params_class.get_params()
-        
-        # Update the old class's dictionaries in-place so all existing references get the new params!
-        old_user, old_robot = old_robot_params_class.get_params()
-        old_user.clear()
-        old_user.update(new_user)
-        old_robot.clear()
-        old_robot.update(new_robot)
-        
-        # Also restore the module reference to the old class to be safe
-        stretch4_body.core.robot_params.RobotParams = old_robot_params_class
+        from stretch4_body.core.robot_params import RobotParams
+        RobotParams.reload()
 
         if direct:
             from stretch4_body.robot.robot import Robot as RobotClient

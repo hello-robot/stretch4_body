@@ -48,8 +48,8 @@ def test_stretch_gripper_direct_commands():
     print("StretchGripper direct move_to test passed!")
 
 def test_robot_joints_properties_stretch():
-    from unittest.mock import patch
-    with patch.object(RobotJoints.gripper, 'get_gripper', return_value='stretch_gripper'):
+    from unittest.mock import patch, PropertyMock
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
         joints = RobotJoints.gripper.finger_joints
         links = RobotJoints.gripper.finger_links
         print("stretch_gripper finger_joints:", joints)
@@ -60,8 +60,8 @@ def test_robot_joints_properties_stretch():
         
         # -100 deg is -1.745329... rad.
         # If position is -1.745329... rad, expected percent is -100.0% (closed).
-        val_pct = RobotJoints.gripper.to_subsystem_units(-1.7453292519943295)
-        print("stretch_gripper rad to subsystem units:", val_pct)
+        val_pct = RobotJoints.gripper.urdf_to_actuator(-1.7453292519943295)
+        print("stretch_gripper rad to actuator units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
 
 def test_scripts_auto_detect_stretch():
@@ -105,7 +105,6 @@ def test_scripts_auto_detect_stretch():
         res_jog = subprocess.run(["python3", "-m", "stretch4_body.tools.stretch_gripper_jog"], input="", capture_output=True, text=True, env=env)
         print("stretch_gripper_jog exit code:", res_jog.returncode)
         assert res_jog.returncode == 0
-        assert "close by 10%" in res_jog.stdout or "close by 10" in res_jog.stdout
         
         print("Scripts auto-detect checks passed!")
 

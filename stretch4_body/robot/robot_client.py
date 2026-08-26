@@ -9,8 +9,6 @@ from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 import importlib
-from stretch4_body.subsystem.end_of_arm.stretch_gripper import GripperConversion
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
 from stretch4_body.core.hello_utils import rad_to_deg, deg_to_rad
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
@@ -1238,13 +1236,16 @@ class StretchGripperClient(WristJointClient):
                                              'finger_rad': 0.0,
                                              'finger_effort': 0.0,
                                              'finger_vel': 0.0}
-        self.gripper_conversion = GripperConversion(self.params)
+        from stretch4_body.utils.tool_metadata import StretchGripperMetadata
+        self.tool_metadata = StretchGripperMetadata()
 
 class ParallelGripperClient(WristJointClient):
     """ Client for the parallel gripper. """
     def __init__(self, parent=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
-        open_m = parallel_gripper_servo_rad_to_mm(deg_to_rad(self.params['range_deg'][1]), self.params) / 1000.0
+        from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+        self.tool_metadata = ParallelGripperMetadata()
+        open_m = self.tool_metadata.actuator_to_aperture(deg_to_rad(self.params['range_deg'][1]))
         self.poses = {'zero': 0.0,
                       'open': open_m,
                       'mid': open_m / 2.0,
