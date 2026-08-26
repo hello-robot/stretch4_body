@@ -1120,6 +1120,8 @@ class WristJointClient(SubsystemClient):
         a_r : float, optional
             Acceleration limit (rad/s^2).
         """
+        self.logger.error(f"Cannot send movement command. Joint {self.joint_name} does not support set_velocity.")
+        return False
         if not self.is_homed():
             self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
             return False
