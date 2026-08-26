@@ -93,3 +93,14 @@ You can also restrict the import range using `--start_seconds_offset` and/or `--
 # Skip the first 10 seconds and stop 20 seconds before the end of the imported log
 stretch_status --import ~/Desktop/stretch_status_2026-05-31.zip --rerun --start_seconds_offset 10 --end_seconds_offset 20
 ```
+
+### 6. Custom 2D X-Y Scatter Plots in Rerun
+To plot custom coordinates (such as motor current on the Y-axis against velocity on the X-axis) as a 2D scatter plot in Rerun, use `--fields_x` and `--fields_y`:
+```bash
+stretch_status \
+  --fields robot.omnibase.x_vel robot.omnibase.y_vel robot.omnibase.theta_vel \
+  --fields_y robot.omnibase.wheel_0.current robot.omnibase.wheel_1.current robot.omnibase.wheel_2.current \
+  --fields_x robot.omnibase.wheel_0.vel robot.omnibase.wheel_1.vel robot.omnibase.wheel_2.vel \
+  --rate 1 --rerun
+```
+*(Both `--fields_x` and `--fields_y` must be of matching length, and refer to valid scalar leaf fields).*
