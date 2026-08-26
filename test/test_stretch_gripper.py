@@ -60,8 +60,8 @@ def test_robot_joints_properties_stretch():
         
         # -100 deg is -1.745329... rad.
         # If position is -1.745329... rad, expected percent is -100.0% (closed).
-        val_pct = RobotJoints.gripper.to_subsystem_units(-1.7453292519943295)
-        print("stretch_gripper rad to subsystem units:", val_pct)
+        val_pct = RobotJoints.gripper.urdf_to_actuator(-1.7453292519943295)
+        print("stretch_gripper rad to actuator units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
 
 def test_scripts_auto_detect_stretch():

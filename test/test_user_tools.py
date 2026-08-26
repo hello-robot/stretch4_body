@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import unittest
 import shutil
 
@@ -42,12 +41,9 @@ class TestUserTools(unittest.TestCase):
 
     def test_dynamic_loading(self):
         # Reload robot params module to trigger scanning
-        for mod in list(sys.modules.keys()):
-            if 'robot_params' in mod:
-                del sys.modules[mod]
-            
         from stretch4_body.core.robot_params import RobotParams
-        
+        RobotParams.reload()
+
         # Verify the custom tool is registered
         self.assertIn(self.tool_name, RobotParams._robot_params['supported_eoa'])
         self.assertEqual(RobotParams._robot_params[self.tool_name]['py_class_name'], 'UserEoaTesttool')
@@ -74,12 +70,9 @@ class TestUserTools(unittest.TestCase):
             f.write("class UserEoaSplitToolGripper:\n    def __init__(self):\n        pass\n")
             
         # Reload robot params module to trigger scanning
-        for mod in list(sys.modules.keys()):
-            if 'robot_params' in mod:
-                del sys.modules[mod]
-                
         from stretch4_body.core.robot_params import RobotParams
-        
+        RobotParams.reload()
+
         try:
             # Verify the split tool is registered with end_of_arm.py detected as primary
             self.assertIn(split_tool_name, RobotParams._robot_params['supported_eoa'])
@@ -129,12 +122,8 @@ client_module_name: user_eoa_validtool_client
 client_class_name: UserEoaValidtoolClient
 """)
 
-        for mod in list(sys.modules.keys()):
-            if 'robot_params' in mod:
-                del sys.modules[mod]
-
         from stretch4_body.core.robot_params import RobotParams
-        _user_params, _robot_params = RobotParams.get_params()
+        RobotParams.reload()
 
         from stretch4_body.utils.tool_metadata import get_tool_metadata, UserToolMetadata
 
@@ -166,11 +155,8 @@ client_class_name: UserEoaValidtoolClient
         with open(os.path.join(invalid_tool_dir, "tool_params.yaml"), 'w') as f:
             f.write("tool_joints: ['joint_a']\ntool_links: ['link_a']\nclient_module_name: dummy\nclient_class_name: Dummy\n")
 
-        for mod in list(sys.modules.keys()):
-            if 'robot_params' in mod:
-                del sys.modules[mod]
-
         from stretch4_body.core.robot_params import RobotParams
+        RobotParams.reload()
         from stretch4_body.utils.tool_metadata import get_tool_metadata, ToolConfigurationError
 
         try:

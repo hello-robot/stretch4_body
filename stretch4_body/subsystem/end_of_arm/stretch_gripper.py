@@ -1,7 +1,6 @@
 import threading
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
 import stretch4_body.core.hello_utils as hu
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import GripperConversion
 
 
 class StretchGripper(FeetechSMHello):
@@ -23,8 +22,9 @@ class StretchGripper(FeetechSMHello):
                       'open': self.pct_max_open,
                       'close': -100}
 
-        self.gripper_conversion = GripperConversion(self.params)
-        self.status['gripper_conversion'] = self.gripper_conversion.get_status(self.status)
+        from stretch4_body.utils.tool_metadata import StretchGripperMetadata
+        self.tool_metadata = StretchGripperMetadata()
+        self.status['gripper_conversion'] = self.tool_metadata.status_to_metadata(self.status)
 
     def startup(self):
         return FeetechSMHello.startup(self)
@@ -69,7 +69,7 @@ class StretchGripper(FeetechSMHello):
     def pull_status(self,data=None):
         FeetechSMHello.pull_status(self,data)
         self.status['pos_pct']=self.world_rad_to_pct(self.status['pos'])
-        self.status['gripper_conversion']=self.gripper_conversion.get_status(self.status)
+        self.status['gripper_conversion']=self.tool_metadata.status_to_metadata(self.status)
 
     def pct_to_world_rad(self,pct):
         return hu.deg_to_rad(self.params['range_deg'][0])*pct/-100

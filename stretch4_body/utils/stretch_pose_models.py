@@ -194,7 +194,7 @@ class RobotJoints(Enum):
         if self.name == "gripper" and self.gripper_model:
             client = self.gripper_client
             if client and hasattr(client, "poses"):
-                return {k: self.subsystem_to_urdf(v) for k, v in client.poses.items()}
+                return {k: self.actuator_to_urdf(v) for k, v in client.poses.items()}
         return None
 
     @property
@@ -202,11 +202,6 @@ class RobotJoints(Enum):
         """Returns (min, max) in actuator command units for this joint, or None if no tool model."""
         model = self.tool_model
         return model.actuator_command_range if model else None
-
-    @property
-    def subsystem_range(self) -> tuple[float, float] | None:
-        """Returns (close, open) in subsystem units for this joint, or None if no gripper model."""
-        return self.actuator_command_range
 
     @property
     def urdf_range(self) -> tuple[float, float] | None:
@@ -293,40 +288,32 @@ class RobotJoints(Enum):
             )
         return model
 
-    def to_subsystem_units(self, position: float) -> float:
-        """Alias for `urdf_to_subsystem`, kept for non-gripper joints where "subsystem"/"standard" are the more familiar terms."""
-        return self.urdf_to_subsystem(position)
-
-    def to_standard_units(self, position: float) -> float:
-        """Alias for `subsystem_to_urdf`, kept for non-gripper joints where "subsystem"/"standard" are the more familiar terms."""
-        return self.subsystem_to_urdf(position)
-
-    def urdf_to_subsystem(self, urdf_units: float) -> float:
-        """Converts URDF units (radians/meters) to subsystem units (percentage/meters); unchanged if no gripper model."""
+    def urdf_to_actuator(self, urdf_units: float) -> float:
+        """Converts URDF units (radians/meters) to actuator units (percentage/meters); unchanged if no gripper model."""
         if self.gripper_model:
             model = self.gripper_model
-            return model.urdf_to_subsystem(urdf_units)
+            return model.urdf_to_actuator(urdf_units)
         else:
             return urdf_units
 
-    def subsystem_to_urdf(self, subsystem: float) -> float:
-        """Converts subsystem units (percentage/meters) to URDF units (radians/meters); unchanged if no gripper model."""
+    def actuator_to_urdf(self, actuator: float) -> float:
+        """Converts actuator units (percentage/meters) to URDF units (radians/meters); unchanged if no gripper model."""
         model = self.gripper_model
-        return model.subsystem_to_urdf(subsystem) if model else subsystem
+        return model.actuator_to_urdf(actuator) if model else actuator
 
     # Only relevant for the gripper joint
 
-    def normalized_to_subsystem(self, normalized: float) -> float:
-        """Converts a normalized scale (0.0=closed, 1.0=open) to subsystem units."""
+    def normalized_to_actuator(self, normalized: float) -> float:
+        """Converts a normalized scale (0.0=closed, 1.0=open) to actuator units."""
         return self.get_gripper_model(
-            "normalized_to_subsystem"
-        ).normalized_to_subsystem(normalized)
+            "normalized_to_actuator"
+        ).normalized_to_actuator(normalized)
 
-    def subsystem_to_normalized(self, subsystem: float) -> float:
-        """Converts subsystem units to a normalized scale (0.0=closed, 1.0=open)."""
+    def actuator_to_normalized(self, actuator: float) -> float:
+        """Converts actuator units to a normalized scale (0.0=closed, 1.0=open)."""
         return self.get_gripper_model(
-            "subsystem_to_normalized"
-        ).subsystem_to_normalized(subsystem)
+            "actuator_to_normalized"
+        ).actuator_to_normalized(actuator)
 
     def urdf_to_normalized(self, urdf: float) -> float:
         """Converts URDF units to a normalized scale (0.0=closed, 1.0=open)."""
