@@ -1120,6 +1120,8 @@ class WristJointClient(SubsystemClient):
         a_r : float, optional
             Acceleration limit (rad/s^2).
         """
+        self.logger.error(f"Cannot send movement command. Joint {self.joint_name} does not support set_velocity.")
+        return False
         if not self.is_homed():
             self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
             return False
@@ -1371,6 +1373,8 @@ class EndOfArmClient(SubsystemClient):
         a_r : float, optional
             Acceleration limit (rad/s^2).
         """
+        self.logger.error(f"Cannot send movement command. Joint {joint} does not support set_velocity.")
+        return False
         if joint not in self.joints:
             self.logger.error(f"Joint {joint} not found in end of arm tool.")
             return False
