@@ -210,11 +210,13 @@ def stream_rgbd(camera_type: RGBCameras, use_left_lidar:bool=True, use_right_lid
     T_base_to_cam = np.linalg.inv(T_cam_to_base)
 
     for lidar_frame, camera_frame in _lidar_camera_stream():
+        if lidar_frame is None:
+            continue
         left_points = None
         right_points = None
         if use_left_lidar and use_right_lidar:
-            left_points = lidar_frame[0].points if lidar_frame[0] is not None else None
-            right_points = lidar_frame[1].points if lidar_frame[1] is not None else None
+            left_points = lidar_frame[0].points
+            right_points = lidar_frame[1].points
         elif use_left_lidar:
             left_points = lidar_frame.points
         elif use_right_lidar:
@@ -273,11 +275,13 @@ def stream_rgbd_synced(camera_type: RGBCameras, use_left_lidar:bool=True, use_ri
     executor = ThreadPoolExecutor(max_workers=4)
 
     for lidar_frame, camera_frame in _lidar_camera_stream():
+        if lidar_frame is None:
+            continue
         left_points = None
         right_points = None
         if use_left_lidar and use_right_lidar:
-            left_points = lidar_frame[0].points if lidar_frame[0] is not None else None
-            right_points = lidar_frame[1].points if lidar_frame[1] is not None else None
+            left_points = lidar_frame[0].points
+            right_points = lidar_frame[1].points
         elif use_left_lidar:
             left_points = lidar_frame.points
         elif use_right_lidar:
