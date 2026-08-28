@@ -61,7 +61,7 @@ def get_lidar_stream(use_left_lidar:bool=True, use_right_lidar:bool=True, use_ro
         
         raise ValueError("Must specify use_right and/or use_left.")
         
-    from pyhesai_wrapper import stream_lidar_left, stream_lidar_right, stream_lidar_left_right
+    from stretch4_pyhesai_wrapper import stream_lidar_left, stream_lidar_right, stream_lidar_left_right
 
     if use_left_lidar and use_right_lidar:
         return stream_lidar_left_right()

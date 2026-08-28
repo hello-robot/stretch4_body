@@ -449,11 +449,11 @@ class LidarLidarCompare:
                 raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
         else:
             try:
-                from pyhesai_wrapper import stream_lidar_left, stream_lidar_right
+                from stretch4_pyhesai_wrapper import stream_lidar_left, stream_lidar_right
                 self.left_stream = ThreadedStreamWrapper(stream_lidar_left())
                 self.right_stream = ThreadedStreamWrapper(stream_lidar_right())
             except ImportError:
-                raise ImportError("pyhesai_wrapper not found. Please install it or pass `--use_ros_for_lidars`.")
+                raise ImportError("stretch4_pyhesai_wrapper not found. Please install it or pass `--use_ros_for_lidars`.")
 
     def cleanup(self):
         print("Cleaning up LidarLidarCompare...")
