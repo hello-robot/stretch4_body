@@ -652,7 +652,7 @@ class OmniBaseClient(SubsystemClient):
         """
         self._queue_command("omnibase", "rotate_by", w_r, v_r, a_r)
 
-    def set_velocity(self, vx_m, vy_m, w_r, a_m=None, a_r=None):
+    def set_velocity(self, vx_m, vy_m, w_r, a_m=None, a_r=None, stiffness=1.0):
         """
         Set the base velocity.
         
@@ -669,7 +669,7 @@ class OmniBaseClient(SubsystemClient):
         a_r : float, optional
             Rotational acceleration limit (rad/s^2).
         """
-        self._queue_command("omnibase", "set_velocity", vx_m, vy_m, w_r, a_m, a_r)
+        self._queue_command("omnibase", "set_velocity", vx_m, vy_m, w_r, a_m, a_r, stiffness=stiffness)
 
     def enable_freewheel_mode(self):
         """
