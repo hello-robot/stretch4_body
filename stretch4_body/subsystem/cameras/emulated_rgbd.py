@@ -51,9 +51,9 @@ def get_lidar_stream(use_left_lidar:bool=True, use_right_lidar:bool=True, use_ro
 
         stream_manager = StreamManager()
         if use_left_lidar and use_right_lidar:
-            def _stream_lidar_left_right():
+            def _stream_lidar_both():
                 yield from zip(stream_lidar_left(stream_manager=stream_manager), stream_lidar_right(stream_manager=stream_manager))
-            return _stream_lidar_left_right()
+            return _stream_lidar_both()
         elif use_left_lidar:
             return stream_lidar_left(stream_manager=stream_manager)
         elif use_right_lidar:
@@ -61,10 +61,10 @@ def get_lidar_stream(use_left_lidar:bool=True, use_right_lidar:bool=True, use_ro
         
         raise ValueError("Must specify use_right and/or use_left.")
         
-    from stretch4_pyhesai_wrapper import stream_lidar_left, stream_lidar_right, stream_lidar_left_right
+    from stretch4_pyhesai_wrapper import stream_lidar_left, stream_lidar_right, stream_lidar_both
 
     if use_left_lidar and use_right_lidar:
-        return stream_lidar_left_right()
+        return stream_lidar_both()
     elif use_left_lidar:
         return stream_lidar_left()
     elif use_right_lidar:
