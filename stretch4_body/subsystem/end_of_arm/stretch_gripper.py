@@ -1,6 +1,5 @@
 import threading
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
-import stretch4_body.core.hello_utils as hu
 
 
 class StretchGripper(FeetechSMHello):
@@ -50,7 +49,7 @@ class StretchGripper(FeetechSMHello):
         v_r: velocity for trapezoidal motion profile (rad/s).
         a_r: acceleration for trapezoidal motion profile (rad/s^2)
         """
-        x_r=self.pct_to_world_rad(pct)
+        x_r=self.tool_metadata.command_to_actuator(pct)
         FeetechSMHello.move_to(self,x_des=x_r, v_des=v_r, a_des=a_r)
 
 
@@ -68,14 +67,8 @@ class StretchGripper(FeetechSMHello):
 
     def pull_status(self,data=None):
         FeetechSMHello.pull_status(self,data)
-        self.status['pos_pct']=self.world_rad_to_pct(self.status['pos'])
+        self.status['pos_pct']=self.tool_metadata.actuator_to_command(self.status['pos'])
         self.status['gripper_conversion']=self.tool_metadata.status_to_metadata(self.status)
-
-    def pct_to_world_rad(self,pct):
-        return hu.deg_to_rad(self.params['range_deg'][0])*pct/-100
-
-    def world_rad_to_pct(self,r):
-        return -100*r/hu.deg_to_rad(self.params['range_deg'][0])
 
     # def step_sentry(self, robot):
     #     """This sentry attempts to prevent the gripper servo from overheating during a prolonged grasp

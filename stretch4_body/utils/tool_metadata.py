@@ -5,7 +5,7 @@ from functools import cached_property, partial
 
 from stretch4_urdf import get_joint_limits, get_urdf
 
-from stretch4_body.core.hello_utils import deg_to_rad
+from stretch4_body.core.hello_utils import deg_to_rad, rad_to_deg
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot_client import ToolJointClient, WristJointClient
 from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
@@ -21,6 +21,19 @@ class ToolMetadata(ABC):
     """
     Abstract base class defining kinematic, hardware command, and physical unit conversions
     for Stretch 4 end-of-arm tools and grippers.
+
+    Five unit tiers, ROS-facing to hardware-facing:
+      - urdf: the ROS/URDF joint value (radians or meters), as seen on JointTrajectory/JointState.
+      - command: the value this tool's own move_to()/move_by()/pose() take directly (e.g. Pct for
+        SG4, fingertip aperture in meters for PG4). This is what ROS-facing code should convert
+        into (via urdf_to_command) before calling move_to()/move_by(), and convert out of (via
+        command_to_urdf) when reading status back.
+      - actuator: the true raw servo/motor register value (radians). This is the boundary every
+        Feetech-driven joint bottoms out at -- FeetechSMHello.move_to()'s own argument -- the
+        same for every tool, gripper or not (e.g. WristYaw has no ToolMetadata and passes URDF
+        radians straight through, because for a direct-drive joint urdf IS actuator).
+      - aperture: physical fingertip opening (meters) -- client convenience.
+      - normalized: 0.0 (closed) .. 1.0 (open) -- client convenience.
     """
 
     @property
@@ -76,19 +89,24 @@ class ToolMetadata(ABC):
 
     @property
     @abstractmethod
-    def actuator_command_range(self) -> tuple[float, float]:
-        """(min_val, max_val) bounds in raw actuator/hardware command units (e.g. % for SG4, radians for PG4)."""
+    def actuator_range(self) -> tuple[float, float]:
+        """(min_val, max_val) bounds in true raw actuator/servo units (radians, for every tool)."""
+
+    @property
+    @abstractmethod
+    def command_range(self) -> tuple[float, float]:
+        """(min_val, max_val) bounds in this tool's own move_to()/move_by() command units (e.g. % for SG4, aperture meters for PG4)."""
 
     @property
     def urdf_range(self) -> tuple[float, float]:
         """(min_val, max_val) bounds in URDF/ROS coordinate units (radians or meters)."""
-        low, high = self.actuator_command_range
+        low, high = self.actuator_range
         return self.actuator_to_urdf(low), self.actuator_to_urdf(high)
 
     @property
     def aperture_range(self) -> tuple[float, float]:
         """(min_aperture, max_aperture) physical opening bounds (meters or angle)."""
-        low, high = self.actuator_command_range
+        low, high = self.actuator_range
         return self.actuator_to_aperture(low), self.actuator_to_aperture(high)
 
     @property
@@ -99,20 +117,28 @@ class ToolMetadata(ABC):
     # --- Abstract Base Conversions ---
 
     @abstractmethod
-    def urdf_to_actuator(self, urdf: float) -> float:
-        """Converts from URDF units (radians/meters) to native actuator command units."""
+    def urdf_to_command(self, urdf: float) -> float:
+        """Converts from URDF units (radians/meters) to this tool's own move_to()/move_by() command units."""
 
     @abstractmethod
-    def actuator_to_urdf(self, actuator: float) -> float:
-        """Converts from native actuator command units to URDF units (radians/meters)."""
+    def command_to_urdf(self, command: float) -> float:
+        """Converts from this tool's own move_to()/move_by() command units to URDF units (radians/meters)."""
+
+    @abstractmethod
+    def command_to_actuator(self, command: float) -> float:
+        """Converts from this tool's own move_to()/move_by() command units to true raw actuator units (radians)."""
+
+    @abstractmethod
+    def actuator_to_command(self, actuator: float) -> float:
+        """Converts from true raw actuator units (radians) to this tool's own move_to()/move_by() command units."""
 
     @abstractmethod
     def aperture_to_actuator(self, aperture: float) -> float:
-        """Converts from physical opening aperture to native actuator command units."""
+        """Converts from physical opening aperture to true raw actuator units (radians)."""
 
     @abstractmethod
     def actuator_to_aperture(self, actuator: float) -> float:
-        """Converts from native actuator command units to physical opening aperture."""
+        """Converts from true raw actuator units (radians) to physical opening aperture."""
 
     @abstractmethod
     def status_to_metadata(self, status: dict) -> dict:
@@ -134,18 +160,26 @@ class ToolMetadata(ABC):
     # --- Normalized <-> Actuator Conversions ---
 
     def normalized_to_actuator(self, normalized: float) -> float:
-        """Converts a normalized scale value (0.0=closed/min, 1.0=open/max) to native actuator units."""
-        low, high = self.actuator_command_range
+        """Converts a normalized scale value (0.0=closed/min, 1.0=open/max) to true raw actuator units (radians)."""
+        low, high = self.actuator_range
         return low + normalized * (high - low)
 
     def actuator_to_normalized(self, actuator: float) -> float:
-        """Converts native actuator units to a normalized scale value (0.0=closed/min, 1.0=open/max)."""
-        low, high = self.actuator_command_range
+        """Converts true raw actuator units (radians) to a normalized scale value (0.0=closed/min, 1.0=open/max)."""
+        low, high = self.actuator_range
         if high == low:
             return 0.0
         return (actuator - low) / (high - low)
 
     # --- Chained Layer Conversions ---
+
+    def urdf_to_actuator(self, urdf: float) -> float:
+        """Converts URDF units to true raw actuator units (radians), via this tool's command units."""
+        return self.command_to_actuator(self.urdf_to_command(urdf))
+
+    def actuator_to_urdf(self, actuator: float) -> float:
+        """Converts true raw actuator units (radians) to URDF units, via this tool's command units."""
+        return self.command_to_urdf(self.actuator_to_command(actuator))
 
     def urdf_to_normalized(self, urdf: float) -> float:
         act = self.urdf_to_actuator(urdf)
@@ -176,11 +210,11 @@ class ToolMetadata(ABC):
     @property
     def poses(self) -> dict[str, float]:
         """
-        Named command positions ('close', 'open', 'mid') in this tool's actuator_command_range units.
-        Subclasses may override to add tool-specific poses (e.g. a 'zero' pose) or express poses in a
-        different unit space (e.g. aperture meters) to match their own move_to()'s expected units.
+        Named command positions ('close', 'open', 'mid') in this tool's command_range units --
+        i.e. move_to()/move_by()'s own expected units. Subclasses may override to add
+        tool-specific poses (e.g. a 'zero' pose).
         """
-        low, high = self.actuator_command_range
+        low, high = self.command_range
         return {"close": low, "open": high, "mid": (low + high) / 2.0}
 
     @property
@@ -217,33 +251,30 @@ class ParallelGripperMetadata(ToolMetadata):
     @property
     def poses(self) -> dict[str, float]:
         """
-        Named command positions in meters (aperture units) — the PG4 driver/client's move_to() takes
-        aperture directly, unlike actuator_command_range (raw servo radians), so poses stay in aperture
-        space here rather than using the base class's actuator-space default.
+        Named command positions in meters (aperture units) — the PG4 driver/client's move_to()
+        takes aperture directly, so command_range coincides with aperture_range for this tool.
         """
-        low, high = self.aperture_range
+        low, high = self.command_range
         return {"zero": 0.0, "close": low, "open": high, "mid": (low + high) / 2.0}
 
     @property
-    def actuator_command_range(self) -> tuple[float, float]:
-        """
-        (closed, open) bounds in raw servo angle (radians) — the PG4's actuator unit, matching the
-        convention used by StretchGripperMetadata. Note this is NOT the same unit as `client.poses`/
-        `move_to()`, which stay in meters for the driver/client's public API; use `aperture_to_actuator`/
-        `actuator_to_aperture` to bridge between the two.
-        """
+    def actuator_range(self) -> tuple[float, float]:
+        """(closed, open) bounds in true raw servo angle (radians)."""
         range_deg = self._params.get("range_deg", [0.0, 116.5])
         return deg_to_rad(range_deg[0]), deg_to_rad(range_deg[1])
 
-    def urdf_to_actuator(self, urdf: float) -> float:
+    @property
+    def command_range(self) -> tuple[float, float]:
+        """
+        (closed, open) bounds in fingertip aperture (meters) — PG4's command units, matching
+        `move_to()`/`move_by()`'s own public parameter directly.
+        """
+        return self.aperture_range
+
+    def urdf_to_command(self, urdf: float) -> float:
         """
         Converts the URDF finger slide-joint value (meters) to fingertip aperture (meters) —
-        PG4's "actuator" units for URDF<->actuator purposes, matching what this tool's own
-        `move_to()`/`move_by()` take directly. This is deliberately NOT raw servo angle
-        (radians): unlike `actuator_command_range` (which stays in raw servo radians for
-        `aperture_to_actuator`/`actuator_to_aperture` and the normalized-scale conversions),
-        the URDF<->actuator direction is defined in aperture space so that callers can always
-        do `move_to(joint, urdf_to_actuator(urdf_units))` uniformly across every gripper type.
+        PG4's command units, matching what this tool's own `move_to()`/`move_by()` take directly.
         """
         lower, upper = self._finger_joint_limits
         range_m = self._params.get("range_mm", 80.0) / 1000.0
@@ -252,12 +283,12 @@ class ParallelGripperMetadata(ToolMetadata):
         pct = (urdf - upper) / (lower - upper)
         return pct * range_m
 
-    def actuator_to_urdf(self, actuator: float) -> float:
+    def command_to_urdf(self, command: float) -> float:
         """
-        Converts fingertip aperture (meters) — PG4's "actuator" units for URDF<->actuator
-        purposes, see `urdf_to_actuator` — to the URDF finger slide-joint value (meters).
+        Converts fingertip aperture (meters) — PG4's command units, see `urdf_to_command` — to
+        the URDF finger slide-joint value (meters).
         """
-        aperture_m = actuator
+        aperture_m = command
         lower, upper = self._finger_joint_limits
         range_m = self._params.get("range_mm", 80.0) / 1000.0
         if range_m == 0:
@@ -265,13 +296,13 @@ class ParallelGripperMetadata(ToolMetadata):
         pct = aperture_m / range_m
         return upper + pct * (lower - upper)
 
-    def urdf_to_aperture(self, urdf: float) -> float:
-        """Converts the URDF finger slide-joint value (meters) to fingertip aperture (meters)."""
-        return self.urdf_to_actuator(urdf)
+    def command_to_actuator(self, command: float) -> float:
+        """PG4's command units (aperture, meters) coincide with aperture, so this is aperture_to_actuator."""
+        return self.aperture_to_actuator(command)
 
-    def aperture_to_urdf(self, aperture: float) -> float:
-        """Converts fingertip aperture (meters) to the URDF finger slide-joint value (meters)."""
-        return self.actuator_to_urdf(aperture)
+    def actuator_to_command(self, actuator: float) -> float:
+        """PG4's command units (aperture, meters) coincide with aperture, so this is actuator_to_aperture."""
+        return self.actuator_to_aperture(actuator)
 
     def aperture_to_actuator(self, aperture: float) -> float:
         """
@@ -382,27 +413,54 @@ class StretchGripperMetadata(ToolMetadata):
 
     @property
     def poses(self) -> dict[str, float]:
-        """Named command positions in pct (actuator units): 'zero' (fingertips just touching), plus
+        """Named command positions in pct (command units): 'zero' (fingertips just touching), plus
         'close'/'open' bounding the full range."""
         low_deg, high_deg = self._range_deg
         pct_max_open = 100.0 * abs(high_deg / low_deg) if low_deg else 100.0
         return {"zero": 0.0, "close": -100.0, "open": pct_max_open}
 
     @property
-    def actuator_command_range(self) -> tuple[float, float]:
+    def command_range(self) -> tuple[float, float]:
+        """(closed, open) bounds in Pct — SG4's command units, matching move_to()/move_by()'s own public parameter."""
         return self.poses["close"], self.poses["open"]
 
-    def urdf_to_actuator(self, urdf: float) -> float:
+    @property
+    def actuator_range(self) -> tuple[float, float]:
+        """(closed, open) bounds in true raw servo angle (radians)."""
+        low, high = self.command_range
+        return self.command_to_actuator(low), self.command_to_actuator(high)
+
+    def urdf_to_command(self, urdf: float) -> float:
+        """Converts the URDF finger joint value (radians) to Pct — SG4's command units."""
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
         return -100.0 * urdf / deg_to_rad(range_deg_0)
 
-    def actuator_to_urdf(self, actuator: float) -> float:
+    def command_to_urdf(self, command: float) -> float:
+        """Converts Pct — SG4's command units — to the URDF finger joint value (radians)."""
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
-        return actuator * deg_to_rad(range_deg_0) / -100.0
+        return command * deg_to_rad(range_deg_0) / -100.0
+
+    def command_to_actuator(self, command: float) -> float:
+        """
+        Converts Pct — SG4's command units — to true raw servo angle (radians). Promoted from
+        StretchGripper.pct_to_world_rad() so ToolMetadata owns this conversion the same way PG4
+        does via aperture_to_actuator(), instead of leaving it only on the driver.
+        """
+        _, robot_params = RobotParams.get_params()
+        sg_params = robot_params.get("stretch_gripper", {})
+        range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
+        return deg_to_rad(range_deg_0) * command / -100.0
+
+    def actuator_to_command(self, actuator: float) -> float:
+        """Converts true raw servo angle (radians) to Pct — SG4's command units. Promoted from StretchGripper.world_rad_to_pct()."""
+        _, robot_params = RobotParams.get_params()
+        sg_params = robot_params.get("stretch_gripper", {})
+        range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
+        return -100.0 * actuator / deg_to_rad(range_deg_0)
 
     @property
     def _range_deg(self) -> tuple[float, float]:
@@ -460,24 +518,28 @@ class StretchGripperMetadata(ToolMetadata):
         )
 
     def aperture_to_actuator(self, aperture: float) -> float:
-        """Models the SG4 gripper's finger as a circular arc to map an aperture (chord length, meters)
-        to a servo command. Note: this is a simplified model, not accurate to the gripper's real motion.
+        """
+        Models the SG4 gripper's finger as a circular arc to map an aperture (chord length,
+        meters) to true raw servo angle (radians). Note: this is a simplified model, not
+        accurate to the gripper's real motion.
         """
         aperture_angle_deg = self._aperture_m_to_aperture_angle_degrees(aperture)
-        servo_closed, servo_open = self._range_deg
-        return self._map_range(
-            aperture_angle_deg, 0.0, self._aperture_open_deg, servo_closed, servo_open
+        servo_closed_deg, servo_open_deg = self._range_deg
+        servo_angle_deg = self._map_range(
+            aperture_angle_deg, 0.0, self._aperture_open_deg, servo_closed_deg, servo_open_deg
         )
+        return deg_to_rad(servo_angle_deg)
 
     def actuator_to_aperture(self, actuator: float) -> float:
-        servo_closed, servo_open = self._range_deg
+        """Converts true raw servo angle (radians) to fingertip aperture (meters), the inverse of `aperture_to_actuator`."""
+        servo_closed_deg, servo_open_deg = self._range_deg
         aperture_angle_deg = self._map_range(
-            actuator, servo_closed, servo_open, 0.0, self._aperture_open_deg
+            rad_to_deg(actuator), servo_closed_deg, servo_open_deg, 0.0, self._aperture_open_deg
         )
         return self._aperture_angle_degrees_to_aperture_m(aperture_angle_deg)
 
     def status_to_metadata(self, status: dict) -> dict:
-        aperture_m = self.actuator_to_aperture(status["pos_pct"])
+        aperture_m = self.actuator_to_aperture(status.get("pos", 0.0))
         finger_rad = (
             math.radians(self._aperture_m_to_aperture_angle_degrees(aperture_m)) / 2.0
         )
@@ -553,12 +615,15 @@ class UserToolMetadata(ToolMetadata):
             self._client_class = None
 
         # 3. Ranges
+        # Config key kept as 'actuator_command_range' for backward compatibility with existing
+        # stretch_user_params.yaml files, even though the Python API below now exposes it as
+        # `actuator_range` (user tools have no separate command tier -- see command_to_actuator).
         act_range = self.tool_params.get("actuator_command_range")
         if not act_range or len(act_range) != 2:
             raise ToolConfigurationError(
                 f"Missing or invalid required key 'actuator_command_range' [min, max] in robot_params['{self.tool_name}']."
             )
-        self._actuator_command_range = (float(act_range[0]), float(act_range[1]))
+        self._actuator_range = (float(act_range[0]), float(act_range[1]))
 
         ap_range = self.tool_params.get(
             "aperture_range", self.tool_params.get("aperture_range_m")
@@ -617,22 +682,39 @@ class UserToolMetadata(ToolMetadata):
             )
 
     @property
-    def actuator_command_range(self) -> tuple[float, float]:
-        return self._actuator_command_range
+    def actuator_range(self) -> tuple[float, float]:
+        return self._actuator_range
+
+    @property
+    def command_range(self) -> tuple[float, float]:
+        """
+        User tools have no YAML mechanism to describe a separate command tier (unlike PG4's
+        aperture or SG4's Pct), so command is assumed to coincide with the true actuator range --
+        see command_to_actuator/actuator_to_command.
+        """
+        return self._actuator_range
 
     @property
     def aperture_range(self) -> tuple[float, float]:
         return self._aperture_range
 
-    def urdf_to_actuator(self, urdf: float) -> float:
+    def urdf_to_command(self, urdf: float) -> float:
         return urdf * self._urdf_scale
 
-    def actuator_to_urdf(self, actuator: float) -> float:
-        return actuator / self._urdf_scale if self._urdf_scale != 0 else actuator
+    def command_to_urdf(self, command: float) -> float:
+        return command / self._urdf_scale if self._urdf_scale != 0 else command
+
+    def command_to_actuator(self, command: float) -> float:
+        """Identity: user tools assume command coincides with the true actuator range (see command_range)."""
+        return command
+
+    def actuator_to_command(self, actuator: float) -> float:
+        """Identity: user tools assume command coincides with the true actuator range (see command_range)."""
+        return actuator
 
     def aperture_to_actuator(self, aperture: float) -> float:
         ap_low, ap_high = self._aperture_range
-        act_low, act_high = self._actuator_command_range
+        act_low, act_high = self._actuator_range
         if ap_high == ap_low:
             return act_low
         norm = (aperture - ap_low) / (ap_high - ap_low)
@@ -640,7 +722,7 @@ class UserToolMetadata(ToolMetadata):
 
     def actuator_to_aperture(self, actuator: float) -> float:
         ap_low, ap_high = self._aperture_range
-        act_low, act_high = self._actuator_command_range
+        act_low, act_high = self._actuator_range
         if act_high == act_low:
             return ap_low
         norm = (actuator - act_low) / (act_high - act_low)

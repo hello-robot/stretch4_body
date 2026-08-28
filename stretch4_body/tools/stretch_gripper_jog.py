@@ -25,7 +25,9 @@ if g is None:
 
 try:
     meta = get_tool_metadata(gripper_type)
-    act_range = meta.actuator_command_range
+    # g.move_to()/move_by() below take this tool's own command units (e.g. aperture meters
+    # for PG4), not true raw actuator units -- use command_range, not actuator_range.
+    act_range = meta.command_range
 except Exception:
     act_range = (0.0, 100.0)
 

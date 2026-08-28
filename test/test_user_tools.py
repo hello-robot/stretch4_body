@@ -133,7 +133,7 @@ client_class_name: UserEoaValidtoolClient
             self.assertEqual(meta.primary_joint, "joint_left")
             self.assertEqual(meta.tool_joints, ["joint_left", "joint_right"])
             self.assertEqual(meta.tool_links, ["link_left", "link_right"])
-            self.assertEqual(meta.actuator_command_range, (0.0, 100.0))
+            self.assertEqual(meta.actuator_range, (0.0, 100.0))
             self.assertEqual(meta.aperture_range, (0.0, 0.08))
 
             # Test conversions
