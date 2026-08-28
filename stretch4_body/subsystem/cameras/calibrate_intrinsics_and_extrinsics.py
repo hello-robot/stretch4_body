@@ -59,7 +59,7 @@ def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.W
 
     try:
         _print_title("Starting Intrinsics Calibration")
-        # REx_calibrate_intrinsics_robot_move(interactive=False)
+        REx_calibrate_intrinsics_robot_move(interactive=False)
 
         _print_title("Starting Intrinsics Validation")
         validation_passed = False
@@ -80,7 +80,7 @@ def calibrate_intrinsics_and_extrinsics_not_interactive(loggin_level = logging.W
             raise Exception(f"Intrinsic calibration failed! Distance errors ({errors}) are above 0.1m. (inf = no detection)")
 
         _print_title("Starting Extrinsics Camera-Camera Calibration")
-        # REx_calibrate_extrinsics_cameras(interactive=False)
+        REx_calibrate_extrinsics_cameras(interactive=False)
         
         _print_title("Starting Extrinsics Camera-Lidar Calibration")
         REx_calibrate_extrinsics_lidars(interactive=False)
