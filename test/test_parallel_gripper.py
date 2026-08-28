@@ -38,12 +38,15 @@ def test_conversions():
         assert math.isclose(val_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_closed}"
         assert math.isclose(val_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_open}"
 
-        # Test servo rad (actuator) to URDF meters
-        val_rad_closed = meta.actuator_to_urdf(0.0)
-        val_rad_open = meta.actuator_to_urdf(math.radians(116.5))
-        print(f"rad to URDF: closed={val_rad_closed}m, open={val_rad_open}m")
-        assert math.isclose(val_rad_closed, 0.0, abs_tol=0.005), f"Expected close to 0.0, got {val_rad_closed}"
-        assert math.isclose(val_rad_open, -0.04, abs_tol=0.005), f"Expected close to -0.04, got {val_rad_open}"
+        # Test actuator (== aperture, in meters) to URDF meters. actuator_to_urdf now shares
+        # units with aperture_to_urdf: PG4's URDF<->actuator direction is defined in aperture
+        # space so it matches what this tool's own move_to()/move_by() take directly, rather
+        # than the raw servo angle (radians) used by actuator_command_range/aperture_to_actuator.
+        val_actuator_closed = meta.actuator_to_urdf(0.0)
+        val_actuator_open = meta.actuator_to_urdf(0.08)
+        print(f"actuator to URDF: closed={val_actuator_closed}m, open={val_actuator_open}m")
+        assert math.isclose(val_actuator_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_actuator_closed}"
+        assert math.isclose(val_actuator_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_actuator_open}"
     print("Conversions tests passed!")
 
 def test_param_lookup():
@@ -71,13 +74,14 @@ def test_robot_joints_properties():
     
     # Test urdf_to_actuator / actuator_to_urdf conversions
     if "parallel" in RobotJoints.gripper.gripper_name.lower() or "pg4" in RobotJoints.gripper.gripper_name.lower():
-        # PG4's actuator unit is raw servo angle (radians), not meters (see ParallelGripperMetadata),
-        # so round-trip actuator -> urdf -> actuator rather than asserting a fixed input/output pair.
-        actuator_open = RobotJoints.gripper.actuator_command_range[1]
-        urdf_val = RobotJoints.gripper.actuator_to_urdf(actuator_open)
-        round_trip = RobotJoints.gripper.urdf_to_actuator(urdf_val)
-        print("PG4 actuator->urdf->actuator round trip:", actuator_open, "->", urdf_val, "->", round_trip)
-        assert math.isclose(round_trip, actuator_open, abs_tol=1e-6)
+        # PG4's actuator unit (for URDF<->actuator purposes) is fingertip aperture in meters,
+        # matching what this tool's own move_to()/move_by() take directly -- so round-trip
+        # urdf -> actuator -> urdf rather than asserting a fixed pair tied to a specific
+        # URDF calibration (unlike actuator_command_range, which stays in raw servo radians).
+        actuator_val = RobotJoints.gripper.urdf_to_actuator(0.0)
+        round_trip = RobotJoints.gripper.actuator_to_urdf(actuator_val)
+        print("PG4 urdf->actuator->urdf round trip:", 0.0, "->", actuator_val, "->", round_trip)
+        assert math.isclose(round_trip, 0.0, abs_tol=1e-6)
     else:
         sub_val = RobotJoints.gripper.urdf_to_actuator(0.08)
         print("0.08 to actuator units:", sub_val)
@@ -94,10 +98,13 @@ def test_robot_joints_properties():
         print("stretch_gripper rad to actuator units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
 
-    # Test gripper_client property
+    # Test gripper_client property: any built-in gripper resolves to a generic
+    # WristJointClient wired up by ToolMetadata.client_class (make_joint_client_class),
+    # not a bespoke per-gripper class.
     client = RobotJoints.gripper.gripper_client
-    from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
-    assert isinstance(client, (ParallelGripperClient, StretchGripperClient))
+    from stretch4_body.robot.robot_client import WristJointClient
+    assert isinstance(client, WristJointClient)
+    assert client.tool_metadata is RobotJoints.gripper.gripper_model
 
     with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
         with patch.dict('stretch4_body.utils.stretch_pose_models.GRIPPER_MODELS') as mock_models:

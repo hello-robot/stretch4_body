@@ -4,7 +4,7 @@ from functools import cache, cached_property
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
-from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
+from stretch4_body.robot.robot_client import WristJointClient
 from stretch4_body.utils.tool_metadata import (
     BUILTIN_TOOL_MODELS,
     ToolConfigurationError,
@@ -177,7 +177,7 @@ class RobotJoints(Enum):
         return self.tool_links
 
     @property
-    def gripper_client(self) -> ParallelGripperClient | StretchGripperClient | None:
+    def gripper_client(self) -> WristJointClient | None:
         """Returns a RobotClient instance for this joint's gripper, or None if no gripper model."""
         model = self.gripper_model
         return model.client_class() if model else None
@@ -337,16 +337,16 @@ class RobotJoints(Enum):
             normalized
         )
 
-    def aperture_to_subsystem(self, aperture_m: float) -> float:
-        """Converts fingertip aperture (meters) to subsystem units."""
-        return self.get_gripper_model("aperture_to_subsystem").aperture_to_subsystem(
+    def aperture_to_actuator(self, aperture_m: float) -> float:
+        """Converts fingertip aperture (meters) to actuator units."""
+        return self.get_gripper_model("aperture_to_actuator").aperture_to_actuator(
             aperture_m
         )
 
-    def subsystem_to_aperture(self, subsystem: float) -> float:
-        """Converts subsystem units to fingertip aperture (meters)."""
-        return self.get_gripper_model("subsystem_to_aperture").subsystem_to_aperture(
-            subsystem
+    def actuator_to_aperture(self, actuator: float) -> float:
+        """Converts actuator units to fingertip aperture (meters)."""
+        return self.get_gripper_model("actuator_to_aperture").actuator_to_aperture(
+            actuator
         )
 
     def urdf_to_aperture(self, urdf: float) -> float:
