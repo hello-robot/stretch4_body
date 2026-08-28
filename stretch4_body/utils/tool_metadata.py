@@ -551,7 +551,7 @@ class StretchGripperMetadata(ToolMetadata):
         }
 
 
-class UserToolMetadata(ToolMetadata):
+class LinearToolMetadata(ToolMetadata):
     """
     Metadata representation for custom user tools loaded strictly from YAML parameters.
     Fails fast if any required configuration key is missing.
@@ -616,14 +616,17 @@ class UserToolMetadata(ToolMetadata):
 
         # 3. Ranges
         # Config key kept as 'actuator_command_range' for backward compatibility with existing
-        # stretch_user_params.yaml files, even though the Python API below now exposes it as
-        # `actuator_range` (user tools have no separate command tier -- see command_to_actuator).
+        # stretch_user_params.yaml files. This is the range a user tool's own move_to()/move_by()
+        # actually accept -- i.e. the COMMAND tier, not necessarily the true raw actuator/servo
+        # scale -- so it's stored as the command range; true actuator is assumed to coincide with
+        # it (see command_to_actuator/actuator_to_command) since a generic YAML tool has no way
+        # to describe a distinct actuator scale.
         act_range = self.tool_params.get("actuator_command_range")
         if not act_range or len(act_range) != 2:
             raise ToolConfigurationError(
                 f"Missing or invalid required key 'actuator_command_range' [min, max] in robot_params['{self.tool_name}']."
             )
-        self._actuator_range = (float(act_range[0]), float(act_range[1]))
+        self._command_range = (float(act_range[0]), float(act_range[1]))
 
         ap_range = self.tool_params.get(
             "aperture_range", self.tool_params.get("aperture_range_m")
@@ -682,17 +685,18 @@ class UserToolMetadata(ToolMetadata):
             )
 
     @property
-    def actuator_range(self) -> tuple[float, float]:
-        return self._actuator_range
+    def command_range(self) -> tuple[float, float]:
+        """(min_val, max_val) in this tool's own move_to()/move_by() command units, from the 'actuator_command_range' YAML key."""
+        return self._command_range
 
     @property
-    def command_range(self) -> tuple[float, float]:
+    def actuator_range(self) -> tuple[float, float]:
         """
-        User tools have no YAML mechanism to describe a separate command tier (unlike PG4's
-        aperture or SG4's Pct), so command is assumed to coincide with the true actuator range --
-        see command_to_actuator/actuator_to_command.
+        User tools have no YAML mechanism to describe a true actuator/servo scale distinct from
+        move_to()/move_by()'s own command units, so actuator is assumed to coincide with command
+        -- see command_to_actuator/actuator_to_command.
         """
-        return self._actuator_range
+        return self._command_range
 
     @property
     def aperture_range(self) -> tuple[float, float]:
@@ -705,16 +709,16 @@ class UserToolMetadata(ToolMetadata):
         return command / self._urdf_scale if self._urdf_scale != 0 else command
 
     def command_to_actuator(self, command: float) -> float:
-        """Identity: user tools assume command coincides with the true actuator range (see command_range)."""
+        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
         return command
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Identity: user tools assume command coincides with the true actuator range (see command_range)."""
+        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
         return actuator
 
     def aperture_to_actuator(self, aperture: float) -> float:
         ap_low, ap_high = self._aperture_range
-        act_low, act_high = self._actuator_range
+        act_low, act_high = self._command_range
         if ap_high == ap_low:
             return act_low
         norm = (aperture - ap_low) / (ap_high - ap_low)
@@ -722,7 +726,7 @@ class UserToolMetadata(ToolMetadata):
 
     def actuator_to_aperture(self, actuator: float) -> float:
         ap_low, ap_high = self._aperture_range
-        act_low, act_high = self._actuator_range
+        act_low, act_high = self._command_range
         if act_high == act_low:
             return ap_low
         norm = (actuator - act_low) / (act_high - act_low)
@@ -778,7 +782,7 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
 
     1. Checks built-in grippers ('stretch_gripper', 'parallel_gripper') and standard tool aliases.
     2. Checks for custom metadata class in user_tools (metadata_module_name/metadata_class_name).
-    3. Uses explicit UserToolMetadata for YAML-configured tools (failing fast if required keys are missing).
+    3. Uses explicit LinearToolMetadata for YAML-configured tools (failing fast if required keys are missing).
     """
     _, robot_params = RobotParams.get_params()
 
@@ -821,5 +825,5 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
                 f"Failed to import custom metadata class '{meta_class}' from '{meta_module}' for tool '{tool_name}': {e}"
             )
 
-    # 3. Explicit UserToolMetadata parser (fails fast on missing YAML parameters)
-    return UserToolMetadata(tool_name)
+    # 3. Explicit LinearToolMetadata parser (fails fast on missing YAML parameters)
+    return LinearToolMetadata(tool_name)

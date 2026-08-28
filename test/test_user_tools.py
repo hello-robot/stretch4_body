@@ -15,20 +15,31 @@ class TestUserTools(unittest.TestCase):
         self.tool_dir = os.path.join(self.user_tools_dir, self.tool_name)
         
         os.makedirs(self.tool_dir, exist_ok=True)
-        # Create a dummy python driver
-        py_file = os.path.join(self.tool_dir, f"{self.tool_name}.py")
+        # Create a dummy driver file under a deliberately arbitrary filename (not
+        # `{tool_name}.py`/`tool.py`/`end_of_arm.py`) to prove resolution comes from
+        # tool_params.yaml alone, never from filename conventions.
+        py_file = os.path.join(self.tool_dir, "driver_impl.py")
         with open(py_file, 'w') as f:
             f.write("class UserEoaTesttool:\n    def __init__(self):\n        pass\n")
-            
-        # Create a dummy client driver
-        client_py_file = os.path.join(self.tool_dir, f"{self.tool_name}_client.py")
+
+        # Same for the client -- an arbitrary filename, not `{tool_name}_client.py`/`tool_client.py`.
+        client_py_file = os.path.join(self.tool_dir, "remote_impl.py")
         with open(client_py_file, 'w') as f:
             f.write("class UserEoaTesttool_Client:\n    def __init__(self):\n        pass\n")
-            
-        # Create a tool_params.yaml to verify merging
+
+        # tool_params.yaml is the single source of truth for driver/client wiring -- it
+        # points explicitly at the (arbitrarily-named) files above.
         params_file = os.path.join(self.tool_dir, "tool_params.yaml")
         with open(params_file, 'w') as f:
-            f.write("tool: eoat_custom\nstow:\n  custom_val: 42\n")
+            f.write(
+                "tool: eoat_custom\n"
+                "stow:\n"
+                "  custom_val: 42\n"
+                "py_module_name: driver_impl\n"
+                "py_class_name: UserEoaTesttool\n"
+                "client_module_name: remote_impl\n"
+                "client_class_name: UserEoaTesttool_Client\n"
+            )
 
         # Set environment variables
         os.environ['HELLO_FLEET_PATH'] = self.fleet_path
@@ -44,40 +55,49 @@ class TestUserTools(unittest.TestCase):
         from stretch4_body.core.robot_params import RobotParams
         RobotParams.reload()
 
-        # Verify the custom tool is registered
+        # Verify the custom tool is registered, and that driver/client resolve entirely
+        # from tool_params.yaml's py_module_name/py_class_name/client_module_name/
+        # client_class_name -- not from the (deliberately non-conventional) filenames
+        # created in setUp.
         self.assertIn(self.tool_name, RobotParams._robot_params['supported_eoa'])
         self.assertEqual(RobotParams._robot_params[self.tool_name]['py_class_name'], 'UserEoaTesttool')
-        self.assertEqual(RobotParams._robot_params[self.tool_name]['py_module_name'], self.tool_name)
+        self.assertEqual(RobotParams._robot_params[self.tool_name]['py_module_name'], 'driver_impl')
         self.assertEqual(RobotParams._robot_params[self.tool_name]['client_class_name'], 'UserEoaTesttool_Client')
-        self.assertEqual(RobotParams._robot_params[self.tool_name]['client_module_name'], f"{self.tool_name}_client")
-        
+        self.assertEqual(RobotParams._robot_params[self.tool_name]['client_module_name'], 'remote_impl')
+
         # Verify custom params were merged and inflated
         self.assertEqual(RobotParams._robot_params[self.tool_name]['tool'], 'eoat_custom')
         self.assertEqual(RobotParams._robot_params[self.tool_name]['stow']['custom_val'], 42)
 
-    def test_dynamic_loading_split_files(self):
-        # Setup a secondary custom tool with split files
+    def test_dynamic_loading_ignores_conventional_filenames(self):
+        # A tool that provides conventionally-named files (end_of_arm.py, tool.py -- the
+        # historical auto-detection patterns) but no tool_params.yaml driver/client keys
+        # must NOT have them picked up: there is no filename-based detection any more, so
+        # it falls back to the passive NIL driver and no bespoke client.
         split_tool_name = "user_eoa_split_tool"
         split_tool_dir = os.path.join(self.user_tools_dir, split_tool_name)
         os.makedirs(split_tool_dir, exist_ok=True)
-        
-        # Create end_of_arm.py
+
         with open(os.path.join(split_tool_dir, "end_of_arm.py"), 'w') as f:
             f.write("class UserEoaSplitTool:\n    def __init__(self):\n        pass\n")
-            
-        # Create tool.py
+
         with open(os.path.join(split_tool_dir, "tool.py"), 'w') as f:
             f.write("class UserEoaSplitToolGripper:\n    def __init__(self):\n        pass\n")
-            
+
         # Reload robot params module to trigger scanning
         from stretch4_body.core.robot_params import RobotParams
         RobotParams.reload()
 
         try:
-            # Verify the split tool is registered with end_of_arm.py detected as primary
             self.assertIn(split_tool_name, RobotParams._robot_params['supported_eoa'])
-            self.assertEqual(RobotParams._robot_params[split_tool_name]['py_class_name'], 'UserEoaSplitTool')
-            self.assertEqual(RobotParams._robot_params[split_tool_name]['py_module_name'], 'end_of_arm')
+            self.assertEqual(
+                RobotParams._robot_params[split_tool_name]['py_class_name'], 'EOA_Wrist_DW4_Tool_NIL'
+            )
+            self.assertEqual(
+                RobotParams._robot_params[split_tool_name]['py_module_name'],
+                'stretch4_body.subsystem.end_of_arm.end_of_arm_tools',
+            )
+            self.assertNotIn('client_class_name', RobotParams._robot_params[split_tool_name])
         finally:
             if os.path.exists(split_tool_dir):
                 shutil.rmtree(split_tool_dir)
@@ -125,11 +145,11 @@ client_class_name: UserEoaValidtoolClient
         from stretch4_body.core.robot_params import RobotParams
         RobotParams.reload()
 
-        from stretch4_body.utils.tool_metadata import get_tool_metadata, UserToolMetadata
+        from stretch4_body.utils.tool_metadata import get_tool_metadata, LinearToolMetadata
 
         try:
             meta = get_tool_metadata(valid_tool_name)
-            self.assertIsInstance(meta, UserToolMetadata)
+            self.assertIsInstance(meta, LinearToolMetadata)
             self.assertEqual(meta.primary_joint, "joint_left")
             self.assertEqual(meta.tool_joints, ["joint_left", "joint_right"])
             self.assertEqual(meta.tool_links, ["link_left", "link_right"])
