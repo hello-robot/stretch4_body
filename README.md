@@ -183,7 +183,6 @@ tool_joints: ['my_finger_left_joint', 'my_finger_right_joint']
 primary_joint: 'my_finger_left_joint'   # optional, defaults to the first tool_joints entry
 tool_links: ['my_finger_left_link', 'my_finger_right_link']
 
-# Your tool's actuation range.
 actuator_command_range: [0.0, 100.0]
 
 # Physical fingertip opening bounds (meters)
@@ -192,7 +191,11 @@ aperture_range: [0.0, 0.08]
 # Linear scale factor: command = urdf * urdf_to_actuator_scale. Optional, defaults to 1.0.
 urdf_to_actuator_scale: 100.0
 
-
+# How close to a commanded position counts as "arrived", in URDF units (meters or radians).
+# Optional; defaults to 2% of the joint's URDF range. The ROS trajectory server uses this to
+# decide when a gripper goal is finished, so a tolerance that is too tight will hang a
+# trajectory and one that is too loose will end the motion early.
+position_tolerance: 0.002
 ```
 
 **Path B — Nonlinear tools.** If your motor's motion relates to the gripper's physical motion
@@ -213,7 +216,7 @@ metadata_class_name: MyToolMetadata
 
 Your subclass must implement every abstract member of `ToolMetadata`
 (`stretch4_body/utils/tool_metadata.py`) — `tool_joints`, `tool_links`, `client_class`,
-`driver_class`, `status_to_metadata`, and the five unit conversions:
+`driver_class`, `status_to_metadata`, the two ranges, and the six unit conversions:
 
 ```python
 from stretch4_body.utils.tool_metadata import ToolMetadata
@@ -258,6 +261,10 @@ the two ranges, the six conversions, and `status_to_metadata` shown above (plus 
 `ParallelGripperMetadata` (linkage-based) and `StretchGripperMetadata` (near-linear) in
 `tool_metadata.py` for complete worked examples.
 
+`position_tolerance` is also provided by the base class, defaulting to 2% of the joint's URDF
+range. Override the property if your tool needs a different arrival threshold — the ROS
+trajectory server reads it to decide when a gripper goal is complete.
+
 ### 3. Mesh Preprocessing and Registration
 
 Once your files are in place, process the tool using the automatic registration utility. This script simplifies visual meshes, generates collision meshes, and appends the default baseline configuration (including serial devices, joint exclusion, and collision management) to `stretch_user_params.yaml`:
@@ -270,12 +277,25 @@ The tool will prompt you to select your custom tool subdirectory, process its UR
 
 ### 4. Switching to Your Tool
 
-To switch your robot to use the custom tool:
+To switch your robot to use the custom tool, run the configuration tool and pick it from the
+menu:
 
 ```bash
-stretch_configure_tool --quick --tool user_eoa_mytool
+stretch_configure_tool
 ```
 
-This updates `stretch_user_params.yaml` to make `user_eoa_mytool` the active tool. The `RobotClient`, `stretch_status`, and `stretch_system_check` utilities will automatically recognize, load, and poll your custom tool.
+Custom tools are not auto-detected on the Feetech bus, so choose the **"Enter a custom tool
+name"** option at the end of the list and type your tool's directory name (`user_eoa_mytool`).
+Add `--quick` to skip the power-cycle and bus-scan steps and go straight to the selection
+prompt:
+
+```bash
+stretch_configure_tool --quick
+```
+
+This updates `stretch_user_params.yaml` to make `user_eoa_mytool` the active tool, then offers
+to restart `stretch_body_server` and home the tool. The `RobotClient`, `stretch_status`, and
+`stretch_system_check` utilities will automatically recognize, load, and poll your custom tool
+from there.
 
 

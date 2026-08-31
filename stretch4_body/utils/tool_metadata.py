@@ -647,12 +647,6 @@ class LinearToolMetadata(ToolMetadata):
             self._client_class = None
 
         # 3. Ranges
-        # Config key kept as 'actuator_command_range' for backward compatibility with existing
-        # stretch_user_params.yaml files. This is the range a user tool's own move_to()/move_by()
-        # actually accept -- i.e. the COMMAND tier, not necessarily the true raw actuator/servo
-        # scale -- so it's stored as the command range; true actuator is assumed to coincide with
-        # it (see command_to_actuator/actuator_to_command) since a generic YAML tool has no way
-        # to describe a distinct actuator scale.
         act_range = self.tool_params.get("actuator_command_range")
         if not act_range or len(act_range) != 2:
             raise ToolConfigurationError(

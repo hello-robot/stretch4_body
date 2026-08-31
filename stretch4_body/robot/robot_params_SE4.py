@@ -478,10 +478,10 @@ SE4_eoa_wrist_dw4_tool_pg4={
                 'device_params': 'SE4_parallel_gripper_DW4'
             }
             },
-        'ros': {'joints': 
+        'ros': {'joints':
             [{
                 'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'ParallelGripperCommandGroup',
+                'py_class_name': 'GripperCommandGroup',
             }]
             }
         }
