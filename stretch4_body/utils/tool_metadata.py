@@ -114,6 +114,25 @@ class ToolMetadata(ABC):
         """Alias for aperture_range for backward compatibility."""
         return self.aperture_range
 
+    # Default fraction of urdf_range treated as "close enough" by position_tolerance below.
+    # urdf_range is a real physical quantity (radians/meters, from the joint's own URDF limits)
+    # for every tool, unlike command_range -- which is e.g. a percent scale for SG4 but aperture
+    # meters for PG4 -- so a fraction of it means the same thing (physical closeness) regardless
+    # of how a given tool chose to define its own command units. Subclasses may override this
+    # constant, or the property itself, with a hardware-tuned value.
+    _POSITION_TOLERANCE_FRACTION: float = 0.02
+
+    @property
+    def position_tolerance(self) -> float:
+        """
+        Absolute error, in URDF units (radians/meters), within which a move to this tool's goal
+        position is considered complete. Defaults to a fraction of the tool's full urdf_range so
+        callers aren't required to supply a tool-specific value; override for hardware that needs
+        a tighter or looser tolerance than the default fraction gives.
+        """
+        low, high = self.urdf_range
+        return self._POSITION_TOLERANCE_FRACTION * abs(high - low)
+
     # --- Abstract Base Conversions ---
 
     @abstractmethod
@@ -262,6 +281,12 @@ class ParallelGripperMetadata(ToolMetadata):
         """(closed, open) bounds in true raw servo angle (radians)."""
         range_deg = self._params.get("range_deg", [0.0, 116.5])
         return deg_to_rad(range_deg[0]), deg_to_rad(range_deg[1])
+
+    @property
+    def position_tolerance(self) -> float:
+        """User-supplied 'position_tolerance' (URDF units, meters) from robot_params if set, else the default fraction of urdf_range."""
+        user_value = self._params.get("position_tolerance")
+        return float(user_value) if user_value is not None else super().position_tolerance
 
     @property
     def command_range(self) -> tuple[float, float]:
@@ -429,6 +454,13 @@ class StretchGripperMetadata(ToolMetadata):
         """(closed, open) bounds in true raw servo angle (radians)."""
         low, high = self.command_range
         return self.command_to_actuator(low), self.command_to_actuator(high)
+
+    @property
+    def position_tolerance(self) -> float:
+        """User-supplied 'position_tolerance' (URDF units, radians) from robot_params if set, else the default fraction of urdf_range."""
+        _, robot_params = RobotParams.get_params()
+        user_value = robot_params.get("stretch_gripper", {}).get("position_tolerance")
+        return float(user_value) if user_value is not None else super().position_tolerance
 
     def urdf_to_command(self, urdf: float) -> float:
         """Converts the URDF finger joint value (radians) to Pct — SG4's command units."""
@@ -639,6 +671,14 @@ class LinearToolMetadata(ToolMetadata):
 
         self._urdf_scale = float(self.tool_params.get("urdf_to_actuator_scale", 1.0))
 
+        # Optional: 'position_tolerance', in URDF units (meters/radians). Left unset (None) if
+        # the user doesn't supply one, so position_tolerance falls back to the base class's
+        # fraction-of-urdf_range default instead.
+        user_tolerance = self.tool_params.get("position_tolerance")
+        self._position_tolerance = (
+            float(user_tolerance) if user_tolerance is not None else None
+        )
+
     @property
     def tool_joints(self) -> list[str]:
         return self._tool_joints
@@ -646,6 +686,13 @@ class LinearToolMetadata(ToolMetadata):
     @property
     def primary_joint(self) -> str:
         return self._primary_joint
+
+    @property
+    def position_tolerance(self) -> float:
+        """User-supplied 'position_tolerance' (URDF units) from robot_params if set, else the default fraction of urdf_range."""
+        if self._position_tolerance is not None:
+            return self._position_tolerance
+        return super().position_tolerance
 
     @property
     def tool_links(self) -> list[str]:

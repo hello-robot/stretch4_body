@@ -60,7 +60,8 @@ class KeyframeRecorder:
                             vel_val = j_status['gripper_conversion'].get('finger_vel', j_status.get('vel', 0.0))
                             eff_val = j_status['gripper_conversion'].get('finger_effort', j_status.get('effort', 0.0))
                         elif 'pos_mm' in j_status:
-                            pos_val = j_status['pos_mm'] / 1000.0
+                            aperture_m = j_status['pos_mm'] / 1000.0
+                            pos_val = meta.aperture_to_urdf(aperture_m) if meta else aperture_m
                             vel_val = j_status.get('vel', 0.0)
                             eff_val = j_status.get('effort', 0.0)
                         else:
