@@ -186,6 +186,47 @@ class RobotParams:
         return (cls._user_params, cls._robot_params)
 
     @classmethod
+    def reload(cls):
+        """
+        Forces a fresh re-scan of the fleet's YAML/user_tools configuration from disk (e.g. after
+        `stretch_configure_tool` writes new tool settings, or a test writes a temporary user_tools
+        directory), then updates this class's already-loaded _user_params/_robot_params dicts
+        IN PLACE with the freshly-scanned content.
+
+        Reloading in place (rather than just doing a fresh `from stretch4_body.core.robot_params
+        import RobotParams`) matters because the class body that builds _user_params/_robot_params
+        only runs once, at first import: a plain re-import returns the same cached class unless the
+        module is force-reloaded, and force-reloading naively would swap in a *new* RobotParams
+        class object that any code already holding a reference to the old one (via a module-level
+        `import`, a `self.foo = RobotParams` attribute, etc.) would not see. Mutating this class's
+        dicts in place, then restoring the module's `RobotParams` name to point back at this same
+        class, means every existing reference keeps working and observes the refreshed data.
+
+        This also drops every already-imported `*robot_params*` module (not just this one) from
+        `sys.modules` before re-importing: the per-model nominal-params module (e.g.
+        stretch4_body.robot.robot_params_SE4) does its own YAML/user_tools disk scan, but only the
+        first time it's imported — this class's body fetches it via `importlib.import_module()`,
+        which returns whatever's already cached rather than re-scanning. Without dropping it too,
+        only the very first `reload()` call in a process would ever see freshly-written files.
+        """
+        for mod_name in list(sys.modules):
+            if 'robot_params' in mod_name:
+                del sys.modules[mod_name]
+
+        import stretch4_body.core.robot_params as robot_params_module
+        new_user, new_robot = robot_params_module.RobotParams.get_params()
+
+        old_user, old_robot = cls.get_params()
+        old_user.clear()
+        old_user.update(new_user)
+        old_robot.clear()
+        old_robot.update(new_robot)
+
+        # Restore the module's RobotParams name to this (the original) class object, now updated,
+        # so it keeps being the single shared identity every caller resolves to.
+        robot_params_module.RobotParams = cls
+
+    @classmethod
     def add_params(cls, new_params):
         hello_utils.overwrite_dict(cls._robot_params, new_params)
 
