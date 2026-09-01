@@ -114,6 +114,25 @@ class ToolMetadata(ABC):
         """Alias for aperture_range for backward compatibility."""
         return self.aperture_range
 
+    # Default fraction of urdf_range treated as "close enough" by position_tolerance below.
+    # urdf_range is a real physical quantity (radians/meters, from the joint's own URDF limits)
+    # for every tool, unlike command_range -- which is e.g. a percent scale for SG4 but aperture
+    # meters for PG4 -- so a fraction of it means the same thing (physical closeness) regardless
+    # of how a given tool chose to define its own command units. Subclasses may override this
+    # constant, or the property itself, with a hardware-tuned value.
+    _POSITION_TOLERANCE_FRACTION: float = 0.02
+
+    @property
+    def position_tolerance(self) -> float:
+        """
+        Absolute error, in URDF units (radians/meters), within which a move to this tool's goal
+        position is considered complete. Defaults to a fraction of the tool's full urdf_range so
+        callers aren't required to supply a tool-specific value; override for hardware that needs
+        a tighter or looser tolerance than the default fraction gives.
+        """
+        low, high = self.urdf_range
+        return self._POSITION_TOLERANCE_FRACTION * abs(high - low)
+
     # --- Abstract Base Conversions ---
 
     @abstractmethod
@@ -262,6 +281,12 @@ class ParallelGripperMetadata(ToolMetadata):
         """(closed, open) bounds in true raw servo angle (radians)."""
         range_deg = self._params.get("range_deg", [0.0, 116.5])
         return deg_to_rad(range_deg[0]), deg_to_rad(range_deg[1])
+
+    @property
+    def position_tolerance(self) -> float:
+        """User-supplied 'position_tolerance' (URDF units, meters) from robot_params if set, else the default fraction of urdf_range."""
+        user_value = self._params.get("position_tolerance")
+        return float(user_value) if user_value is not None else super().position_tolerance
 
     @property
     def command_range(self) -> tuple[float, float]:
@@ -430,6 +455,13 @@ class StretchGripperMetadata(ToolMetadata):
         low, high = self.command_range
         return self.command_to_actuator(low), self.command_to_actuator(high)
 
+    @property
+    def position_tolerance(self) -> float:
+        """User-supplied 'position_tolerance' (URDF units, radians) from robot_params if set, else the default fraction of urdf_range."""
+        _, robot_params = RobotParams.get_params()
+        user_value = robot_params.get("stretch_gripper", {}).get("position_tolerance")
+        return float(user_value) if user_value is not None else super().position_tolerance
+
     def urdf_to_command(self, urdf: float) -> float:
         """Converts the URDF finger joint value (radians) to Pct — SG4's command units."""
         _, robot_params = RobotParams.get_params()
@@ -551,7 +583,7 @@ class StretchGripperMetadata(ToolMetadata):
         }
 
 
-class UserToolMetadata(ToolMetadata):
+class LinearToolMetadata(ToolMetadata):
     """
     Metadata representation for custom user tools loaded strictly from YAML parameters.
     Fails fast if any required configuration key is missing.
@@ -615,15 +647,12 @@ class UserToolMetadata(ToolMetadata):
             self._client_class = None
 
         # 3. Ranges
-        # Config key kept as 'actuator_command_range' for backward compatibility with existing
-        # stretch_user_params.yaml files, even though the Python API below now exposes it as
-        # `actuator_range` (user tools have no separate command tier -- see command_to_actuator).
         act_range = self.tool_params.get("actuator_command_range")
         if not act_range or len(act_range) != 2:
             raise ToolConfigurationError(
                 f"Missing or invalid required key 'actuator_command_range' [min, max] in robot_params['{self.tool_name}']."
             )
-        self._actuator_range = (float(act_range[0]), float(act_range[1]))
+        self._command_range = (float(act_range[0]), float(act_range[1]))
 
         ap_range = self.tool_params.get(
             "aperture_range", self.tool_params.get("aperture_range_m")
@@ -636,6 +665,14 @@ class UserToolMetadata(ToolMetadata):
 
         self._urdf_scale = float(self.tool_params.get("urdf_to_actuator_scale", 1.0))
 
+        # Optional: 'position_tolerance', in URDF units (meters/radians). Left unset (None) if
+        # the user doesn't supply one, so position_tolerance falls back to the base class's
+        # fraction-of-urdf_range default instead.
+        user_tolerance = self.tool_params.get("position_tolerance")
+        self._position_tolerance = (
+            float(user_tolerance) if user_tolerance is not None else None
+        )
+
     @property
     def tool_joints(self) -> list[str]:
         return self._tool_joints
@@ -643,6 +680,13 @@ class UserToolMetadata(ToolMetadata):
     @property
     def primary_joint(self) -> str:
         return self._primary_joint
+
+    @property
+    def position_tolerance(self) -> float:
+        """User-supplied 'position_tolerance' (URDF units) from robot_params if set, else the default fraction of urdf_range."""
+        if self._position_tolerance is not None:
+            return self._position_tolerance
+        return super().position_tolerance
 
     @property
     def tool_links(self) -> list[str]:
@@ -682,17 +726,18 @@ class UserToolMetadata(ToolMetadata):
             )
 
     @property
-    def actuator_range(self) -> tuple[float, float]:
-        return self._actuator_range
+    def command_range(self) -> tuple[float, float]:
+        """(min_val, max_val) in this tool's own move_to()/move_by() command units, from the 'actuator_command_range' YAML key."""
+        return self._command_range
 
     @property
-    def command_range(self) -> tuple[float, float]:
+    def actuator_range(self) -> tuple[float, float]:
         """
-        User tools have no YAML mechanism to describe a separate command tier (unlike PG4's
-        aperture or SG4's Pct), so command is assumed to coincide with the true actuator range --
-        see command_to_actuator/actuator_to_command.
+        User tools have no YAML mechanism to describe a true actuator/servo scale distinct from
+        move_to()/move_by()'s own command units, so actuator is assumed to coincide with command
+        -- see command_to_actuator/actuator_to_command.
         """
-        return self._actuator_range
+        return self._command_range
 
     @property
     def aperture_range(self) -> tuple[float, float]:
@@ -705,16 +750,16 @@ class UserToolMetadata(ToolMetadata):
         return command / self._urdf_scale if self._urdf_scale != 0 else command
 
     def command_to_actuator(self, command: float) -> float:
-        """Identity: user tools assume command coincides with the true actuator range (see command_range)."""
+        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
         return command
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Identity: user tools assume command coincides with the true actuator range (see command_range)."""
+        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
         return actuator
 
     def aperture_to_actuator(self, aperture: float) -> float:
         ap_low, ap_high = self._aperture_range
-        act_low, act_high = self._actuator_range
+        act_low, act_high = self._command_range
         if ap_high == ap_low:
             return act_low
         norm = (aperture - ap_low) / (ap_high - ap_low)
@@ -722,7 +767,7 @@ class UserToolMetadata(ToolMetadata):
 
     def actuator_to_aperture(self, actuator: float) -> float:
         ap_low, ap_high = self._aperture_range
-        act_low, act_high = self._actuator_range
+        act_low, act_high = self._command_range
         if act_high == act_low:
             return ap_low
         norm = (actuator - act_low) / (act_high - act_low)
@@ -778,7 +823,7 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
 
     1. Checks built-in grippers ('stretch_gripper', 'parallel_gripper') and standard tool aliases.
     2. Checks for custom metadata class in user_tools (metadata_module_name/metadata_class_name).
-    3. Uses explicit UserToolMetadata for YAML-configured tools (failing fast if required keys are missing).
+    3. Uses explicit LinearToolMetadata for YAML-configured tools (failing fast if required keys are missing).
     """
     _, robot_params = RobotParams.get_params()
 
@@ -821,5 +866,5 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
                 f"Failed to import custom metadata class '{meta_class}' from '{meta_module}' for tool '{tool_name}': {e}"
             )
 
-    # 3. Explicit UserToolMetadata parser (fails fast on missing YAML parameters)
-    return UserToolMetadata(tool_name)
+    # 3. Explicit LinearToolMetadata parser (fails fast on missing YAML parameters)
+    return LinearToolMetadata(tool_name)
