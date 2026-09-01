@@ -1,5 +1,7 @@
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.utils.stretch_pose_models import RobotJoints
+from stretch4_body.utils.tool_metadata import get_tool_metadata
 
 """
 The gamepad_joints library provides the abstract motion command classes 
@@ -260,67 +262,52 @@ class CommandWristRoll(CommandFeetechJoint):
         super().__init__(name, dx_deg, motion_profile, motion_profile)
 
             
-class CommandStretchGripperPosition:
-    """Stretch Gripper motion command class for Dynamixel joints
-    For this class only simple open and close methods are provided
-    and expected only to be controlled on a button state.
-    """
-    def __init__(self, motion_profile:str = 'max'):
-        from stretch4_body.utils.stretch_pose_models import RobotJoints
-        self.name = RobotJoints.gripper.value or 'stretch_gripper'
-        self.params = RobotParams().get_params()[1][self.name]
-        self.gripper_rotate_pct = 60.0
-        self.gripper_accel = self.params['motion'][motion_profile]['accel']
-        self.gripper_vel = self.params['motion'][motion_profile]['vel']
-        self.precision_mode = 0.0
-        self.stop_reqd=False
+class CommandToolPosition:
+    """Generic end-of-arm tool motion command class using ToolMetadata for range calculation."""
 
-    def _move(self, pct, robot):
-        scale = 1.0 - 0.75 * self.precision_mode
-        pct = pct * scale
-        robot.end_of_arm.move_by(self.name, pct, self.gripper_vel, self.gripper_accel)
-        self.stop_reqd = True
-    
-    def open_gripper(self, robot):
-        self._move(self.gripper_rotate_pct, robot)
-        
-    def close_gripper(self, robot):
-        self._move(-self.gripper_rotate_pct, robot)
+    def __init__(self, name: str | None = None, motion_profile: str = 'max'):
+        self.name = name or RobotJoints.gripper.value or 'stretch_gripper'
+        try:
+            self.metadata = get_tool_metadata(self.name)
+            # move_by() below takes this tool's own command units (e.g. aperture meters for
+            # PG4), not true raw actuator units -- use command_range, not actuator_range.
+            low, high = self.metadata.command_range
+            self.step_inc = (high - low) / 10.0 if high != low else 1.0
+        except Exception:
+            self.metadata = None
+            self.step_inc = 10.0 if 'parallel' not in self.name else 0.01
 
-    def stop_gripper(self, robot):
-        if self.stop_reqd:
-            robot.end_of_arm.quick_stop(self.name)
-            self.stop_reqd = False
-
-class CommandParallelGripperPosition:
-    """Parallel Gripper motion command class for Feetech joints
-    For this class only simple open and close methods are provided
-    and expected only to be controlled on a button state.
-    """
-    def __init__(self, motion_profile:str = 'max'):
-        from stretch4_body.utils.stretch_pose_models import RobotJoints
-        self.name = RobotJoints.gripper.value or 'parallel_gripper'
-        self.params = RobotParams().get_params()[1][self.name]
-        self.gripper_step_m = 0.01
-        self.gripper_accel = self.params['motion'][motion_profile]['accel']
-        self.gripper_vel = self.params['motion'][motion_profile]['vel']
+        _, robot_params = RobotParams().get_params()
+        tool_params = robot_params.get(self.name, {})
+        motion_params = tool_params.get('motion', {}).get(motion_profile, {})
+        self.gripper_accel = motion_params.get('accel', None)
+        self.gripper_vel = motion_params.get('vel', None)
         self.precision_mode = 0.0
         self.stop_reqd = False
 
-    def _move(self, dx_m, robot):
+    def _move(self, inc: float, robot):
         scale = 1.0 - 0.75 * self.precision_mode
-        dx_m = dx_m * scale
-        robot.end_of_arm.move_by(self.name, dx_m, self.gripper_vel, self.gripper_accel)
+        inc = inc * scale
+        robot.end_of_arm.move_by(self.name, inc, self.gripper_vel, self.gripper_accel)
         self.stop_reqd = True
-    
+
     def open_gripper(self, robot):
-        self._move(self.gripper_step_m, robot)
-        
+        self._move(self.step_inc, robot)
+
     def close_gripper(self, robot):
-        self._move(-self.gripper_step_m, robot)
+        self._move(-self.step_inc, robot)
 
     def stop_gripper(self, robot):
         if self.stop_reqd:
-            robot.end_of_arm.move_by(self.name, 0.0)
+            try:
+                robot.end_of_arm.quick_stop(self.name)
+            except (AttributeError, KeyError):
+                robot.end_of_arm.move_by(self.name, 0.0)
             self.stop_reqd = False
+
+
+# Backwards compatibility aliases
+CommandGripperPosition = CommandToolPosition
+CommandStretchGripperPosition = CommandToolPosition
+CommandParallelGripperPosition = CommandToolPosition
 
