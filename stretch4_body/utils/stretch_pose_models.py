@@ -4,7 +4,7 @@ from functools import cache, cached_property
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
-from stretch4_body.robot.robot_client import ParallelGripperClient, StretchGripperClient
+from stretch4_body.robot.robot_client import WristJointClient
 from stretch4_body.utils.tool_metadata import (
     BUILTIN_TOOL_MODELS,
     ToolConfigurationError,
@@ -177,7 +177,7 @@ class RobotJoints(Enum):
         return self.tool_links
 
     @property
-    def gripper_client(self) -> ParallelGripperClient | StretchGripperClient | None:
+    def gripper_client(self) -> WristJointClient | None:
         """Returns a RobotClient instance for this joint's gripper, or None if no gripper model."""
         model = self.gripper_model
         return model.client_class() if model else None
@@ -194,14 +194,21 @@ class RobotJoints(Enum):
         if self.name == "gripper" and self.gripper_model:
             client = self.gripper_client
             if client and hasattr(client, "poses"):
-                return {k: self.actuator_to_urdf(v) for k, v in client.poses.items()}
+                # client.poses is in command units (move_to()'s own parameter), not true actuator.
+                return {k: self.command_to_urdf(v) for k, v in client.poses.items()}
         return None
 
     @property
-    def actuator_command_range(self) -> tuple[float, float] | None:
-        """Returns (min, max) in actuator command units for this joint, or None if no tool model."""
+    def actuator_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) in true raw actuator units (radians) for this joint, or None if no tool model."""
         model = self.tool_model
-        return model.actuator_command_range if model else None
+        return model.actuator_range if model else None
+
+    @property
+    def command_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) in this tool's own move_to()/move_by() command units, or None if no tool model."""
+        model = self.tool_model
+        return model.command_range if model else None
 
     @property
     def urdf_range(self) -> tuple[float, float] | None:
@@ -288,8 +295,21 @@ class RobotJoints(Enum):
             )
         return model
 
+    def urdf_to_command(self, urdf_units: float) -> float:
+        """Converts URDF units (radians/meters) to this tool's own move_to()/move_by() command units; unchanged if no gripper model."""
+        if self.gripper_model:
+            model = self.gripper_model
+            return model.urdf_to_command(urdf_units)
+        else:
+            return urdf_units
+
+    def command_to_urdf(self, command: float) -> float:
+        """Converts this tool's own move_to()/move_by() command units to URDF units (radians/meters); unchanged if no gripper model."""
+        model = self.gripper_model
+        return model.command_to_urdf(command) if model else command
+
     def urdf_to_actuator(self, urdf_units: float) -> float:
-        """Converts URDF units (radians/meters) to actuator units (percentage/meters); unchanged if no gripper model."""
+        """Converts URDF units (radians/meters) to true raw actuator units (radians); unchanged if no gripper model."""
         if self.gripper_model:
             model = self.gripper_model
             return model.urdf_to_actuator(urdf_units)
@@ -297,9 +317,17 @@ class RobotJoints(Enum):
             return urdf_units
 
     def actuator_to_urdf(self, actuator: float) -> float:
-        """Converts actuator units (percentage/meters) to URDF units (radians/meters); unchanged if no gripper model."""
+        """Converts true raw actuator units (radians) to URDF units (radians/meters); unchanged if no gripper model."""
         model = self.gripper_model
         return model.actuator_to_urdf(actuator) if model else actuator
+
+    def command_to_actuator(self, command: float) -> float:
+        """Converts this tool's own move_to()/move_by() command units to true raw actuator units (radians)."""
+        return self.get_gripper_model("command_to_actuator").command_to_actuator(command)
+
+    def actuator_to_command(self, actuator: float) -> float:
+        """Converts true raw actuator units (radians) to this tool's own move_to()/move_by() command units."""
+        return self.get_gripper_model("actuator_to_command").actuator_to_command(actuator)
 
     # Only relevant for the gripper joint
 
@@ -337,16 +365,16 @@ class RobotJoints(Enum):
             normalized
         )
 
-    def aperture_to_subsystem(self, aperture_m: float) -> float:
-        """Converts fingertip aperture (meters) to subsystem units."""
-        return self.get_gripper_model("aperture_to_subsystem").aperture_to_subsystem(
+    def aperture_to_actuator(self, aperture_m: float) -> float:
+        """Converts fingertip aperture (meters) to actuator units."""
+        return self.get_gripper_model("aperture_to_actuator").aperture_to_actuator(
             aperture_m
         )
 
-    def subsystem_to_aperture(self, subsystem: float) -> float:
-        """Converts subsystem units to fingertip aperture (meters)."""
-        return self.get_gripper_model("subsystem_to_aperture").subsystem_to_aperture(
-            subsystem
+    def actuator_to_aperture(self, actuator: float) -> float:
+        """Converts actuator units to fingertip aperture (meters)."""
+        return self.get_gripper_model("actuator_to_aperture").actuator_to_aperture(
+            actuator
         )
 
     def urdf_to_aperture(self, urdf: float) -> float:
