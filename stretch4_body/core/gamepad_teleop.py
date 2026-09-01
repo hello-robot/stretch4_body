@@ -10,8 +10,6 @@ from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechCommError
 from stretch4_body.core import gamepad_joints
-from stretch4_body.robot.robot import Robot
-from stretch4_body.robot.robot_client import RobotClient
 from stretch4_body.utils.stretch_pose_models import RobotJoints
 import os
 import time
@@ -174,13 +172,9 @@ class GamePadTeleop(Device):
             self.wrist_roll_command = gamepad_joints.CommandWristRoll(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['gripper']:
             if self.custom_gamepad_command_position_class is not None:
-                self.gripper = self.custom_gamepad_command_position_class(motion_profile=self.motion_profile.get_name() )
-            elif self.gripper_name == 'parallel_gripper':
-                self.gripper = gamepad_joints.CommandParallelGripperPosition(motion_profile=self.motion_profile.get_name() )
-            elif self.gripper_name == 'stretch_gripper':
-                self.gripper = gamepad_joints.CommandStretchGripperPosition(motion_profile=self.motion_profile.get_name() )
+                self.gripper = self.custom_gamepad_command_position_class(motion_profile=self.motion_profile.get_name())
             else:
-                raise NotImplementedError(f"Gripper {self.gripper_name} is not supported.")
+                self.gripper = gamepad_joints.CommandToolPosition(name=self.gripper_name, motion_profile=self.motion_profile.get_name())
 
 
     def cycle_motion_profile(self):
@@ -297,7 +291,6 @@ class GamePadTeleop(Device):
                         state['bottom_pad_pressed']
                     )
                     if is_movement_attempt:
-                        play_sound(get_sounds_dir()+f'/homing_required.wav')
                         self.gamepad_controller.vibrate(duration_ms=400, strong_magnitude=1.0, weak_magnitude=1.0)
                 
             if self.controller_state is None: # No control if gamepad not being controlled
@@ -306,11 +299,9 @@ class GamePadTeleop(Device):
             self.manage_start_button(robot)
 
             if robot.is_homed():
-                if self.robot.is_runstopped():
-                    play_sound(get_sounds_dir()+f'/is_runstopped.wav')
+                if self.robot.power_periph.status['runstop_event']:
                     # If the robot is runstopped, vibrate
                     self.gamepad_controller.vibrate(duration_ms=100, strong_magnitude=1.0, weak_magnitude=1.0)
-                    self.logger.error("Robot is runstopped, cannot move.")
                     return False
                 
                 # Regular control
@@ -615,7 +606,7 @@ class GamePadTeleop(Device):
         self.gamepad_controller.stop()
 
     
-    def manage_start_button(self, robot:Robot|RobotClient):
+    def manage_start_button(self, robot):
         """
         Manage the state of the Start button.
 
@@ -629,10 +620,6 @@ class GamePadTeleop(Device):
             
         if not robot.is_homed():
             def do_home():
-                if self.robot.is_runstopped():
-                    play_sound(get_sounds_dir()+f'/is_runstopped.wav')
-                    self.logger.error("Robot is runstopped, cannot home.")
-                    return
                 self.do_single_beep(robot)
                 play_sound(get_sounds_dir()+f'/homing.wav')
                 robot.home()
