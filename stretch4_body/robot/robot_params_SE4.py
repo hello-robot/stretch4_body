@@ -605,6 +605,17 @@ nominal_params={
     'eoa_wrist_dw4_tool_pg4': SE4_eoa_wrist_dw4_tool_pg4,
     'eoa_wrist_dw4_tool_tablet': SE4_eoa_wrist_dw4_tool_tablet,
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
+    # 'line_sensor_vel_limit':{
+    #     'sensor_normals':{ #CCW from robot forward
+    #         'hello-gs2-0':180,
+    #         'hello-gs2-1':120,
+    #         'hello-gs2-2':60,
+    #         'hello-gs2-3':0,
+    #         'hello-gs2-4':300,
+    #         'hello-gs2-5':240},
+    #     'phase_adj':330.0, #adjust to forward
+    #     'dropoff_deg':20.0
+    # },
     'line_sensor_loop':{
         'loop_rate_Hz': 250, #Run fast as polling serial, 6 ch, 30hz
         'cpu_affinity': 16,
@@ -1344,6 +1355,101 @@ nominal_params={
     'robot_trace':{
         'n_samples_per_file':100,
         'duration_limit_minutes':10.0
+    },
+    'cameras': {
+        'head_left': {
+            "config": {
+                "camera_device": "OAK-FFC-3P",
+                "image_size": (1200, 1920),
+                "fps": 30,
+                "rotate_number_of_times": 1,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
+                "sensor_pixel_size_mm": 3.0/1000.0,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'head_right': {
+            "config": {
+                "camera_device": "OAK-FFC-3P",
+                "image_size": (1200, 1920),
+                "fps": 30,
+                "rotate_number_of_times": -1,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
+                "sensor_pixel_size_mm": 3.0/1000.0,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'head_center': {
+            "config": {
+                "camera_device": "OAK-FFC-3P",
+                # "image_size": (3040, 4056),  # Full 12MP resolution
+                "image_size": (3040, 4032),  # Almost full 12MP resolution, 24 pixels subtracted to be divisible by 16 for compression
+                "fps": 10,
+                "rotate_number_of_times": -1,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": "DistortionModels.wide_angle",
+                "sensor_pixel_size_mm": 1.55/1000.0,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'gripper_left': {
+            "config": {
+                "camera_device": "OAK-D-SR",
+                # Options for full FOV: (640x400), (800x500), (960x600), (1024x640), (1280x800)
+                "image_size": (400, 640),
+                # "image_size": (800, 1280),
+                "fps": 30,
+                "rotate_number_of_times": 0,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": None,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'gripper_right': {
+            "config": {
+                "camera_device": "OAK-D-SR",
+                # Options for full FOV: (640x400), (800x500), (960x600), (1024x640), (1280x800)
+                "image_size": (400, 640),
+                # "image_size": (800, 1280),
+                "fps": 30,
+                "rotate_number_of_times": 0,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": None,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
     },
     'self_collision_mujoco':{
         'SE4':{'k_brake_distance': {'lift': 1.1, 'arm': 1.1,'wrist_pitch':1.1,'wrist_yaw':1.1,'wrist_roll':1.1},
