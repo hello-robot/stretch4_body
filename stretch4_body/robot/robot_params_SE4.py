@@ -478,10 +478,10 @@ SE4_eoa_wrist_dw4_tool_pg4={
                 'device_params': 'SE4_parallel_gripper_DW4'
             }
             },
-        'ros': {'joints': 
+        'ros': {'joints':
             [{
                 'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'ParallelGripperCommandGroup',
+                'py_class_name': 'GripperCommandGroup',
             }]
             }
         }
@@ -605,6 +605,17 @@ nominal_params={
     'eoa_wrist_dw4_tool_pg4': SE4_eoa_wrist_dw4_tool_pg4,
     'eoa_wrist_dw4_tool_tablet': SE4_eoa_wrist_dw4_tool_tablet,
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
+    # 'line_sensor_vel_limit':{
+    #     'sensor_normals':{ #CCW from robot forward
+    #         'hello-gs2-0':180,
+    #         'hello-gs2-1':120,
+    #         'hello-gs2-2':60,
+    #         'hello-gs2-3':0,
+    #         'hello-gs2-4':300,
+    #         'hello-gs2-5':240},
+    #     'phase_adj':330.0, #adjust to forward
+    #     'dropoff_deg':20.0
+    # },
     'line_sensor_loop':{
         'loop_rate_Hz': 250, #Run fast as polling serial, 6 ch, 30hz
         'cpu_affinity': 16,
@@ -1345,6 +1356,101 @@ nominal_params={
         'n_samples_per_file':100,
         'duration_limit_minutes':10.0
     },
+    'cameras': {
+        'head_left': {
+            "config": {
+                "camera_device": "OAK-FFC-3P",
+                "image_size": (1200, 1920),
+                "fps": 30,
+                "rotate_number_of_times": 1,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
+                "sensor_pixel_size_mm": 3.0/1000.0,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'head_right': {
+            "config": {
+                "camera_device": "OAK-FFC-3P",
+                "image_size": (1200, 1920),
+                "fps": 30,
+                "rotate_number_of_times": -1,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
+                "sensor_pixel_size_mm": 3.0/1000.0,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'head_center': {
+            "config": {
+                "camera_device": "OAK-FFC-3P",
+                # "image_size": (3040, 4056),  # Full 12MP resolution
+                "image_size": (3040, 4032),  # Almost full 12MP resolution, 24 pixels subtracted to be divisible by 16 for compression
+                "fps": 10,
+                "rotate_number_of_times": -1,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": "DistortionModels.wide_angle",
+                "sensor_pixel_size_mm": 1.55/1000.0,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'gripper_left': {
+            "config": {
+                "camera_device": "OAK-D-SR",
+                # Options for full FOV: (640x400), (800x500), (960x600), (1024x640), (1280x800)
+                "image_size": (400, 640),
+                # "image_size": (800, 1280),
+                "fps": 30,
+                "rotate_number_of_times": 0,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": None,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+        'gripper_right': {
+            "config": {
+                "camera_device": "OAK-D-SR",
+                # Options for full FOV: (640x400), (800x500), (960x600), (1024x640), (1280x800)
+                "image_size": (400, 640),
+                # "image_size": (800, 1280),
+                "fps": 30,
+                "rotate_number_of_times": 0,
+                "buffer_size": 2,
+                "is_compressed": False,
+                "is_lossless": False, # Only used if is_compressed is true
+                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
+                "distortion_model": None,
+                "use_auto_exposure": True,
+                "limit_max": None, # Only used if use_auto_exposure is True
+                "exposure_time": None, # Only used if use_auto_exposure is False
+                "iso": None # Only used if use_auto_exposure is False
+            }
+        },
+    },
     'self_collision_mujoco':{
         'SE4':{'k_brake_distance': {'lift': 1.1, 'arm': 1.1,'wrist_pitch':1.1,'wrist_yaw':1.1,'wrist_roll':1.1},
                # 'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link', 'wrist_link','gripper_camera_link','tool_attachment_site_link','camera_right_link',
@@ -1468,9 +1574,7 @@ nominal_params={
 # #################################################################################
 try:
     import os
-    import sys
     import copy
-    import ast
     import yaml
 
     def _get_user_tools_dirs():
@@ -1501,71 +1605,21 @@ try:
                         'description': f'User-defined custom end-of-arm tool located in {_user_tools_dir}/{_tool_name}.'
                     }
 
-                    # Default configuration inherits from NIL/passive tool, so users can override in stretch_user_params.yaml
+                    # Default configuration inherits from NIL/passive tool -- a tool with no
+                    # motor to control simply never overrides py_module_name/py_class_name below.
                     _default_tool_params = copy.deepcopy(SE4_eoa_wrist_dw4_tool_nil)
-                    
-                    # Check for python class inside user tool folder
+                    _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
+                    _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
+
                     _tool_dir_path = os.path.join(_user_tools_dir, _tool_name)
-                    _py_file = None
-                    if os.path.exists(os.path.join(_tool_dir_path, "end_of_arm.py")):
-                        _py_file = os.path.join(_tool_dir_path, "end_of_arm.py")
-                        _module_name = "end_of_arm"
-                    elif os.path.exists(os.path.join(_tool_dir_path, "custom_tool_end_of_arm.py")):
-                        _py_file = os.path.join(_tool_dir_path, "custom_tool_end_of_arm.py")
-                        _module_name = "custom_tool_end_of_arm"
-                    elif os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}.py")):
-                        _py_file = os.path.join(_tool_dir_path, f"{_tool_name}.py")
-                        _module_name = _tool_name
-                    elif os.path.exists(os.path.join(_tool_dir_path, "tool.py")):
-                        _py_file = os.path.join(_tool_dir_path, "tool.py")
-                        _module_name = "tool"
 
-                    _class_name = None
-                    if _py_file:
-                        try:
-                            # Append the directory path to sys.path so the module can be dynamically imported
-                            if _tool_dir_path not in sys.path:
-                                sys.path.append(_tool_dir_path)
-                            with open(_py_file, 'r') as _f:
-                                _tree = ast.parse(_f.read())
-                            _classes = [node.name for node in ast.walk(_tree) if isinstance(node, ast.ClassDef)]
-                            if _classes:
-                                _class_name = _classes[0]
-                        except Exception:
-                            pass
-
-                    # Detect client file inside user tool folder
-                    _client_py_file = None
-                    if os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}_client.py")):
-                        _client_py_file = os.path.join(_tool_dir_path, f"{_tool_name}_client.py")
-                        _client_module_name = f"{_tool_name}_client"
-                    elif os.path.exists(os.path.join(_tool_dir_path, "tool_client.py")):
-                        _client_py_file = os.path.join(_tool_dir_path, "tool_client.py")
-                        _client_module_name = "tool_client"
-
-                    _client_class_name = None
-                    if _client_py_file:
-                        try:
-                            with open(_client_py_file, 'r') as _f:
-                                _tree = ast.parse(_f.read())
-                            _classes = [node.name for node in ast.walk(_tree) if isinstance(node, ast.ClassDef)]
-                            if _classes:
-                                _client_class_name = _classes[0]
-                        except Exception:
-                            pass
-
-                    if _class_name:
-                        _default_tool_params['py_class_name'] = _class_name
-                        _default_tool_params['py_module_name'] = _module_name
-                    else:
-                        _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
-                        _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
-
-                    if _client_class_name:
-                        _default_tool_params['client_class_name'] = _client_class_name
-                        _default_tool_params['client_module_name'] = _client_module_name
-
-                    # Check for tool_params.yaml inside user tool folder
+                    # Check for tool_params.yaml inside user tool folder. This is the single
+                    # source of truth for a tool's driver (py_module_name/py_class_name, or
+                    # server_module_name/server_class_name -- see ToolMetadata.driver_class),
+                    # client (client_module_name/client_class_name), and metadata
+                    # (metadata_module_name/metadata_class_name -- see get_tool_metadata) --
+                    # consumers read these keys directly rather than inferring them from
+                    # whatever Python files happen to exist in the tool's directory.
                     _params_file = os.path.join(_tool_dir_path, "tool_params.yaml")
                     if os.path.exists(_params_file):
                         try:
