@@ -269,7 +269,9 @@ class CommandToolPosition:
         self.name = name or RobotJoints.gripper.value or 'stretch_gripper'
         try:
             self.metadata = get_tool_metadata(self.name)
-            low, high = self.metadata.actuator_command_range
+            # move_by() below takes this tool's own command units (e.g. aperture meters for
+            # PG4), not true raw actuator units -- use command_range, not actuator_range.
+            low, high = self.metadata.command_range
             self.step_inc = (high - low) / 10.0 if high != low else 1.0
         except Exception:
             self.metadata = None

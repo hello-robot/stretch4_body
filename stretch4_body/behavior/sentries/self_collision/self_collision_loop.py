@@ -8,7 +8,6 @@ from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.mujoco_urdf import get_custom_tool_joints
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_pos_mm_to_urdf_m
 from stretch4_body.utils.tool_metadata import get_tool_metadata
 
 # ###########################################################################################
@@ -195,8 +194,7 @@ class SelfCollisionLoop(Device):
                     if 'gripper_conversion' in tool_status and 'finger_rad' in tool_status['gripper_conversion']:
                         joint_val = tool_status['gripper_conversion']['finger_rad']
                     elif 'pos_mm' in tool_status:
-                        pg_params = robot_params.get('parallel_gripper', {})
-                        joint_val = parallel_gripper_pos_mm_to_urdf_m(tool_status['pos_mm'], pg_params)
+                        joint_val = meta.aperture_to_urdf(tool_status['pos_mm'] / 1000.0)
                     elif 'pos' in tool_status:
                         joint_val = meta.actuator_to_urdf(tool_status['pos'])
                     else:
