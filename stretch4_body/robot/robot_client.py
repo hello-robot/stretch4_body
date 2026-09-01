@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import importlib
-import os
-import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -14,7 +12,6 @@ from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 from stretch4_body.subsystem.line_sensor import calibration
-<<<<<<< HEAD
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
 from stretch4_body.utils.tool_metadata import (
@@ -24,16 +21,6 @@ from stretch4_body.utils.tool_metadata import (
 
 if TYPE_CHECKING:
     from stretch4_body.utils.tool_metadata import ToolMetadata
-=======
-
-if TYPE_CHECKING:
-    from stretch4_body.utils.tool_metadata import ToolMetadata
-
-import importlib
-from stretch4_body.core.hello_utils import rad_to_deg
-from stretch4_body.subsystem.omnibase import OmnibaseStatus
-from stretch4_body.subsystem.power_periph import PowerPeriphStatus
->>>>>>> 92c0f79 (rebase fix)
 
 
 class RobotClient(SubsystemClient):
@@ -1249,6 +1236,7 @@ class WristPitchClient(WristJointClient):
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 class StretchGripperClient(WristJointClient):
     """ Client for the stretch gripper. """
     def __init__(self, parent=None, ip_address=None):
@@ -1282,6 +1270,10 @@ class ParallelGripperClient(WristJointClient):
 =======
 =======
 >>>>>>> 80c7996 (Resolve circular imports with WristJointClient and tool_metadata)
+=======
+=======
+>>>>>>> 1121587 (Add abstract gripper object to EndOfArmClient)
+>>>>>>> 705b723 (Add abstract gripper object to EndOfArmClient)
 class ToolJointClient(WristJointClient):
     """Flexible client for the end effector tool joint"""
     def __init__(self, metadata: ToolMetadata, parent: EndOfArmClient | None = None, ip_address=None):
@@ -1290,8 +1282,11 @@ class ToolJointClient(WristJointClient):
         self.poses = metadata.poses
         self.status['gripper_conversion'] = metadata.status
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> 0cb0822 (Add abstract gripper object to EndOfArmClient)
 =======
+=======
+>>>>>>> 705b723 (Add abstract gripper object to EndOfArmClient)
 =======
 class StretchGripperClient(WristJointClient):
     """ Client for the stretch gripper. """
@@ -1326,6 +1321,10 @@ class ParallelGripperClient(WristJointClient):
 >>>>>>> 80d461d (Resolve circular imports with WristJointClient and tool_metadata)
 >>>>>>> 80c7996 (Resolve circular imports with WristJointClient and tool_metadata)
 # #####################################################################
+=======
+
+######################################################################
+>>>>>>> 1121587 (Add abstract gripper object to EndOfArmClient)
 class EndOfArmClient(SubsystemClient):
     """
     Client interface for the End of Arm (Tool).
