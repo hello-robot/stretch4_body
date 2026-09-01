@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
+import importlib
 import os
 import sys
 import time
+from typing import TYPE_CHECKING
+
 import numpy as np
-from stretch4_body.subsystem.line_sensor import calibration
+
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
+from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
-import importlib
-from stretch4_body.core.hello_utils import rad_to_deg
-from stretch4_body.utils.tool_metadata import StretchGripperMetadata, ParallelGripperMetadata
+from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
+from stretch4_body.utils.tool_metadata import (
+    ParallelGripperMetadata,
+    StretchGripperMetadata,
+)
+
+if TYPE_CHECKING:
+    from stretch4_body.utils.tool_metadata import ToolMetadata
 
 class RobotClient(SubsystemClient):
     """
@@ -1225,6 +1235,7 @@ class WristPitchClient(WristJointClient):
     def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_pitch', parent=parent, ip_address=ip_address)
 
+<<<<<<< HEAD
 class StretchGripperClient(WristJointClient):
     """ Client for the stretch gripper. """
     def __init__(self, parent=None, ip_address=None):
@@ -1255,6 +1266,15 @@ class ParallelGripperClient(WristJointClient):
         Move the parallel gripper to an absolute position in millimeters.
         """
         return self.move_to(x_mm / 1000.0, v_r, a_r)
+=======
+class ToolJointClient(WristJointClient):
+    """Flexible client for the end effector tool joint"""
+    def __init__(self, metadata: ToolMetadata, parent: EndOfArmClient | None = None, ip_address=None):
+        WristJointClient.__init__(self, joint_name=metadata.joint_name, parent=parent, ip_address=ip_address)
+        self.tool_metadata = metadata
+        self.poses = metadata.poses
+        self.status['gripper_conversion'] = metadata.status
+>>>>>>> 0cb0822 (Add abstract gripper object to EndOfArmClient)
 # #####################################################################
 class EndOfArmClient(SubsystemClient):
     """
@@ -1266,30 +1286,29 @@ class EndOfArmClient(SubsystemClient):
         self.joints = list(self.robot_params[self.name].get('devices', {}).keys())
 
         # These are populated for python typing.
-        self.wrist_pitch:WristPitchClient
-        self.wrist_roll:WristRollClient
-        self.wrist_yaw:WristYawClient
-        self.stretch_gripper:StretchGripperClient
-        self.parallel_gripper:ParallelGripperClient
+        self.wrist_pitch: WristPitchClient
+        self.wrist_roll: WristRollClient
+        self.wrist_yaw: WristYawClient
+        self.gripper: ToolJointClient
+
+        from stretch4_body.utils.tool_metadata import get_tool_metadata, is_tool_joint
 
         for joint in self.joints:
             # The attributes defined above are assigned in this forloop:
-            py_class_name = self.robot_params[self.name].get('devices', {}).get(joint, {}).get('py_class_name')
-            if py_class_name is None:
+            device_params = self.robot_params[self.name].get('devices', {}).get(joint, {})
+            if device_params.get('py_class_name') is None:
                 continue
-            if py_class_name == "StretchGripper4":
-                py_class_name = "StretchGripper"
-            class_name = py_class_name+'Client'
-            module_name = 'stretch4_body.robot.robot_client'
-            
-            current_module = importlib.import_module(module_name)
-            if not hasattr(current_module, class_name):
-                from stretch4_body.robot.robot_client import WristJointClient
-                def dynamic_init(self_obj, parent=None, joint_name=joint):
-                    WristJointClient.__init__(self_obj, joint_name=joint_name, parent=parent)
-                dynamic_class = type(class_name, (WristJointClient,), {"__init__": dynamic_init})
-                setattr(current_module, class_name, dynamic_class)
-            setattr(self, joint, getattr(current_module, class_name)(self))
+
+            if is_tool_joint(joint):
+                # A configured tool (built-in gripper, or a user tool registered under this
+                # joint's own name) gets whatever client its metadata declares, and is also
+                # aliased as `self.gripper`. A misconfigured tool raises here rather than
+                # silently falling back to a plain joint client.
+                client = get_tool_metadata(joint).client_class(parent=self)
+                self.gripper = client
+            else:
+                client = WristJointClient(joint_name=joint, parent=self)
+            setattr(self, joint, client)
 
     def do_ping(self, joint):
         """
