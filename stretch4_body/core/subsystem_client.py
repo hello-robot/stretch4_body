@@ -43,14 +43,15 @@ class SubsystemClient(Device):
     def connected(self):
         return self.is_valid and self.client.connected
 
-    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False):
+    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False, block:bool=False):
         """
         `verbose`: Whether to print messages about the server starting up
         `allow_different_user_connection`: Whether to allow connecting to a server running as a different user on the same machine.
+        `block`: Whether to wait for the server, retrying every 100ms, instead of failing when it isn't running yet. Never returns if no server comes up.
         """
         Device.startup(self)
         if self.parent is None:
-            if not self.client.startup(verbose=verbose, allow_different_user_connection=allow_different_user_connection):
+            if not self.client.startup(verbose=verbose, allow_different_user_connection=allow_different_user_connection, block=block):
                 return False
         self.is_valid=True
         for k in self.subsystems:
