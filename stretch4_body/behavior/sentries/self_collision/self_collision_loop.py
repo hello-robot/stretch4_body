@@ -8,7 +8,7 @@ from stretch4_body.core.worker_loop import *
 from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.mujoco_urdf import get_custom_tool_joints
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_pos_mm_to_urdf_m
+from stretch4_body.utils.tool_metadata import get_tool_metadata
 
 # ###########################################################################################
 
@@ -181,21 +181,27 @@ class SelfCollisionLoop(Device):
             if custom_joints:
                 for jk, jv in custom_joints.items():
                     configuration[jk] = jv
-            elif 'stretch_gripper' in s['end_of_arm']:
-                stretch_gripper = s['end_of_arm'].get('stretch_gripper', None)
-                if stretch_gripper is not None:
-                    gripper_conversion = stretch_gripper.get('gripper_conversion', None)
-                    if gripper_conversion is not None:
-                        configuration['gripper_finger_left_joint'] = gripper_conversion.get('finger_rad')
-                        configuration['gripper_finger_right_joint'] = gripper_conversion.get('finger_rad')
-            elif 'parallel_gripper' in s['end_of_arm']:
-                parallel_gripper = s['end_of_arm'].get('parallel_gripper', None)
-                if parallel_gripper is not None:
-                    pos_mm = parallel_gripper.get('pos_mm', 0.0)
-                    pg_params = robot_params.get('parallel_gripper', {})
-                    joint_val = parallel_gripper_pos_mm_to_urdf_m(pos_mm, pg_params)
-                    configuration['finger_left_joint'] = joint_val
-                    configuration['finger_right_joint'] = joint_val
+            elif 'end_of_arm' in s:
+                try:
+                    meta = get_tool_metadata(tool_name)
+                    tool_key = meta.joint_name
+                except Exception:
+                    meta = None
+                    tool_key = tool_name
+
+                tool_status = s['end_of_arm'].get(tool_key, {}) or s['end_of_arm'].get('stretch_gripper', {}) or s['end_of_arm'].get('parallel_gripper', {})
+                if tool_status and meta:
+                    if 'gripper_conversion' in tool_status and 'finger_rad' in tool_status['gripper_conversion']:
+                        joint_val = tool_status['gripper_conversion']['finger_rad']
+                    elif 'pos_mm' in tool_status:
+                        joint_val = meta.aperture_to_urdf(tool_status['pos_mm'] / 1000.0)
+                    elif 'pos' in tool_status:
+                        joint_val = meta.actuator_to_urdf(tool_status['pos'])
+                    else:
+                        joint_val = 0.0
+
+                    for finger_joint in meta.tool_joints:
+                        configuration[finger_joint] = joint_val
 
         return configuration
 
