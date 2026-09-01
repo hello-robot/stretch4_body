@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import time
 import argparse
+import time
+
 import stretch4_body.core.hello_utils as hu
 from stretch4_body.utils.tool_metadata import get_gripper_instance
 
@@ -10,7 +11,7 @@ parser=argparse.ArgumentParser(description='Calibrate the gripper position by cl
 parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
 args=parser.parse_args()
 
-g, gripper_type, is_parallel = get_gripper_instance(direct=args.direct)
+g, gripper_type = get_gripper_instance(direct=args.direct)
 if g is None:
     print("No gripper is configured on this robot.")
     exit(1)
