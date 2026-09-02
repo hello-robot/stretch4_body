@@ -18,17 +18,10 @@ class StretchGripper(FeetechSMHello):
     def __init__(self, chain=None, usb=None, name="stretch_gripper", is_direct=False):
         FeetechSMHello.__init__(self, name, chain, usb, is_direct=is_direct)
         self.status["pos_pct"] = 0.0
-        self.pct_max_open = 100 * abs(
-            self.params["range_deg"][1] / self.params["range_deg"][0]
-        )
-
-        self.poses = {
-            "zero": 0, 
-            "open": self.pct_max_open, 
-            "close": -100
-            }
-
         self.tool_metadata = StretchGripperMetadata()
+        self.poses = self.tool_metadata.poses
+        self.pct_max_open = self.poses["open"]
+
         self.status['gripper_conversion'] = self.tool_metadata.status_to_metadata(self.status)
 
     def startup(self):

@@ -13,12 +13,7 @@ class ParallelGripper(FeetechSMHello):
         FeetechSMHello.__init__(self, name, chain, usb,is_direct=is_direct)
         self.status['pos_mm'] = 0.0
         self.tool_metadata = ParallelGripperMetadata()
-        open_m = self.tool_metadata.actuator_to_aperture(hu.deg_to_rad(self.params['range_deg'][1]))
-        self.poses = {
-            'open': open_m,
-            'mid': open_m / 2.0,
-            'close': 0.0,
-            'zero': 0.0}
+        self.poses = self.tool_metadata.poses
 
     def startup(self):
         return FeetechSMHello.startup(self)
@@ -43,7 +38,8 @@ class ParallelGripper(FeetechSMHello):
         v_r: velocity for trapezoidal motion profile (rad/s).
         a_r: acceleration for trapezoidal motion profile (rad/s^2)
         """
-        x_m = min(max(x_m, 0.0), self.params.get('range_mm', 80.0) / 1000.0)
+        low, high = self.tool_metadata.command_range
+        x_m = min(max(x_m, low), high)
         x_r = self.tool_metadata.aperture_to_actuator(x_m)
         FeetechSMHello.move_to(self, x_des=x_r, v_des=v_r, a_des=a_r)
 
