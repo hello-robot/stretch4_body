@@ -10,6 +10,7 @@ import signal
 import pathlib
 import numbers
 import subprocess
+import shutil
 import cv2
 import sys, tty, termios
 import math
@@ -25,6 +26,143 @@ from stretch4_body.utils.file_access_utils import acquire_lock_if_available, rel
 def print_stretch_re_use():
     print("For use with S T R E T C H (R) from Hello Robot Inc.")
     print("---------------------------------------------------------------------\n")
+
+# ==============================================================================
+# stretch_body_server lifecycle helpers
+# ==============================================================================
+
+def _release_leaked_zmq_resources(robot_client) -> None:
+    """Work around a leak in StretchBodyClient.startup(): when it fails to
+    connect (no server running, or a different user owns the server) it
+    returns False without closing the zmq socket/context it already created.
+    Left alone, that orphaned zmq.Context hangs forever in __del__ -> term()
+    whenever the garbage collector eventually finalizes it, since term()
+    blocks until every socket on the context has been explicitly closed.
+    We reach into the inner client here and force-close anything it left
+    open so nothing is left for the GC to trip over later in the run.
+    """
+    inner = getattr(robot_client, 'client', None)
+    if inner is None:
+        return
+    for sock_attr in ('socket_admin', 'socket_cmd', 'socket_status'):
+        sock = getattr(inner, sock_attr, None)
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+    ctx = getattr(inner, 'context', None)
+    if ctx is not None:
+        try:
+            ctx.term()
+        except Exception:
+            pass
+
+
+def is_stretch_body_server_active() -> bool:
+    """Return True if stretch_body_server is currently running.
+
+    Tries the programmatic RobotClient API first (zero-latency, no subprocess).
+    Falls back to a one-shot `stretch_body_server --ping` subprocess if the
+    stretch4_body package is not importable in the current environment.
+    """
+    # --- Programmatic path (preferred) ---
+    try:
+        from stretch4_body.robot.robot_client import RobotClient
+        client = RobotClient()
+        active = client.startup(verbose=False, allow_different_user_connection=True) and client.is_server_active()
+        client.stop()
+        _release_leaked_zmq_resources(client)
+        return active
+    except Exception:
+        pass
+
+    # --- Subprocess fallback ---
+    if shutil.which('stretch_body_server') is None:
+        return False
+    try:
+        result = subprocess.run(
+            ['stretch_body_server', '--ping'],
+            capture_output=True, text=True, timeout=5
+        )
+        # --ping prints "Successful server ping" on success
+        return 'Successful server ping' in result.stdout
+    except Exception:
+        return False
+
+
+def kill_stretch_body_server() -> bool:
+    """Issue a clean `stretch_body_server --kill` and wait for the process
+    and its transport file locks to be fully released.
+
+    Returns True if the server was successfully stopped, False otherwise.
+    """
+    click.secho("\n  Sending kill signal to stretch_body_server...", fg='yellow')
+    try:
+        result = subprocess.run(
+            ['stretch_body_server', '--kill'],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            click.secho(f"  [WARN] --kill returned non-zero exit code: {result.returncode}", fg='yellow')
+    except subprocess.TimeoutExpired:
+        click.secho("  [WARN] stretch_body_server --kill timed out.", fg='yellow')
+    except Exception as e:
+        click.secho(f"  [WARN] Could not run stretch_body_server --kill: {e}", fg='yellow')
+
+    # Poll until the server is confirmed dead (up to 15 s)
+    click.secho("  Waiting for server to shut down and release transport locks...", fg='cyan')
+    deadline = time.time() + 15.0
+    while time.time() < deadline:
+        if not is_stretch_body_server_active():
+            click.secho("  ✓ Server is no longer active. Transport locks are free.", fg='green', bold=True)
+            # Give udev / OS a moment to release any remaining file descriptors
+            time.sleep(0.5)
+            return True
+        time.sleep(0.75)
+
+    click.secho("  [ERROR] Server did not shut down within 15 s.", fg='red', bold=True)
+    return False
+
+
+def check_stretch_body_server_and_prompt() -> bool:
+    """Check if stretch_body_server is running and prompt the user to kill it.
+
+    Returns True if it is safe to continue (server was not running, or was
+    successfully killed), False if the user declined or the kill failed.
+    """
+    click.secho("\nChecking stretch_body_server status...", fg='cyan')
+
+    if not is_stretch_body_server_active():
+        click.secho("  ✓ No active stretch_body_server detected.", fg='green')
+        return True
+
+    # Server IS running — show status summary
+    click.secho("\n  ⚠ stretch_body_server is currently running in the background.", fg='yellow', bold=True)
+    try:
+        status_result = subprocess.run(
+            ['stretch_body_server', '--status'],
+            capture_output=True, text=True, timeout=5
+        )
+        if status_result.stdout.strip():
+            click.secho("\n" + status_result.stdout.strip(), fg='white')
+    except Exception:
+        pass
+
+    click.secho(
+        "\n  To run this tool, the stretch_body_server must be stopped.\n",
+        fg='yellow'
+    )
+
+    proceed = click.confirm(
+        click.style("  Do you want to kill the server and proceed?", fg='cyan', bold=True),
+        default=False
+    )
+    if not proceed:
+        click.secho("  Aborted. Stretch Body Server is still running.", fg='red')
+        return False
+
+    return kill_stretch_body_server()
 
 # Periodic printing (every second)
 qprint = (lambda msg, fg=None, bold=False, state={"last": 0}:

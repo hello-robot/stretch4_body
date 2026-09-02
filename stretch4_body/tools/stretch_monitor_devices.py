@@ -18,7 +18,6 @@ Modes:
 """
 
 import time
-import shutil
 import sys
 import os
 import signal
@@ -42,6 +41,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from stretch4_body.core.factory.hello_device_utils import find_tty_devices
+import stretch4_body.core.hello_utils as hu
 # Try importing Feetech
 try:
     from stretch4_body.core.feetech.feetech_SM_servo import FeetechSMServo
@@ -1005,140 +1005,6 @@ def generate_table(monitor):
         )
     return table
 
-def _release_leaked_zmq_resources(robot_client) -> None:
-    """Work around a leak in StretchBodyClient.startup(): when it fails to
-    connect (no server running, or a different user owns the server) it
-    returns False without closing the zmq socket/context it already created.
-    Left alone, that orphaned zmq.Context hangs forever in __del__ -> term()
-    whenever the garbage collector eventually finalizes it, since term()
-    blocks until every socket on the context has been explicitly closed.
-    We reach into the inner client here and force-close anything it left
-    open so nothing is left for the GC to trip over later in the run.
-    """
-    inner = getattr(robot_client, 'client', None)
-    if inner is None:
-        return
-    for sock_attr in ('socket_admin', 'socket_cmd', 'socket_status'):
-        sock = getattr(inner, sock_attr, None)
-        if sock is not None:
-            try:
-                sock.close()
-            except Exception:
-                pass
-    ctx = getattr(inner, 'context', None)
-    if ctx is not None:
-        try:
-            ctx.term()
-        except Exception:
-            pass
-
-
-def _is_server_active() -> bool:
-    """Return True if stretch_body_server is currently running.
-
-    Tries the programmatic RobotClient API first (zero-latency, no subprocess).
-    Falls back to a one-shot `stretch_body_server --ping` subprocess if the
-    stretch4_body package is not importable in the current environment.
-    """
-    # --- Programmatic path (preferred) ---
-    try:
-        from stretch4_body.robot.robot_client import RobotClient
-        client = RobotClient()
-        active = client.startup(verbose=False, allow_different_user_connection=True) and client.is_server_active()
-        client.stop()
-        _release_leaked_zmq_resources(client)
-        return active
-    except Exception:
-        pass
-
-    # --- Subprocess fallback ---
-    if shutil.which('stretch_body_server') is None:
-        return False
-    try:
-        result = subprocess.run(
-            ['stretch_body_server', '--ping'],
-            capture_output=True, text=True, timeout=5
-        )
-        # --ping prints "Successful server ping" on success
-        return 'Successful server ping' in result.stdout
-    except Exception:
-        return False
-
-
-def _kill_server() -> bool:
-    """Issue a clean `stretch_body_server --kill` and wait for the process
-    and its transport file locks to be fully released.
-
-    Returns True if the server was successfully stopped, False otherwise.
-    """
-    click.secho("\n  Sending kill signal to stretch_body_server...", fg='yellow')
-    try:
-        result = subprocess.run(
-            ['stretch_body_server', '--kill'],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            click.secho(f"  [WARN] --kill returned non-zero exit code: {result.returncode}", fg='yellow')
-    except subprocess.TimeoutExpired:
-        click.secho("  [WARN] stretch_body_server --kill timed out.", fg='yellow')
-    except Exception as e:
-        click.secho(f"  [WARN] Could not run stretch_body_server --kill: {e}", fg='yellow')
-
-    # Poll until the server is confirmed dead (up to 15 s)
-    click.secho("  Waiting for server to shut down and release transport locks...", fg='cyan')
-    deadline = time.time() + 15.0
-    while time.time() < deadline:
-        if not _is_server_active():
-            click.secho("  ✓ Server is no longer active. Transport locks are free.", fg='green', bold=True)
-            # Give udev / OS a moment to release any remaining file descriptors
-            time.sleep(0.5)
-            return True
-        time.sleep(0.75)
-
-    click.secho("  [ERROR] Server did not shut down within 15 s.", fg='red', bold=True)
-    return False
-
-
-def _check_server_and_prompt() -> bool:
-    """Check if stretch_body_server is running and prompt the user to kill it.
-
-    Returns True if it is safe to continue (server was not running, or was
-    successfully killed), False if the user declined or the kill failed.
-    """
-    click.secho("\nChecking stretch_body_server status...", fg='cyan')
-
-    if not _is_server_active():
-        click.secho("  ✓ No active stretch_body_server detected.", fg='green')
-        return True
-
-    # Server IS running — show status summary
-    click.secho("\n  ⚠ stretch_body_server is currently running in the background.", fg='yellow', bold=True)
-    try:
-        status_result = subprocess.run(
-            ['stretch_body_server', '--status'],
-            capture_output=True, text=True, timeout=5
-        )
-        if status_result.stdout.strip():
-            click.secho("\n" + status_result.stdout.strip(), fg='white')
-    except Exception:
-        pass
-
-    click.secho(
-        "\n  To run this tool, the stretch_body_server must be stopped.\n",
-        fg='yellow'
-    )
-
-    proceed = click.confirm(
-        click.style("  Do you want to kill the server and proceed?", fg='cyan', bold=True),
-        default=False
-    )
-    if not proceed:
-        click.secho("  Aborted. Stretch Body Server is still running.", fg='red')
-        return False
-
-    return _kill_server()
-
-
 def main():
     parser = argparse.ArgumentParser(description="Stretch Monitor")
     parser.add_argument("--passive", action="store_true", help="Passive checking only (no stream claims)")
@@ -1161,11 +1027,11 @@ def main():
     # In Passive mode we only check device presence (symlinks / pings) and the
     # check is purely advisory, so we don't force a kill.
     if not args.passive:
-        if not _check_server_and_prompt():
+        if not hu.check_stretch_body_server_and_prompt():
             sys.exit(1)
     else:
         # Passive mode: warn but do not block.
-        if _is_server_active():
+        if hu.is_stretch_body_server_active():
             click.secho(
                 "\n  [INFO] stretch_body_server is running. Passive mode is safe to use "
                 "alongside the server (no device locks are claimed).\n",
