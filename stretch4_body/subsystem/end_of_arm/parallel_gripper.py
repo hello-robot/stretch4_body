@@ -43,6 +43,7 @@ class ParallelGripper(FeetechSMHello):
         v_r: velocity for trapezoidal motion profile (rad/s).
         a_r: acceleration for trapezoidal motion profile (rad/s^2)
         """
+        x_m = min(max(x_m, 0.0), self.params.get('range_mm', 80.0) / 1000.0)
         x_r = self.tool_metadata.aperture_to_actuator(x_m)
         FeetechSMHello.move_to(self, x_des=x_r, v_des=v_r, a_des=a_r)
 
@@ -68,7 +69,7 @@ class ParallelGripper(FeetechSMHello):
 
     def pull_status(self,data=None):
         FeetechSMHello.pull_status(self,data)
-        self.status['pos_mm']=self.tool_metadata.actuator_to_aperture(self.status['pos'])*1000.0
+        self.status['pos_mm']=self.tool_metadata.actuator_to_aperture(self.status['pos']) * 1000.0
 
     def step_sentry(self, robot):
         pass
