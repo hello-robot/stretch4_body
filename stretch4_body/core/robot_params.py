@@ -192,22 +192,6 @@ class RobotParams:
         `stretch_configure_tool` writes new tool settings, or a test writes a temporary user_tools
         directory), then updates this class's already-loaded _user_params/_robot_params dicts
         IN PLACE with the freshly-scanned content.
-
-        Reloading in place (rather than just doing a fresh `from stretch4_body.core.robot_params
-        import RobotParams`) matters because the class body that builds _user_params/_robot_params
-        only runs once, at first import: a plain re-import returns the same cached class unless the
-        module is force-reloaded, and force-reloading naively would swap in a *new* RobotParams
-        class object that any code already holding a reference to the old one (via a module-level
-        `import`, a `self.foo = RobotParams` attribute, etc.) would not see. Mutating this class's
-        dicts in place, then restoring the module's `RobotParams` name to point back at this same
-        class, means every existing reference keeps working and observes the refreshed data.
-
-        This also drops every already-imported `*robot_params*` module (not just this one) from
-        `sys.modules` before re-importing: the per-model nominal-params module (e.g.
-        stretch4_body.robot.robot_params_SE4) does its own YAML/user_tools disk scan, but only the
-        first time it's imported — this class's body fetches it via `importlib.import_module()`,
-        which returns whatever's already cached rather than re-scanning. Without dropping it too,
-        only the very first `reload()` call in a process would ever see freshly-written files.
         """
         for mod_name in list(sys.modules):
             if 'robot_params' in mod_name:
