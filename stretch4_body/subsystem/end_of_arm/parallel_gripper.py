@@ -55,9 +55,8 @@ class ParallelGripper(FeetechSMHello):
         """
         if self.is_direct:
             self.pull_status()
-        x_mm = (self.status.get('pos_mm', 0.0) / 1000.0) + x_m
-        x_r = self.tool_metadata.aperture_to_actuator(x_mm * 1000.0)
-        self.move_to(x_r, v_r, a_r)
+        x_final = (self.status.get('pos_mm', 0.0) / 1000.0) + x_m
+        self.move_to(x_final, v_r, a_r)
 
     def move_to_mm(self, x_mm, v_r=None, a_r=None):
         self.move_to(x_mm / 1000.0, v_r, a_r)
