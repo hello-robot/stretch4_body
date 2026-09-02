@@ -319,4 +319,34 @@ class RobotParams:
                 return p
         return None
 
+    @classmethod
+    def add_user_tool_to_sys_path(cls, tool_name):
+        """
+        Finds and adds the user tool's directory to sys.path dynamically.
+        """
+        if not tool_name:
+            return
+        _dirs = []
+        _fleet_path = os.environ.get("HELLO_FLEET_PATH")
+        _fleet_id = os.environ.get("HELLO_FLEET_ID")
+        if _fleet_path:
+            if _fleet_id:
+                _specific_dir = os.path.join(_fleet_path, _fleet_id, "user_tools")
+                if os.path.exists(_specific_dir):
+                    _dirs.append(_specific_dir)
+            _shared_dir = os.path.join(_fleet_path, "user_tools")
+            if os.path.exists(_shared_dir):
+                _dirs.append(_shared_dir)
+        else:
+            _default_dir = os.path.expanduser("~/stretch_user/user_tools")
+            if os.path.exists(_default_dir):
+                _dirs.append(_default_dir)
+
+        for _user_tools_dir in _dirs:
+            _candidate = os.path.join(_user_tools_dir, tool_name)
+            if os.path.exists(_candidate):
+                if _candidate not in sys.path:
+                    sys.path.append(_candidate)
+                break
+
 
