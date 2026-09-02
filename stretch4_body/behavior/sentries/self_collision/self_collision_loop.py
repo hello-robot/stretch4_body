@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-import time
-import queue
-from multiprocessing import Process, Event
 import math
+import queue
+import time
+from multiprocessing import Event, Process
+
+from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import (
+    MujocoJointStates,
+    SelfCollisionMujoco,
+)
 from stretch4_body.core.device import Device
-from stretch4_body.core.worker_loop import *
-from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import MujocoJointStates, SelfCollisionMujoco
-from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.mujoco_urdf import get_custom_tool_joints
+from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.core.worker_loop import *
 from stretch4_body.utils.tool_metadata import get_tool_metadata
 
 # ###########################################################################################
@@ -108,7 +112,7 @@ class SelfCollisionLoop(Device):
     def step(self,joint_cfg=None):
         """
         Update collision model given joint_cfg (or get joint_cfg from robot if not provided)
-        Called at 100hz from main control loop. 
+        Called at 100hz from main control loop.
         Send joint configuration to solver loop, get back latest collisions (async)
         """
         if joint_cfg is None:
@@ -129,9 +133,9 @@ class SelfCollisionLoop(Device):
         if self.solver_process is not None:
             self.solver_process.join()
             self.solver_process = None
-            
 
-            
+
+
         signal.signal(signal.SIGINT, original_sigint)
 
     @staticmethod
@@ -171,37 +175,23 @@ class SelfCollisionLoop(Device):
                 dwr = kbd['wrist_roll'] * wrist_roll.get('braking_distance', 0.0)
                 configuration['wrist_roll_joint'] = wrist_roll.get('pos', 0.0) + dwr
 
-            custom_joints = {}
             tool_name = robot_params.get('robot', {}).get('tool')
-            
-            # Identify custom tools: dynamically check if the tool's folder exists under user_tools
+
             if tool_name and RobotParams.is_user_defined_tool(tool_name):
-                custom_joints = get_custom_tool_joints(tool_name, s)
-
-            if custom_joints:
-                for jk, jv in custom_joints.items():
-                    configuration[jk] = jv
-            elif 'end_of_arm' in s:
+                for joint, joint_pos in get_custom_tool_joints(tool_name, s).items():
+                    configuration[joint] = joint_pos
+            else:
                 try:
-                    meta = get_tool_metadata(tool_name)
-                    tool_key = meta.joint_name
+                    tool_metadata = get_tool_metadata(tool_name)
                 except Exception:
-                    meta = None
-                    tool_key = tool_name
+                    tool_metadata = None
 
-                tool_status = s['end_of_arm'].get(tool_key, {}) or s['end_of_arm'].get('stretch_gripper', {}) or s['end_of_arm'].get('parallel_gripper', {})
-                if tool_status and meta:
-                    if 'gripper_conversion' in tool_status and 'finger_rad' in tool_status['gripper_conversion']:
-                        joint_val = tool_status['gripper_conversion']['finger_rad']
-                    elif 'pos_mm' in tool_status:
-                        joint_val = meta.aperture_to_urdf(tool_status['pos_mm'] / 1000.0)
-                    elif 'pos' in tool_status:
-                        joint_val = meta.actuator_to_urdf(tool_status['pos'])
-                    else:
-                        joint_val = 0.0
-
-                    for finger_joint in meta.tool_joints:
-                        configuration[finger_joint] = joint_val
+                if tool_metadata is not None:
+                    tool_status = s['end_of_arm'].get(tool_metadata.joint_name, {})
+                    if tool_status:
+                        joint_val = tool_metadata.status_to_metadata(tool_status)['finger_rad']
+                        for joint in tool_metadata.tool_joints:
+                            configuration[joint] = joint_val
 
         return configuration
 
@@ -247,7 +237,7 @@ if __name__ == "__main__":
             def cb(joint_states):
                  cfg=get_virtual_joint_cfg()
                  return MujocoJointStates.from_urdf_joint_state(cfg)
-            
+
             joint_states=MujocoJointStates.from_urdf_joint_state(get_virtual_joint_cfg())
             solver.visualize(joint_states, highlight_collisions=True,highlight_collision_directions=True,callback=cb)
 
