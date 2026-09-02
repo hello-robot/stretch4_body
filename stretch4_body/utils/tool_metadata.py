@@ -2,13 +2,13 @@ import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import cached_property
+from typing import Any
 
 from stretch4_urdf import get_joint_limits, get_urdf
 
 from stretch4_body.core.hello_utils import deg_to_rad, rad_to_deg
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot_client import WristJointClient
-from stretch4_body.utils.user_tool_utils import add_user_tool_to_sys_path
 
 
 class ToolConfigurationError(ValueError):
@@ -266,12 +266,14 @@ class ParallelGripperMetadata(ToolMetadata):
     def client_class(self) -> Callable[..., WristJointClient]:
         # Import here to avoid circular dependencies
         from stretch4_body.robot.robot_client import ParallelGripperClient
+
         return ParallelGripperClient
 
     @property
     def driver_class(self) -> type:
         # Import here to avoid circular dependencies
         from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
+
         return ParallelGripper
 
     @property
@@ -441,12 +443,14 @@ class StretchGripperMetadata(ToolMetadata):
     def client_class(self) -> Callable[..., WristJointClient]:
         # Import here to avoid circular dependencies
         from stretch4_body.robot.robot_client import StretchGripperClient
+
         return StretchGripperClient
 
     @property
     def driver_class(self) -> type:
         # Import here to avoid circular dependencies
         from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
+
         return StretchGripper
 
     @property
@@ -655,7 +659,7 @@ class LinearToolMetadata(ToolMetadata):
                 raise ToolConfigurationError(
                     f"Both 'client_module_name' and 'client_class_name' must be set together in robot_params['{self.tool_name}']."
                 )
-            add_user_tool_to_sys_path(self.tool_name)
+            RobotParams.add_user_tool_to_sys_path(self.tool_name)
             try:
                 module = RobotParams.import_user_tool_module(
                     self.tool_name, client_module, is_server=False
@@ -742,7 +746,7 @@ class LinearToolMetadata(ToolMetadata):
             raise ToolConfigurationError(
                 f"Direct driver configuration for tool '{self.tool_name}' must specify 'py_module_name' and 'py_class_name'."
             )
-        add_user_tool_to_sys_path(self.tool_name)
+        RobotParams.add_user_tool_to_sys_path(self.tool_name)
         try:
             module = RobotParams.import_user_tool_module(
                 self.tool_name, py_module, is_server=True
@@ -883,7 +887,7 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     meta_class = tool_params.get("metadata_class_name")
 
     if meta_module and meta_class:
-        add_user_tool_to_sys_path(tool_name)
+        RobotParams.add_user_tool_to_sys_path(tool_name)
         try:
             module = RobotParams.import_user_tool_module(
                 tool_name, meta_module, is_server=False
@@ -897,3 +901,34 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
 
     # 3. Explicit LinearToolMetadata parser (fails fast on missing YAML parameters)
     return LinearToolMetadata(tool_name)
+
+
+def get_gripper_instance(
+    direct: bool = False, ip_address: str | None = None
+) -> tuple[Any, str] | tuple[None, None]:
+    """
+    Constructs and returns a tool instance (the driver for direct, client otherwise) along with its type name.
+    """
+    try:
+        meta = get_tool_metadata()
+    except Exception:
+        return None, None
+
+    gripper_type = meta.joint_name
+
+    try:
+        if direct:
+            DriverClass = meta.driver_class
+            g = DriverClass(is_direct=True)
+        else:
+            ClientClass = meta.client_class
+            try:
+                g = ClientClass(ip_address=ip_address)
+            except TypeError:
+                g = ClientClass()
+    except Exception as e:
+        raise ValueError(
+            f"Failed to instantiate {'driver' if direct else 'client'} for tool '{gripper_type}': {e}"
+        )
+
+    return g, gripper_type
