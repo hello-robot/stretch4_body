@@ -5,15 +5,7 @@ from functools import cache, cached_property
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot_client import WristJointClient
-from stretch4_body.utils.tool_metadata import (
-    BUILTIN_TOOL_MODELS,
-    ToolConfigurationError,
-    ToolMetadata,
-    get_tool_metadata,
-)
-
-# Backwards compatibility alias for tests patching GRIPPER_MODELS
-GRIPPER_MODELS = BUILTIN_TOOL_MODELS
+from stretch4_body.utils.tool_metadata import ToolMetadata, get_tool_metadata
 
 
 @dataclass
@@ -47,15 +39,15 @@ class RobotPose:
         pose = cls(name=data["name"], timestamp=data["timestamp"])
         if "delay_before_start" in data:
             pose.delay_before_start = data["delay_before_start"]
-        if "base" in data and data["base"]:
+        if data.get("base"):
             pose.base = BasePose(**data["base"])
         if "joints" in data:
-            for k, v in data["joints"].items():
-                joint = RobotJoints.get_joint_by_name(k)
-                normalized_key = joint.name if joint is not None else k
-                v_copy = dict(v)
-                v_copy.setdefault("name", normalized_key)
-                pose.joints[normalized_key] = JointPose(**v_copy)
+            for joint_name, joint_pose in data["joints"].items():
+                joint = RobotJoints.get_joint_by_name(joint_name)
+                normalized_key = joint.name if joint is not None else joint_name
+                joint_pose = dict(joint_pose)
+                joint_pose = joint_pose.setdefault("name", normalized_key)
+                pose.joints[normalized_key] = JointPose(**joint_pose)
         return pose
 
     @classmethod
@@ -103,25 +95,31 @@ class RobotJoints(Enum):
 
     @classmethod
     def get_joint_by_name(cls, name: str) -> "RobotJoints | None":
-        """Looks up a joint by its enum name, alias, configured tool name, or URDF tool joints."""
+        """Looks up a joint by its enum name, robot param name, or tool joint alias"""
         if name in cls.__members__:
             return cls[name]
-        if name in ["gripper", "tool"]:
-            return cls.gripper
         for joint in cls:
             if joint.value == name:
                 return joint
-            if joint == cls.gripper:
-                if (
-                    joint.gripper_name and name == joint.gripper_name
-                ) or name in joint.tool_joints:
-                    return joint
-                try:
-                    if get_tool_metadata(name) is not None:
-                        return joint
-                except Exception:
-                    pass
+        if cls._is_gripper_alias(name):
+            return cls.gripper
         return None
+
+    @classmethod
+    def _is_gripper_alias(cls, name: str) -> bool:
+        """True if `name` is the configured tool's robot_params name, one of its URDF joint
+        names, or any name recognized by tool_metadata (even if not the currently-configured tool)."""
+        gripper = cls.gripper
+        if gripper.gripper_name and name == gripper.gripper_name:
+            return True
+        if name in gripper.tool_joints:
+            return True
+        if name == "tool":
+            return True
+        try:
+            return get_tool_metadata(name) is not None
+        except Exception:
+            return False
 
     @classmethod
     def get_end_of_arm_joints(cls) -> list["RobotJoints"]:
@@ -140,95 +138,6 @@ class RobotJoints(Enum):
             return self.gripper_name
         else:
             return self.name
-
-    @property
-    def gripper_model(self) -> ToolMetadata | None:
-        """Returns the ToolMetadata for this joint, or None if this isn't the gripper joint or none is configured."""
-        if self.name == "gripper":
-            try:
-                return get_tool_metadata(self.gripper_name)
-            except Exception:
-                return None
-        return None
-
-    @property
-    def tool_model(self) -> ToolMetadata | None:
-        """Alias for gripper_model."""
-        return self.gripper_model
-
-    @property
-    def tool_joints(self) -> list[str]:
-        """Returns the URDF joint names for this tool, or [] if no tool model."""
-        model = self.tool_model
-        return model.tool_joints if model else []
-
-    @property
-    def finger_joints(self) -> list[str]:
-        """Returns the URDF finger joint names for this joint, or [] if no gripper model."""
-        return self.tool_joints
-
-    @property
-    def tool_links(self) -> list[str]:
-        """Returns the URDF link names for this tool, or [] if no tool model."""
-        model = self.tool_model
-        return model.tool_links if model else []
-
-    @property
-    def finger_links(self) -> list[str]:
-        """Returns the URDF finger link names for this joint, or [] if no gripper model."""
-        return self.tool_links
-
-    @property
-    def gripper_client(self) -> WristJointClient | None:
-        """Returns a RobotClient instance for this joint's gripper, or None if no gripper model."""
-        model = self.gripper_model
-        return model.client_class() if model else None
-
-    @cached_property
-    def gripper_name(self) -> str | None:
-        """Returns the configured tool's robot_params name, or None if no tool is configured."""
-        _, robot_params = RobotParams.get_params()
-        return robot_params.get("robot", {}).get("tool")
-
-    @property
-    def poses(self) -> dict[str, float] | None:
-        """Returns this joint's named gripper client poses in URDF units, or None if no gripper model."""
-        if self.name == "gripper" and self.gripper_model:
-            client = self.gripper_client
-            if client and hasattr(client, "poses"):
-                # client.poses is in command units (move_to()'s own parameter), not true actuator.
-                return {k: self.command_to_urdf(v) for k, v in client.poses.items()}
-        return None
-
-    @property
-    def actuator_range(self) -> tuple[float, float] | None:
-        """Returns (min, max) in true raw actuator units (radians) for this joint, or None if no tool model."""
-        model = self.tool_model
-        return model.actuator_range if model else None
-
-    @property
-    def command_range(self) -> tuple[float, float] | None:
-        """Returns (min, max) in this tool's own move_to()/move_by() command units, or None if no tool model."""
-        model = self.tool_model
-        return model.command_range if model else None
-
-    @property
-    def urdf_range(self) -> tuple[float, float] | None:
-        """Returns (close, open) in URDF units for this joint, or None if no gripper model."""
-        model = self.tool_model
-        return model.urdf_range if model else None
-
-    @property
-    def position_tolerance(self) -> float | None:
-        """Returns this joint's "close enough" tolerance in URDF units, or None if no tool model."""
-        model = self.tool_model
-        return model.position_tolerance if model else None
-
-    @property
-    def aperture_range(self) -> tuple[float, float] | None:
-        """Returns (min, max) fingertip aperture for this joint, or None if no gripper model."""
-        model = self.tool_model
-        return model.aperture_range if model else None
 
 
     @cache
@@ -279,12 +188,47 @@ class RobotJoints(Enum):
         vel_xy_m = base_params["vel_xy_m"]
         return vel_xy_m, accel_xy_m, vel_w_r, accel_w_r
 
+    #  ---------- Not yet implemented for non-gripper joints (raises NotImplementedError) ---------- #
+    # lift/arm limits are stored in robot_params[<joint>]['range_m'];
+    # wrist_yaw/pitch/roll limits can be accessed via stretch4_urdf methods (get_joint_limits)
+
+    @property
+    def actuator_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) in true raw actuator units (radians) for this joint, or None if no tool configured."""
+        if self.name != "gripper":
+            raise NotImplementedError(
+                f"actuator_range is not yet implemented for joint '{self.name}'."
+            )
+        model = self.tool_model
+        return model.actuator_range if model else None
+
+    @property
+    def urdf_range(self) -> tuple[float, float] | None:
+        """Returns (close, open) in URDF units for this joint, or None if no tool configured."""
+        if self.name != "gripper":
+            raise NotImplementedError(
+                f"urdf_range is not yet implemented for joint '{self.name}'."
+            )
+        model = self.tool_model
+        return model.urdf_range if model else None
+
+    @property
+    def position_tolerance(self) -> float | None:
+        """Returns this joint's "close enough" tolerance in URDF units"""
+        if self.name != "gripper":
+            raise NotImplementedError(
+                f"position_tolerance is not yet implemented for joint '{self.name}'."
+            )
+        model = self.tool_model
+        return model.position_tolerance if model else None
+
+    #  ---------- Tool-only concepts, no non-gripper equivalent (raises AttributeError) ---------- #
     def raise_joint_specific_warning(
         self, method: str, expected_joints: list[str]
     ) -> None:
-        """Raises NotImplementedError if this joint isn't one of `expected_joints`."""
+        """Raises AttributeError if this joint isn't one of `expected_joints`."""
         if self.name not in expected_joints:
-            raise NotImplementedError(
+            raise AttributeError(
                 f"Method {method} is not implemented for joint {self.name}"
             )
 
@@ -299,7 +243,84 @@ class RobotJoints(Enum):
             )
         return model
 
-    # Only relevant for the gripper joint
+    @property
+    def command_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) in this tool's own move_to()/move_by() command units, or None if no tool configured."""
+        if self.name != "gripper":
+            raise AttributeError(
+                f"'{self.name}' joint has no command_range; only tool-driven joints do."
+            )
+        model = self.tool_model
+        return model.command_range if model else None
+
+    @property
+    def aperture_range(self) -> tuple[float, float] | None:
+        """Returns (min, max) fingertip aperture for this joint, or None if no tool configured."""
+        if self.name != "gripper":
+            raise AttributeError(
+                f"'{self.name}' joint has no aperture_range; only the gripper has fingertips."
+            )
+        model = self.tool_model
+        return model.aperture_range if model else None
+
+    @property
+    def poses(self) -> dict[str, float] | None:
+        """Returns this joint's named gripper client poses in URDF units, or None if no gripper model."""
+        if self.name == "gripper" and self.gripper_model:
+            client = self.gripper_client
+            if client and hasattr(client, "poses"):
+                # client.poses is in command units (move_to() input)
+                return {k: self.command_to_urdf(v) for k, v in client.poses.items()}
+        return None
+
+    @property
+    def gripper_model(self) -> ToolMetadata | None:
+        """Returns the ToolMetadata for this joint, or None if this isn't the gripper joint or none is configured."""
+        if self.name == "gripper":
+            try:
+                return get_tool_metadata(self.gripper_name)
+            except Exception:
+                return None
+        return None
+
+    @property
+    def tool_model(self) -> ToolMetadata | None:
+        """Alias for gripper_model."""
+        return self.gripper_model
+
+    @property
+    def tool_joints(self) -> list[str]:
+        """Returns the URDF joint names for this tool, or [] if no tool model."""
+        model = self.tool_model
+        return model.tool_joints if model else []
+
+    @property
+    def finger_joints(self) -> list[str]:
+        """Returns the URDF finger joint names for this joint, or [] if no gripper model."""
+        return self.tool_joints
+
+    @property
+    def tool_links(self) -> list[str]:
+        """Returns the URDF link names for this tool, or [] if no tool model."""
+        model = self.tool_model
+        return model.tool_links if model else []
+
+    @property
+    def finger_links(self) -> list[str]:
+        """Returns the URDF finger link names for this joint, or [] if no gripper model."""
+        return self.tool_links
+
+    @property
+    def gripper_client(self) -> WristJointClient | None:
+        """Returns a RobotClient instance for this joint's gripper, or None if no gripper model."""
+        model = self.gripper_model
+        return model.client_class() if model else None
+
+    @cached_property
+    def gripper_name(self) -> str | None:
+        """Returns the configured tool's robot_params name, or None if no tool is configured."""
+        _, robot_params = RobotParams.get_params()
+        return robot_params.get("robot", {}).get("tool")
 
     def urdf_to_command(self, urdf_units: float) -> float:
         """Converts URDF units (radians/meters) to this tool's own move_to()/move_by() command units."""
