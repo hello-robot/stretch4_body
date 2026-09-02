@@ -12,11 +12,22 @@ from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 from stretch4_body.subsystem.line_sensor import calibration
+<<<<<<< HEAD
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
 
 if TYPE_CHECKING:
     from stretch4_body.utils.tool_metadata import ToolMetadata
+=======
+
+if TYPE_CHECKING:
+    from stretch4_body.utils.tool_metadata import ToolMetadata
+
+from stretch4_body.core.hello_utils import rad_to_deg
+from stretch4_body.subsystem.omnibase import OmnibaseStatus
+from stretch4_body.subsystem.power_periph import PowerPeriphStatus
+>>>>>>> 92c0f79 (rebase fix)
+
 
 
 class RobotClient(SubsystemClient):
