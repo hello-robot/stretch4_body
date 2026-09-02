@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
 from functools import cache, cached_property
+from typing import TYPE_CHECKING
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
-from stretch4_body.robot.robot_client import WristJointClient
 from stretch4_body.utils.tool_metadata import ToolMetadata, get_tool_metadata
+
+if TYPE_CHECKING:
+    from stretch4_body.robot.robot_client import WristJointClient
 
 
 @dataclass
