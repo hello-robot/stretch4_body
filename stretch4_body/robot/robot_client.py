@@ -9,7 +9,6 @@ from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 import importlib
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import GripperConversion
 from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.utils.tool_metadata import StretchGripperMetadata, ParallelGripperMetadata
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
@@ -1237,7 +1236,6 @@ class StretchGripperClient(WristJointClient):
                                              'finger_rad': 0.0,
                                              'finger_effort': 0.0,
                                              'finger_vel': 0.0}
-        self.gripper_conversion = GripperConversion(self.params)
 
 class ParallelGripperClient(WristJointClient):
     """ Client for the parallel gripper. """
