@@ -1,15 +1,13 @@
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from functools import cached_property, partial
+from functools import cached_property
 
 from stretch4_urdf import get_joint_limits, get_urdf
 
 from stretch4_body.core.hello_utils import deg_to_rad, rad_to_deg
 from stretch4_body.core.robot_params import RobotParams
-from stretch4_body.robot.robot_client import ToolJointClient, WristJointClient
-from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
-from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
+from stretch4_body.robot.robot_client import WristJointClient
 from stretch4_body.utils.user_tool_utils import add_user_tool_to_sys_path
 
 
@@ -239,7 +237,12 @@ class ToolMetadata(ABC):
     @property
     def status(self) -> dict[str, float]:
         """Default zeroed 'gripper_conversion' status fields, used to seed a fresh client's status dict."""
-        return {"aperture_m": 0.0, "finger_rad": 0.0, "finger_effort": 0.0, "finger_vel": 0.0}
+        return {
+            "aperture_m": 0.0,
+            "finger_rad": 0.0,
+            "finger_effort": 0.0,
+            "finger_vel": 0.0,
+        }
 
 
 class ParallelGripperMetadata(ToolMetadata):
@@ -261,10 +264,14 @@ class ParallelGripperMetadata(ToolMetadata):
 
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
-        return partial(ToolJointClient, self)
+        # Import here to avoid circular dependencies
+        from stretch4_body.robot.robot_client import ParallelGripperClient
+        return ParallelGripperClient
 
     @property
     def driver_class(self) -> type:
+        # Import here to avoid circular dependencies
+        from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
         return ParallelGripper
 
     @property
@@ -286,7 +293,9 @@ class ParallelGripperMetadata(ToolMetadata):
     def position_tolerance(self) -> float:
         """User-supplied 'position_tolerance' (URDF units, meters) from robot_params if set, else the default fraction of urdf_range."""
         user_value = self._params.get("position_tolerance")
-        return float(user_value) if user_value is not None else super().position_tolerance
+        return (
+            float(user_value) if user_value is not None else super().position_tolerance
+        )
 
     @property
     def command_range(self) -> tuple[float, float]:
@@ -430,10 +439,14 @@ class StretchGripperMetadata(ToolMetadata):
 
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
-        return partial(ToolJointClient, self)
+        # Import here to avoid circular dependencies
+        from stretch4_body.robot.robot_client import StretchGripperClient
+        return StretchGripperClient
 
     @property
     def driver_class(self) -> type:
+        # Import here to avoid circular dependencies
+        from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
         return StretchGripper
 
     @property
@@ -460,7 +473,9 @@ class StretchGripperMetadata(ToolMetadata):
         """User-supplied 'position_tolerance' (URDF units, radians) from robot_params if set, else the default fraction of urdf_range."""
         _, robot_params = RobotParams.get_params()
         user_value = robot_params.get("stretch_gripper", {}).get("position_tolerance")
-        return float(user_value) if user_value is not None else super().position_tolerance
+        return (
+            float(user_value) if user_value is not None else super().position_tolerance
+        )
 
     def urdf_to_command(self, urdf: float) -> float:
         """Converts the URDF finger joint value (radians) to Pct — SG4's command units."""
@@ -488,7 +503,7 @@ class StretchGripperMetadata(ToolMetadata):
         return deg_to_rad(range_deg_0) * command / -100.0
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts true raw servo angle (radians) to Pct — SG4's command units. Promoted from StretchGripper.world_rad_to_pct()."""
+        """Converts true raw servo angle (radians) to Pct — SG4's command units"""
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
@@ -558,7 +573,11 @@ class StretchGripperMetadata(ToolMetadata):
         aperture_angle_deg = self._aperture_m_to_aperture_angle_degrees(aperture)
         servo_closed_deg, servo_open_deg = self._range_deg
         servo_angle_deg = self._map_range(
-            aperture_angle_deg, 0.0, self._aperture_open_deg, servo_closed_deg, servo_open_deg
+            aperture_angle_deg,
+            0.0,
+            self._aperture_open_deg,
+            servo_closed_deg,
+            servo_open_deg,
         )
         return deg_to_rad(servo_angle_deg)
 
@@ -566,7 +585,11 @@ class StretchGripperMetadata(ToolMetadata):
         """Converts true raw servo angle (radians) to fingertip aperture (meters), the inverse of `aperture_to_actuator`."""
         servo_closed_deg, servo_open_deg = self._range_deg
         aperture_angle_deg = self._map_range(
-            rad_to_deg(actuator), servo_closed_deg, servo_open_deg, 0.0, self._aperture_open_deg
+            rad_to_deg(actuator),
+            servo_closed_deg,
+            servo_open_deg,
+            0.0,
+            self._aperture_open_deg,
         )
         return self._aperture_angle_degrees_to_aperture_m(aperture_angle_deg)
 
@@ -694,7 +717,12 @@ class LinearToolMetadata(ToolMetadata):
 
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
-        return self._client_class or partial(ToolJointClient, self)
+        if self._client_class is None:
+            raise ToolConfigurationError(
+                f"No client class available for user tool '{self.tool_name}': set "
+                "'client_module_name' and 'client_class_name' in robot_params."
+            )
+        return self._client_class
 
     @property
     def driver_class(self) -> type:
@@ -813,7 +841,8 @@ def is_tool_joint(name: str) -> bool:
     _, robot_params = RobotParams.get_params()
     tool_params = robot_params.get(name, {})
     return bool(tool_params.get("tool_joints")) or bool(
-        tool_params.get("metadata_module_name") and tool_params.get("metadata_class_name")
+        tool_params.get("metadata_module_name")
+        and tool_params.get("metadata_class_name")
     )
 
 

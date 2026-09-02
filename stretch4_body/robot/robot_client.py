@@ -9,8 +9,7 @@ from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 import importlib
-from stretch4_body.subsystem.end_of_arm.stretch_gripper import GripperConversion
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
+from stretch4_body.subsystem.end_of_arm.gripper_conversion import GripperConversion, parallel_gripper_servo_rad_to_mm
 from stretch4_body.core.hello_utils import rad_to_deg, deg_to_rad
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
