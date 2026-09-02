@@ -22,12 +22,14 @@ class StretchGripper(FeetechSMHello):
             self.params["range_deg"][1] / self.params["range_deg"][0]
         )
 
-        self.poses = {"zero": 0, "open": self.pct_max_open, "close": -100}
+        self.poses = {
+            "zero": 0, 
+            "open": self.pct_max_open, 
+            "close": -100
+            }
 
         self.tool_metadata = StretchGripperMetadata()
-        self.status["gripper_conversion"] = self.tool_metadata.status_to_metadata(
-            self.status
-        )
+        self.status['gripper_conversion'] = self.tool_metadata.status_to_metadata(self.status)
 
     def startup(self):
         return FeetechSMHello.startup(self)
@@ -67,12 +69,10 @@ class StretchGripper(FeetechSMHello):
 
     ############### Utilities ###############
 
-    def pull_status(self, data=None):
-        FeetechSMHello.pull_status(self, data)
-        self.status["pos_pct"] = self.tool_metadata.actuator_to_command(self.status["pos"])
-        self.status["gripper_conversion"] = self.tool_metadata.status_to_metadata(
-            self.status
-        )
+    def pull_status(self,data=None):
+        FeetechSMHello.pull_status(self,data)
+        self.status['pos_pct']=self.tool_metadata.actuator_to_command(self.status['pos'])
+        self.status['gripper_conversion']=self.tool_metadata.status_to_metadata(self.status)
 
     # def step_sentry(self, robot):
     #     """This sentry attempts to prevent the gripper servo from overheating during a prolonged grasp
