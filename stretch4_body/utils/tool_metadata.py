@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from stretch4_urdf import get_joint_limits, get_urdf
 
 from stretch4_body.core.hello_utils import deg_to_rad, rad_to_deg
 from stretch4_body.core.robot_params import RobotParams
-from stretch4_body.robot.robot_client import WristJointClient
+
+if TYPE_CHECKING:
+    from stretch4_body.robot.robot_client import WristJointClient
 
 
 class ToolConfigurationError(ValueError):
