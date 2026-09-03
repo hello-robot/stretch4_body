@@ -11,7 +11,6 @@ import mujoco.viewer
 from stretch4_urdf import get_urdf
 
 from stretch4_body.core.device import Device
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import *
 from stretch4_body.core.robot_params import RobotParams
 
 _custom_collision_mappers = {}
