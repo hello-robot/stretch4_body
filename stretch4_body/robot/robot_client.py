@@ -14,10 +14,6 @@ from stretch4_body.core.subsystem_client import SubsystemClient
 from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
-from stretch4_body.utils.tool_metadata import (
-    ParallelGripperMetadata,
-    StretchGripperMetadata,
-)
 
 if TYPE_CHECKING:
     from stretch4_body.utils.tool_metadata import ToolMetadata
@@ -1234,46 +1230,6 @@ class WristPitchClient(WristJointClient):
     def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_pitch', parent=parent, ip_address=ip_address)
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-class StretchGripperClient(WristJointClient):
-    """ Client for the stretch gripper. """
-    def __init__(self, parent=None, ip_address=None):
-        WristJointClient.__init__(self, joint_name='stretch_gripper', parent=parent, ip_address=ip_address)
-        self.tool_metadata = StretchGripperMetadata()
-        self.poses = self.tool_metadata.poses
-        self.pct_max_open = self.poses['open']
-        self.status['gripper_conversion'] = {'aperture_m': 0.0,
-                                             'finger_rad': 0.0,
-                                             'finger_effort': 0.0,
-                                             'finger_vel': 0.0}
-
-class ParallelGripperClient(WristJointClient):
-    """ Client for the parallel gripper. """
-    def __init__(self, parent=None, ip_address=None):
-        WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
-        self.tool_metadata = ParallelGripperMetadata()
-        self.poses = self.tool_metadata.poses
-
-    def move_by_mm(self, x_mm, v_r=None, a_r=None):
-        """
-        Move the parallel gripper by a relative amount in millimeters.
-        """
-        return self.move_by(x_mm / 1000.0, v_r, a_r)
-    
-    def move_to_mm(self, x_mm, v_r=None, a_r=None):
-        """
-        Move the parallel gripper to an absolute position in millimeters.
-        """
-        return self.move_to(x_mm / 1000.0, v_r, a_r)
-=======
-=======
->>>>>>> 80c7996 (Resolve circular imports with WristJointClient and tool_metadata)
-=======
-=======
->>>>>>> 1121587 (Add abstract gripper object to EndOfArmClient)
->>>>>>> 705b723 (Add abstract gripper object to EndOfArmClient)
 class ToolJointClient(WristJointClient):
     """Flexible client for the end effector tool joint"""
     def __init__(self, metadata: ToolMetadata, parent: EndOfArmClient | None = None, ip_address=None):
@@ -1281,50 +1237,8 @@ class ToolJointClient(WristJointClient):
         self.tool_metadata = metadata
         self.poses = metadata.poses
         self.status['gripper_conversion'] = metadata.status
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 0cb0822 (Add abstract gripper object to EndOfArmClient)
-=======
-=======
->>>>>>> 705b723 (Add abstract gripper object to EndOfArmClient)
-=======
-class StretchGripperClient(WristJointClient):
-    """ Client for the stretch gripper. """
-    def __init__(self, parent=None, ip_address=None):
-        WristJointClient.__init__(self, joint_name='stretch_gripper', parent=parent, ip_address=ip_address)
-        self.tool_metadata = StretchGripperMetadata()
-        self.poses = self.tool_metadata.poses
-        self.pct_max_open = self.poses['open']
-        self.status['gripper_conversion'] = {'aperture_m': 0.0,
-                                             'finger_rad': 0.0,
-                                             'finger_effort': 0.0,
-                                             'finger_vel': 0.0}
 
-class ParallelGripperClient(WristJointClient):
-    """ Client for the parallel gripper. """
-    def __init__(self, parent=None, ip_address=None):
-        WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
-        self.tool_metadata = ParallelGripperMetadata()
-        self.poses = self.tool_metadata.poses
-
-    def move_by_mm(self, x_mm, v_r=None, a_r=None):
-        """
-        Move the parallel gripper by a relative amount in millimeters.
-        """
-        return self.move_by(x_mm / 1000.0, v_r, a_r)
-    
-    def move_to_mm(self, x_mm, v_r=None, a_r=None):
-        """
-        Move the parallel gripper to an absolute position in millimeters.
-        """
-        return self.move_to(x_mm / 1000.0, v_r, a_r)
->>>>>>> 80d461d (Resolve circular imports with WristJointClient and tool_metadata)
->>>>>>> 80c7996 (Resolve circular imports with WristJointClient and tool_metadata)
 # #####################################################################
-=======
-
-######################################################################
->>>>>>> 1121587 (Add abstract gripper object to EndOfArmClient)
 class EndOfArmClient(SubsystemClient):
     """
     Client interface for the End of Arm (Tool).
