@@ -226,6 +226,22 @@ class ToolMetadata(ABC):
         act = self.aperture_to_actuator(aperture)
         return self.actuator_to_urdf(act)
 
+    def aperture_to_command(self, aperture: float) -> float:
+        act = self.aperture_to_actuator(aperture)
+        return self.actuator_to_command(act)
+
+    def command_to_aperture(self, command: float) -> float:
+        act = self.command_to_actuator(command)
+        return self.actuator_to_aperture(act)
+
+    def normalized_to_command(self, normalized: float) -> float:
+        act = self.normalized_to_actuator(normalized)
+        return self.actuator_to_command(act)
+
+    def command_to_normalized(self, command: float) -> float:
+        act = self.command_to_actuator(command)
+        return self.actuator_to_normalized(act)
+
     # --- Client-facing defaults ---
 
     @property
