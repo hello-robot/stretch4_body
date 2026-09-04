@@ -100,7 +100,7 @@ class GripperCameraLuxonis(SyncedCamera):
         """Returns M and D from the hardware factory calibration if available."""
         try:
             calib = self.device.readCalibration()
-            M = np.array(calib.getCameraIntrinsics(LuxonisCameraAdapter.get_depthai_camera_socket(camera_type), camera_type.config.image_size[0], camera_type.config.image_size[1]), dtype=np.float64)
+            M = np.array(calib.getCameraIntrinsics(LuxonisCameraAdapter.get_depthai_camera_socket(camera_type), camera_type.config.image_size[1], camera_type.config.image_size[0]), dtype=np.float64)
             D = np.array(calib.getDistortionCoefficients(LuxonisCameraAdapter.get_depthai_camera_socket(camera_type)), dtype=np.float64)
             return M, D
         except Exception as e:
