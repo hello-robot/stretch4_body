@@ -12,6 +12,7 @@ from stretch4_body.subsystem.cameras.detectors.detector_ai_models import AIModel
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras import (
     stream_gripper_camera,
+    stream_gripper_camera_compressed,
 )
 from stretch4_body.subsystem.cameras.models.image_frame import (
     ImageFrame,
@@ -395,7 +396,10 @@ def stream_gripper_rgbd(*, is_rotate=True, use_ros_for_cameras:bool=False) -> Ge
             [0.0, 0.0, 1.0]
         ])
 
-    for synced_frame in stream_gripper_camera(is_rotate=is_rotate, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=False):
+    # Over ROS 2 the camera node publishes MJPEG color and PNG-compressed depth, so ask for the
+    # compressed variant instead of subscribing to raw topics the node never publishes.
+    stream_gripper = stream_gripper_camera_compressed if use_ros_for_cameras else stream_gripper_camera
+    for synced_frame in stream_gripper(is_rotate=is_rotate, use_ros_for_cameras=use_ros_for_cameras, enable_pointcloud=False):
         if synced_frame is None:
             continue
         image_frame = synced_frame.right
