@@ -11,6 +11,9 @@
 * [Server Behaviors](docs/primer_behaviors.md)
 * [Self-Collision](docs/primer_self_collision.md)
 
+## Development Practices
+* [Agent Guardrails](docs/primer_agent_guardrails.md)
+
 ## Subsystems & Hardware
 * [Hardware Subsystems](docs/primer_subsystems.md)
 * [End-Of-Arm (EOA)](docs/primer_end_of_arm.md)
