@@ -31,6 +31,7 @@ from importlib.metadata import version as pkg_version
 
 import click
 from stretch4_body.core import robot_params as rp
+from stretch4_body.subsystem.line_sensor import calibration_store
 
 
 # ==============================================================================
@@ -1275,16 +1276,19 @@ def check_calibrations():
 
     click.secho('    Line Sensors:', fg='white', bold=True)
     ls_dir = os.path.join(cal_root, 'calibration_line_sensors')
-    if os.path.isdir(ls_dir):
-        for i in range(6):
-            sensor_dir = os.path.join(ls_dir, f'sensor_{i}')
-            has_cal = (os.path.isdir(sensor_dir) and
-                       any(f.endswith('.yaml') for _, _, files in os.walk(sensor_dir) for f in files))
-            print_result(has_cal, f'sensor_{i}', indent=6)
+
+    ls_names = (rp.RobotParams._robot_params
+                .get('line_sensor_loop', {})
+                .get('sensor_names', [f'sensor_{i}' for i in range(6)]))
+    tare_dir = calibration_store.tare_dir(ls_dir)
+    if os.path.isdir(tare_dir):
+        for name in ls_names:
+            has_cal = os.path.isfile(calibration_store.tare_path(ls_dir, name))
+            print_result(has_cal, name, indent=6)
             if not has_cal:
                 all_pass = False
     else:
-        print_result(False, f'calibration directory missing: {ls_dir}', indent=6)
+        print_result(False, f'tare directory missing: {tare_dir}', indent=6)
         all_pass = False
 
     click.secho('    Lidars:', fg='white', bold=True)
