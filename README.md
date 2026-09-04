@@ -69,6 +69,7 @@ For an in-depth understanding of how specific parts of the system are designed, 
 | [Server Behaviors](./docs/primer_behaviors.md) | Explains the plugin architecture for Sentries, Safe Motions, and Routines within the 100Hz server loop. |
 | [Self-Collision](./docs/primer_self_collision.md) | Details the MuJoCo-based collision checking system, its background loop, and configuration parameters. |
 | [Gamepad Teleop](./docs/primer_gamepad_teleop.md) | Explains how different control schemes can be mapped onto a standard gamepad controller + how to extend it. |
+| [Agent Guardrails](./docs/primer_agent_guardrails.md) | How to keep an AI coding agent from running hardware commands, and the `stretch_package_create` scaffold that installs the guardrails. |
 | [Cameras](./docs/primer_cameras.md) | A guide to the cameras on Stretch 4's head and wrist, with an overview of the CLIs and API. |
 
 ## Installation
