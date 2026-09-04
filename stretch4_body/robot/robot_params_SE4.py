@@ -419,13 +419,6 @@ SE4_eoa_wrist_dw4_tool_sg4={
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.stretch_gripper',
                 'device_params': 'SE4_stretch_gripper_DW4'
             }
-            },
-        'ros': {
-            'joints': 
-            [{
-                'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'GripperCommandGroup',
-            }]
             }
         }
 
@@ -477,12 +470,6 @@ SE4_eoa_wrist_dw4_tool_pg4={
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.parallel_gripper',
                 'device_params': 'SE4_parallel_gripper_DW4'
             }
-            },
-        'ros': {'joints': 
-            [{
-                'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'ParallelGripperCommandGroup',
-            }]
             }
         }
 
@@ -1457,6 +1444,10 @@ nominal_params={
         {
             'py_module_name': 'stretch_core.command_groups',
             'py_class_name': 'WristRollCommandGroup',
+        },
+        {
+            'py_module_name': 'stretch_core.command_groups',
+            'py_class_name': 'GripperCommandGroup',
         }],
     }
     }
