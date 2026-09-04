@@ -523,11 +523,11 @@ class DeviceMonitor:
         try:
             from stretch4_pyhesai_wrapper.hesai_lidar import HesaiLidar
             import queue as _queue
-            PYHESAI_AVAILABLE = True
+            STRETCH4_PYHESAI_AVAILABLE = True
         except ImportError:
-            PYHESAI_AVAILABLE = False
+            STRETCH4_PYHESAI_AVAILABLE = False
 
-        if PYHESAI_AVAILABLE and any(d['type'] == 'LIDAR' for d in self.devices.values()):
+        if STRETCH4_PYHESAI_AVAILABLE and any(d['type'] == 'LIDAR' for d in self.devices.values()):
             for cfg in LIDAR_CONFIGS:
                 if any(d['type'] == 'LIDAR' and d['details'] == cfg['ip'] for d in self.devices.values()):
                     is_right = 'right' in cfg['name'].lower()
