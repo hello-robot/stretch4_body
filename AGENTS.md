@@ -7,7 +7,7 @@ separate `stretch_body` repo.
 <!-- hello-robot-core v2 -->
 ## Hello Robot core rules
 
-1. **This machine may be a robot.** If `HELLO_FLEET_ID` is set, a command you run can physically move a 60 kg machine with a telescoping arm and a powered lift, in a room that may contain people.
+1. **This machine may be a robot.** If `HELLO_FLEET_ID` is set, a command you run can physically move a 60 kg machine with a telescoping arm and a powered lift, in a room that may contain people. Also remember that env-var presence isn't proof of hardware.
 
 2. You do not run motion, homing, stowing, jogging, teleop, docking, or calibration, or any command that moves the robot; unless explicitly stated. You write the exact command in your reply and hand it to a human, with the preconditions they must check. Reading code is always allowed. Never run such a command merely to confirm it works.
 
