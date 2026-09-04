@@ -1471,13 +1471,9 @@ def check_sensors():
         click.secho(f'\n  {side.capitalize()} lidar ({ip})', fg='cyan', bold=True)
 
         ping_ok = subprocess.call(
-            ['ping', '-c', '1', '-W', '1', ip],
+            ['ping', '-c', '3', '-i', '0.2', '-W', '1', ip],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         ) == 0
-        print_result(ping_ok, f'Ping reachable')
-        if not ping_ok:
-            all_pass = False
-            continue
 
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1486,6 +1482,14 @@ def check_sensors():
             sock.close()
         except Exception:
             ptc_ok = False
+
+        if ping_ok:
+            print_result(True, 'Ping reachable')
+        elif ptc_ok:
+            print_warn('Ping unanswered, but PTC responded -- treating as reachable')
+        else:
+            print_result(False, 'Ping reachable')
+
         print_result(ptc_ok, f'PTC reachable ({ip}:{port})')
         if not ptc_ok:
             all_pass = False
