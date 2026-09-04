@@ -1,4 +1,5 @@
 import threading
+from dataclasses import replace
 from enum import Enum, auto
 
 from typing import TYPE_CHECKING
@@ -154,8 +155,32 @@ class RGBCameras(Enum):
     def config(self):
         return self.get_config()
 
-    def start(self, stop_event: threading.Event | None = None) -> "CameraAdapter":
-        """Use `start()` to capture from one camera device. Use `start_synced()` for synced or dual camera setups."""
+    def config_with(self, **overrides) -> "RGBCameraConfig":
+        """This camera's configuration with some fields replaced, e.g. `RGBCameras.head_left.config_with(fps=30)`. """
+        return replace(self.get_config(), **overrides)
+
+    def config_or(self, config: "RGBCameraConfig | None") -> "RGBCameraConfig":
+        """`config` adapted to this camera, or this camera's own configuration when none is given. """
+        if config is None:
+            return self.get_config()
+
+        if config.camera_type.base != self.base:
+            raise ValueError(
+                f"A configuration for {config.camera_type.name} cannot be used to open {self.name}."
+            )
+
+        config = replace(config, camera_type=self)
+        if self.is_compressed_variant:
+            config.is_compressed = True
+
+        return config
+
+    def start(self, stop_event: threading.Event | None = None, config: "RGBCameraConfig | None" = None) -> "CameraAdapter":
+        """Use `start()` to capture from one camera device. Use `start_synced()` for synced or dual camera setups.
+
+        `config` opens the camera with a configuration of your own instead of the one in
+        `CAMERA_CONFIGS`.
+        """
         if self.base in [
             RGBCameras.head_left,
             RGBCameras.head_right,
@@ -164,7 +189,7 @@ class RGBCameras(Enum):
             RGBCameras.gripper_right,
         ]:
             from stretch4_body.subsystem.cameras.adapters.luxonis_camera_adapter import LuxonisCameraAdapter # import here to avoid circular import
-            return LuxonisCameraAdapter(self.config, stop_event=stop_event)
+            return LuxonisCameraAdapter(self.config_or(config), stop_event=stop_event)
 
         # Handles for other camera types, no need to update or edit these:
         if "synced_left" in self.name or "synced_right" in self.name:
@@ -177,7 +202,7 @@ class RGBCameras(Enum):
 
         raise NotImplementedError(f"{self}'s start() method is not implemented.")
 
-    def start_synced(self, stop_event: threading.Event | None = None, enable_pointcloud: bool = False) -> "SyncedCamera":
+    def start_synced(self, stop_event: threading.Event | None = None, enable_pointcloud: bool = False, configs: "dict[RGBCameras, RGBCameraConfig] | None" = None) -> "SyncedCamera":
         """Use `start_synced()` to start sync'd frame grabbing."""
         from stretch4_body.subsystem.cameras.adapters.luxonis_gripper_camera_adapter import (
             GripperCameraLuxonis # import here to avoid circular import
@@ -186,10 +211,16 @@ class RGBCameras(Enum):
             SyncedCameraLuxonis, # import here to avoid circular import
         )
 
+      
+        configs = {camera_type.base: config for camera_type, config in (configs or {}).items()}
+
+        def config_for(camera_type: "RGBCameras") -> "RGBCameraConfig":
+            return self.matching_variant_of(camera_type).config_or(configs.get(camera_type.base))
+
         if self.base == RGBCameras.head_left_right:
             return SyncedCameraLuxonis(
-                self.matching_variant_of(RGBCameras.head_left).config,
-                self.matching_variant_of(RGBCameras.head_right).config,
+                config_for(RGBCameras.head_left),
+                config_for(RGBCameras.head_right),
                 center=None,
                 do_sync_frames=True,
                 stop_event=stop_event,
@@ -197,17 +228,17 @@ class RGBCameras(Enum):
 
         if self.base == RGBCameras.head_left_right_center:
             return SyncedCameraLuxonis(
-                self.matching_variant_of(RGBCameras.head_left).config,
-                self.matching_variant_of(RGBCameras.head_right).config,
-                center=self.matching_variant_of(RGBCameras.head_center).config,
+                config_for(RGBCameras.head_left),
+                config_for(RGBCameras.head_right),
+                center=config_for(RGBCameras.head_center),
                 do_sync_frames=True,
                 stop_event=stop_event,
             )
 
         if self.base == RGBCameras.gripper_rgbd:
             return GripperCameraLuxonis(
-                self.matching_variant_of(RGBCameras.gripper_left).config,
-                self.matching_variant_of(RGBCameras.gripper_right).config,
+                config_for(RGBCameras.gripper_left),
+                config_for(RGBCameras.gripper_right),
                 enable_pointcloud=enable_pointcloud,
             )
 

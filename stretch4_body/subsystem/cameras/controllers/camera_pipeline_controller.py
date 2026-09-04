@@ -28,6 +28,7 @@ from stretch4_body.subsystem.cameras.enums.recording_file_format import Recordin
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS, RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
 
 
@@ -57,6 +58,7 @@ class RGBPipelineController:
         enable_pointcloud: bool = False,
         recording_file_format: RecordingFileFormat = RecordingFileFormat.png,
         recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS,
+        camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None,
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
@@ -65,11 +67,17 @@ class RGBPipelineController:
 
         `recording_chunk_seconds`: How long each file of a video recording is, so that an interrupted
         recording stays playable up to the last completed chunk. 0 or None writes a single file.
+
+        `camera_configs`: Opens some of the cameras with a configuration of your own instead of the
+        one in `CAMERA_CONFIGS`, keyed by the camera it applies to.
         """
         self.recording_directory = recording_directory
         self.recording_file_format = recording_file_format
         self.recording_chunk_seconds = recording_chunk_seconds
         self.camera_type = camera_type
+        self.camera_configs = {
+            configured_type.base: config for configured_type, config in (camera_configs or {}).items()
+        }
         self.show_image_in = show_image_in
         self.is_rectify = is_rectify
         self.is_crop = is_crop
@@ -104,7 +112,7 @@ class RGBPipelineController:
 
         # Synced camera types have no configuration of their own, but their save threads are never
         # started either - the per-camera copies made in get_frame_synced() do the writing.
-        video_fps = 30.0 if self.camera_type.is_synced_camera_type() else float(self.camera_type.config.fps)
+        video_fps = 30.0 if self.camera_type.is_synced_camera_type() else float(self.camera_config.fps)
 
         self.save_thread = threading.Thread(
             target=saver_thread,
@@ -139,11 +147,19 @@ class RGBPipelineController:
         if is_open_camera:
             self.open_camera()
 
+    @property
+    def camera_config(self) -> RGBCameraConfig:
+        """The configuration this controller's camera is opened with, override included.
+
+        Synced camera types have no configuration of their own; ask the cameras they are composed of.
+        """
+        return self.camera_type.config_or(self.camera_configs.get(self.camera_type.base))
+
     def open_camera(self):
         if self.camera_type.is_synced_camera_type():
-            self._camera = self.camera_type.start_synced(stop_event=self.stop_event,enable_pointcloud=self.enable_pointcloud)
+            self._camera = self.camera_type.start_synced(stop_event=self.stop_event,enable_pointcloud=self.enable_pointcloud, configs=self.camera_configs)
         else:
-            self._camera = self.camera_type.start(stop_event=self.stop_event)
+            self._camera = self.camera_type.start(stop_event=self.stop_event, config=self.camera_configs.get(self.camera_type.base))
 
     @property
     def camera(self):
@@ -446,6 +462,7 @@ class RGBPipelineController:
             enable_pointcloud=self.enable_pointcloud,
             recording_file_format=self.recording_file_format,
             recording_chunk_seconds=self.recording_chunk_seconds,
+            camera_configs=self.camera_configs,
         )
         return copy
 
@@ -603,7 +620,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS, camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -617,6 +634,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
             enable_pointcloud=enable_pointcloud,
             recording_file_format=recording_file_format,
             recording_chunk_seconds=recording_chunk_seconds,
+            camera_configs=camera_configs,
         )
         
         try:
@@ -645,6 +663,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
             enable_pointcloud=self.enable_pointcloud,
             recording_file_format=self.recording_file_format,
             recording_chunk_seconds=self.recording_chunk_seconds,
+            camera_configs=self.camera_configs,
         )
         return copy
 
