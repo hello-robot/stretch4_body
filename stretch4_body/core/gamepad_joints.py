@@ -87,29 +87,19 @@ class CommandBase:
         """
         robot.base.set_velocity(0, 0, 0, self.accel_xy_max, self.accel_w_max)
             
-LIFT_USE_VELOCITY_CONTROL = False
-ARM_USE_VELOCITY_CONTROL = False
-FEETECH_USE_VELOCITY_CONTROL = True
-
-
 class CommandLift:
-    def __init__(self, motion_profile:str = 'default', dx_m:float = 0.015):
+    def __init__(self, motion_profile:str = 'default'):
         self.motion_profile = motion_profile
         self.params = RobotParams().get_params()[1]['lift']
         self.dead_zone = 0.0001
         self.max_linear_vel = self.params['motion'][self.motion_profile]['vel_m']
         self.precision_mode = 0.0
         self.acc = self.params['motion'][self.motion_profile]['accel_m']
-        self.dx_m = dx_m
         
-    def _move(self, value, robot):
+    def _move(self, v_m, robot):
         scale = 1.0 - 0.75 * self.precision_mode
-        if LIFT_USE_VELOCITY_CONTROL:
-            v_m = value * scale
-            robot.lift.set_velocity(v_m, a_m=self.acc)
-        else:
-            inc = self.dx_m * value * scale
-            robot.lift.move_by(inc, v_m=self.max_linear_vel, a_m=self.acc)
+        v_m = v_m * scale
+        robot.lift.set_velocity(v_m, a_m=self.acc)
 
     def command_stick_to_motion(self, x, robot):
         """Convert a stick axis value to robot lift motion.
@@ -119,16 +109,11 @@ class CommandLift:
             robot (robot.Robot): Valid robot instance
         """
         if abs(x) < self.dead_zone:
-            if not LIFT_USE_VELOCITY_CONTROL:
-                return
             x = 0
+        v_m = map_to_range(abs(x), 0, self.max_linear_vel)
+        v_m *= -1 if x < 0 else 1
 
-        if LIFT_USE_VELOCITY_CONTROL:
-            v_m = map_to_range(abs(x), 0, self.max_linear_vel)
-            v_m *= -1 if x < 0 else 1
-            self._move(v_m, robot)
-        else:
-            self._move(x, robot)
+        self._move(v_m, robot)
     
     def command_button_to_motion(self, direction, robot):
         """Make lift move based on a button state.
@@ -137,11 +122,8 @@ class CommandLift:
             direction (int): Direction integer -1 or +1
             robot (robot.Robot): Valid robot instance
         """
-        if LIFT_USE_VELOCITY_CONTROL:
-            v_m = self.max_linear_vel * direction
-            self._move(v_m, robot)
-        else:
-            self._move(direction, robot)
+        v_m = self.max_linear_vel * direction
+        self._move(v_m, robot)
     
     def stop_motion(self, robot):
         """Stop the joint motion. To be used when ever the controller is idle/no-inputs
@@ -150,27 +132,21 @@ class CommandLift:
         Args:
             robot (robot.Robot): Valid robot instance
         """
-        if LIFT_USE_VELOCITY_CONTROL:
-            robot.lift.set_velocity(0, a_m=self.params['motion']['max']['accel_m'])
+        robot.lift.set_velocity(0, a_m=self.params['motion']['max']['accel_m'])
 
 class CommandArm:
-    def __init__(self, motion_profile:str = 'default', dx_m:float = 0.015):
+    def __init__(self, motion_profile:str = 'default'):
         self.motion_profile = motion_profile
         self.params = RobotParams().get_params()[1]['arm']
         self.dead_zone = 0.0001
         self.max_linear_vel = self.params['motion'][self.motion_profile]['vel_m']*0.75
         self.precision_mode = 0.0
         self.acc = self.params['motion'][self.motion_profile]['accel_m']
-        self.dx_m = dx_m
 
-    def _move(self, value, robot):
+    def _move(self, v_m, robot):
         scale = 1.0 - 0.75 * self.precision_mode
-        if ARM_USE_VELOCITY_CONTROL:
-            v_m = value * scale
-            robot.arm.set_velocity(v_m, a_m=self.acc)
-        else:
-            inc = self.dx_m * value * scale
-            robot.arm.move_by(inc, v_m=self.max_linear_vel, a_m=self.acc)
+        v_m = v_m * scale
+        robot.arm.set_velocity(v_m, a_m=self.acc)
 
     def command_stick_to_motion(self, x, robot):
         """Convert a stick axis value to robot arm motion.
@@ -179,17 +155,14 @@ class CommandArm:
             x (float): Range [-1.0,+1.0], control lift speed
             robot (robot.Robot): Valid robot instance
         """
+
         if abs(x) < self.dead_zone:
-            if not ARM_USE_VELOCITY_CONTROL:
-                return
             x = 0
 
-        if ARM_USE_VELOCITY_CONTROL:
-            v_m = map_to_range(abs(x), 0, self.max_linear_vel)
-            v_m *= -1 if x < 0 else 1
-            self._move(v_m, robot)
-        else:
-            self._move(x, robot)
+        v_m = map_to_range(abs(x), 0, self.max_linear_vel)
+        v_m *= -1 if x < 0 else 1
+        
+        self._move(v_m, robot)
 
     def command_button_to_motion(self, direction, robot):
         """Make arm move based on a button state.
@@ -198,11 +171,8 @@ class CommandArm:
             direction (int): Direction integer -1 or +1
             robot (robot.Robot): Valid robot instance
         """
-        if ARM_USE_VELOCITY_CONTROL:
-            v_m = self.max_linear_vel * direction
-            self._move(v_m, robot)
-        else:
-            self._move(direction, robot)
+        v_m = self.max_linear_vel * direction
+        self._move(v_m, robot)
 
     def stop_motion(self, robot):
         """Stop the joint motion. To be used when ever the controller is idle/no-inputs
@@ -211,8 +181,9 @@ class CommandArm:
         Args:
             robot (robot.Robot): Valid robot instance
         """
-        if ARM_USE_VELOCITY_CONTROL:
-            robot.arm.set_velocity(0, a_m=self.params['motion']['max']['accel_m'])
+        robot.arm.set_velocity(0, a_m=self.params['motion']['max']['accel_m'])
+
+FEETECH_USE_VELOCITY_CONTROL = True
 
 
 class CommandFeetechJoint:
