@@ -77,7 +77,7 @@ LIDAR_PORTS = [2368, 2378]
 FEETECH_IDS = [20, 21, 22, 23]
 FEETECH_BAUD = 1000000
 
-# Lidar decoder configs (calibration is handled internally by pyhesai_wrapper)
+# Lidar decoder configs (calibration is handled internally by stretch4_pyhesai_wrapper)
 LIDAR_CONFIGS = [
     {'name': 'Left Lidar', 'ip': '192.168.1.202'},
     {'name': 'Right Lidar', 'ip': '192.168.1.201'},
@@ -521,13 +521,13 @@ class DeviceMonitor:
 
         # Start Lidar Decoders
         try:
-            from pyhesai_wrapper.hesai_lidar import HesaiLidar
+            from stretch4_pyhesai_wrapper.hesai_lidar import HesaiLidar
             import queue as _queue
-            PYHESAI_AVAILABLE = True
+            STRETCH4_PYHESAI_AVAILABLE = True
         except ImportError:
-            PYHESAI_AVAILABLE = False
+            STRETCH4_PYHESAI_AVAILABLE = False
 
-        if PYHESAI_AVAILABLE and any(d['type'] == 'LIDAR' for d in self.devices.values()):
+        if STRETCH4_PYHESAI_AVAILABLE and any(d['type'] == 'LIDAR' for d in self.devices.values()):
             for cfg in LIDAR_CONFIGS:
                 if any(d['type'] == 'LIDAR' and d['details'] == cfg['ip'] for d in self.devices.values()):
                     is_right = 'right' in cfg['name'].lower()

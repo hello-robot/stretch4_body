@@ -1307,7 +1307,7 @@ def check_calibrations():
 
 def _ptc_call(fn, *args, label='', fail_ok=False):
     """
-    Call a pyhesai_wrapper.ptc_client helper, suppressing SDK stdout/stderr.
+    Call a stretch4_pyhesai_wrapper.ptc_client helper, suppressing SDK stdout/stderr.
     Returns (value, error_string).  error_string is None on success.
     """
     _o, _e = sys.stdout, sys.stderr
@@ -1326,7 +1326,7 @@ def _ptc_call(fn, *args, label='', fail_ok=False):
 
 def _check_lidar_ptc(ip, side, all_pass):
     """Run the full PTC config check for a single lidar. Returns updated all_pass."""
-    from pyhesai_wrapper.ptc_client import (
+    from stretch4_pyhesai_wrapper.ptc_client import (
         FILTER_NAMES, FILTER_STRONG,
         PTP_LOCK_OFFSET_US, PTP_STATUS_LOCKED, PTP_STATUS_NAMES,
         RETURN_MODE_LAST_AND_STRONGEST, RETURN_MODE_NAMES,
@@ -1445,7 +1445,7 @@ def check_sensors():
     }
     try:
         import yaml, importlib.util
-        spec = importlib.util.find_spec('pyhesai_wrapper')
+        spec = importlib.util.find_spec('stretch4_pyhesai_wrapper')
         if spec:
             cfg_path = os.path.join(os.path.dirname(spec.origin), 'config.yaml')
             if os.path.isfile(cfg_path):
@@ -1461,10 +1461,10 @@ def check_sensors():
     print_section('Lidars (Hesai)')
     ptc_available = False
     try:
-        from pyhesai_wrapper.ptc_client import get_return_mode as _test_import  # noqa
+        from stretch4_pyhesai_wrapper.ptc_client import get_return_mode as _test_import  # noqa
         ptc_available = True
     except ImportError:
-        print_warn('pyhesai_wrapper.ptc_client not available — PTC config checks skipped')
+        print_warn('stretch4_pyhesai_wrapper.ptc_client not available — PTC config checks skipped')
 
     for side, cfg in LIDARS.items():
         ip, port = cfg['ip'], cfg['ptc_port']

@@ -43,6 +43,7 @@ dependencies = [
     "pyzmq",
     "hello-robot-stretch4-urdf>=2026.6.25",
     "hello-robot-stretch4-flying-gripper>=2026.6.25",
+    "hello-robot-stretch4-pyhesai-wrapper>=2026.8.25",
 ]
 
 [project.urls]
