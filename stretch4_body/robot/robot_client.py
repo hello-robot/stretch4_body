@@ -9,9 +9,8 @@ from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 import importlib
-from stretch4_body.subsystem.end_of_arm.stretch_gripper import GripperConversion
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
-from stretch4_body.core.hello_utils import rad_to_deg, deg_to_rad
+from stretch4_body.core.hello_utils import rad_to_deg
+from stretch4_body.utils.tool_metadata import StretchGripperMetadata, ParallelGripperMetadata
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
 
@@ -1230,25 +1229,20 @@ class StretchGripperClient(WristJointClient):
     """ Client for the stretch gripper. """
     def __init__(self, parent=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='stretch_gripper', parent=parent, ip_address=ip_address)
-        self.pct_max_open = 100 * abs(self.params['range_deg'][1] / self.params['range_deg'][0])
-        self.poses = {'zero': 0,
-                      'open': self.pct_max_open,
-                      'close': -100}
+        self.tool_metadata = StretchGripperMetadata()
+        self.poses = self.tool_metadata.poses
+        self.pct_max_open = self.poses['open']
         self.status['gripper_conversion'] = {'aperture_m': 0.0,
                                              'finger_rad': 0.0,
                                              'finger_effort': 0.0,
                                              'finger_vel': 0.0}
-        self.gripper_conversion = GripperConversion(self.params)
 
 class ParallelGripperClient(WristJointClient):
     """ Client for the parallel gripper. """
     def __init__(self, parent=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
-        open_m = parallel_gripper_servo_rad_to_mm(deg_to_rad(self.params['range_deg'][1]), self.params) / 1000.0
-        self.poses = {'zero': 0.0,
-                      'open': open_m,
-                      'mid': open_m / 2.0,
-                      'close': 0.0}
+        self.tool_metadata = ParallelGripperMetadata()
+        self.poses = self.tool_metadata.poses
 
     def move_by_mm(self, x_mm, v_r=None, a_r=None):
         """
