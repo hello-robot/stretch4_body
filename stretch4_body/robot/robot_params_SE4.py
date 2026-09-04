@@ -1265,7 +1265,13 @@ nominal_params={
         'fan_control': 1
     },
     ############## SAFE MOTIONS #############################
-    'safe_motion_manager': {'controllers': ['safe_motion_overtilt_avoid']},
+    'safe_motion_manager': {'controllers': ['safe_motion_overtilt_avoid', 'safe_motion_velocity_brake']},
+    'safe_motion_velocity_brake': {
+        'py_module_name': 'stretch4_body.behavior.safe_motions.safe_motion_velocity_brake',
+        'py_class_name': 'SafeMotionVelocityBrake',
+        'required_subsystems': [],
+        'enabled': 1,
+    },
     'safe_motion_line_sensor_vel_limit': {
         'py_module_name': 'stretch4_body.behavior.safe_motions.safe_motion_line_sensor_vel_limit',
         'py_class_name': 'SafeMotionLineSensorVelLimit',

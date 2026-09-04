@@ -34,6 +34,7 @@ class PrismaticJoint(Device):
         self.i_feedforward_payload=0
         self.vel_r = self.translate_m_to_motor_rad(self.params['motion']['default']['vel_m'])
         self.accel_r = self.translate_m_to_motor_rad(self.params['motion']['default']['accel_m'])
+        self.accel_r_last = self.accel_r
         self.soft_motion_limits = {'hard': [self.params['range_m'][0], self.params['range_m'][1]],
                                    'current': [self.params['range_m'][0], self.params['range_m'][1]],
                                    'user': [None, None]}
@@ -246,6 +247,7 @@ class PrismaticJoint(Device):
         else:
             a_r = self.accel_r
 
+        self.accel_r_last = a_r
 
         if contact_sensitivity_pos is None:
             contact_sensitivity_pos = self.contact_sensitivity_pos
@@ -253,98 +255,19 @@ class PrismaticJoint(Device):
         if contact_sensitivity_neg is None:
             contact_sensitivity_neg = self.contact_sensitivity_neg
 
-        if self.params['set_safe_velocity']==1 and self.in_vel_brake_zone: # only when sentry is active
-            self._step_vel_braking(v_des=v_m,
-                                a_des=a_r,
-                                stiffness=stiffness,
-                                i_feedforward=self.i_feedforward+self.i_feedforward_payload,
-                                contact_sensitivity_pos=contact_sensitivity_pos,
-                                contact_sensitivity_neg=contact_sensitivity_neg)
+        if self.params['use_vel_traj']:
+            ctrl_mode = Stepper.MODE_VEL_TRAJ
         else:
-            if self.params['use_vel_traj']:
-                ctrl_mode = Stepper.MODE_VEL_TRAJ
-            else:
-                ctrl_mode = Stepper.MODE_VEL_PID
+            ctrl_mode = Stepper.MODE_VEL_PID
 
-            self.motor.set_command(mode=ctrl_mode,
-                                v_des=v_r,
-                                a_des=a_r,
-                                stiffness=stiffness,
-                                i_feedforward=self.i_feedforward+self.i_feedforward_payload,
-                                coeff_sensitivity_pos=contact_sensitivity_pos,
-                                coeff_sensitivity_neg=contact_sensitivity_neg)
-            self._prev_set_vel_ts = time.time()
-
-    def _step_vel_braking(self, v_des, a_des, stiffness, i_feedforward, contact_sensitivity_pos=None, contact_sensitivity_neg=None):
-        """
-        In velocity mode while using set_velocity() command, when the joint is in a braking zone,
-        the input velocities are tapered till the joint limits  to zero and smoothly braked at the limits to 
-        avoid hitting the hardstops.
-        """
-
-        if self._prev_set_vel_ts is None:
-            self._prev_set_vel_ts = time.time()
-
-        if self.status['timestamp_pc']>self._prev_set_vel_ts: # Braking control syncs with the pull status's freaquency for accurate motion control
-            # Honor joint limits in velocity mode
-            lim_lower = self.get_soft_motion_limits()[0]
-            lim_upper = self.get_soft_motion_limits()[1]
-            
-            v_curr = self.status['vel']
-            x_curr = self.status['pos']
-
-            to_min = abs(x_curr - lim_lower)
-            to_max = abs(x_curr - lim_upper)
-
-            c1 = to_min<to_max and v_des>0 # if v_des -ve
-            c2 = to_min>to_max and v_des<0 # if v_des +ve
-            opp_vel = c1 or c2
-
-            t_brake = abs(v_curr /self.params['motion']['max']['accel_m'])  # How long to brake from current speed (s)
-            d_brake = t_brake * abs(v_curr) / 2  # How far it will go before breaking (pos/neg)
-            d_brake = d_brake+0.003 #Pad out by 0.003m to give a bit of safety margin
-            
-            v = 0
-            if opp_vel:
-                v = v_des # allow input velocity if direction is opposite to nearest limit
-            elif (v_des > 0 and x_curr + d_brake >= lim_upper) or (v_des <=0 and x_curr - d_brake <= lim_lower) or min(to_min,to_max)<0.001:
-                v = 0  # apply brakes if the braking distance is >= limits
-            else:
-                taper = min(to_max,to_min)/self.vel_brake_zone_thresh # normalized (0~1) distance to limits
-                v = v_des*taper # apply tapered velocity inside braking zone
-            
-            # convert to motor rad
-            v_m=min(self.params['motion']['max']['vel_m'],v) if v>=0 else max(-1*self.params['motion']['max']['vel_m'],v)
-            v_r = self.translate_m_to_motor_rad(v_m)
-
-            # self.logger.warning(f"Applied safety brakes near limits. reduced set_vel={v_m} m/s")
-
-            if self.params['use_vel_traj']:
-                ctrl_mode = Stepper.MODE_VEL_TRAJ
-            else:
-                ctrl_mode = Stepper.MODE_VEL_PID
-
-            if contact_sensitivity_pos is None:
-                contact_sensitivity_pos = self.contact_sensitivity_pos
-            if contact_sensitivity_neg is None:
-                contact_sensitivity_neg = self.contact_sensitivity_neg
-
-            self.motor.set_command(mode=ctrl_mode,
+        self.motor.set_command(mode=ctrl_mode,
                             v_des=v_r,
-                            a_des=a_des,
+                            a_des=a_r,
                             stiffness=stiffness,
-                            i_feedforward=i_feedforward,
+                            i_feedforward=self.i_feedforward+self.i_feedforward_payload,
                             coeff_sensitivity_pos=contact_sensitivity_pos,
                             coeff_sensitivity_neg=contact_sensitivity_neg)
-            self._prev_set_vel_ts = time.time()
-
-    def bound_value(self, value, lower_bound, upper_bound):
-        if value < lower_bound:
-            return lower_bound
-        elif value > upper_bound:
-            return upper_bound
-        else:
-            return value
+        self.in_vel_mode = True
 
     def is_sync_required(self,ts_last_motor_sync):
         return self.motor.is_sync_required(ts_last_motor_sync)
@@ -399,6 +322,7 @@ class PrismaticJoint(Device):
         else:
             a_r = self.accel_r
 
+        self.accel_r_last = a_r
 
         if contact_sensitivity_pos is None:
             contact_sensitivity_pos = self.contact_sensitivity_pos
@@ -413,8 +337,7 @@ class PrismaticJoint(Device):
                                 i_feedforward=self.i_feedforward+self.i_feedforward_payload,
                                 coeff_sensitivity_pos=contact_sensitivity_pos,
                                 coeff_sensitivity_neg=contact_sensitivity_neg)
-
-
+        self.in_vel_mode = False
 
     def move_by(self,x_m,v_m=None, a_m=None, stiffness=None,  req_calibration=True,
                 contact_sensitivity_pos=None, contact_sensitivity_neg=None):
@@ -473,6 +396,7 @@ class PrismaticJoint(Device):
         else:
             a_r = self.accel_r
 
+        self.accel_r_last = a_r
 
         if contact_sensitivity_pos is None:
             contact_sensitivity_pos = self.contact_sensitivity_pos
@@ -486,10 +410,9 @@ class PrismaticJoint(Device):
                                 i_feedforward=self.i_feedforward+self.i_feedforward_payload,
                                 coeff_sensitivity_pos=contact_sensitivity_pos,
                                 coeff_sensitivity_neg=contact_sensitivity_neg)
-
+        self.in_vel_mode = False
 
     # ######### Utility ##############################
-
 
     def motor_rad_to_translate_m(self,ang): #Override
         self.logger.warning('motor_rad_to_translate_m not implemented in %s'%self.name)
@@ -544,59 +467,45 @@ class PrismaticJoint(Device):
             if self.status['in_collision_stop'][dir] and not in_collision[dir] and time.time() - self.ts_collision_stop[dir] > 1.0:
                 self.status['in_collision_stop'][dir] = False
 
-
-    def get_braking_distance(self,acc=None):
-        """Compute distance to brake the joint from the current velocity"""
-        v_curr = self.status['vel']
+    def get_braking_distance(self, v=None, acc=None):
+        """Compute distance to brake the joint from velocity v (default current status['vel'])"""
+        if v is None:
+            v = self.status['vel']
         if acc is None:
-            acc=self.params['motion']['max']['accel_m']
-        t_brake = abs(v_curr / acc)  # How long to brake from current speed (s)
-        d_brake = t_brake * v_curr / 2  # How far it will go before breaking (pos/neg)
+            acc = self.params['motion']['max']['accel_m']
+        if acc <= 0:
+            return 0.0
+        t_brake = abs(v / acc)  # How long to brake from speed (s)
+        d_brake = t_brake * abs(v) / 2.0  # How far it will go before stopping
         return d_brake
 
+    # ############# Safe velocity control ###################
+
+    def get_safe_velocity(self, v_des, v_deadband=.005, pad_m=0.003):
+
+        if not self.params['set_safe_velocity'] or abs(v_des) < v_deadband: # m/s, filter noise if v_des is encoder signal, not controller setp
+            return v_des
+
+        x_curr = self.status['pos']
+        v_curr = self.status['vel']
+        lim_lower = self.get_soft_motion_limits()[0]
+        lim_upper = self.get_soft_motion_limits()[1]
+
+        accel_m = self.motor_rad_to_translate_m(self.accel_r_last)
+        v_eval = max(abs(v_curr), abs(v_des))
+        d_brake = self.get_braking_distance(v=v_eval, acc=accel_m) + pad_m
+
+        if v_des > 0:
+            if x_curr >= lim_upper - d_brake:
+                v_des = 0.0
+        elif v_des < 0:
+            if x_curr <= lim_lower + d_brake:
+                v_des = 0.0
+        return v_des
 
     def step_sentry(self,robot_status):
         self.motor.step_sentry(robot_status)
 
-        delta1, delta2 = self.get_dist_to_limits() # calculate dist to min,max limits
-        self.dist_to_min_max = [delta1, delta2]
-
-        if self.dist_to_min_max[0] < self.vel_brake_zone_thresh or self.dist_to_min_max[1] < self.vel_brake_zone_thresh:
-            self.logger.debug(f"In Vel-Braking Zone.")
-            self.in_vel_brake_zone = True
-        else:
-            self.in_vel_brake_zone = False
-
-        self._update_safety_vel_brake_zone()
-
-    def _update_safety_vel_brake_zone(self):
-        """
-        dynamically update the braking zone thresh based on it is propotional nature to the 
-        current velocity and the inverse of distance left to reach the nearest hardstop.
-        """
-        delta1,delta2 = self.dist_to_min_max 
-        distance_to_limit = min(delta1,delta2)
-        brake_zone_factor = self.params['motion']['vel_brakezone_factor'] # Propotional value
-        if distance_to_limit!=0:
-            brake_zone_thresh = brake_zone_factor*abs(self.status['vel'])/distance_to_limit
-            brake_zone_thresh =  self.bound_value(brake_zone_thresh,0,self.total_range/2)
-            brake_zone_thresh = brake_zone_thresh + 0.05 # 0.05m is minimum brake zone thresh  
-            self._set_vel_brake_thresh(brake_zone_thresh)
-
-    def _set_vel_brake_thresh(self, thresh):
-        self.vel_brake_zone_thresh = thresh
-
-    def get_dist_to_limits(self,threshold=0.2):
-        current_position = self.status['pos']
-        min_position = self.get_soft_motion_limits()[0]
-        max_position = self.get_soft_motion_limits()[1]
-        delta1 = abs(current_position - min_position)
-        delta2 =  abs(current_position - max_position)
-        
-        if delta2<threshold or delta1<threshold:
-            return delta1, delta2
-        else:
-            return delta1, delta2
 
     def is_homed(self):
         return self.motor.status['pos_calibrated']

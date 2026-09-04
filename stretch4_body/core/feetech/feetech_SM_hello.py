@@ -663,17 +663,6 @@ class FeetechSMHello(Device):
     def unpause_sentry(self):
         self.sentry_paused = False
 
-        if not self.is_calibration_required():
-            delta1, delta2 = self.get_dist_to_limits()  # calculate dist to min,max limits
-            self.dist_to_min_max = [delta1, delta2]
-
-            if self.dist_to_min_max[0] < self.vel_brake_zone_thresh or self.dist_to_min_max[1] < self.vel_brake_zone_thresh:
-                self.logger.debug(f"In Vel-Braking Zone.")
-                self.in_vel_brake_zone = True
-            else:
-                self.in_vel_brake_zone = False
-            self._update_safety_vel_brake_zone()
-
         if self.in_vel_mode:
             #Watchdog on velocity control
             # disable if a set_velocity() command is not passed above 1s
@@ -790,6 +779,29 @@ class FeetechSMHello(Device):
 
     # #############Safe Velocity Control ########################
 
+    def get_safe_velocity(self, v_des, v_deadband=0.001, pad_rad=deg_to_rad(1.0)):
+        if not self.params['set_safe_velocity'] or abs(v_des) < v_deadband:
+            return v_des
+
+        lim_lower = min(self.ticks_to_world_rad(self.range_t[0]),
+                        self.ticks_to_world_rad(self.range_t[1]))
+        lim_upper = max(self.ticks_to_world_rad(self.range_t[0]),
+                        self.ticks_to_world_rad(self.range_t[1]))
+
+        x_curr = self.status['pos']
+        v_curr = self.status['vel']
+        v_eval = max(abs(v_curr), abs(v_des))
+        d_brake = abs(self.get_braking_distance(v=v_eval, acc=self.a_des)) + pad_rad
+
+        if v_des > 0:
+            if x_curr >= lim_upper - d_brake:
+                v_des = 0.0
+        elif v_des < 0:
+            if x_curr <= lim_lower + d_brake:
+                v_des = 0.0
+
+        return v_des
+
     def set_velocity(self, v_des, a_des=None):
         if True in [self.check_nan_value(d) for d in (v_des, a_des)]:
             self.logger.warning('Received NaN value. dropping the command.')
@@ -825,21 +837,17 @@ class FeetechSMHello(Device):
             self.logger.warning('Feetech not calibrated: %s' % self.name)
             print('Feetech not calibrated:', self.name)
             return
-        success = False
 
         if not self.in_vel_mode or not self.status['torque_enabled']:
             self.enable_velocity_ctrl()
 
         for i in range(nretry):
             try:
-                if self.params['set_safe_velocity'] and self.in_vel_brake_zone:  # in_vel_brake_zone only when sentry is active
-                    self._step_vel_braking(v_des, a_des)
-                else:
-                    self.set_motion_params(a_des=a_des)
-                    t_des = self.world_rad_to_ticks_per_sec(v_des)
-                    self.motor.set_vel(t_des)
-                    self._prev_set_vel_ts = time.time()
-                success = True
+                self.set_motion_params(a_des=a_des)
+                v_des = self.get_safe_velocity(v_des)
+                t_des = self.world_rad_to_ticks_per_sec(v_des)
+                self.motor.set_vel(t_des)
+                self._prev_set_vel_ts = time.time()
                 break
             except(termios.error, FeetechCommError, IndexError):
                 self.logger.warning('FeetechSMHello communication error during set_velocity on %s: ' % self.name)
@@ -847,89 +855,16 @@ class FeetechSMHello(Device):
                 if self.bubble_up_comm_exception:
                     raise FeetechCommError
 
-    def _step_vel_braking(self, v_des, a_des):
-        """
-        In velocity mode while using set_velocity() command, when the joint is in a braking zone,
-        the input velocities are tapered till the joint limits  to zero and smoothly braked at the limits to
-        avoid hitting the hardstops.
-        """
-        if self._prev_set_vel_ts is None:
-            self._prev_set_vel_ts = time.time()
-
-        if self.status[
-            'timestamp_pc'] > self._prev_set_vel_ts:  # Braking control syncs with the pull status's freaquency for accurate motion control
-            # Honor joint limits in velocity mode
-            lim_lower = min(self.ticks_to_world_rad(self.range_t[0]),
-                            self.ticks_to_world_rad(self.range_t[1]))
-            lim_upper = max(self.ticks_to_world_rad(self.range_t[0]),
-                            self.ticks_to_world_rad(self.range_t[1]))
-
-            v_curr = self.status['vel']
-            x_curr = self.status['pos']
-
-            to_min = abs(x_curr - lim_lower)
-            to_max = abs(x_curr - lim_upper)
-
-            c1 = to_min < to_max and v_des > 0  # if v_des -ve
-            c2 = to_min > to_max and v_des < 0  # if v_des +ve
-            opp_vel = c1 or c2
-
-            t_brake = abs(v_curr / self.params['motion']['max']['accel'])  # How long to brake from current speed (s)
-            d_brake = t_brake * abs(v_curr) / 2  # How far it will go before breaking (pos/neg)
-            d_brake = d_brake + deg_to_rad(5.0)  # Pad out by 5 degrees to give a bit of safety margin
-            v = 0
-            if opp_vel:
-                self.set_motion_params(a_des=a_des)
-                v = v_des  # allow input velocity if direction is opposite to nearest limit
-            elif (v_des > 0 and x_curr + d_brake >= lim_upper) or (v_des <= 0 and x_curr - d_brake <= lim_lower) or min(
-                    to_max, to_max) < 0.1:
-                self.set_motion_params(a_des=self.params['motion']['max']['accel'])
-                v = 0  # apply brakes if the braking distance is >= limits
-            else:
-                self.set_motion_params(a_des=self.params['motion']['max']['accel'])
-                taper = min(to_max, to_min) / self.vel_brake_zone_thresh  # normalized (0~1) distance to limits
-                v = v_des * taper  # apply tapered velocity inside braking zone
-            # self.logger.warning(f"Applied safety brakes near limits. reduced set_vel={v} rad/s")
-            self.motor.set_vel(self.world_rad_to_ticks_per_sec(v))
-            self._prev_set_vel_ts = time.time()
-
-    def _update_safety_vel_brake_zone(self):
-        """
-        dynamically update the braking zone thresh based on it is propotional nature to the
-        current velocity and the inverse of distance left to reach the nearest hardstop.
-        """
-        delta1, delta2 = self.dist_to_min_max
-        distance_to_limit = min(delta1, delta2)
-        brake_zone_factor = self.params['motion'][
-            'vel_brakezone_factor']  # Propotional value, for now value 1 seems to work fine with all fee joints
-        if distance_to_limit != 0:
-            brake_zone_thresh = brake_zone_factor * abs(self.status['vel']) / distance_to_limit
-            brake_zone_thresh = self.bound_value(brake_zone_thresh, 0, self.total_range / 2)
-            brake_zone_thresh = brake_zone_thresh + 0.3  # 0.3 rad is minimum brake zone thresh
-            self._set_vel_brake_thresh(brake_zone_thresh)
-
-    def _set_vel_brake_thresh(self, thresh):
-        self.vel_brake_zone_thresh = thresh
-
-    def get_dist_to_limits(self, threshold=0.2):
-        current_position = self.status['pos']
-        min_position = self.get_soft_motion_limits()[0]
-        max_position = self.get_soft_motion_limits()[1]
-        delta1 = abs(current_position - min_position)
-        delta2 = abs(current_position - max_position)
-
-        if delta2 < threshold or delta1 < threshold:
-            return delta1, delta2
-        else:
-            return delta1, delta2
-
-    def get_braking_distance(self, acc=None):
-        """Compute signed distance to brake the joint from the current velocity"""
-        v_curr = self.status['vel']
+    def get_braking_distance(self, v=None, acc=None):
+        """Compute distance to brake the joint from velocity v (default current status['vel'])"""
+        if v is None:
+            v = self.status['vel']
         if acc is None:
             acc = self.params['motion']['max']['accel']
-        t_brake = abs(v_curr / acc)  # How long to brake from current speed (s)
-        d_brake = t_brake * v_curr / 2  # How far it will go before breaking (pos/neg)
+        if acc <= 0:
+            return 0.0
+        t_brake = abs(v / acc)  # How long to brake from speed (s)
+        d_brake = t_brake * abs(v) / 2.0  # How far it will go before stopping
         return d_brake
 
 

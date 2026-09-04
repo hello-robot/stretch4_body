@@ -34,8 +34,23 @@ class EndOfArm(FeetechSMChain):
 
             if self.params['devices']['wrist_yaw']['py_class_name'] == 'WristYaw' and len(list(self.motors.keys()))>0:
                 pass # The instruction provided an incomplete 'if' block, adding 'pass' to maintain syntax.
+
+            self.status['safe_motion_velocity_brake'] = {m: {'safe_motion_triggered': False} for m in self.motors}
             return True
         return False
+
+    def step_safe_motion_velocity_brake(self):
+        with self.pt_lock:
+            for m in self.motors:
+                if m not in self.status['safe_motion_velocity_brake']:
+                    self.status['safe_motion_velocity_brake'][m] = {'safe_motion_triggered': False}
+                self.status['safe_motion_velocity_brake'][m]['safe_motion_triggered'] = False
+                if self.motors[m].in_vel_mode:
+                    v_curr = self.motors[m].status['vel']
+                    v_allowed = self.motors[m].get_safe_velocity(v_curr)
+                    if v_curr != v_allowed:
+                        self.motors[m].set_velocity(v_allowed)  # Override
+                        self.status['safe_motion_velocity_brake'][m]['safe_motion_triggered'] = True
 
 
     def pull_status(self,blocking=True):

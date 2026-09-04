@@ -96,6 +96,7 @@ class EndOfArmLoop(Device):
         self.do_exit = Event()
         self.n_rate_log = 0
         self.rate_log = []
+        self.ts_last_safe_motion_velocity_brake = 0
 
     def startup(self):
         """
@@ -171,6 +172,15 @@ class EndOfArmLoop(Device):
             cmd_id=uuid.uuid1()
             cmd=SubsystemClient._construct_command('end_of_arm','step_sentry',cmd_id,{'power_periph':robot_status['power_periph']})
             self.q_cmd.put(cmd)
+
+    def step_safe_motion_velocity_brake(self, robot_status):
+        # Downsample calls to 1/loop_rate_Hz
+        ts = time.time()
+        if ts - self.ts_last_safe_motion_velocity_brake > 1.0 / self.params['loop_rate_Hz']:
+            cmd_id = uuid.uuid1()
+            cmd = SubsystemClient._construct_command('end_of_arm', 'step_safe_motion_velocity_brake', cmd_id)
+            self.q_cmd.put(cmd)
+            self.ts_last_safe_motion_velocity_brake = ts
 
     def step_collision_avoidance(self,joint_name,in_collision_stop):
         cmd_id = uuid.uuid1()
