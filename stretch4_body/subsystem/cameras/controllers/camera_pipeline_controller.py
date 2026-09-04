@@ -737,7 +737,13 @@ class RGBPipelineControllerROS(RGBPipelineController):
             raise Exception("get_frame_synced() can only be called for a synced camera type. Use get_frame() instead.")
         
         try:
-            from stretch_python_bridge import stream_gripper_stereo, stream_gripper_stereo_points
+            from stretch_python_bridge import (
+                decode_compressed_depth,
+                is_compressed_depth,
+                stream_gripper_stereo,
+                stream_gripper_stereo_compressed,
+                stream_gripper_stereo_points,
+            )
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
 
@@ -785,8 +791,14 @@ class RGBPipelineControllerROS(RGBPipelineController):
         right_generator = self._camera_stream(right)
 
         if is_gripper:
-            # The depth map is 16-bit and never MJPEG encoded, so it always comes off the raw topic.
-            depth_generator = stream_gripper_stereo(stream_manager=self.stream_manager)
+            # The depth map is 16-bit, so the compressed variant gets a PNG on the compressedDepth
+            # topic rather than the MJPEG the color cameras get. Either way SyncedImageFrame.depth
+            # ends up a decoded 16-bit map, so callers never see which topic it came from.
+            depth_generator = (
+                stream_gripper_stereo_compressed(stream_manager=self.stream_manager)
+                if self.camera_type.is_compressed_variant
+                else stream_gripper_stereo(stream_manager=self.stream_manager)
+            )
             if self.enable_pointcloud:
                 pointcloud_generator = stream_gripper_stereo_points(stream_manager=self.stream_manager)
         elif use_center and center is not None:
@@ -810,11 +822,19 @@ class RGBPipelineControllerROS(RGBPipelineController):
                 if is_gripper and depth_ros_frame is None:
                     continue
 
+                depth_image = None
+                if depth_ros_frame is not None:
+                    depth_image = (
+                        decode_compressed_depth(depth_ros_frame.image)
+                        if is_compressed_depth(depth_ros_frame.compression_format)
+                        else depth_ros_frame.image
+                    )
+
                 frame = SyncedImageFrame(
                     timestamp=left_ros_frame.timestamp,
                     left=self._to_image_frame(left_ros_frame),
                     right=self._to_image_frame(right_ros_frame),
-                    depth=depth_ros_frame.image if depth_ros_frame is not None else None,
+                    depth=depth_image,
                     pointcloud=pointcloud_ros_frame.points if pointcloud_ros_frame is not None else None,
                     pointcloud_color=pointcloud_ros_frame.colors if pointcloud_ros_frame is not None else None,
                 )
