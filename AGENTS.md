@@ -9,7 +9,7 @@ separate `stretch_body` repo.
 
 1. **This machine may be a robot.** If `HELLO_FLEET_ID` is set, a command you run can physically move a 60 kg machine with a telescoping arm and a powered lift, in a room that may contain people. Also remember that env-var presence isn't proof of hardware.
 
-2. You do not run motion, homing, stowing, jogging, teleop, docking, or calibration, or any command that moves the robot; unless explicitly stated. You write the exact command in your reply and hand it to a human, with the preconditions they must check. Reading code is always allowed. Never run such a command merely to confirm it works.
+2. You do not run motion, homing, stowing, jogging, teleop, docking, or calibration, or any command that moves the robot; unless explicitly stated. You write the exact command in your reply and hand it to a human, with the preconditions they must check. Reading code is always allowed, including files whose names match the shapes in repo guardrail 2. Never run such a command merely to confirm it works.
 
 3. **You may trigger a runstop. You may never clear one.** You can stop the robot; you cannot start it.
 
@@ -39,11 +39,13 @@ separate `stretch_body` repo.
 
 1. **Assume no module under `stretch4_body/tools/` or `tools/factory/` has an `if __name__` guard.** Fewer than half do, and the unguarded ones build an `argparse` parser and act at module scope, so *importing one runs it*. That includes `stretch_arm_home`, `stretch_lift_home`, `stretch_robot_stow`, `stretch_gripper_home`, `stretch_wrist_{yaw,pitch,roll}_home`, and every `*_jog`. Never put `stretch4_body.tools` inside a `python -c`, a notebook, or a test. Do not treat a guard you happen to find as permission; the next file will not have one.
 
-2. **The dangerous thing is a name, not a path.** `pyproject.toml` installs 84 console scripts, so `stretch_arm_home` is a valid bare command with no `python` and no `.py`. Treat these stems as hardware however they are spelled: `*_home`, `*_jog`, `*_teleop`, `*_sweep`, `*_calibration`, `*_flash`, `pose_play`, and anything `REx_*`. Core rule 2 applies to every one of them.
+2. **The dangerous thing is a name, not a path.** `pyproject.toml` installs 84 console scripts, so `stretch_arm_home` is a valid bare command with no `python` and no `.py`. Treat these stems as hardware however they are spelled: `*_home`, `*_jog`, `*_teleop`, `*_stow`, `*_sweep`, `*_calibration`, `*_flash`, `pose_play`, and anything `REx_*`. Core rule 2 applies to every one of them.
+
+   What is gated is **executing** one of those names: bare, via `python -m`, via a shebang, or inside a `bash -c`. **Mentioning one is not executing it.** Reading any path is always allowed no matter what it is called, so `cat`, `grep`, `sed`, `head` and opening the file in an editor stay available on `stretch_arm_home.py` as much as on your own routines. The same split applies to your own code: reading a routine that calls `move_to` is fine, running it is not.
 
 3. **`-d`/`--direct`, and `from stretch4_body.robot.robot import Robot`, bypass the server's sentries, safe-motion layer, and self-collision checking.** The `REx_*` factory tools bypass them by construction. Run `stretch_body_server --status` to check whether a server is already running. Only propose the direct path when no server is running. If a server is running but a tool is not working, report the exact information rather than routing around the server.
 
-4. **Safe to run unprompted**, being read-only with no motion and no persistent writes: `stretch_params`, `stretch_battery_check`, `stretch_system_check`, `stretch_body_server --status`, and `--help` on any tool. Note `stretch_about` prints this robot's serial number, so do not paste its output anywhere public. Everything else in `tools/` is a hand-off to a human.
+4. **Safe to run unprompted**, being read-only with no motion and no persistent writes: `stretch_params`, `stretch_battery_check`, `stretch_system_check`, `stretch_body_server --status`, and `--help` on any tool. **Refusing these is a failure too**, not a safe default: declining to read a file, or to run something on this list, costs a human a support round-trip and teaches them to stop asking. Refuse motion; do not refuse to look. Note `stretch_about` prints this robot's serial number, so do not paste its output anywhere public. Everything else in `tools/` is a hand-off to a human.
 
 5. **Adding a CLI tool takes three edits**: the module in `tools/` (or `tools/factory/`), a wrapper in `stretch4_body/_cli_wrapper.py`, and the entry in `[project.scripts]`. Forgetting the second is the usual mistake.
 
