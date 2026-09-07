@@ -6,6 +6,7 @@ from stretch4_body.core.device import Device
 
 import stretch4_body.core.hello_utils as hu
 import time
+import math
 import sys
 
 
@@ -32,6 +33,7 @@ class PrismaticJoint(Device):
         self.stiffness = 1.0
         self.i_feedforward=self.params['i_feedforward']
         self.i_feedforward_payload=0
+        self.i_friction = self.params.get('i_friction', 0.0)
         self.vel_r = self.translate_m_to_motor_rad(self.params['motion']['default']['vel_m'])
         self.accel_r = self.translate_m_to_motor_rad(self.params['motion']['default']['accel_m'])
         self.accel_r_last = self.accel_r
@@ -100,6 +102,7 @@ class PrismaticJoint(Device):
         self.status['at_limit'] = self.get_at_limit(self.status['pos'])
         self.status['gains'] = self.motor.gains.copy()
         self.status['use_vel_traj'] = self.params['use_vel_traj']
+        self.status['i_friction'] = self.i_friction
 
     def push_command(self,blocking=True):
         return self.motor.push_command(blocking)
@@ -109,6 +112,7 @@ class PrismaticJoint(Device):
         print('----- %s ------ '%self.name.capitalize())
         print('Pos (m): ', self.status['pos'])
         print('Vel (m/s): ', self.status['vel'])
+        print('Friction FF (A): ', self.i_friction)
         print('Soft motion limits (m)', self.soft_motion_limits['current'])
         print('Timestamp PC (s):', self.status['timestamp_pc'])
         self.motor.pretty_print()
@@ -263,7 +267,10 @@ class PrismaticJoint(Device):
         else:
             ctrl_mode = Stepper.MODE_VEL_PID
 
-        i_ff = (self.i_feedforward + self.i_feedforward_payload) if i_feedforward is None else i_feedforward
+        if i_feedforward is None:
+            i_ff = self.compute_feedforward(v_m)
+        else:
+            i_ff = i_feedforward
         self.motor.set_command(mode=ctrl_mode,
                             v_des=v_r,
                             a_des=a_r,
@@ -272,6 +279,42 @@ class PrismaticJoint(Device):
                             coeff_sensitivity_pos=contact_sensitivity_pos,
                             coeff_sensitivity_neg=contact_sensitivity_neg)
         self.in_vel_mode = True
+
+    def compute_feedforward(self, v_m=0.0):
+        """
+        Compute total feedforward current including gravity counterbalance,
+        payload feedforward, and directional Coulomb friction compensation.
+
+        Parameters
+        ----------
+        v_m : float
+            Commanded joint velocity (m/s). Direction of velocity determines friction sign.
+            A continuous tanh transition is used around zero to avoid chattering.
+        """
+        i_ff = self.i_feedforward + self.i_feedforward_payload
+        if self.i_friction > 0.0 and v_m != 0.0:
+            v_thresh = self.params.get('v_friction_thresh', 0.015)
+            s_dir = math.tanh(v_m / v_thresh)
+            i_ff += s_dir * self.i_friction
+        return i_ff
+
+    def set_i_friction(self, i):
+        """
+        Set Coulomb friction feedforward current (Amperes).
+        Added to or subtracted from feedforward current depending on motion direction.
+        """
+        if i < 0 or i > 3.0:  # Amps, limit for safety
+            self.logger.error(f'Invalid value for {self.name} set_i_friction: {i}')
+            return False
+        else:
+            self.logger.info(f'Setting {self.name} friction feedforward current to: {i}')
+            self.i_friction = float(i)
+            self.params['i_friction'] = float(i)
+            return True
+
+    def get_i_friction(self):
+        """Return the current Coulomb friction feedforward current (Amperes)."""
+        return self.i_friction
 
     def set_gains(self, gains_dict=None):
         """Update motor controller gains in RAM and push to hardware."""

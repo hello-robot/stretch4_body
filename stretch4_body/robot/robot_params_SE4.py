@@ -687,6 +687,7 @@ nominal_params={
         'chain_sprocket_teeth': 15,
         'gr_spur': 2.33333,
         'i_feedforward': 0,
+        'i_friction': 0.0,
         'calibration_range_bounds':[0.547, 0.558],
         # Absolute hardstop limits. Tune carefully to prevent physical damage.
         'range_m': [0.0, 0.55],#0.555], clipp last 5mm to protect hardstops
@@ -1058,6 +1059,7 @@ nominal_params={
         'use_vel_traj': 1,
         'calibration_range_bounds': [1.197,1.203 ],
         'i_feedforward': 1.7,
+        'i_friction': 0.0,
         # Absolute hardstop limits. Tune carefully to prevent physical damage.
         'range_m' : [0.0, 1.20], #Calder no shells, [0.0, 1.21], #Dali w/ shells, [0.0, 1.20]
         # Homing procedure settings. contact_sensitivity adjusts how hard the lift hits the hardstop.

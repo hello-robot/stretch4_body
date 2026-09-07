@@ -1053,6 +1053,13 @@ class PrismaticJointClient(SubsystemClient):
         self._queue_command(self.name, "write_gains_to_flash")
         return True
 
+    def set_i_friction(self, i_friction):
+        """
+        Set Coulomb friction feedforward current (Amperes).
+        """
+        self._queue_command(self.name, "set_i_friction", i_friction)
+        return True
+
 
 # #####################################################################
 class LiftClient(PrismaticJointClient):

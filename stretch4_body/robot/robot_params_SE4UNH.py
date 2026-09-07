@@ -359,6 +359,7 @@ nominal_params={
         'use_vel_traj': 1,
         'calibration_range_bounds': [1.094, 1.106],
         'i_feedforward': 0.8,
+        'i_friction': 0.0,
         'range_m' : [0.0, 1.1],
         'homing': {'contact_sensitivity': 0.7, 'end_pos': 0.5, 'v_m': 0.25, 'a_m': 0.3, 'to_positive_stop': True,'safety_hold':1,'safety_stiffness':0.7},
         'belt_pitch_m': 0.005,
