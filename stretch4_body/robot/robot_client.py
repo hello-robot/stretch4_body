@@ -1027,6 +1027,32 @@ class PrismaticJointClient(SubsystemClient):
         self._queue_command(self.name, "move_to",x_m, v_m=v_m, a_m=a_m, stiffness=stiffness, req_calibration=req_calibration,contact_sensitivity_pos=contact_sensitivity_pos, contact_sensitivity_neg=contact_sensitivity_neg)
         return True
 
+    def set_gains(self, gains_dict):
+        """
+        Update motor controller gains.
+        
+        Parameters
+        ----------
+        gains_dict : dict
+            Dictionary mapping gain names (e.g. 'vKp_d', 'vKi_d', 'vKd_d', 'vKi_limit') to values.
+        """
+        self._queue_command(self.name, "set_gains", gains_dict)
+        return True
+
+    def set_use_vel_traj(self, use_vel_traj):
+        """
+        Configure whether velocity mode uses MODE_VEL_TRAJ (True) or MODE_VEL_PID (False).
+        """
+        self._queue_command(self.name, "set_use_vel_traj", use_vel_traj)
+        return True
+
+    def write_gains_to_flash(self):
+        """
+        Trigger saving current controller gains to flash memory.
+        """
+        self._queue_command(self.name, "write_gains_to_flash")
+        return True
+
 
 # #####################################################################
 class LiftClient(PrismaticJointClient):

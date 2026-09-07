@@ -98,6 +98,8 @@ class PrismaticJoint(Device):
         self.status['braking_distance']=self.get_braking_distance()
         self.status['soft_motion_limits'] = self.get_soft_motion_limits()
         self.status['at_limit'] = self.get_at_limit(self.status['pos'])
+        self.status['gains'] = self.motor.gains.copy()
+        self.status['use_vel_traj'] = self.params['use_vel_traj']
 
     def push_command(self,blocking=True):
         return self.motor.push_command(blocking)
@@ -205,7 +207,8 @@ class PrismaticJoint(Device):
         self.motor.set_guarded_contact_sensitivity(c_sens_p, c_sens_n)
 
     def set_velocity(self, v_m, a_m=None,stiffness=None, req_calibration=True,
-                     contact_sensitivity_pos=None, contact_sensitivity_neg=None):
+                     contact_sensitivity_pos=None, contact_sensitivity_neg=None,
+                     i_feedforward=None):
         """
         v_m: commanded joint velocity (m/s)
         a_m: acceleration for trapezoidal motion profile (m/s^2)
@@ -260,14 +263,41 @@ class PrismaticJoint(Device):
         else:
             ctrl_mode = Stepper.MODE_VEL_PID
 
+        i_ff = (self.i_feedforward + self.i_feedforward_payload) if i_feedforward is None else i_feedforward
         self.motor.set_command(mode=ctrl_mode,
                             v_des=v_r,
                             a_des=a_r,
                             stiffness=stiffness,
-                            i_feedforward=self.i_feedforward+self.i_feedforward_payload,
+                            i_feedforward=i_ff,
                             coeff_sensitivity_pos=contact_sensitivity_pos,
                             coeff_sensitivity_neg=contact_sensitivity_neg)
         self.in_vel_mode = True
+
+    def set_gains(self, gains_dict=None):
+        """Update motor controller gains in RAM and push to hardware."""
+        if gains_dict is not None:
+            for k, v in gains_dict.items():
+                if k in self.motor.gains:
+                    self.motor.gains[k] = v
+        self.motor.set_gains(self.motor.gains)
+        self.push_command()
+        return True
+
+    def get_gains(self):
+        """Return the current active gains dict."""
+        return self.motor.gains.copy()
+
+    def set_use_vel_traj(self, use_vel_traj):
+        """Configure whether velocity mode uses MODE_VEL_TRAJ (True) or MODE_VEL_PID (False)."""
+        self.params['use_vel_traj'] = bool(use_vel_traj)
+        self.status['use_vel_traj'] = bool(use_vel_traj)
+        return True
+
+    def write_gains_to_flash(self):
+        """Write current active gains to non-volatile flash memory."""
+        self.motor.write_gains_to_flash()
+        self.push_command()
+        return True
 
     def is_sync_required(self,ts_last_motor_sync):
         return self.motor.is_sync_required(ts_last_motor_sync)
