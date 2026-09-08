@@ -133,4 +133,4 @@ stretch_pose_record = "stretch4_body._cli_wrapper:stretch_pose_record"
 stretch_pose_edit = "stretch4_body._cli_wrapper:stretch_pose_edit"
 stretch_monitor_devices         = "stretch4_body._cli_wrapper:stretch_monitor_devices"
 stretch_jetson_connect          = "stretch4_body._cli_wrapper:stretch_jetson_connect"
-
+stretch_package_create          = "stretch4_body._cli_wrapper:stretch_package_create"
