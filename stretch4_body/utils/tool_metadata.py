@@ -242,6 +242,219 @@ class ToolMetadata(ABC):
         act = self.command_to_actuator(command)
         return self.actuator_to_normalized(act)
 
+    # --- Differential (velocity / delta) Conversions (y' = f'(x) * x')---
+
+    _UNIT_TYPE_PARENT: dict[str, str] = {
+        "urdf": "command",
+        "command": "actuator",
+        "aperture": "actuator",
+        "normalized": "actuator",
+    }
+
+    #: Edges known to be affine, whose gain is exactly the full-range secant. Subclasses extend
+    #: this; unlisted edges use an analytic override, else central differencing.
+    _LINEAR_CONVERSIONS: frozenset[tuple[str, str]] = frozenset(
+        {("normalized", "actuator"), ("actuator", "normalized")}
+    )
+
+    @classmethod
+    def _unit_type_path(cls, frm: str, to: str) -> list[str]:
+        """Ordered list of unit types to traverse from `frm` to `to`, via their lowest common ancestor."""
+        valid = set(cls._UNIT_TYPE_PARENT) | {"actuator"}
+        for unit_type in (frm, to):
+            if unit_type not in valid:
+                raise ToolConfigurationError(
+                    f"Unknown unit type '{unit_type}'. Expected one of {sorted(valid)}."
+                )
+        if frm == to:
+            return [frm]
+
+        def ancestors(unit_type: str) -> list[str]:
+            chain = [unit_type]
+            while unit_type in cls._UNIT_TYPE_PARENT:
+                unit_type = cls._UNIT_TYPE_PARENT[unit_type]
+                chain.append(unit_type)
+            return chain
+
+        up_from = ancestors(frm)
+        up_to = ancestors(to)
+        depth_in_to = {unit_type: i for i, unit_type in enumerate(up_to)}
+        for i, unit_type in enumerate(up_from):
+            if unit_type in depth_in_to:
+                return up_from[: i + 1] + list(reversed(up_to[: depth_in_to[unit_type]]))
+        raise ToolConfigurationError(f"No conversion path from '{frm}' to '{to}'.")
+
+    def unit_type_range(self, unit_type: str) -> tuple[float, float]:
+        """(min, max) bounds of this tool in the given unit type."""
+        if unit_type == "urdf":
+            return self.urdf_range
+        if unit_type == "command":
+            return self.command_range
+        if unit_type == "actuator":
+            return self.actuator_range
+        if unit_type == "aperture":
+            return self.aperture_range
+        if unit_type == "normalized":
+            return 0.0, 1.0
+        raise ToolConfigurationError(f"Unknown unit type '{unit_type}'.")
+
+    def _analytic_gain(self, frm: str, to: str, at: float) -> float | None:
+        """
+        d(to)/d(frm) in closed form for one edge, or None if unavailable. Subclasses override
+        this for nonlinear transmissions.
+        """
+        return None
+
+    def _edge_gain(self, frm: str, to: str, at: float) -> float:
+        """d(to)/d(frm) across one primitive edge, with `at` expressed in `frm` units."""
+        convert = getattr(self, f"{frm}_to_{to}")
+        low, high = sorted(self.unit_type_range(frm))
+
+        if (frm, to) in self._LINEAR_CONVERSIONS and high > low:
+            return (convert(high) - convert(low)) / (high - low)
+
+        analytic = self._analytic_gain(frm, to, at)
+        if analytic is not None:
+            return analytic
+
+        at = min(max(at, low), high)
+        span = high - low
+        step = span * 1e-4 if span > 0 else 1e-6
+        lower, upper = at - step, at + step
+        # Keep the stencil inside the valid range: a conversion evaluated past its own limits
+        # can saturate or raise.
+        if lower < low:
+            lower, upper = low, min(low + 2 * step, high)
+        elif upper > high:
+            lower, upper = max(high - 2 * step, low), high
+        if upper == lower:
+            return 0.0
+        return (convert(upper) - convert(lower)) / (upper - lower)
+
+    def conversion_gain(self, frm: str, to: str, at: float) -> float:
+        """
+        Jacobian of the `frm` -> `to` conversion: d(to)/d(frm) at `at`, in `frm` units.
+
+        Scalar, as a tool has one actuated degree of freedom. `at` is required because the
+        derivative is constant only for an affine conversion; PG4's actuator->aperture
+        derivative spans 0.0129 to 0.0544 m/rad. Composite pairs apply the chain rule.
+        """
+        path = self._unit_type_path(frm, to)
+        gain = 1.0
+        position = at
+        for source, target in zip(path, path[1:]):
+            gain *= self._edge_gain(source, target, position)
+            position = getattr(self, f"{source}_to_{target}")(position)
+        return gain
+
+    def convert_velocity(self, velocity: float, frm: str, to: str, at: float) -> float:
+        """Converts a rate from `frm` units per second to `to` units per second, at position `at`."""
+        return velocity * self.conversion_gain(frm, to, at)
+
+    def convert_acceleration(self, accel: float, frm: str, to: str, at: float) -> float:
+        """
+        Converts an acceleration between unit types using the first-order gain only.
+
+        The exact transform is y'' = f'(x)*x'' + f''(x)*x'^2; the second term is dropped. Valid
+        for a motion-profile limit, not for tracking an acceleration trajectory.
+        """
+        return accel * self.conversion_gain(frm, to, at)
+
+    def convert_delta(self, delta: float, frm: str, to: str, at: float) -> float:
+        """
+        Converts a finite displacement exactly, as f(at + delta) - f(at).
+
+        Prefer this over `convert_velocity` for a displacement (a move_by amount): it is exact
+        across a nonlinear transmission, where the Jacobian is only first-order.
+        """
+        if frm == to:
+            return delta
+        self._unit_type_path(frm, to)  # validates both unit type names
+        convert = getattr(self, f"{frm}_to_{to}")
+        return convert(at + delta) - convert(at)
+
+    # --- Named velocity wrappers, mirroring the position conversions above ---
+
+    def urdf_to_command_velocity(self, velocity: float, at_urdf: float) -> float:
+        return self.convert_velocity(velocity, "urdf", "command", at_urdf)
+
+    def command_to_urdf_velocity(self, velocity: float, at_command: float) -> float:
+        return self.convert_velocity(velocity, "command", "urdf", at_command)
+
+    def urdf_to_actuator_velocity(self, velocity: float, at_urdf: float) -> float:
+        return self.convert_velocity(velocity, "urdf", "actuator", at_urdf)
+
+    def actuator_to_urdf_velocity(self, velocity: float, at_actuator: float) -> float:
+        return self.convert_velocity(velocity, "actuator", "urdf", at_actuator)
+
+    def command_to_actuator_velocity(self, velocity: float, at_command: float) -> float:
+        return self.convert_velocity(velocity, "command", "actuator", at_command)
+
+    def actuator_to_command_velocity(
+        self, velocity: float, at_actuator: float
+    ) -> float:
+        return self.convert_velocity(velocity, "actuator", "command", at_actuator)
+
+    def actuator_to_aperture_velocity(
+        self, velocity: float, at_actuator: float
+    ) -> float:
+        return self.convert_velocity(velocity, "actuator", "aperture", at_actuator)
+
+    def aperture_to_actuator_velocity(
+        self, velocity: float, at_aperture: float
+    ) -> float:
+        return self.convert_velocity(velocity, "aperture", "actuator", at_aperture)
+
+    # --- Velocity limits ---
+
+    def actuator_velocity_limit(self, profile: str = "default") -> float:
+        """
+        This tool's motion-profile velocity limit, in actuator units (rad/s).
+
+        Raises if the tool has no motion params, which includes any tool that is not the
+        configured one.
+        """
+        _, robot_params = RobotParams.get_params()
+        motion = robot_params.get(self.joint_name, {}).get("motion", {})
+        prof = motion.get(profile) or motion.get("default")
+        if not prof or "vel" not in prof:
+            raise ToolConfigurationError(
+                f"No motion velocity limit for tool '{self.joint_name}' "
+                f"(looked for robot_params['{self.joint_name}']['motion']['{profile}']['vel']). "
+                "Is this the configured tool?"
+            )
+        return float(prof["vel"])
+
+    def velocity_limit(self, unit_type: str, at: float, profile: str = "default") -> float:
+        """
+        The actuator velocity limit in `unit_type` units:
+        |d(unit_type)/d(actuator)| * limit_actuator, at position `at` (in `unit_type` units).
+
+        Position-dependent wherever that derivative is.
+        """
+        limit = self.actuator_velocity_limit(profile)
+        at_actuator = (
+            at if unit_type == "actuator" else getattr(self, f"{unit_type}_to_actuator")(at)
+        )
+        return abs(self.convert_velocity(limit, "actuator", unit_type, at_actuator))
+
+    def conservative_velocity_limit(
+        self, unit_type: str, profile: str = "default", samples: int = 33
+    ) -> float:
+        """
+        The minimum of `velocity_limit` over the actuator range: a rate achievable at every
+        position. Use where a single scalar is required, such as a ROS parameter.
+        """
+        limit = self.actuator_velocity_limit(profile)
+        low, high = sorted(self.actuator_range)
+        if high == low:
+            return abs(self.convert_velocity(limit, "actuator", unit_type, low))
+        step = (high - low) / (samples - 1)
+        return min(
+            abs(self.convert_velocity(limit, "actuator", unit_type, low + i * step))
+            for i in range(samples)
+        )
+
     # --- Client-facing defaults ---
 
     @property
@@ -307,7 +520,7 @@ class ParallelGripperMetadata(ToolMetadata):
 
     @property
     def actuator_range(self) -> tuple[float, float]:
-        """(closed, open) bounds in true raw servo angle (radians)."""
+        """(closed, open) bounds in servo angle (radians)."""
         range_deg = self._params.get("range_deg", [0.0, 116.5])
         return deg_to_rad(range_deg[0]), deg_to_rad(range_deg[1])
 
@@ -362,8 +575,9 @@ class ParallelGripperMetadata(ToolMetadata):
 
     def aperture_to_actuator(self, aperture: float) -> float:
         """
-        Converts fingertip aperture (meters) to raw servo angle (radians), accounting for the
-        nonlinear four-bar linkage geometry connecting the servo horn to the finger slider.
+        Converts fingertip aperture (meters) to servo angle (radians) across the nonlinear
+        slider-crank linkage: the servo horn is the crank (kR), kL the connecting rod, and the
+        finger carrier the slider.
         """
         x_mm = (
             aperture * 1000.0
@@ -410,7 +624,50 @@ class ParallelGripperMetadata(ToolMetadata):
         x_pivot = r * math.sin(q_eff) - math.sqrt(term)
         # x_mm: Combined gap width between both fingers (twice the distance from slider to contact face)
         x_mm = 2 * (-x_pivot - finger_offset)
-        return round(x_mm, 3) / 1000.0
+        # Not rounded: quantizing a conversion makes its numeric derivative unusable.
+        return x_mm / 1000.0
+
+    # urdf <-> command (aperture) is affine. command <-> actuator is the slider-crank linkage,
+    # since PG4's command unit is aperture; see _analytic_gain.
+    _LINEAR_CONVERSIONS = ToolMetadata._LINEAR_CONVERSIONS | frozenset(
+        {("urdf", "command"), ("command", "urdf")}
+    )
+
+    def _analytic_gain(self, frm: str, to: str, at: float) -> float | None:
+        """Closed-form derivative of the slider-crank linkage; see `actuator_to_aperture`."""
+        # PG4's command units are aperture meters, so the command edge is the same linkage.
+        pair = (
+            frm.replace("command", "aperture"),
+            to.replace("command", "aperture"),
+        )
+        if pair == ("actuator", "aperture"):
+            return self._aperture_gain_at_actuator(at)
+        if pair == ("aperture", "actuator"):
+            actuator = self.aperture_to_actuator(at)
+            gain = self._aperture_gain_at_actuator(actuator)
+            return None if gain == 0.0 else 1.0 / gain
+        return None
+
+    def _aperture_gain_at_actuator(self, actuator: float) -> float:
+        """
+        d(aperture_m)/d(actuator_rad), differentiating `actuator_to_aperture` in closed form.
+
+        With q = kT0 - actuator and term = L^2 - (r*cos q)^2:
+            d(x_mm)/d(actuator) = 2 * (r*cos q - r^2*sin q*cos q / sqrt(term))
+        """
+        L = self._params.get("kL", 30.25)
+        r = self._params.get("kR", 22.0)
+        kT0_rad = math.radians(self._params.get("kT0", 44.0))
+
+        q = kT0_rad - actuator
+        term = L**2 - (r * math.cos(q)) ** 2
+        if term <= 0.0:
+            # Unbounded at the linkage singularity.
+            return 0.0
+        d_x_mm = 2 * (
+            r * math.cos(q) - (r**2 * math.sin(q) * math.cos(q)) / math.sqrt(term)
+        )
+        return d_x_mm / 1000.0
 
     @property
     def _params(self) -> dict:
@@ -438,7 +695,10 @@ class ParallelGripperMetadata(ToolMetadata):
             "aperture_m": pos_mm / 1000.0,
             "finger_rad": self.aperture_to_urdf(pos_mm / 1000.0),
             "finger_effort": status.get("effort", 0.0),
-            "finger_vel": status.get("vel", 0.0),
+            # Time derivative of finger_rad above.
+            "finger_vel": self.actuator_to_urdf_velocity(
+                status.get("vel", 0.0), status.get("pos", 0.0)
+            ),
         }
 
 
@@ -488,7 +748,7 @@ class StretchGripperMetadata(ToolMetadata):
 
     @property
     def actuator_range(self) -> tuple[float, float]:
-        """(closed, open) bounds in true raw servo angle (radians)."""
+        """(closed, open) bounds in servo angle (radians)."""
         low, high = self.command_range
         return self.command_to_actuator(low), self.command_to_actuator(high)
 
@@ -517,7 +777,7 @@ class StretchGripperMetadata(ToolMetadata):
 
     def command_to_actuator(self, command: float) -> float:
         """
-        Converts Pct — SG4's command units — to true raw servo angle (radians). Promoted from
+        Converts Pct — SG4's command units — to servo angle (radians). Promoted from
         StretchGripper.pct_to_world_rad() so ToolMetadata owns this conversion the same way PG4
         does via aperture_to_actuator(), instead of leaving it only on the driver.
         """
@@ -532,6 +792,61 @@ class StretchGripperMetadata(ToolMetadata):
         sg_params = robot_params.get("stretch_gripper", {})
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
         return -100.0 * actuator / deg_to_rad(range_deg_0)
+
+    # SG4's urdf/command/actuator conversions are pure scalings through the origin, so a rate
+    # converts like a position there. Only the aperture edge is nonlinear.
+    _LINEAR_CONVERSIONS = ToolMetadata._LINEAR_CONVERSIONS | frozenset(
+        {
+            ("urdf", "command"),
+            ("command", "urdf"),
+            ("command", "actuator"),
+            ("actuator", "command"),
+        }
+    )
+
+    def _analytic_gain(self, frm: str, to: str, at: float) -> float | None:
+        """Closed-form derivative of the circular-arc chord model; see `actuator_to_aperture`."""
+        if (frm, to) == ("actuator", "aperture"):
+            return self._aperture_gain_at_actuator(at)
+        if (frm, to) == ("aperture", "actuator"):
+            gain = self._aperture_gain_at_actuator(self.aperture_to_actuator(at))
+            return None if gain == 0.0 else 1.0 / gain
+        return None
+
+    @property
+    def _aperture_angle_per_actuator(self) -> float:
+        """
+        d(aperture_angle)/d(actuator_angle), dimensionless.
+
+        `actuator_to_aperture` maps the servo span onto the aperture-angle span by a constant
+        `_map_range` ratio. Both sides are angles, so the ratio is unit-independent.
+        """
+        servo_closed_deg, servo_open_deg = self._range_deg
+        servo_span_deg = servo_open_deg - servo_closed_deg
+        if servo_span_deg == 0:
+            return 0.0
+        return self._aperture_open_deg / servo_span_deg
+
+    def _aperture_gain_at_actuator(self, actuator: float) -> float:
+        """
+        d(aperture_m)/d(actuator_rad) for aperture = 2*R*sin(theta/2).
+
+        d(theta)/d(actuator) is the constant `_map_range` ratio; the chord contributes
+        d(aperture)/d(theta) = R*cos(theta/2).
+        """
+        theta_per_actuator = self._aperture_angle_per_actuator
+        if theta_per_actuator == 0.0:
+            return 0.0
+        servo_closed_deg, servo_open_deg = self._range_deg
+        aperture_angle_deg = self._map_range(
+            rad_to_deg(actuator),
+            servo_closed_deg,
+            servo_open_deg,
+            0.0,
+            self._aperture_open_deg,
+        )
+        theta_rad = math.radians(aperture_angle_deg)
+        return self._finger_length_m * math.cos(theta_rad / 2.0) * theta_per_actuator
 
     @property
     def _range_deg(self) -> tuple[float, float]:
@@ -568,13 +883,6 @@ class StretchGripperMetadata(ToolMetadata):
             self._finger_length_m, params["aperture_open_m"]
         )
         return math.degrees(aperture_open_rad)
-
-    @cached_property
-    def _servo_to_aperture_slope(self) -> float:
-        params = self._gripper_conversion_params
-        return (
-            params["aperture_open_m"] - params["aperture_closed_m"]
-        ) / self._aperture_open_deg
 
     def _aperture_m_to_aperture_angle_degrees(self, aperture_m: float) -> float:
         return math.degrees(
@@ -626,7 +934,12 @@ class StretchGripperMetadata(ToolMetadata):
             "aperture_m": aperture_m,
             "finger_rad": finger_rad,
             "finger_effort": status["effort"],
-            "finger_vel": (self._servo_to_aperture_slope * status["vel"]) / 2.0,
+            # Time derivative of finger_rad above. finger_rad is half the chord-model aperture
+            # angle, not this tool's `urdf` unit type (actuator_to_urdf is the identity for SG4),
+            # so it cannot route through the urdf conversions.
+            "finger_vel": self._aperture_angle_per_actuator
+            * status.get("vel", 0.0)
+            / 2.0,
         }
 
 
@@ -795,6 +1108,18 @@ class LinearToolMetadata(ToolMetadata):
     def aperture_range(self) -> tuple[float, float]:
         return self._aperture_range
 
+    # Every conversion this class defines is affine, so every edge has a constant gain.
+    _LINEAR_CONVERSIONS = ToolMetadata._LINEAR_CONVERSIONS | frozenset(
+        {
+            ("urdf", "command"),
+            ("command", "urdf"),
+            ("command", "actuator"),
+            ("actuator", "command"),
+            ("aperture", "actuator"),
+            ("actuator", "aperture"),
+        }
+    )
+
     def urdf_to_command(self, urdf: float) -> float:
         return urdf * self._urdf_scale
 
@@ -837,7 +1162,10 @@ class LinearToolMetadata(ToolMetadata):
             "aperture_m": self.actuator_to_aperture(actuator),
             "finger_rad": self.actuator_to_urdf(actuator),
             "finger_effort": status.get("effort", 0.0),
-            "finger_vel": status.get("vel", 0.0),
+            # Time derivative of finger_rad above.
+            "finger_vel": self.actuator_to_urdf_velocity(
+                status.get("vel", 0.0), actuator
+            ),
         }
 
 
