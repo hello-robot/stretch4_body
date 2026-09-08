@@ -1,6 +1,7 @@
-from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
 import stretch4_body.core.hello_utils as hu
+from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
 from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+
 
 class ParallelGripper(FeetechSMHello):
     """
@@ -9,28 +10,29 @@ class ParallelGripper(FeetechSMHello):
     A position of zero is the fingertips  touching
     Units are in meters
     """
-    def __init__(self, chain=None, usb=None, name='parallel_gripper',is_direct=False):
-        FeetechSMHello.__init__(self, name, chain, usb,is_direct=is_direct)
-        self.status['pos_mm'] = 0.0
+
+    def __init__(self, chain=None, usb=None, name="parallel_gripper", is_direct=False):
+        FeetechSMHello.__init__(self, name, chain, usb, is_direct=is_direct)
+        self.status["pos_mm"] = 0.0
         self.tool_metadata = ParallelGripperMetadata()
         self.poses = self.tool_metadata.poses
 
     def startup(self):
         return FeetechSMHello.startup(self)
 
-    def home(self, end_pos=hu.deg_to_rad(45.0),delay_at_stop=1.0):
-        FeetechSMHello.home(self, end_pos=end_pos,delay_at_stop=delay_at_stop)
+    def home(self, end_pos=hu.deg_to_rad(45.0), delay_at_stop=1.0):
+        FeetechSMHello.home(self, end_pos=end_pos, delay_at_stop=delay_at_stop)
 
     def pretty_print(self):
-        print('--- ParallelGripper ----')
-        print("Position (mm): %f"%self.status['pos_mm'])
+        print("--- ParallelGripper ----")
+        print("Position (mm): %f" % self.status["pos_mm"])
         FeetechSMHello.pretty_print(self)
 
-    def pose(self,p,v_r=None, a_r=None):
+    def pose(self, p, v_r=None, a_r=None):
         """
         p: Dictionary key to named pose (eg 'close')
         """
-        self.move_to(self.poses[p],v_r,a_r)
+        self.move_to(self.poses[p], v_r, a_r)
 
     def move_to(self, x_m, v_r=None, a_r=None):
         """
@@ -51,9 +53,8 @@ class ParallelGripper(FeetechSMHello):
         """
         if self.is_direct:
             self.pull_status()
-        x_final = (self.status.get('pos_mm', 0.0) / 1000.0) + x_m
+        x_final = (self.status.get("pos_mm", 0.0) / 1000.0) + x_m
         self.move_to(x_final, v_r, a_r)
-
 
     def set_velocity(self, v_r, a_r=None):
         """
@@ -64,10 +65,11 @@ class ParallelGripper(FeetechSMHello):
 
     ############### Utilities ###############
 
-    def pull_status(self,data=None):
-        FeetechSMHello.pull_status(self,data)
-        self.status['pos_mm']=self.tool_metadata.actuator_to_aperture(self.status['pos']) * 1000.0
+    def pull_status(self, data=None):
+        FeetechSMHello.pull_status(self, data)
+        self.status["pos_mm"] = (
+            self.tool_metadata.actuator_to_aperture(self.status["pos"]) * 1000.0
+        )
 
     def step_sentry(self, robot):
         pass
-

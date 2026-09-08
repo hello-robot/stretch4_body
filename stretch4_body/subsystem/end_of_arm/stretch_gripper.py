@@ -22,7 +22,9 @@ class StretchGripper(FeetechSMHello):
         self.poses = self.tool_metadata.poses
         self.pct_max_open = self.poses["open"]
 
-        self.status['gripper_conversion'] = self.tool_metadata.status_to_metadata(self.status)
+        self.status["gripper_conversion"] = self.tool_metadata.status_to_metadata(
+            self.status
+        )
 
     def startup(self):
         return FeetechSMHello.startup(self)
@@ -43,8 +45,7 @@ class StretchGripper(FeetechSMHello):
 
     def move_to(self, pct, v_r=None, a_r=None):
         """
-        pct: target absolute position, in unitless 'pct' (percent). 0 is fingertips touching,
-            negative is closed, positive up to self.pct_max_open is open.
+        pct: commanded absolute position (percent)
         v_r: motion-profile velocity limit, in actuator units (rad/s).
         a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
@@ -53,14 +54,13 @@ class StretchGripper(FeetechSMHello):
 
     def move_by(self, delta_pct, v_r=None, a_r=None):
         """
-        delta_pct: change in position, in unitless 'pct' (percent), added to the current pos_pct
+        delta_pct: commanded incremental motion (percent)
         v_r: motion-profile velocity limit, in actuator units (rad/s).
         a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         if self.is_direct:
-            self.pull_status() 
+            self.pull_status()
         self.move_to(self.status["pos_pct"] + delta_pct, v_r, a_r)
-
 
     def set_velocity(self, v_r, a_r=None):
         """
@@ -71,10 +71,14 @@ class StretchGripper(FeetechSMHello):
 
     ############### Utilities ###############
 
-    def pull_status(self,data=None):
-        FeetechSMHello.pull_status(self,data)
-        self.status['pos_pct']=self.tool_metadata.actuator_to_command(self.status['pos'])
-        self.status['gripper_conversion']=self.tool_metadata.status_to_metadata(self.status)
+    def pull_status(self, data=None):
+        FeetechSMHello.pull_status(self, data)
+        self.status["pos_pct"] = self.tool_metadata.actuator_to_command(
+            self.status["pos"]
+        )
+        self.status["gripper_conversion"] = self.tool_metadata.status_to_metadata(
+            self.status
+        )
 
     # def step_sentry(self, robot):
     #     """This sentry attempts to prevent the gripper servo from overheating during a prolonged grasp
