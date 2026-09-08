@@ -165,7 +165,7 @@ For actuated tools, the software works in five primary units.
 |---|---|
 | `urdf` | The units used to define the joint in ROS's robot model, used with `JointTrajectory`, `JointState`, and other ROS topics
 | `command` | The units expected by stretch4_body's `move_to()` and `move_by()` methods. stretch4_body will translate values into raw motor units, and raw motor readings back into these units to report status. |
-| `actuator` | The true raw servo/motor register value (radians).|
+| `actuator` | The servo/motor register value (radians).|
 | `aperture` | Physical fingertip opening (meters) — a client convenience unit. |
 | `normalized` | 0.0 (closed) .. 1.0 (open) — another client convenience unit, e.g. for a UI slider |
 
@@ -216,7 +216,8 @@ metadata_class_name: MyToolMetadata
 
 Your subclass must implement every abstract member of `ToolMetadata`
 (`stretch4_body/utils/tool_metadata.py`) — `tool_joints`, `tool_links`, `client_class`,
-`driver_class`, `status_to_metadata`, the two ranges, and the six unit conversions:
+`driver_class`, `status_to_metadata`, the two ranges, and the six conversions between the five
+units above:
 
 ```python
 from stretch4_body.utils.tool_metadata import ToolMetadata
@@ -226,7 +227,7 @@ class MyToolMetadata(ToolMetadata):
 
     @property
     def actuator_range(self) -> tuple[float, float]:
-        """(min, max) true raw servo angle (radians)."""
+        """(min, max) servo angle (radians)."""
 
     @property
     def command_range(self) -> tuple[float, float]:
@@ -239,31 +240,69 @@ class MyToolMetadata(ToolMetadata):
         """Your move_to()/move_by()'s own units -> URDF joint value."""
 
     def command_to_actuator(self, command: float) -> float:
-        """Your move_to()/move_by()'s own units -> true raw servo angle (radians)."""
+        """Your move_to()/move_by()'s own units -> servo angle (radians)."""
 
     def actuator_to_command(self, actuator: float) -> float:
-        """True raw servo angle (radians) -> your move_to()/move_by()'s own units."""
+        """Servo angle (radians) -> your move_to()/move_by()'s own units."""
 
     def aperture_to_actuator(self, aperture: float) -> float:
-        """Physical fingertip opening (meters) -> true raw servo angle (radians)."""
+        """Physical fingertip opening (meters) -> servo angle (radians)."""
 
     def actuator_to_aperture(self, actuator: float) -> float:
-        """True raw servo angle (radians) -> physical fingertip opening (meters)."""
+        """Servo angle (radians) -> physical fingertip opening (meters)."""
 
     def status_to_metadata(self, status: dict) -> dict:
         """Raw hardware status -> {'aperture_m', 'finger_rad', 'finger_effort', 'finger_vel'}."""
 ```
 
-`urdf_to_actuator`/`actuator_to_urdf` and the `normalized`/`aperture` conversions are provided
-for you by the base class, chained through `command`/`actuator` — you only need to implement
-the two ranges, the six conversions, and `status_to_metadata` shown above (plus `tool_joints`,
-`tool_links`, `client_class`, `driver_class`, unchanged from a normal user tool). See
-`ParallelGripperMetadata` (linkage-based) and `StretchGripperMetadata` (near-linear) in
-`tool_metadata.py` for complete worked examples.
+The six cover three of the four edges between those units — `urdf`↔`command`,
+`command`↔`actuator` and `actuator`↔`aperture`, each in both directions. The fourth,
+`actuator`↔`normalized`, is derived from `actuator_range`, so the base class provides it along
+with `urdf_to_actuator`/`actuator_to_urdf`, the remaining chained pairs, and the differential
+conversions below. You only need the two ranges, the six conversions, and `status_to_metadata`
+shown above, plus `tool_joints`, `tool_links`, `client_class` and `driver_class`, unchanged from
+a normal user tool. See `ParallelGripperMetadata` (linkage-based) and `StretchGripperMetadata`
+(near-linear) in `tool_metadata.py` for complete worked examples.
 
 `position_tolerance` is also provided by the base class, defaulting to 2% of the joint's URDF
 range. Override the property if your tool needs a different arrival threshold — the ROS
 trajectory server reads it to decide when a gripper goal is complete.
+
+#### Converting velocities
+
+**A rate does not convert like a position.** For a position conversion `y = f(x)`, a velocity
+transforms by the derivative: `ẏ = f'(x)·ẋ`. Running a rate through the position conversion is
+incorrect whenever `f` is not a pure scaling through the origin — either because it carries an
+offset (`f(0) ≠ 0`, as when a fully-closed gripper sits at a nonzero servo angle), or because it
+is nonlinear (the gain varies with position, as across PG4's slider-crank linkage).
+
+So `ToolMetadata` provides a separate family of differential conversions:
+
+| Method | Use for |
+|---|---|
+| `convert_velocity(v, frm, to, at)` | A rate. Multiplies by the Jacobian evaluated at position `at`. |
+| `convert_delta(d, frm, to, at)` | A finite displacement (a `move_by` amount). Computed exactly as `f(at + d) - f(at)`, so it needs no derivative and stays exact across a nonlinear transmission. **Prefer this whenever the quantity really is a displacement.** |
+| `convert_acceleration(a, frm, to, at)` | A motion-profile acceleration limit. First-order only. |
+| `conversion_gain(frm, to, at)` | The Jacobian itself — the partial derivative `d(to)/d(frm)` at `at`, if you want to multiply yourself. |
+| `velocity_limit(unit_type, at)` / `conservative_velocity_limit(unit_type)` | This tool's servo velocity limit pushed through the Jacobian into other units: `\|d(unit_type)/d(actuator)\| * limit_actuator`. The conservative form minimizes that over the range, giving a rate achievable at every position — use it when you need one scalar. |
+
+Named wrappers exist for the common pairs, e.g. `urdf_to_command_velocity(v, at_urdf)` and
+`actuator_to_urdf_velocity(v, at_actuator)`.
+
+**`at` is required, not optional** — for a nonlinear tool there is no position-independent answer
+— and it is expressed in the *source* units. `ToolMetadata` is stateless, so the caller supplies
+the current position, typically from `status['pos']`.
+
+Your subclass gets velocity support for free: the base class differentiates the six position
+conversions above numerically. Since a Path B transmission is nonlinear by definition, you should
+still override `_analytic_gain(frm, to, at)` to return a closed-form derivative, which is exact
+and cheaper. Two things to watch for if you rely on the numeric fallback: do not round or quantize
+inside a conversion function (it makes the derivative meaningless, and a small enough step can
+return exactly zero), and make sure your conversions do not raise at the edges of their range.
+
+Note the one asymmetry: a tool driver's `move_to(x, v_r, a_r)` takes its *position* in command
+units but its `v_r`/`a_r` in **actuator rad/s**, since those are servo motion-profile limits. If
+you hold a rate in command units, convert it with `command_to_actuator_velocity()` first.
 
 ### 3. Mesh Preprocessing and Registration
 

@@ -24,13 +24,13 @@ class ToolMetadata(ABC):
     Abstract base class defining kinematic, hardware command, and physical unit conversions
     for Stretch 4 end-of-arm tools and grippers.
 
-    Five unit tiers, ROS-facing to hardware-facing:
+    Five unit types, ROS-facing to hardware-facing:
       - urdf: the ROS/URDF joint value (radians or meters), as seen on JointTrajectory/JointState.
       - command: the value this tool's own move_to()/move_by()/pose() take directly (e.g. Pct for
         SG4, fingertip aperture in meters for PG4). This is what ROS-facing code should convert
         into (via urdf_to_command) before calling move_to()/move_by(), and convert out of (via
         command_to_urdf) when reading status back.
-      - actuator: the true raw servo/motor register value (radians). This is the boundary every
+      - actuator: the servo/motor register value (radians). This is the boundary every
         Feetech-driven joint bottoms out at -- FeetechSMHello.move_to()'s own argument -- the
         same for every tool, gripper or not (e.g. WristYaw has no ToolMetadata and passes URDF
         radians straight through, because for a direct-drive joint urdf IS actuator).
@@ -92,7 +92,7 @@ class ToolMetadata(ABC):
     @property
     @abstractmethod
     def actuator_range(self) -> tuple[float, float]:
-        """(min_val, max_val) bounds in true raw actuator/servo units (radians, for every tool)."""
+        """(min_val, max_val) bounds in actuator units (radians, for every tool)."""
 
     @property
     @abstractmethod
@@ -147,19 +147,19 @@ class ToolMetadata(ABC):
 
     @abstractmethod
     def command_to_actuator(self, command: float) -> float:
-        """Converts from this tool's own move_to()/move_by() command units to true raw actuator units (radians)."""
+        """Converts from this tool's own move_to()/move_by() command units to actuator units (radians)."""
 
     @abstractmethod
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts from true raw actuator units (radians) to this tool's own move_to()/move_by() command units."""
+        """Converts from actuator units (radians) to this tool's own move_to()/move_by() command units."""
 
     @abstractmethod
     def aperture_to_actuator(self, aperture: float) -> float:
-        """Converts from physical opening aperture to true raw actuator units (radians)."""
+        """Converts from physical opening aperture to actuator units (radians)."""
 
     @abstractmethod
     def actuator_to_aperture(self, actuator: float) -> float:
-        """Converts from true raw actuator units (radians) to physical opening aperture."""
+        """Converts from actuator units (radians) to physical opening aperture."""
 
     @abstractmethod
     def status_to_metadata(self, status: dict) -> dict:
@@ -181,12 +181,12 @@ class ToolMetadata(ABC):
     # --- Normalized <-> Actuator Conversions ---
 
     def normalized_to_actuator(self, normalized: float) -> float:
-        """Converts a normalized scale value (0.0=closed/min, 1.0=open/max) to true raw actuator units (radians)."""
+        """Converts a normalized scale value (0.0=closed/min, 1.0=open/max) to actuator units (radians)."""
         low, high = self.actuator_range
         return low + normalized * (high - low)
 
     def actuator_to_normalized(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to a normalized scale value (0.0=closed/min, 1.0=open/max)."""
+        """Converts actuator units (radians) to a normalized scale value (0.0=closed/min, 1.0=open/max)."""
         low, high = self.actuator_range
         if high == low:
             return 0.0
@@ -195,11 +195,11 @@ class ToolMetadata(ABC):
     # --- Chained Layer Conversions ---
 
     def urdf_to_actuator(self, urdf: float) -> float:
-        """Converts URDF units to true raw actuator units (radians), via this tool's command units."""
+        """Converts URDF units to actuator units (radians), via this tool's command units."""
         return self.command_to_actuator(self.urdf_to_command(urdf))
 
     def actuator_to_urdf(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to URDF units, via this tool's command units."""
+        """Converts actuator units (radians) to URDF units, via this tool's command units."""
         return self.command_to_urdf(self.actuator_to_command(actuator))
 
     def urdf_to_normalized(self, urdf: float) -> float:
@@ -787,7 +787,7 @@ class StretchGripperMetadata(ToolMetadata):
         return deg_to_rad(range_deg_0) * command / -100.0
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts true raw servo angle (radians) to Pct — SG4's command units"""
+        """Converts servo angle (radians) to Pct — SG4's command units"""
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
@@ -899,7 +899,7 @@ class StretchGripperMetadata(ToolMetadata):
     def aperture_to_actuator(self, aperture: float) -> float:
         """
         Models the SG4 gripper's finger as a circular arc to map an aperture (chord length,
-        meters) to true raw servo angle (radians). Note: this is a simplified model, not
+        meters) to servo angle (radians). Note: this is a simplified model, not
         accurate to the gripper's real motion.
         """
         aperture_angle_deg = self._aperture_m_to_aperture_angle_degrees(aperture)
@@ -914,7 +914,7 @@ class StretchGripperMetadata(ToolMetadata):
         return deg_to_rad(servo_angle_deg)
 
     def actuator_to_aperture(self, actuator: float) -> float:
-        """Converts true raw servo angle (radians) to fingertip aperture (meters), the inverse of `aperture_to_actuator`."""
+        """Converts servo angle (radians) to fingertip aperture (meters), the inverse of `aperture_to_actuator`."""
         servo_closed_deg, servo_open_deg = self._range_deg
         aperture_angle_deg = self._map_range(
             rad_to_deg(actuator),
@@ -1098,7 +1098,7 @@ class LinearToolMetadata(ToolMetadata):
     @property
     def actuator_range(self) -> tuple[float, float]:
         """
-        User tools have no YAML mechanism to describe a true actuator/servo scale distinct from
+        User tools have no YAML mechanism to describe an actuator/servo scale distinct from
         move_to()/move_by()'s own command units, so actuator is assumed to coincide with command
         -- see command_to_actuator/actuator_to_command.
         """
@@ -1127,11 +1127,11 @@ class LinearToolMetadata(ToolMetadata):
         return command / self._urdf_scale if self._urdf_scale != 0 else command
 
     def command_to_actuator(self, command: float) -> float:
-        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
+        """Identity: user tools assume the actuator range coincides with command (see actuator_range)."""
         return command
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
+        """Identity: user tools assume the actuator range coincides with command (see actuator_range)."""
         return actuator
 
     def aperture_to_actuator(self, aperture: float) -> float:
