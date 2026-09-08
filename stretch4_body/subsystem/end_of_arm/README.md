@@ -57,6 +57,13 @@ A user tool of the same name as a built-in **shadows** it, and the loader says s
 
 ### Heads Up
 
+* A velocity is not converted like a position. If your tool's unit conversions are affine or
+nonlinear, use `ToolMetadata`'s differential conversions (`convert_velocity`, `convert_delta`,
+`conversion_gain`) rather than passing a rate through `urdf_to_command()` and friends, and
+override `_analytic_gain()` if your transmission is nonlinear. See "Converting velocities" under
+Path B in the top-level README. Relatedly: never round or quantize inside a conversion function —
+it makes the numeric derivative of that function unusable.
+
 * If your tool defines a custom `ToolMetadata` subclass, your driver and your metadata module will reference each other: the driver
 uses the metadata class to convert command units to actuator radians, and the metadata imports the driver class as for its property. To 
 avoid circularity, import the driver module from inside the `driver_class` property of the ToolMetadata subclass.

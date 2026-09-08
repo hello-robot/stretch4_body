@@ -199,7 +199,7 @@ class RobotJoints(Enum):
 
     @property
     def actuator_range(self) -> tuple[float, float] | None:
-        """Returns (min, max) in true raw actuator units (radians) for this joint, or None if no tool configured."""
+        """Returns (min, max) in actuator units (radians) for this joint, or None if no tool configured."""
         if self.name != "gripper":
             raise NotImplementedError(
                 f"actuator_range is not yet implemented for joint '{self.name}'."
@@ -336,21 +336,21 @@ class RobotJoints(Enum):
         return self.get_gripper_model("command_to_urdf").command_to_urdf(command)
 
     def urdf_to_actuator(self, urdf_units: float) -> float:
-        """Converts URDF units (radians/meters) to true raw actuator units (radians)."""
+        """Converts URDF units (radians/meters) to actuator units (radians)."""
         return self.get_gripper_model("urdf_to_actuator").urdf_to_actuator(urdf_units)
 
     def actuator_to_urdf(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to URDF units (radians/meters)."""
+        """Converts actuator units (radians) to URDF units (radians/meters)."""
         return self.get_gripper_model("actuator_to_urdf").actuator_to_urdf(actuator)
 
     def command_to_actuator(self, command: float) -> float:
-        """Converts this tool's own move_to()/move_by() command units to true raw actuator units"""
+        """Converts this tool's own move_to()/move_by() command units to actuator units"""
         return self.get_gripper_model("command_to_actuator").command_to_actuator(
             command
         )
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to this tool's own move_to()/move_by() command units."""
+        """Converts actuator units (radians) to this tool's own move_to()/move_by() command units."""
         return self.get_gripper_model("actuator_to_command").actuator_to_command(
             actuator
         )
