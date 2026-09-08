@@ -34,9 +34,9 @@ class ParallelGripper(FeetechSMHello):
 
     def move_to(self, x_m, v_r=None, a_r=None):
         """
-        x_m: commanded absolute position (meters)
-        v_r: velocity for trapezoidal motion profile (rad/s).
-        a_r: acceleration for trapezoidal motion profile (rad/s^2)
+        x_m: commanded absolute position, in fingertip aperture (meters)
+        v_r: motion-profile velocity limit, in actuator units (rad/s).
+        a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         low, high = self.tool_metadata.command_range
         x_m = min(max(x_m, low), high)
@@ -45,14 +45,25 @@ class ParallelGripper(FeetechSMHello):
 
     def move_by(self, x_m, v_r=None, a_r=None):
         """
-        x_m: commanded incremental position (meters)
-        v_r: velocity for trapezoidal motion profile (rad/s).
-        a_r: acceleration for trapezoidal motion profile (rad/s^2)
+        x_m: commanded incremental position, in fingertip aperture (meters)
+        v_r: motion-profile velocity limit, in actuator units (rad/s).
+        a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         if self.is_direct:
             self.pull_status()
         x_final = (self.status.get('pos_mm', 0.0) / 1000.0) + x_m
         self.move_to(x_final, v_r, a_r)
+
+
+    def set_velocity(self, v_r, a_r=None):
+        """
+        v_r: velocity, in actuator units (rad/s), not this tool's command units.
+        a_r: acceleration limit, in actuator units (rad/s^2).
+
+        Inert until FeetechSMServo.set_vel() writes SMS_GOAL_VEL; callers emulate velocity
+        with move_by().
+        """
+        return super().set_velocity(v_r, a_r)
 
     ############### Utilities ###############
 

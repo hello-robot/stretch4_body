@@ -43,22 +43,33 @@ class StretchGripper(FeetechSMHello):
 
     def move_to(self, pct, v_r=None, a_r=None):
         """
-        pct: commanded absolute position (Pct).
-        v_r: velocity for trapezoidal motion profile (rad/s).
-        a_r: acceleration for trapezoidal motion profile (rad/s^2)
+        pct: commanded absolute position (percent)
+        v_r: motion-profile velocity limit, in actuator units (rad/s).
+        a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         x_r = self.tool_metadata.command_to_actuator(pct)
         FeetechSMHello.move_to(self, x_des=x_r, v_des=v_r, a_des=a_r)
 
     def move_by(self, delta_pct, v_r=None, a_r=None):
         """
-        delta_pct: commanded incremental motion (pct).
-        v_r: velocity for trapezoidal motion profile (rad/s).
-        a_r: acceleration for trapezoidal motion profile (rad/s^2)
+        delta_pct: commanded incremental motion (percent)
+        v_r: motion-profile velocity limit, in actuator units (rad/s).
+        a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         if self.is_direct:
-            self.pull_status()  # Ensure up to date as server not doing pull_status
+            self.pull_status() 
         self.move_to(self.status["pos_pct"] + delta_pct, v_r, a_r)
+
+
+    def set_velocity(self, v_r, a_r=None):
+        """
+        v_r: velocity, in actuator units (rad/s), not this tool's command units.
+        a_r: acceleration limit, in actuator units (rad/s^2).
+
+        Inert until FeetechSMServo.set_vel() writes SMS_GOAL_VEL; callers emulate velocity
+        with move_by().
+        """
+        return super().set_velocity(v_r, a_r)
 
     ############### Utilities ###############
 
