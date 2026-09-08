@@ -270,7 +270,7 @@ class CommandToolPosition:
         try:
             self.metadata = get_tool_metadata(self.name)
             # move_by() below takes this tool's own command units (e.g. aperture meters for
-            # PG4), not true raw actuator units -- use command_range, not actuator_range.
+            # PG4), not actuator units -- use command_range, not actuator_range.
             low, high = self.metadata.command_range
             self.step_inc = (high - low) / 10.0 if high != low else 1.0
         except Exception:
