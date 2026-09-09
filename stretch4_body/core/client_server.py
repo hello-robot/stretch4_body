@@ -228,16 +228,23 @@ class StretchBodyClient:
         pname = psutil.Process(pid).name()
         return f"client_{pname}_{pid}_{str(uuid.uuid4())[:8]}"
 
-    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool = False):
-        if not is_user_in_group('users'):
-            if verbose:
-                self.logger.error("StretchBodyClient: Cannot connect to the server because the current user is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
-            return False
+    def _connect_admin_socket(self):
+        """
+        (Re)create the admin REQ socket and its poller, closing any previous one.
 
-        # Start admin REQ-REP connection       
-        self.context = zmq.Context()
+        A REQ socket is stuck once it has sent a request that never got a reply, so a
+        failed `check_connection()` leaves it unusable and it has to be replaced.
+        """
+        if self.socket_admin is not None:
+            if self.admin_poller is not None:
+                try:
+                    self.admin_poller.unregister(self.socket_admin)
+                except Exception:
+                    pass
+            self.socket_admin.close(linger=0)
+
         self.socket_admin = self.context.socket(zmq.REQ)
-        self.socket_admin.setsockopt(zmq.LINGER, 0) # the purpose of this is to exit without hang when the server socket died, otherwise `socket.close()` waits for all queued commands to go out       
+        self.socket_admin.setsockopt(zmq.LINGER, 0) # the purpose of this is to exit without hang when the server socket died, otherwise `socket.close()` waits for all queued commands to go out
         if self.ip_address is not None:
             self.socket_admin.connect(f"tcp://{self.ip_address}:23114")
         else:
@@ -246,7 +253,51 @@ class StretchBodyClient:
         self.admin_poller = zmq.Poller()
         self.admin_poller.register(self.socket_admin, zmq.POLLIN)
 
+    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool = False, block:bool = False):
+        """
+        Connect this client to the Stretch Body Server.
+
+        Opens the admin (REQ), command (PUB), and status (SUB) sockets, over IPC by
+        default or over TCP when this client was constructed with an `ip_address`.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, log an explanation when the connection cannot be made, by default True.
+        allow_different_user_connection : bool, optional
+            If True, connect even when the server was started by a different user on this
+            machine. If False, the connection is refused in that case, by default False.
+        block : bool, optional
+            If True, keep retrying the connection to the server every 100ms until it
+            succeeds, instead of returning False right away. This call does not return
+            until a server responds, so it blocks forever if none ever comes up.
+            By default False.
+
+        Returns
+        -------
+        bool
+            True if the client is connected to the server. False if the connection failed,
+            in which case the sockets have already been cleaned up with `stop()`.
+        """
+        if not is_user_in_group('users'):
+            if verbose:
+                self.logger.error("StretchBodyClient: Cannot connect to the server because the current user is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
+            return False
+
+        # Start admin REQ-REP connection
+        self.context = zmq.Context()
+        self._connect_admin_socket()
+
         self.check_connection()
+
+        if not self.connected and block:
+            if verbose:
+                self.logger.info("StretchBodyClient: Waiting for the Stretch Body Server to become available...")
+            while not self.connected:
+                time.sleep(0.1)
+                # A REQ socket with an unanswered request can't send again, so start fresh each retry
+                self._connect_admin_socket()
+                self.check_connection()
 
         if not self.connected:
             if verbose:
