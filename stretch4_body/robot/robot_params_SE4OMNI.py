@@ -38,14 +38,14 @@ configuration_params_template={
 # ###################################33
 # Baseline Nominal Params
 nominal_params={
-    'supported_eoa': ['eoa_wrist_nil_tool_unh'],
+    'supported_eoa': ['whole_arm_nil'],
     'supported_eoa_metadata': {
-        'eoa_wrist_nil_tool_unh': {
-            'name': 'No Tool',
-            'description': 'No tool attached to the robot.'
+        'whole_arm_nil': {
+            'name': 'No lift, arm, wrist, or gripper',
+            'description': 'No arm attached to the robot.'
         }
     },
-    'eoa_wrist_nil_tool_unh': {
+    'whole_arm_nil': {
         'devices': {}, # intentionally empty
     },
     'omnibase': {
@@ -426,7 +426,7 @@ nominal_params={
         'serial_no': 'NA',
         'model_name': 'SE4OMNI',
         'subsystems': ['omnibase', 'power_periph'],
-        'tool': 'eoa_wrist_nil_tool_unh',
+        'tool': 'whole_arm_nil',
         'enable_rate_log':1,
         'max_rate_log_samples':10000,
         'guarded_contact':{
