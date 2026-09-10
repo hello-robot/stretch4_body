@@ -70,18 +70,20 @@ def render_rgbd(c_name: str, frame: RGBDFrame):
     
     # if frame.depth_image is not None and frame.depth_image.shape[0] > 0:
     #     logger.log_any(f"Cameras/{c_name}/depth", rr.DepthImage(frame.depth_image, meter=1.0))
-        
-    # if len(frame.pointcloud) > 0:
-    #     logger.log_any(
-    #         f"Pointclouds/camera_frame/{c_name}",
-    #         rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
-    #     )
+
     if len(frame.pointcloud_base) > 0:
         logger.log_any(
             f"Pointclouds/base_frame/{c_name}",
             rr.Points3D(frame.pointcloud_base, colors=frame.pointcloud_colors, radii=[0.0025]),
         )
-    ...
+    elif len(frame.pointcloud) > 0:
+        # The head cameras colorize lidar returns, so their points already come in the base frame.
+        # The gripper builds its cloud from its own stereo depth map and has no base frame to give
+        # it, so fall back to logging in the camera frame rather than dropping the cloud entirely.
+        logger.log_any(
+            f"Pointclouds/camera_frame/{c_name}",
+            rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
+        )
 
 def main():
     args = _parse_args()
