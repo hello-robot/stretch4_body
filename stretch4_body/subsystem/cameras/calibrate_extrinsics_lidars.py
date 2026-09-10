@@ -581,9 +581,9 @@ class CalibrateLidarToCamera:
                     raise ImportError("stretch_python_bridge not found. Did you colcon build?")
             else:
                 try:
-                    from pyhesai_wrapper import stream_lidar_left, stream_lidar_right
+                    from stretch4_pyhesai_wrapper import stream_lidar_left, stream_lidar_right
                 except ImportError:
-                    raise ImportError("pyhesai_wrapper not found. Please install it or use the `--use_ros_for_lidars` flag.")
+                    raise ImportError("stretch4_pyhesai_wrapper not found. Please install it or use the `--use_ros_for_lidars` flag.")
             
             self.lidar_stream = (
                 stream_lidar_right()
