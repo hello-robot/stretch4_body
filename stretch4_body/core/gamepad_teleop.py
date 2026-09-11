@@ -164,8 +164,10 @@ class GamePadTeleop(Device):
         self.set_joint_command()
 
     def set_joint_command(self):
-        self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
-        self.lift_command = gamepad_joints.CommandLift(motion_profile=self.motion_profile.get_name() )
+        if self.use_devices['base']:
+            self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
+        if self.use_devices['lift']:
+            self.lift_command = gamepad_joints.CommandLift(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['arm']:
             self.arm_command = gamepad_joints.CommandArm(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['eoa']:
@@ -406,8 +408,10 @@ class GamePadTeleop(Device):
     def _update_modes(self):
         if self.use_devices['arm']:
             self.arm_command.precision_mode = self.precision_mode
-        self.lift_command.precision_mode = self.precision_mode
-        self.base_command.precision_mode = self.precision_mode
+        if self.use_devices['lift']:
+            self.lift_command.precision_mode = self.precision_mode
+        if self.use_devices['base']:
+            self.base_command.precision_mode = self.precision_mode
         if self.use_devices['gripper']:
             self.gripper.precision_mode = self.precision_mode
         if self.use_devices['eoa']:
