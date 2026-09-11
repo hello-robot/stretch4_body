@@ -100,6 +100,22 @@ MESONPY_EDITABLE_VERBOSE=1 stretch_body_server --launch
 
 Stretch 4 supports dynamic user-defined custom end-of-arm tools. Users can define, process, register, and switch to their own tools without modifying the core software stack.
 
+### Overview
+
+A tool is made of three independently-configured pieces. Each is described in detail in the
+matching step below, but at a glance:
+
+- **Driver** (`driver_class`, Step 1) — the server-side class that talks directly to your tool's
+  physical motor/servo hardware from inside the 100Hz `RobotServer` loop. Required for any tool
+  with a motor to control; omit it and the tool falls back to a passive, no-op driver
+  (`EOA_Wrist_DW4_Tool_NIL`).
+- **Metadata** (`ToolMetadata`, Step 2) — defines the conversions between the `urdf`/`command`/`actuator`/
+  `aperture`/`normalized` units. Never performs hardware I/O itself. Most tools need no custom
+  Python here: the built-in `LinearToolMetadata` handles any linear mapping from YAML keys alone;
+  only a nonlinear transmission (e.g. a linkage) requires writing a bespoke subclass.
+- **Client** (`client_class`, Step 2) — the `RobotClient`-facing class used by application code
+  for `move_to()`, `move_by()`, `pose()`, and status reads. Optional: the generic `ToolJointClient` can handle single degree of freedom tools using the poses and conversions defined in the metadata. A bespoke client class may be required for more complex tools.
+
 ### 1. Directory Structure
 
 Custom tools should be placed in your fleet's `user_tools` directory:
@@ -111,14 +127,184 @@ Create a subdirectory named after your tool (e.g., `user_eoa_mytool`):
 ```yaml
 > user_eoa_mytool
     > meshes
-        my_tool_mesh.stl      # Visual/Collision mesh files
-    user_eoa_mytool.urdf      # Tool URDF file describing joints & links
-    user_eoa_mytool.py        # Optional custom Python driver class
+        my_tool_mesh.stl               # Visual/Collision mesh files
+    user_eoa_mytool.urdf               # URDF file describing joints & links
+    tool_params.yaml                   # YAML config
+    user_eoa_mytool_driver.py          # Optional custom Python driver class
+    user_eoa_mytool_client.py          # Optional custom Python RobotClient class
+    user_eoa_mytool_metadata.py        # Optional custom Python ToolMetadata subclass
 ```
 
-If your tool has custom driver code, the main Python file must match the tool directory name (e.g., `user_eoa_mytool.py`) or be named `tool.py`, and contain a class matching the tool name in PascalCase (e.g., `class UserEoaMytool`).
+The three Python files above can be named anything you like — there is no filename or
+class-name convention to follow, and nothing scans your directory guessing which file is
+which. Each is wired up explicitly by a pair of keys in `tool_params.yaml`, pointing at a
+module name (filename without `.py`) and the class within it:
 
-### 2. Mesh Preprocessing and Registration
+```yaml
+py_module_name: user_eoa_mytool_driver      # driver -- see Overview
+py_class_name: UserEoaMytool
+
+client_module_name: user_eoa_mytool_client  # client -- optional, see Overview
+client_class_name: UserEoaMytoolClient
+
+metadata_module_name: user_eoa_mytool_metadata  # metadata -- optional, see Overview and Step 2
+metadata_class_name: UserEoaMytoolMetadata
+```
+
+All three are independently optional: omit `py_module_name`/`py_class_name` and the tool
+falls back to a passive, no-op driver; omit `client_module_name`/`client_class_name` and it
+falls back to the generic `ToolJointClient`; omit `metadata_module_name`/`metadata_class_name`
+and it falls back to the built-in `LinearToolMetadata` (Step 2, Path A). See the Overview
+above for what each piece does and when you actually need to provide one.
+
+### 2. Configuring Unit Conversions
+
+For actuated tools, the software works in five primary units.
+
+| Unit | Description |
+|---|---|
+| `urdf` | The units used to define the joint in ROS's robot model, used with `JointTrajectory`, `JointState`, and other ROS topics
+| `command` | The units expected by stretch4_body's `move_to()` and `move_by()` methods. stretch4_body will translate values into raw motor units, and raw motor readings back into these units to report status. |
+| `actuator` | The servo/motor register value (radians).|
+| `aperture` | Physical fingertip opening (meters) — a client convenience unit. |
+| `normalized` | 0.0 (closed) .. 1.0 (open) — another client convenience unit, e.g. for a UI slider |
+
+Each tool is expected to provide a conversion path between each of the 5 units. There are two ways to configure this, depending on how your gripper's motor motion relates to
+its physical motion:
+
+**Path A — Linear tools.** To send motor commands directly without specialized conversations (no gearbox nonlinearity, no linkage), just add these keys to your
+tool's `tool_params.yaml`:
+
+```yaml
+py_module_name: my_tool_driver
+py_class_name: MyToolDriver
+
+tool_joints: ['my_finger_left_joint', 'my_finger_right_joint']
+primary_joint: 'my_finger_left_joint'   # optional, defaults to the first tool_joints entry
+tool_links: ['my_finger_left_link', 'my_finger_right_link']
+
+actuator_command_range: [0.0, 100.0]
+
+# Physical fingertip opening bounds (meters)
+aperture_range: [0.0, 0.08]
+
+# Linear scale factor: command = urdf * urdf_to_actuator_scale. Optional, defaults to 1.0.
+urdf_to_actuator_scale: 100.0
+
+# How close to a commanded position counts as "arrived", in URDF units (meters or radians).
+# Optional; defaults to 2% of the joint's URDF range. The ROS trajectory server uses this to
+# decide when a gripper goal is finished, so a tolerance that is too tight will hang a
+# trajectory and one that is too loose will end the motion early.
+position_tolerance: 0.002
+```
+
+**Path B — Nonlinear tools.** If your motor's motion relates to the gripper's physical motion
+through a linkage or other nonlinear transmission and a single
+linear scale can't describe it, write your own `ToolMetadata` subclass and register it
+in `tool_params.yaml`:
+
+```yaml
+py_module_name: my_tool_driver
+py_class_name: MyToolDriver
+
+client_module_name: my_tool_client
+client_class_name: MyToolClient
+
+metadata_module_name: my_tool_metadata
+metadata_class_name: MyToolMetadata
+```
+
+Your subclass must implement every abstract member of `ToolMetadata`
+(`stretch4_body/utils/tool_metadata.py`) — `tool_joints`, `tool_links`, `client_class`,
+`driver_class`, `status_to_metadata`, the two ranges, and the six conversions between the five
+units above:
+
+```python
+from stretch4_body.utils.tool_metadata import ToolMetadata
+
+class MyToolMetadata(ToolMetadata):
+    ...  # tool_joints, tool_links, client_class, driver_class
+
+    @property
+    def actuator_range(self) -> tuple[float, float]:
+        """(min, max) servo angle (radians)."""
+
+    @property
+    def command_range(self) -> tuple[float, float]:
+        """(min, max) in whatever units your move_to()/move_by() actually accept."""
+
+    def urdf_to_command(self, urdf: float) -> float:
+        """URDF joint value -> your move_to()/move_by()'s own units."""
+
+    def command_to_urdf(self, command: float) -> float:
+        """Your move_to()/move_by()'s own units -> URDF joint value."""
+
+    def command_to_actuator(self, command: float) -> float:
+        """Your move_to()/move_by()'s own units -> servo angle (radians)."""
+
+    def actuator_to_command(self, actuator: float) -> float:
+        """Servo angle (radians) -> your move_to()/move_by()'s own units."""
+
+    def aperture_to_actuator(self, aperture: float) -> float:
+        """Physical fingertip opening (meters) -> servo angle (radians)."""
+
+    def actuator_to_aperture(self, actuator: float) -> float:
+        """Servo angle (radians) -> physical fingertip opening (meters)."""
+
+    def status_to_metadata(self, status: dict) -> dict:
+        """Raw hardware status -> {'aperture_m', 'finger_rad', 'finger_effort', 'finger_vel'}."""
+```
+
+The six cover three of the four edges between those units — `urdf`↔`command`,
+`command`↔`actuator` and `actuator`↔`aperture`, each in both directions. The fourth,
+`actuator`↔`normalized`, is derived from `actuator_range`, so the base class provides it along
+with `urdf_to_actuator`/`actuator_to_urdf`, the remaining chained pairs, and the differential
+conversions below. You only need the two ranges, the six conversions, and `status_to_metadata`
+shown above, plus `tool_joints`, `tool_links`, `client_class` and `driver_class`, unchanged from
+a normal user tool. See `ParallelGripperMetadata` (linkage-based) and `StretchGripperMetadata`
+(near-linear) in `tool_metadata.py` for complete worked examples.
+
+`position_tolerance` is also provided by the base class, defaulting to 2% of the joint's URDF
+range. Override the property if your tool needs a different arrival threshold — the ROS
+trajectory server reads it to decide when a gripper goal is complete.
+
+#### Converting velocities
+
+**A rate does not convert like a position.** For a position conversion `y = f(x)`, a velocity
+transforms by the derivative: `ẏ = f'(x)·ẋ`. Running a rate through the position conversion is
+incorrect whenever `f` is not a pure scaling through the origin — either because it carries an
+offset (`f(0) ≠ 0`, as when a fully-closed gripper sits at a nonzero servo angle), or because it
+is nonlinear (the gain varies with position, as across PG4's slider-crank linkage).
+
+So `ToolMetadata` provides a separate family of differential conversions:
+
+| Method | Use for |
+|---|---|
+| `convert_velocity(v, frm, to, at)` | A rate. Multiplies by the Jacobian evaluated at position `at`. |
+| `convert_delta(d, frm, to, at)` | A finite displacement (a `move_by` amount). Computed exactly as `f(at + d) - f(at)`, so it needs no derivative and stays exact across a nonlinear transmission. **Prefer this whenever the quantity really is a displacement.** |
+| `convert_acceleration(a, frm, to, at)` | A motion-profile acceleration limit. First-order only. |
+| `conversion_gain(frm, to, at)` | The Jacobian itself — the partial derivative `d(to)/d(frm)` at `at`, if you want to multiply yourself. |
+| `velocity_limit(unit_type, at)` / `conservative_velocity_limit(unit_type)` | This tool's servo velocity limit pushed through the Jacobian into other units: `\|d(unit_type)/d(actuator)\| * limit_actuator`. The conservative form minimizes that over the range, giving a rate achievable at every position — use it when you need one scalar. |
+
+Named wrappers exist for the common pairs, e.g. `urdf_to_command_velocity(v, at_urdf)` and
+`actuator_to_urdf_velocity(v, at_actuator)`.
+
+**`at` is required, not optional** — for a nonlinear tool there is no position-independent answer
+— and it is expressed in the *source* units. `ToolMetadata` is stateless, so the caller supplies
+the current position, typically from `status['pos']`.
+
+Your subclass gets velocity support for free: the base class differentiates the six position
+conversions above numerically. Since a Path B transmission is nonlinear by definition, you should
+still override `_analytic_gain(frm, to, at)` to return a closed-form derivative, which is exact
+and cheaper. Two things to watch for if you rely on the numeric fallback: do not round or quantize
+inside a conversion function (it makes the derivative meaningless, and a small enough step can
+return exactly zero), and make sure your conversions do not raise at the edges of their range.
+
+Note the one asymmetry: a tool driver's `move_to(x, v_r, a_r)` takes its *position* in command
+units but its `v_r`/`a_r` in **actuator rad/s**, since those are servo motion-profile limits. If
+you hold a rate in command units, convert it with `command_to_actuator_velocity()` first.
+
+### 3. Mesh Preprocessing and Registration
 
 Once your files are in place, process the tool using the automatic registration utility. This script simplifies visual meshes, generates collision meshes, and appends the default baseline configuration (including serial devices, joint exclusion, and collision management) to `stretch_user_params.yaml`:
 
@@ -128,14 +314,27 @@ stretch_configure_tool --add_user_tool
 
 The tool will prompt you to select your custom tool subdirectory, process its URDF/meshes, and generate the parameters.
 
-### 3. Switching to Your Tool
+### 4. Switching to Your Tool
 
-To switch your robot to use the custom tool:
+To switch your robot to use the custom tool, run the configuration tool and pick it from the
+menu:
 
 ```bash
-stretch_configure_tool --quick --tool user_eoa_mytool
+stretch_configure_tool
 ```
 
-This updates `stretch_user_params.yaml` to make `user_eoa_mytool` the active tool. The `RobotClient`, `stretch_status`, and `stretch_system_check` utilities will automatically recognize, load, and poll your custom tool.
+Custom tools are not auto-detected on the Feetech bus, so choose the **"Enter a custom tool
+name"** option at the end of the list and type your tool's directory name (`user_eoa_mytool`).
+Add `--quick` to skip the power-cycle and bus-scan steps and go straight to the selection
+prompt:
+
+```bash
+stretch_configure_tool --quick
+```
+
+This updates `stretch_user_params.yaml` to make `user_eoa_mytool` the active tool, then offers
+to restart `stretch_body_server` and home the tool. The `RobotClient`, `stretch_status`, and
+`stretch_system_check` utilities will automatically recognize, load, and poll your custom tool
+from there.
 
 
