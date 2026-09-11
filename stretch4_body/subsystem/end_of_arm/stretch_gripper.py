@@ -43,7 +43,8 @@ class StretchGripper(FeetechSMHello):
 
     def move_to(self, pct, v_r=None, a_r=None):
         """
-        pct: commanded absolute position (percent)
+        pct: target absolute position, in unitless 'pct' (percent). 0 is fingertips touching,
+            negative is closed, positive up to self.pct_max_open is open.
         v_r: motion-profile velocity limit, in actuator units (rad/s).
         a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
@@ -52,7 +53,7 @@ class StretchGripper(FeetechSMHello):
 
     def move_by(self, delta_pct, v_r=None, a_r=None):
         """
-        delta_pct: commanded incremental motion (percent)
+        delta_pct: change in position, in unitless 'pct' (percent), added to the current pos_pct
         v_r: motion-profile velocity limit, in actuator units (rad/s).
         a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
@@ -63,11 +64,8 @@ class StretchGripper(FeetechSMHello):
 
     def set_velocity(self, v_r, a_r=None):
         """
-        v_r: velocity, in actuator units (rad/s), not this tool's command units.
-        a_r: acceleration limit, in actuator units (rad/s^2).
-
-        Inert until FeetechSMServo.set_vel() writes SMS_GOAL_VEL; callers emulate velocity
-        with move_by().
+        v_r: target velocity, in actuator units (rad/s)
+        a_r: target acceleration, in actuator units (rad/s^2).
         """
         return super().set_velocity(v_r, a_r)
 
