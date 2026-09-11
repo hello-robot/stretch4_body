@@ -43,22 +43,31 @@ class StretchGripper(FeetechSMHello):
 
     def move_to(self, pct, v_r=None, a_r=None):
         """
-        pct: commanded absolute position (Pct).
-        v_r: velocity for trapezoidal motion profile (rad/s).
-        a_r: acceleration for trapezoidal motion profile (rad/s^2)
+        pct: target absolute position, in unitless 'pct' (percent). 0 is fingertips touching,
+            negative is closed, positive up to self.pct_max_open is open.
+        v_r: motion-profile velocity limit, in actuator units (rad/s).
+        a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         x_r = self.tool_metadata.command_to_actuator(pct)
         FeetechSMHello.move_to(self, x_des=x_r, v_des=v_r, a_des=a_r)
 
     def move_by(self, delta_pct, v_r=None, a_r=None):
         """
-        delta_pct: commanded incremental motion (pct).
-        v_r: velocity for trapezoidal motion profile (rad/s).
-        a_r: acceleration for trapezoidal motion profile (rad/s^2)
+        delta_pct: change in position, in unitless 'pct' (percent), added to the current pos_pct
+        v_r: motion-profile velocity limit, in actuator units (rad/s).
+        a_r: motion-profile acceleration limit, in actuator units (rad/s^2).
         """
         if self.is_direct:
-            self.pull_status()  # Ensure up to date as server not doing pull_status
+            self.pull_status() 
         self.move_to(self.status["pos_pct"] + delta_pct, v_r, a_r)
+
+
+    def set_velocity(self, v_r, a_r=None):
+        """
+        v_r: target velocity, in actuator units (rad/s)
+        a_r: target acceleration, in actuator units (rad/s^2).
+        """
+        return super().set_velocity(v_r, a_r)
 
     ############### Utilities ###############
 
