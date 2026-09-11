@@ -462,11 +462,11 @@ class RobotJoints(Enum):
         """This tool's actuator velocity limit expressed in `unit_type` units, at position `at`."""
         return self.get_gripper_model("velocity_limit").velocity_limit(unit_type, at, profile)
 
-    def conservative_velocity_limit(self, unit_type: str, profile: str = "default") -> float:
+    def position_independent_velocity_limit(self, unit_type: str, profile: str = "default") -> float:
         """
-        The minimum of `velocity_limit` over the actuator range. Use where a single scalar is
-        required.
+        The minimum of `velocity_limit` over the actuator range, so it needs no position. Use
+        where a single scalar is required.
         """
         return self.get_gripper_model(
-            "conservative_velocity_limit"
-        ).conservative_velocity_limit(unit_type, profile)
+            "position_independent_velocity_limit"
+        ).position_independent_velocity_limit(unit_type, profile)

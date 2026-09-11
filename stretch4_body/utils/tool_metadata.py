@@ -438,12 +438,12 @@ class ToolMetadata(ABC):
         )
         return abs(self.convert_velocity(limit, "actuator", unit_type, at_actuator))
 
-    def conservative_velocity_limit(
+    def position_independent_velocity_limit(
         self, unit_type: str, profile: str = "default", samples: int = 33
     ) -> float:
         """
-        The minimum of `velocity_limit` over the actuator range: a rate achievable at every
-        position. Use where a single scalar is required, such as a ROS parameter.
+        The minimum of `velocity_limit` over the actuator range, so it needs no position: a rate
+        achievable everywhere. Use where a single scalar is required, such as a ROS parameter.
         """
         limit = self.actuator_velocity_limit(profile)
         low, high = sorted(self.actuator_range)
