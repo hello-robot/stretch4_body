@@ -498,11 +498,11 @@ SE4_eoa_wrist_dw4_tool_tablet={
         'wrist': 'eoaw_dw4',
         'tool': 'eoat_tablet',
         'stow': {
-            'arm': 0.0,
-            'lift': 0.169,
-            'wrist_pitch': 1.490,
-            'wrist_roll': 3.686,
-            'wrist_yaw': 4.103,
+            'arm': 0.007,
+            'lift': 0.258,
+            'wrist_pitch': -0.446,
+            'wrist_roll': 0.051,
+            'wrist_yaw': -0.710,
         },
         'homing': {
             'wrist_roll': -0.4, #Roll held here while pitch homes so the tablet clears the robot
