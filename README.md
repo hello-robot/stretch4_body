@@ -195,11 +195,16 @@ devices:
     motion: { ... }                 # default and max speeds/accelerations
 
 stow:
-  my_tool_joint: 0.0                # the stow position, in "command" units
+  my_tool_joint: 0.0                # optional stow position, in "command" units (defaults to 0)
+
+homing:
+  wrist_roll: -0.4                  # optional final position after homing, in actuator units (defaults to 0)
 ```
 
 The `devices` entry adds your gripper's motor(s) to the end-of-arm chain. Pick an `id` no built-in tool uses. See `SE4_parallel_gripper_DW4` in `robot/robot_params_SE4.py` for a complete `eeprom_cfg` and `motion` example to copy.
 
+`homing` sets where `wrist_pitch`, `wrist_roll` and `wrist_yaw` are left when each finishes homing, defaulting to 0. This can be helpful to keep the end effector out of the way while
+the wrist is homing and collision is off. The end-of-arm will home the yaw joint, then the roll joint, the pitch joint, and finally the tool joints. Each will hold its final position while the next homes to its hardstop.
 
 ### 2. Configuring Unit Conversions
 
