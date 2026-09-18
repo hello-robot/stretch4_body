@@ -119,36 +119,61 @@ matching step below, but at a glance:
 ### 1. Directory Structure
 
 Custom tools should be placed in your fleet's `user_tools` directory:
-- If environment variables `HELLO_FLEET_PATH` and `HELLO_FLEET_ID` are set: `<HELLO_FLEET_PATH>/<HELLO_FLEET_ID>/user_tools/`
+- If `HELLO_FLEET_PATH` is set: `<HELLO_FLEET_PATH>/user_tools/`
 - Otherwise (fallback): `~/stretch_user/user_tools/`
 
-Create a subdirectory named after your tool (e.g., `user_eoa_mytool`):
+Create a subdirectory named after your tool (e.g., `user_eoa_tool`). The directory name is the
+tool name, and it must not collide with a built-in tool name — a user directory named after a
+built-in is ignored.
 
 ```yaml
-> user_eoa_mytool
+> user_eoa_tool
     > meshes
-        my_tool_mesh.stl               # Visual/Collision mesh files
-    user_eoa_mytool.urdf               # URDF file describing joints & links
+        my_tool_link.STL               # Visual meshes, referenced by the URDF
+        my_tool_collision_link.STL     # Collision meshes, generated in Step 3
+    user_eoa_tool.urdf               # URDF describing joints & links -- exactly one per tool
+    collision_mesh_config.yaml         # Per-link collision mesh recipe -- see Step 3
     tool_params.yaml                   # YAML config
-    user_eoa_mytool_driver.py          # Optional custom Python driver class
-    user_eoa_mytool_client.py          # Optional custom Python RobotClient class
-    user_eoa_mytool_metadata.py        # Optional custom Python ToolMetadata subclass
+    user_eoa_tool_driver.py          # Optional custom Python driver class
+    user_eoa_tool_client.py          # Optional custom Python RobotClient class
+    user_eoa_tool_metadata.py        # Optional custom Python ToolMetadata subclass
 ```
 
+Your URDF's root link must be named `quick_connect_interface_link`. This is how the tool
+attaches to the robot: `SE4.xacro` includes your URDF and then adds a fixed `tool_connection_joint`
+whose parent is the robot's `tool_attachment_site_link` and whose child is
+`quick_connect_interface_link`, by that exact name. Every built-in tool follows the same
+convention.
+
+Root link here means a link that is not the child of any joint *within your URDF* — the robot
+supplies the joint above it. If your CAD export names the root something else, add
+`quick_connect_interface_link` as a new root and tie it to your old root with a fixed identity
+joint:
+
+```xml
+<link name="quick_connect_interface_link"/>
+
+<joint name="quick_connect_interface_joint" type="fixed">
+  <parent link="quick_connect_interface_link"/>
+  <child link="my_old_root_link"/>
+  <origin xyz="0 0 0" rpy="0 0 0"/>
+</joint>
+```
+
+
 The three Python files above can be named anything you like — there is no filename or
-class-name convention to follow, and nothing scans your directory guessing which file is
-which. Each is wired up explicitly by a pair of keys in `tool_params.yaml`, pointing at a
+class-name convention to follow. Each is wired up explicitly by a pair of keys in `tool_params.yaml`, pointing at a
 module name (filename without `.py`) and the class within it:
 
 ```yaml
-py_module_name: user_eoa_mytool_driver      # driver -- see Overview
-py_class_name: UserEoaMytool
+py_module_name: user_eoa_tool_driver      # driver -- see Overview
+py_class_name: UserEoaTool
 
-client_module_name: user_eoa_mytool_client  # client -- optional, see Overview
-client_class_name: UserEoaMytoolClient
+client_module_name: user_eoa_tool_client  # client -- optional, see Overview
+client_class_name: UserEoaToolClient
 
-metadata_module_name: user_eoa_mytool_metadata  # metadata -- optional, see Overview and Step 2
-metadata_class_name: UserEoaMytoolMetadata
+metadata_module_name: user_eoa_tool_metadata  # metadata -- optional, see Overview and Step 2
+metadata_class_name: UserEoaToolMetadata
 ```
 
 All three are independently optional: omit `py_module_name`/`py_class_name` and the tool
@@ -156,6 +181,25 @@ falls back to a passive, no-op driver; omit `client_module_name`/`client_class_n
 falls back to the generic `ToolJointClient`; omit `metadata_module_name`/`metadata_class_name`
 and it falls back to the built-in `LinearToolMetadata` (Step 2, Path A). See the Overview
 above for what each piece does and when you actually need to provide one.
+
+Your tool starts from the bare 3-DOF wrist. If your tool has a
+motor, declare it under `devices` and give it a stow target:
+
+```yaml
+devices:
+  my_tool_joint:                    # key order sets the order motors join the Feetech chain
+    py_module_name: user_eoa_tool_driver
+    py_class_name: UserEoaTool
+    id: 24                          # servo id on the wrist bus
+    eeprom_cfg: { ... }             # servo limits and protections
+    motion: { ... }                 # default and max speeds/accelerations
+
+stow:
+  my_tool_joint: 0.0                # the stow position, in "command" units
+```
+
+The `devices` entry adds your gripper's motor(s) to the end-of-arm chain. Pick an `id` no built-in tool uses. See `SE4_parallel_gripper_DW4` in `robot/robot_params_SE4.py` for a complete `eeprom_cfg` and `motion` example to copy.
+
 
 ### 2. Configuring Unit Conversions
 
@@ -176,8 +220,8 @@ its physical motion:
 tool's `tool_params.yaml`:
 
 ```yaml
-py_module_name: my_tool_driver
-py_class_name: MyToolDriver
+py_module_name: user_eoa_tool_driver
+py_class_name: UserEoaTool
 
 tool_joints: ['my_finger_left_joint', 'my_finger_right_joint']
 primary_joint: 'my_finger_left_joint'   # optional, defaults to the first tool_joints entry
@@ -204,14 +248,14 @@ linear scale can't describe it, write your own `ToolMetadata` subclass and regis
 in `tool_params.yaml`:
 
 ```yaml
-py_module_name: my_tool_driver
-py_class_name: MyToolDriver
+py_module_name: user_eoa_tool_driver
+py_class_name: UserEoaTool
 
-client_module_name: my_tool_client
-client_class_name: MyToolClient
+client_module_name: user_eoa_tool_client
+client_class_name: UserEoaToolClient
 
-metadata_module_name: my_tool_metadata
-metadata_class_name: MyToolMetadata
+metadata_module_name: user_eoa_tool_metadata
+metadata_class_name: UserEoaToolMetadata
 ```
 
 Your subclass must implement every abstract member of `ToolMetadata`
@@ -222,7 +266,7 @@ units above:
 ```python
 from stretch4_body.utils.tool_metadata import ToolMetadata
 
-class MyToolMetadata(ToolMetadata):
+class UserEoaToolMetadata(ToolMetadata):
     ...  # tool_joints, tool_links, client_class, driver_class
 
     @property
@@ -304,37 +348,83 @@ Note the one asymmetry: a tool driver's `move_to(x, v_r, a_r)` takes its *positi
 units but its `v_r`/`a_r` in **actuator rad/s**, since those are servo motion-profile limits. If
 you hold a rate in command units, convert it with `command_to_actuator_velocity()` first.
 
-### 3. Mesh Preprocessing and Registration
+### 3. Mesh Processing
 
-Once your files are in place, process the tool using the automatic registration utility. This script simplifies visual meshes, generates collision meshes, and appends the default baseline configuration (including serial devices, joint exclusion, and collision management) to `stretch_user_params.yaml`:
+For a tool directory to fit into the robot's URDF structure, all of the following have to be true:
+
+- It holds exactly one `.urdf` file. That is how the robot model finds it.
+- That URDF's root link is named `quick_connect_interface_link`
+- Every mesh the URDF references is in the directory's `meshes/` folder.
+- Every `<mesh filename>` is written as `$(arg tool_mesh_dir)/<filename>`, which is how the
+  assembled robot model resolves them.
+- Links that need collision checking reference a mesh in their `<collision>` tag.
+- Moving joints carry `velocity` and `effort` in their `<limit>` element.
+
+A convenience function is provided to help with these steps:
 
 ```bash
-stretch_configure_tool --add_user_tool
+python3 -m stretch4_urdf.utils.preprocessing.process_new_user_tool ~/stretch_user/user_tools/user_eoa_tool
 ```
 
-The tool will prompt you to select your custom tool subdirectory, process its URDF/meshes, and generate the parameters.
+In order, it:
+
+1. Checks the root link is `quick_connect_interface_link`, and offers to insert one if not.
+2. Writes a `collision_mesh_config.yaml` covering every visual mesh link if you do not already have
+   one.
+3. Generates each collision mesh next to its visual mesh: `my_tool_body_link.STL` spawns
+   `my_tool_body_link_collision_link.STL`.
+4. Rewrites your URDF in place so each `<collision>` tag points at the generated mesh.
+5. Points every mesh path at `$(arg tool_mesh_dir)/...`, which is how the assembled robot model
+   resolves them. See below.
+
+By default, collision links are reduced by 90%. Different decimation ratios or shapes can be specified in `collision_mesh_config.yaml`, next
+to your URDF. Keys under `links:` are URDF link names; each needs an `action`:
+
+```yaml
+links:
+  my_tool_body_link:
+    action: qem
+    simplification_ratio: 0.1
+  my_finger_left_link:
+    action: bounding_box
+    padding: [0.0, 0.0, 0.005]
+  my_fingertip_left_link:
+    action: convex_hull
+```
+
+| `action` | Result |
+|---|---|
+| `qem` | Quadric-error-metric decimation, keeping `simplification_ratio` of the original face count (0.0 = maximal simplification, 1.0 = unchanged; defaults to 0.5). The usual choice for a detailed part whose shape matters. |
+| `bounding_box` | An axis-aligned box around the mesh, grown by `padding` in x/y/z (meters; a single number applies to all three, and it defaults to zero). Cheapest, and the right choice for a chunky body link. |
+| `convex_hull` | The mesh's convex hull. Good for a part that is roughly convex already. |
+| `nop` | Copy the visual mesh through unchanged. |
+
+A link without a mesh specified in the `<visual>` tag will be skipped. Only `.stl`, `.obj` and `.dae` are processed.
+
+`stretch4_urdf` sets the xacro argument `tool_mesh_dir` to the absolute path of your tool's
+`meshes/` directory when it builds the robot model, so every mesh reference in your URDF should be
+written against it:
+
+```xml
+<mesh filename="$(arg tool_mesh_dir)/my_tool_body_link.STL"/>
+```
+
+Whatever your CAD exporter wrote — a bare filename, `meshes/...`, `package://...`, or an absolute
+path on your machine will not resolve on the robot. Item 5 above fixes that: it walks the URDF's
+`<mesh>` elements, takes each filename's basename, confirms that file is in `meshes/`, and rewrites
+the reference. Matching on the elements rather than on the text of the path means a reference
+written any way at all is normalized.
+
 
 ### 4. Switching to Your Tool
 
-To switch your robot to use the custom tool, run the configuration tool and pick it from the
-menu:
+To switch your robot to the custom tool, run the configuration tool and pick it from the menu:
 
 ```bash
 stretch_configure_tool
 ```
 
-Custom tools are not auto-detected on the Feetech bus, so choose the **"Enter a custom tool
-name"** option at the end of the list and type your tool's directory name (`user_eoa_mytool`).
-Add `--quick` to skip the power-cycle and bus-scan steps and go straight to the selection
-prompt:
-
-```bash
-stretch_configure_tool --quick
-```
-
-This updates `stretch_user_params.yaml` to make `user_eoa_mytool` the active tool, then offers
-to restart `stretch_body_server` and home the tool. The `RobotClient`, `stretch_status`, and
-`stretch_system_check` utilities will automatically recognize, load, and poll your custom tool
-from there.
+Your tool appears in the numbered list alongside the built-ins, under a display name derived from
+its directory name (`user_eoa_tool` shows as "User Eoa Tool").
 
 
