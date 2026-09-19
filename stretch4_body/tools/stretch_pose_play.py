@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 import logging
-import time
 import math
+import time
+
 import click
 import yaml
+
 import stretch4_body.robot.robot_client as rc
 from stretch4_body.core.gamepad_enums import MotionProfile
-
 from stretch4_body.utils.stretch_pose_models import RobotJoints, RobotPose
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class KeyframePlayer:
         else:
             self.robot = rc.RobotClient()
             self.robot.startup()
-            
+
         self.poses: list[RobotPose] = []
         self.current_pose_index = 0
 
@@ -49,7 +50,7 @@ class KeyframePlayer:
         self.logger.info(f"Moving to pose: {pose.name}")
 
         self.last_pose = pose
-        
+
         for name, joint_pose in pose.joints.items():
             joint = RobotJoints.get_joint_by_name(name)
             if joint is None or joint.value is None:
@@ -58,7 +59,7 @@ class KeyframePlayer:
             if not joint in self.joints_allowed_to_move:
                 continue
 
-            position = joint.to_subsystem_units(joint_pose.position)
+            position = joint.command_to_actuator(joint_pose.position)
             if joint is RobotJoints.arm:
                 self.robot.arm.move_to(position, *joint.get_joint_params(self.motion_profile))
             elif joint is RobotJoints.lift:
@@ -67,10 +68,10 @@ class KeyframePlayer:
                 self.robot.end_of_arm.move_to(joint.value, position, *joint.get_joint_params(self.motion_profile))
             else:
                 raise NotImplementedError(f"{joint.name} is not a supported joint to move.")
-            
+
         # Move Base
         base_joint = RobotJoints.base
-        if pose.base is not None and base_joint in self.joints_allowed_to_move:            
+        if pose.base is not None and base_joint in self.joints_allowed_to_move:
             # self.robot.base.move_by(dx_robot, dy_robot, dtheta, *base_joint.get_base_params(self.motion_profile))
             self.robot.base.rotate_by(pose.base.theta, *base_joint.get_base_params(self.motion_profile)[2:])
             self.robot.base.translate_by(pose.base.x, pose.base.y, *base_joint.get_base_params(self.motion_profile)[:2])
@@ -87,9 +88,9 @@ class KeyframePlayer:
         if diff > 0.0:
             self.logger.info(f"Waiting {diff:.2f}s")
             time.sleep(diff)
-        
+
         self.play_pose(pose)
-        
+
 
     def play_poses(self, poses: list[RobotPose], delay_between_frames:float|None, step:bool = False):
         for pose in poses:
@@ -118,7 +119,7 @@ class KeyframePlayer:
                 return False
             self.logger.info("All poses played. Resetting index.")
             self.current_pose_index = 0
-            
+
         pose = self.poses[self.current_pose_index]
         self.play_pose(pose) if not wait_until_frame_start_time else self._play_pose_wait_until_start_time(pose)
         self.current_pose_index += 1
@@ -150,10 +151,10 @@ Neither this keyframe player nor the robot account for the changes in the enviro
 Please make sure the robot's surroundings are clear before proceeding.
 
 """)
-    
+
     delay_between_frames = float(delay_between_frames) if delay_between_frames is not None else None
     motion_profile = MotionProfile[speed.upper()]
-    
+
     if input("Type y to continue. The robot will start moving. ").lower() != "y": return
 
     _joints_allowed_to_move = [
@@ -163,13 +164,13 @@ Please make sure the robot's surroundings are clear before proceeding.
     ]
     player = KeyframePlayer(joints_allowed_to_move=_joints_allowed_to_move, motion_profile=motion_profile)
     player.load_from_file(file)
-    
+
     try:
         if loop:
             player.play_poses_loop(player.poses,delay_between_frames=delay_between_frames, delay_between_restart=1.0, step=step)
         else:
             player.play_poses(player.poses, delay_between_frames=delay_between_frames, step=step)
-        
+
         time.sleep(0.5)
         player.robot.wait_command()
         
