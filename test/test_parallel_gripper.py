@@ -134,7 +134,7 @@ def test_robot_joints_properties():
     assert client.tool_metadata is RobotJoints.gripper.gripper_model
 
     with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
-        with patch.dict('stretch4_body.utils.stretch_pose_models.GRIPPER_MODELS') as mock_models:
+        with patch.dict('stretch4_body.utils.tool_metadata.BUILTIN_TOOL_MODELS') as mock_models:
             mock_meta = MagicMock()
             mock_client = MagicMock()
             mock_meta.client_class.return_value = mock_client
@@ -200,8 +200,12 @@ def test_parallel_gripper_direct_commands():
         # Call move_to with 0.08 m
         gripper.move_to(0.08)
 
-        # Ensure it translated 0.08 m into servo radians using the gripper's tool_metadata conversion
-        expected_rad = gripper.tool_metadata.aperture_to_actuator(0.08)
+        # Ensure it translated 0.08 m into servo radians using the gripper's tool_metadata
+        # conversion. move_to() clamps to command_range first, so clamp here too -- 0.08 is the
+        # nominal full-open aperture and sits a hair outside the range the linkage actually
+        # reaches, so an unclamped expectation never matches.
+        low, high = gripper.tool_metadata.command_range
+        expected_rad = gripper.tool_metadata.aperture_to_actuator(min(max(0.08, low), high))
         mock_move_to.assert_called_once_with(gripper, x_des=expected_rad, v_des=None, a_des=None)
     print("ParallelGripper direct move_to test passed!")
 
@@ -212,3 +216,144 @@ if __name__ == "__main__":
     test_parallel_gripper_direct_commands()
     test_scripts_auto_detect()
     print("All tests passed successfully!")
+
+
+# ---------------------------------------------------------------------------
+# Velocity / differential conversions
+#
+# A rate does not convert like a position: for y = f(x), y' = f'(x) * x'. Reusing a position
+# conversion on a rate adds the map's offset (affine) or uses the wrong gain (nonlinear).
+# ---------------------------------------------------------------------------
+
+def _numeric_derivative(f, x, h=1e-6):
+    return (f(x + h) - f(x - h)) / (2 * h)
+
+
+def test_pg4_gain_matches_numeric_derivative():
+    """The closed-form slider-crank gain must agree with differentiating the conversion itself."""
+    from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+    meta = ParallelGripperMetadata()
+    low, high = meta.actuator_range
+    for i in range(1, 12):
+        at = low + (high - low) * i / 12
+        analytic = meta.conversion_gain("actuator", "aperture", at)
+        numeric = _numeric_derivative(meta.actuator_to_aperture, at, 1e-5)
+        assert math.isclose(analytic, numeric, rel_tol=1e-6), (
+            f"at={at}: analytic {analytic} != numeric {numeric}"
+        )
+
+
+def test_pg4_gain_varies_across_range():
+    """
+    Characterisation guard. PG4's linkage gain swings ~4x from closed to mid-range, so any
+    regression to a single constant slope (the thing this whole API exists to prevent) fails here.
+    """
+    from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+    meta = ParallelGripperMetadata()
+    low, high = meta.actuator_range
+    gains = [
+        abs(meta.conversion_gain("actuator", "aperture", low + (high - low) * i / 10))
+        for i in range(11)
+    ]
+    spread = max(gains) / min(gains)
+    print(f"PG4 actuator->aperture gain spread: {spread:.2f}x  (min {min(gains):.5f}, max {max(gains):.5f})")
+    assert spread > 3.0, f"expected a strongly position-dependent gain, got {spread:.2f}x"
+
+
+def test_gain_is_reciprocal_in_both_directions():
+    from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+    meta = ParallelGripperMetadata()
+    low, high = meta.aperture_range
+    for i in range(1, 5):
+        aperture = low + (high - low) * i / 5
+        fwd = meta.conversion_gain("aperture", "actuator", aperture)
+        back = meta.conversion_gain("actuator", "aperture", meta.aperture_to_actuator(aperture))
+        assert math.isclose(fwd * back, 1.0, abs_tol=1e-9)
+
+
+def test_velocity_conversion_drops_the_affine_offset():
+    """
+    The bug this API exists to prevent, made visible.
+
+    PG4's urdf->command map is affine; its offset is zero only because the shipped
+    finger_left_joint limits happen to have upper == 0. Force a non-zero upper limit and a
+    position conversion applied to a rate acquires a spurious offset, while the rate conversion
+    stays correct.
+    """
+    from unittest.mock import patch
+    from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+    meta = ParallelGripperMetadata()
+    # (lower, upper) with a deliberately non-zero upper limit.
+    with patch.object(ParallelGripperMetadata, "_finger_joint_limits", (-0.05, 0.01)):
+        offset = meta.urdf_to_command(0.0)
+        assert not math.isclose(offset, 0.0, abs_tol=1e-9), "test setup failed to create an offset"
+        # A zero rate must stay a zero rate, whatever the offset is.
+        assert math.isclose(meta.urdf_to_command_velocity(0.0, -0.02), 0.0, abs_tol=1e-12)
+        # And a non-zero rate must be pure gain, with no offset added.
+        gain = meta.conversion_gain("urdf", "command", -0.02)
+        assert math.isclose(meta.urdf_to_command_velocity(2.0, -0.02), 2.0 * gain, rel_tol=1e-12)
+        assert not math.isclose(meta.urdf_to_command_velocity(2.0, -0.02),
+                                meta.urdf_to_command(2.0), rel_tol=1e-6)
+
+
+def test_pg4_velocity_sign_flips_urdf_to_command():
+    """PG4's URDF finger joint closes as the aperture opens, so the rate gain is negative."""
+    from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+    meta = ParallelGripperMetadata()
+    assert meta.conversion_gain("urdf", "command", -0.02) < 0.0
+
+
+def test_convert_delta_is_exact_across_the_linkage():
+    """A finite displacement converts exactly; the first-order rate conversion only approximates."""
+    from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+    meta = ParallelGripperMetadata()
+    at, delta = 0.02, 0.01
+    exact = meta.aperture_to_actuator(at + delta) - meta.aperture_to_actuator(at)
+    assert math.isclose(meta.convert_delta(delta, "aperture", "actuator", at), exact, rel_tol=1e-15)
+    jacobian = meta.convert_velocity(delta, "aperture", "actuator", at)
+    assert abs(jacobian - exact) > abs(meta.convert_delta(delta, "aperture", "actuator", at) - exact)
+
+
+def test_finger_vel_is_the_derivative_of_finger_rad():
+    """
+    status_to_metadata publishes finger_rad/finger_vel as a ROS JointState position/velocity
+    pair, so the velocity must be the time derivative of that exact position expression.
+    """
+    from stretch4_body.utils.tool_metadata import (
+        ParallelGripperMetadata,
+        StretchGripperMetadata,
+    )
+    for meta in (ParallelGripperMetadata(), StretchGripperMetadata()):
+        low, high = meta.actuator_range
+        for i in range(1, 6):
+            at = low + (high - low) * i / 6
+            position_of = lambda x: meta.status_to_metadata(
+                {"pos": x, "vel": 0.0, "effort": 0.0}
+            )["finger_rad"]
+            expected = _numeric_derivative(position_of, at)
+            reported = meta.status_to_metadata({"pos": at, "vel": 1.0, "effort": 0.0})["finger_vel"]
+            assert math.isclose(reported, expected, rel_tol=1e-5), (
+                f"{type(meta).__name__} at {at}: finger_vel {reported} != d(finger_rad)/dt {expected}"
+            )
+
+
+def test_same_unit_type_conversions_are_identities():
+    """A conversion from a unit type to itself has no `<unit_type>_to_<unit_type>` method to call."""
+    from stretch4_body.utils.tool_metadata import (
+        ParallelGripperMetadata,
+        ToolConfigurationError,
+    )
+    meta = ParallelGripperMetadata()
+    assert meta.conversion_gain("actuator", "actuator", 0.5) == 1.0
+    assert meta.convert_velocity(2.5, "urdf", "urdf", 0.0) == 2.5
+    assert meta.convert_delta(0.1, "aperture", "aperture", 0.02) == 0.1
+    # An unknown unit type must still be rejected, not silently treated as an identity.
+    for call in (
+        lambda: meta.conversion_gain("bogus", "urdf", 0.0),
+        lambda: meta.convert_delta(0.1, "urdf", "bogus", 0.0),
+    ):
+        try:
+            call()
+            raise AssertionError("expected ToolConfigurationError for an unknown unit type")
+        except ToolConfigurationError:
+            pass
