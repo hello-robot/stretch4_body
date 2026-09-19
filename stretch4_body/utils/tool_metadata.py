@@ -39,9 +39,12 @@ class ToolMetadata(ABC):
     """
 
     @property
-    def joint_name(self) -> str:
-        """Name of the joint/device in robot_params used for motion params lookup."""
-        return self.primary_joint
+    def tool_name(self) -> str:
+        """
+        This tool's name in robot_params, used as a key for end_of_arm devices, robot status, and client commands.
+        """
+        raise ToolConfigurationError(
+            f"{type(self).__name__} does not define tool_name")
 
     @property
     @abstractmethod
@@ -415,12 +418,12 @@ class ToolMetadata(ABC):
         configured one.
         """
         _, robot_params = RobotParams.get_params()
-        motion = robot_params.get(self.joint_name, {}).get("motion", {})
+        motion = robot_params.get(self.tool_name, {}).get("motion", {})
         prof = motion.get(profile) or motion.get("default")
         if not prof or "vel" not in prof:
             raise ToolConfigurationError(
-                f"No motion velocity limit for tool '{self.joint_name}' "
-                f"(looked for robot_params['{self.joint_name}']['motion']['{profile}']['vel']). "
+                f"No motion velocity limit for tool '{self.tool_name}' "
+                f"(looked for robot_params['{self.tool_name}']['motion']['{profile}']['vel']). "
                 "Is this the configured tool?"
             )
         return float(prof["vel"])
@@ -480,7 +483,7 @@ class ToolMetadata(ABC):
 
 class ParallelGripperMetadata(ToolMetadata):
     @property
-    def joint_name(self) -> str:
+    def tool_name(self) -> str:
         return "parallel_gripper"
 
     @property
@@ -704,7 +707,7 @@ class ParallelGripperMetadata(ToolMetadata):
 
 class StretchGripperMetadata(ToolMetadata):
     @property
-    def joint_name(self) -> str:
+    def tool_name(self) -> str:
         return "stretch_gripper"
 
     @property
@@ -950,7 +953,7 @@ class LinearToolMetadata(ToolMetadata):
     """
 
     def __init__(self, tool_name: str):
-        self.tool_name = tool_name
+        self._tool_name = tool_name
         _, self.robot_params = RobotParams.get_params()
 
         if tool_name not in self.robot_params:
@@ -983,10 +986,12 @@ class LinearToolMetadata(ToolMetadata):
             )
         self._tool_links = list(links)
 
-        # 2. Client Class (optional: a single-joint tool can omit this and fall back to the
-        # generic ToolJointClient instead of a bespoke class)
+        # 2. Client Class. 'client_class_name' names either the EndOfArmClient subclass that
+        # RobotClient installs as the subsystem, or a client for this tool's own joint. An
+        # EndOfArmClient leaves the joint on ToolJointClient.
         client_module = self.tool_params.get("client_module_name")
         client_class_name = self.tool_params.get("client_class_name")
+        self._client_class = None
         if client_module or client_class_name:
             if not client_module or not client_class_name:
                 raise ToolConfigurationError(
@@ -997,14 +1002,16 @@ class LinearToolMetadata(ToolMetadata):
                 module = RobotParams.import_user_tool_module(
                     self.tool_name, client_module, is_server=False
                 )
-                self._client_class = getattr(module, client_class_name)
+                declared = getattr(module, client_class_name)
             except Exception as e:
                 raise ToolConfigurationError(
                     f"Failed to import client class '{client_class_name}' from module '{client_module}' "
                     f"for user tool '{self.tool_name}': {e}"
                 )
-        else:
-            self._client_class = None
+            from stretch4_body.robot.robot_client import EndOfArmClient
+
+            if not (isinstance(declared, type) and issubclass(declared, EndOfArmClient)):
+                self._client_class = declared
 
         # 3. Ranges
         act_range = self.tool_params.get("actuator_command_range")
@@ -1052,32 +1059,37 @@ class LinearToolMetadata(ToolMetadata):
     def tool_links(self) -> list[str]:
         return self._tool_links
 
+    @property
+    def tool_name(self) -> str:
+        return self._tool_name
+
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
+        """The tool's own joint client if it declares one, else the generic ToolJointClient."""
         if self._client_class is None:
-            raise ToolConfigurationError(
-                f"No client class available for user tool '{self.tool_name}': set "
-                "'client_module_name' and 'client_class_name' in robot_params."
-            )
+            # Import here to avoid circular dependencies
+            from stretch4_body.robot.robot_client import ToolJointClient
+
+            return partial(ToolJointClient, self)
         return self._client_class
 
     @property
     def driver_class(self) -> type:
-        device_params = self.tool_params.get("devices", {}).get(self.joint_name, {})
-        py_module = (
-            device_params.get("py_module_name")
-            or self.tool_params.get("server_module_name")
-            or self.tool_params.get("py_module_name")
-        )
-        py_class = (
-            device_params.get("py_class_name")
-            or self.tool_params.get("server_class_name")
-            or self.tool_params.get("py_class_name")
-        )
+        """The servo driver named by this tool's own 'devices' entry."""
+        devices = self.tool_params.get("devices", {})
+        if self.tool_name not in devices:
+            raise ToolConfigurationError(
+                f"robot_params['{self.tool_name}']['devices'] has no '{self.tool_name}' entry "
+                f"naming this tool's servo; it holds {sorted(devices)}."
+            )
+        device_params = devices[self.tool_name]
+        py_module = device_params.get("py_module_name")
+        py_class = device_params.get("py_class_name")
 
         if not py_module or not py_class:
             raise ToolConfigurationError(
-                f"Direct driver configuration for tool '{self.tool_name}' must specify 'py_module_name' and 'py_class_name'."
+                f"robot_params['{self.tool_name}']['devices']['{self.tool_name}'] must specify "
+                "'py_module_name' and 'py_class_name' naming this tool's driver."
             )
         RobotParams.add_user_tool_to_sys_path(self.tool_name)
         try:
@@ -1262,7 +1274,7 @@ def get_gripper_instance(
     except Exception:
         return None, None
 
-    gripper_type = meta.joint_name
+    gripper_type = meta.tool_name
 
     try:
         if direct:

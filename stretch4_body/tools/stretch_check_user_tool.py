@@ -9,6 +9,7 @@ attached. Exits 0 when every check passes, 1 otherwise.
 import argparse
 import os
 import sys
+import textwrap
 
 import yaml
 
@@ -33,6 +34,11 @@ class _Report:
 
     def note(self, message):
         print(f"        {message}")
+
+    def para(self, message):
+        """A note wrapped to the terminal, for explanations too long for one line."""
+        for line in textwrap.wrap(" ".join(message.split()), width=92):
+            print(f"        {line}")
 
 
 def check_tool(tool_name):
@@ -73,7 +79,9 @@ def check_tool(tool_name):
         report.fail(f"get_tool_metadata: {e}")
         return False
     report.ok(f"metadata: {type(meta).__name__}")
-    report.note(f"joint_name={meta.joint_name}  primary_joint={meta.primary_joint}")
+    report.note(f"primary_joint={meta.primary_joint}")
+
+    _check_tool_name(meta, params, tool_name, robot_params, report)
     report.note(
         f"command_range={meta.command_range}  aperture_range={meta.aperture_range}"
     )
@@ -97,6 +105,37 @@ def check_tool(tool_name):
     _check_subsystem_client(params, tool_name, report)
     _check_pose_models(tool_path, tool_name, report)
     return report.passed
+
+def _check_tool_name(meta, params, tool_name, robot_params, report):
+    """`ToolMetadata.tool_name` has to name one of the tool's servos, not one of its URDF joints."""
+    devices = robot_params.get(tool_name, {}).get("devices", {})
+    try:
+        declared = meta.tool_name
+    except Exception as e:
+        report.fail(str(e))
+        _report_servos(devices, report)
+        return
+
+    if declared in devices:
+        report.ok(f"tool_name '{declared}' names a servo on the wrist bus")
+        return
+
+    report.fail(f"tool_name '{declared}' does not name a servo on the wrist bus")
+    _report_servos(devices, report)
+    if declared == meta.primary_joint:
+        report.para(
+            f"'{declared}' is a URDF joint name, this tool's primary_joint."
+        )
+
+
+def _report_servos(devices, report):
+    report.para(
+        f"tool_name must be one of this tool's servos: {', '.join(sorted(devices))}. Those are "
+        "the keys of the 'devices' block in tool_params.yaml, merged over the three wrist joints "
+        "every tool inherits. The name is how the rest of the stack reaches this tool: it keys "
+        "the tool's entry in status['end_of_arm'], and names the joint ToolJointClient sends "
+        "move_to/move_by to."
+    )
 
 
 def _check_subsystem_client(params, tool_name, report):
