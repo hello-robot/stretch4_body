@@ -10,6 +10,8 @@ from stretch4_body.core.gamepad_enums import MotionProfile
 
 from stretch4_body.utils.stretch_pose_models import RobotJoints, RobotPose
 
+logger = logging.getLogger(__name__)
+
 
 class KeyframePlayer:
     """As a safety precaution, only joints in the `joints_allowed_to_move` param will move."""
@@ -130,19 +132,19 @@ class KeyframePlayer:
 @click.option('--loop', is_flag=True, help='Loop after reaching the last pose.')
 @click.option('--step', is_flag=True, help='Step through poses by pressing enter.')
 def main(file, speed:str, joints_allowed_to_move:str, delay_between_frames:float|None, loop, step):
-    print(f"""
+    logger.warning(f"""
 WARNING: Please proceed carefully.
-          
+
 You are about to replay a set of pre-recorded robot poses.
-          
+
 This keyframe player does not guarantee any safety or precautions.
-          
+
 The robot joints will move to the recorded poses.
-          
+
 These joints will move: {joints_allowed_to_move}.
-          
+
 The robot's environment and surroundings may have changed since the recording.
-          
+
 Neither this keyframe player nor the robot account for the changes in the environment.
 
 Please make sure the robot's surroundings are clear before proceeding.
@@ -171,11 +173,11 @@ Please make sure the robot's surroundings are clear before proceeding.
         time.sleep(0.5)
         player.robot.wait_command()
         
-        print("\nReplay complete. Press Ctrl+C to exit and stop the robot...")
+        logger.info("Replay complete. Press Ctrl+C to exit and stop the robot...")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nExiting...")
+        logger.info("Exiting...")
     finally:
         player.robot.stop()
 
