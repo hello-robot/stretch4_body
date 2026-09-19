@@ -51,6 +51,7 @@ Homepage = "https://github.com/hello-robot/stretch4_body"
 
 [project.scripts]
 stretch_configure_tool = "stretch4_body._cli_wrapper:stretch_configure_tool"
+stretch_check_user_tool = "stretch4_body._cli_wrapper:stretch_check_user_tool"
 stretch_robot_rates = "stretch4_body._cli_wrapper:stretch_robot_rates"
 stretch_robot_stow = "stretch4_body._cli_wrapper:stretch_robot_stow"
 stretch_robot_home = "stretch4_body._cli_wrapper:stretch_robot_home"
