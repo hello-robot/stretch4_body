@@ -1471,20 +1471,9 @@ try:
     import copy
     import yaml
 
-    def _get_user_tools_dirs():
-        _dirs = []
-        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-        if _fleet_path:
-            _shared_dir = os.path.join(_fleet_path, 'user_tools')
-            if os.path.exists(_shared_dir):
-                _dirs.append(_shared_dir)
-        else:
-            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
-            if os.path.exists(_default_dir):
-                _dirs.append(_default_dir)
-        return _dirs
+    from stretch4_body.core.user_tool_paths import user_tool_dirs
 
-    _user_tools_dirs = _get_user_tools_dirs()
+    _user_tools_dirs = user_tool_dirs()
     for _user_tools_dir in _user_tools_dirs:
         if os.path.exists(_user_tools_dir):
             _subdirs = [d for d in os.listdir(_user_tools_dir) if os.path.isdir(os.path.join(_user_tools_dir, d))]
