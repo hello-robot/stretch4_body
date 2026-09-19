@@ -266,16 +266,10 @@ class CommandToolPosition:
     """Generic end-of-arm tool motion command class using ToolMetadata for range calculation."""
 
     def __init__(self, name: str | None = None, motion_profile: str = 'max'):
-        self.name = name or RobotJoints.gripper.value or 'stretch_gripper'
-        try:
-            self.metadata = get_tool_metadata(self.name)
-            # move_by() below takes this tool's own command units (e.g. aperture meters for
-            # PG4), not true raw actuator units -- use command_range, not actuator_range.
-            low, high = self.metadata.command_range
-            self.step_inc = (high - low) / 10.0 if high != low else 1.0
-        except Exception:
-            self.metadata = None
-            self.step_inc = 10.0 if 'parallel' not in self.name else 0.01
+        self.name = name or RobotJoints.gripper.value
+        self.metadata = get_tool_metadata(self.name)
+        low, high = self.metadata.command_range
+        self.step_inc = (high - low) / 10.0 if high != low else 1.0
 
         _, robot_params = RobotParams().get_params()
         tool_params = robot_params.get(self.name, {})
