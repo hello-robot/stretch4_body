@@ -9,7 +9,6 @@ from stretch4_body.behavior.sentries.self_collision.self_collision_mujoco import
     SelfCollisionMujoco,
 )
 from stretch4_body.core.device import Device
-from stretch4_body.core.mujoco_urdf import get_custom_tool_joints
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.worker_loop import *
 from stretch4_body.utils.tool_metadata import get_tool_metadata
@@ -177,21 +176,17 @@ class SelfCollisionLoop(Device):
 
             tool_name = robot_params.get('robot', {}).get('tool')
 
-            if tool_name and RobotParams.is_user_defined_tool(tool_name):
-                for joint, joint_pos in get_custom_tool_joints(tool_name, s).items():
-                    configuration[joint] = joint_pos
-            else:
-                try:
-                    tool_metadata = get_tool_metadata(tool_name)
-                except Exception:
-                    tool_metadata = None
+            try:
+                tool_metadata = get_tool_metadata(tool_name)
+            except Exception:
+                tool_metadata = None
 
-                if tool_metadata is not None:
-                    tool_status = s['end_of_arm'].get(tool_metadata.joint_name, {})
-                    if tool_status:
-                        joint_val = tool_metadata.status_to_metadata(tool_status)['finger_rad']
-                        for joint in tool_metadata.tool_joints:
-                            configuration[joint] = joint_val
+            if tool_metadata is not None:
+                tool_status = s['end_of_arm'].get(tool_metadata.tool_name, {})
+                if tool_status:
+                    joint_val = tool_metadata.status_to_metadata(tool_status)['finger_rad']
+                    for joint in tool_metadata.tool_joints:
+                        configuration[joint] = joint_val
 
         return configuration
 

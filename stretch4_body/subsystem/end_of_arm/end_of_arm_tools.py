@@ -8,7 +8,13 @@ import time
 # ##########################################################3#
 
 def _home_joint(eoa: "EndOfArm", joint_name: str):
-    success = eoa.motors[f"wrist_{joint_name}"].home(end_pos=0)
+    """
+    Homes one wrist joint and leaves it at the tool's `homing` position for that joint (radians),
+    or at 0 when the tool sets none. A joint homed before another can use this to hold clear of it.
+    """
+    joint = f"wrist_{joint_name}"
+    end_pos = eoa.params.get('homing', {}).get(joint, 0)
+    success = eoa.motors[joint].home(end_pos=end_pos)
     if not success or eoa.cancel_homing_event.is_set():
         eoa.logger.error(f"{joint_name} homing failed")
         return False

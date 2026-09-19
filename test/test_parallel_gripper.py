@@ -41,7 +41,7 @@ def test_conversions():
         assert math.isclose(val_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_open}"
 
         # Test command (== aperture, in meters) to URDF meters. command_to_urdf shares units
-        # with aperture_to_urdf: PG4's command tier is defined in aperture space so it matches
+        # with aperture_to_urdf: PG4's command unit type is defined in aperture space so it matches
         # what this tool's own move_to()/move_by() take directly.
         val_command_closed = meta.command_to_urdf(0.0)
         val_command_open = meta.command_to_urdf(0.08)
@@ -49,7 +49,7 @@ def test_conversions():
         assert math.isclose(val_command_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_command_closed}"
         assert math.isclose(val_command_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_command_open}"
 
-        # Test true actuator (raw servo angle, radians) to URDF meters -- a different unit space
+        # Test actuator (servo angle, radians) to URDF meters -- a different unit space
         # than command (aperture, meters), unlike SG4 where command and actuator differ only by
         # a linear scale. Round-trip rather than asserting a fixed pair.
         actuator_val = meta.urdf_to_actuator(0.0)
@@ -58,7 +58,7 @@ def test_conversions():
         assert math.isclose(round_trip, 0.0, abs_tol=1e-6)
 
         # command_to_actuator/actuator_to_command coincide with aperture_to_actuator/
-        # actuator_to_aperture for PG4, since PG4's command tier IS aperture.
+        # actuator_to_aperture for PG4, since PG4's command unit type IS aperture.
         assert math.isclose(meta.command_to_actuator(0.08), meta.aperture_to_actuator(0.08))
         assert math.isclose(meta.actuator_to_command(actuator_val), meta.actuator_to_aperture(actuator_val))
     print("Conversions tests passed!")
@@ -102,7 +102,7 @@ def test_robot_joints_properties():
         # Stretch gripper converts radians to percent
         assert math.isclose(sub_val, 4.58, abs_tol=0.1)
 
-    # Test true actuator (raw servo angle, radians) round trip, distinct from command above.
+    # Test actuator (servo angle, radians) round trip, distinct from command above.
     actuator_val = RobotJoints.gripper.urdf_to_actuator(0.0)
     round_trip = RobotJoints.gripper.actuator_to_urdf(actuator_val)
     print("urdf->actuator->urdf round trip:", 0.0, "->", actuator_val, "->", round_trip)

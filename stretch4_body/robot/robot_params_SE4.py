@@ -222,6 +222,68 @@ SE4_parallel_gripper_DW4={
         'enable_torque_after_runstop': 1,
         'enable_runstop':1}
 
+# Baseline parameters for a user tool's own servo on the wrist bus, referenced by
+# 'device_params' on the devices entry the loader synthesizes for each user tool. Holds the bus
+# and protection settings that do not vary between tools. The keys in
+# SE4_eoa_tool_servo_required_DW4 are deliberately absent: they describe a specific piece of
+# hardware's travel, homing direction and force limits, so a tool states them itself.
+SE4_eoa_tool_servo_DW4={
+    'eeprom_cfg': {
+        'temperature_limit': 72,
+        'max_voltage_limit': 29,
+        'min_voltage_limit': 11,
+        'pid': [32,32,0],
+        'return_delay_time': 0,
+        'angular_resolution': 1.0,
+        'phase': 61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
+        'min_pos_limit': 0,
+        'overload_time_ms': 1000,
+        'overcurrent': 150,
+        'overcurrent_time_ms': 200,
+        'protection_torque': 20,
+        'overload_protection_time': 200,
+        'enable_protection_current':1,
+        'enable_protection_temp':1,
+        'enable_protection_sensor':0,
+        'enable_protection_voltage':0
+    },
+    'motion': {
+        # Predefined motion profiles (vel: rad/s, accel: rad/s^2)
+        'default': {'accel': 6.0, 'vel': 6.0},
+        'fast': {'accel': 6.0, 'vel': 6.0},
+        'max': {'accel': 6.0, 'vel': 6.0},
+        'slow': {'accel': 4.0, 'vel': 1.0},
+        'vel_brakezone_factor': 1,
+        'vel_is_moving_thresh': 0.01
+    },
+        'set_safe_velocity': 1,
+        'req_calibration': 1,
+        'gr': 1.0,
+        'usb_name': '/dev/hello-feetech-wrist',
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'range_pad_deg': [ 0.0, 0.0 ],
+        'homing_offset_bias_t': 0,
+        'stall_backoff': 0.017,
+        'stall_max_effort': 20.0,
+        'stall_max_time': 1.0,
+        'stall_min_vel': 0.1,
+        'disable_torque_on_runstop': 0,
+        'enable_torque_after_runstop': 1,
+        'enable_runstop':1}
+
+# Servo parameters every user tool states in its own tool_params.yaml. Each describes the
+# physical hardware -- its travel, which way it homes, and how hard it may pull -- so a default
+# would be a guess that drives an unfamiliar servo into a hardstop or lets it overload.
+SE4_eoa_tool_servo_required_DW4=(
+    'id',
+    'range_deg',
+    'homing_pwm',
+    'homing_to_neg_limit',
+    'flip_encoder_polarity',
+)
+
 SE4_wrist_pitch_DW4={
     'eeprom_cfg': {
         'temperature_limit': 72,
@@ -377,6 +439,19 @@ SE4_eoa_wrist_dw4_tool_nil={
             }
             }
 
+
+# Keys a tool_params.yaml states about the tool itself rather than about its servo. The loader
+# routes every other top-level key into the tool's synthesized 'devices' entry, so a servo
+# parameter the baseline does not mention still reaches the servo.
+SE4_eoa_tool_level_keys=frozenset(SE4_eoa_wrist_dw4_tool_nil) | frozenset({
+    'client_class_name', 'client_module_name',
+    'metadata_class_name', 'metadata_module_name',
+    'driver_class_name', 'driver_module_name',
+    'homing', 'collision_mgmt', 'self_collision_mujoco', 'ros',
+    'tool_joints', 'tool_links', 'actuator_command_range', 'aperture_range',
+    'urdf_to_actuator_scale', 'position_tolerance', 'primary_joint',
+    'i_feedforward_payload', 'wrist', 'tool', 'dxl_latency_timer',
+})
 
 SE4_eoa_wrist_dw4_tool_sg4={
         'py_class_name': 'EOA_Wrist_DW4_Tool_SG4',
@@ -1471,20 +1546,9 @@ try:
     import copy
     import yaml
 
-    def _get_user_tools_dirs():
-        _dirs = []
-        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-        if _fleet_path:
-            _shared_dir = os.path.join(_fleet_path, 'user_tools')
-            if os.path.exists(_shared_dir):
-                _dirs.append(_shared_dir)
-        else:
-            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
-            if os.path.exists(_default_dir):
-                _dirs.append(_default_dir)
-        return _dirs
+    from stretch4_body.core.user_tool_paths import user_tool_dirs
 
-    _user_tools_dirs = _get_user_tools_dirs()
+    _user_tools_dirs = user_tool_dirs()
     for _user_tools_dir in _user_tools_dirs:
         if os.path.exists(_user_tools_dir):
             _subdirs = [d for d in os.listdir(_user_tools_dir) if os.path.isdir(os.path.join(_user_tools_dir, d))]
@@ -1506,6 +1570,7 @@ try:
 
                     _tool_dir_path = os.path.join(_user_tools_dir, _tool_name)
 
+                    _tool_custom_params = {}
                     _params_file = os.path.join(_tool_dir_path, "tool_params.yaml")
                     if os.path.exists(_params_file):
                         try:
@@ -1521,6 +1586,24 @@ try:
                             _merge_dicts(_default_tool_params, _tool_custom_params)
                         except Exception as _pe:
                             print(f"Warning: Failed to load tool_params.yaml for {_tool_name}: {_pe}")
+
+                    # Synthesize the tool's own entry in 'devices' from the shared servo
+                    # baseline, so tool_params.yaml states only what differs. Its key is the
+                    # tool name, which is what ToolMetadata.tool_name returns.
+                    _servo = copy.deepcopy(SE4_eoa_tool_servo_DW4)
+                    _merge_dicts(_servo, {_k: _v for _k, _v in _tool_custom_params.items()
+                                          if _k not in SE4_eoa_tool_level_keys})
+                    _driver_module = _tool_custom_params.get('driver_module_name')
+                    _driver_class = _tool_custom_params.get('driver_class_name')
+                    if _driver_module and _driver_class:
+                        _servo['py_module_name'] = _driver_module
+                        _servo['py_class_name'] = _driver_class
+                        _missing = [_k for _k in SE4_eoa_tool_servo_required_DW4 if _k not in _servo]
+                        if _missing:
+                            print(f"Warning: tool_params.yaml for {_tool_name} is missing required "
+                                  f"servo parameters {_missing}; its servo will not be loaded.")
+                        else:
+                            _default_tool_params.setdefault('devices', {})[_tool_name] = _servo
 
                     nominal_params[_tool_name] = _default_tool_params
 

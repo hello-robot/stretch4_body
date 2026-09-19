@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import importlib
 import time
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -64,30 +64,24 @@ class RobotClient(SubsystemClient):
             if k == 'end_of_arm':
                 self.eoa_name = self.params['tool']
                 eoa_params = self.robot_params.get(self.eoa_name, {})
-                if 'client_module_name' in eoa_params and 'client_class_name' in eoa_params:
-                    module_name = eoa_params['client_module_name']
-                    class_name = eoa_params['client_class_name']
-                    
-                    from stretch4_body.core.robot_params import RobotParams
-                    current_module = RobotParams.import_user_tool_module(self.eoa_name, module_name, is_server=False)
-                else:
-                    module_name = 'stretch4_body.robot.robot_client'
-                    class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
-                    
-                    # Check if the class is defined in the module
-                    current_module = importlib.import_module(module_name)
-                    if not hasattr(current_module, class_name):
-                        # Dynamically define a subclass of EndOfArmClient with name class_name
-                        # and register it into the module
-                        from stretch4_body.robot.robot_client import EndOfArmClient
-                        
-                        def dynamic_init(self_obj, parent=None):
-                            EndOfArmClient.__init__(self_obj, name=self.eoa_name, parent=parent)
-                            
-                        dynamic_class = type(class_name, (EndOfArmClient,), {"__init__": dynamic_init})
-                        setattr(current_module, class_name, dynamic_class)
+                eoa_class = None
 
-                self.end_of_arm:EndOfArmClient = getattr(current_module, class_name)(parent=self)
+                if 'client_module_name' in eoa_params and 'client_class_name' in eoa_params:
+                    from stretch4_body.core.robot_params import RobotParams
+                    declared_module = RobotParams.import_user_tool_module(
+                        self.eoa_name, eoa_params['client_module_name'], is_server=False)
+                    declared = getattr(declared_module, eoa_params['client_class_name'], None)
+                    # 'client_class_name' may instead name a client for the tool's own joint,
+                    # which EndOfArmClient resolves through the tool's metadata.
+                    if isinstance(declared, type) and issubclass(declared, EndOfArmClient):
+                        eoa_class = declared
+
+                if eoa_class is None:
+                    # Every other tool, built-in or user, gets EndOfArmClient bound to its own
+                    # name, which is what reaches that tool's 'devices' entry.
+                    eoa_class = partial(EndOfArmClient, name=self.eoa_name)
+
+                self.end_of_arm:EndOfArmClient = eoa_class(parent=self)
                 self.subsystems[k] = self.end_of_arm
 
         for k in self.params['server']['subsystems']:
@@ -1233,7 +1227,7 @@ class WristPitchClient(WristJointClient):
 class ToolJointClient(WristJointClient):
     """Flexible client for the end effector tool joint"""
     def __init__(self, metadata: ToolMetadata, parent: EndOfArmClient | None = None, ip_address=None):
-        WristJointClient.__init__(self, joint_name=metadata.joint_name, parent=parent, ip_address=ip_address)
+        WristJointClient.__init__(self, joint_name=metadata.tool_name, parent=parent, ip_address=ip_address)
         self.tool_metadata = metadata
         self.poses = metadata.poses
         self.status['gripper_conversion'] = metadata.status
@@ -1534,42 +1528,6 @@ class EndOfArmClient(SubsystemClient):
         SubsystemClient.stop(self)
 
 # #####################################################################
-class EOA_Wrist_DW4_Tool_NIL_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll only for version 4 of DexWrist
-    """
-    def __init__(self, parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_nil',parent=parent)
-
-class EOA_Wrist_DW4_Tool_SG4_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_sg4',parent=parent)
-
-class EOA_Wrist_DW4_Tool_PG4_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_pg4',parent=parent)
-
-class EOA_Wrist_DW4_Tool_Calibration_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_calibration',parent=parent)
-
-class EOA_Wrist_DW4_Tool_Tablet_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_tablet',parent=parent)
-
-
 
 if __name__ == '__main__':
     if 1:
