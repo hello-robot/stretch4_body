@@ -105,10 +105,10 @@ Stretch 4 supports dynamic user-defined custom end-of-arm tools. Users can defin
 A tool is made of three independently-configured pieces. Each is described in detail in the
 matching step below, but at a glance:
 
-- **Driver** (`driver_class`, Step 1) — the server-side class that talks directly to your tool's
-  physical motor/servo hardware from inside the 100Hz `RobotServer` loop. Required for any tool
-  with a motor to control; omit it and the tool falls back to a passive, no-op driver
-  (`EOA_Wrist_DW4_Tool_NIL`).
+- **Driver** (`driver_class_name`, Step 1) — the server-side class that talks directly to your
+  tool's physical motor/servo hardware from inside the 100Hz `RobotServer` loop. Declaring it is
+  what adds your servo to the wrist bus. A tool that declares no driver is passive: it keeps the
+  bare 3-DOF wrist and the `EOA_Wrist_DW4_Tool_NIL` subsystem.
 - **Metadata** (`ToolMetadata`, Step 2) — defines the conversions between the `urdf`/`command`/`actuator`/
   `aperture`/`normalized` units. Never performs hardware I/O itself. Most tools need no custom
   Python here: the built-in `LinearToolMetadata` handles any linear mapping from YAML keys alone;
@@ -134,7 +134,7 @@ built-in is ignored.
     user_eoa_tool.urdf               # URDF describing joints & links -- exactly one per tool
     collision_mesh_config.yaml         # Per-link collision mesh recipe -- see Step 3
     tool_params.yaml                   # YAML config
-    user_eoa_tool_driver.py          # Optional custom Python driver class
+    user_eoa_tool_driver.py          # Python driver class for the tool's actuator(s)
     user_eoa_tool_client.py          # Optional custom Python RobotClient class
     user_eoa_tool_metadata.py        # Optional custom Python ToolMetadata subclass
 ```
@@ -166,8 +166,8 @@ class-name convention to follow. Each is wired up explicitly by a pair of keys i
 module name (filename without `.py`) and the class within it:
 
 ```yaml
-py_module_name: user_eoa_tool_driver      # driver -- see Overview
-py_class_name: UserEoaTool
+driver_module_name: user_eoa_tool_driver      # driver -- see Overview
+driver_class_name: UserEoaTool
 
 client_module_name: user_eoa_tool_client  # client -- optional, see Overview
 client_class_name: UserEoaToolClient
@@ -176,23 +176,34 @@ metadata_module_name: user_eoa_tool_metadata  # metadata -- optional, see Overvi
 metadata_class_name: UserEoaToolMetadata
 ```
 
-All three are independently optional: omit `py_module_name`/`py_class_name` and the tool
-falls back to a passive, no-op driver; omit `client_module_name`/`client_class_name` and it
+All three are independently optional: omit `driver_module_name`/`driver_class_name` and the tool
+stays passive; omit `client_module_name`/`client_class_name` and it
 falls back to the generic `ToolJointClient`; omit `metadata_module_name`/`metadata_class_name`
 and it falls back to the built-in `LinearToolMetadata` (Step 2, Path A). See the Overview
 above for what each piece does and when you actually need to provide one.
 
-Your tool starts from the bare 3-DOF wrist. If your tool has a
-motor, declare it under `devices` and give it a stow target:
+A fourth pair, `py_module_name`/`py_class_name`, names an `EndOfArm` subsystem subclass. Most
+tools omit it and inherit `EOA_Wrist_DW4_Tool_NIL`, which drives the three wrist joints and
+leaves your tool joint to the driver above.
+
+Your tool starts from the bare 3-DOF wrist. Declaring a driver adds your servo to the
+end-of-arm chain under your tool's own name, starting from `SE4_eoa_tool_servo_DW4` in
+`robot/robot_params_SE4.py` — the shared baseline holding the bus, motion-profile, stall and
+protection settings that are the same for every tool. State only what your hardware does
+differently, as top-level keys:
 
 ```yaml
-devices:
-  my_tool_joint:                    # key order sets the order motors join the Feetech chain
-    py_module_name: user_eoa_tool_driver
-    py_class_name: UserEoaTool
-    id: 24                          # servo id on the wrist bus
-    eeprom_cfg: { ... }             # servo limits and protections
-    motion: { ... }                 # default and max speeds/accelerations
+# Required: this servo's bus address, travel, and which way it homes. The baseline leaves
+# these out, because a default would be a guess about hardware it has never seen.
+id: 24                              # servo id on the wrist bus, unique across tools
+range_deg: [0, 187]                 # mechanical travel
+homing_to_neg_limit: 1
+homing_pwm: -80                     # sign sets the homing direction
+flip_encoder_polarity: 1
+
+# Optional: anything else that differs from the baseline, merged key by key.
+eeprom_cfg:
+  max_load_limit_pct: 20.0          # this tool's fingers pull less than the baseline allows
 
 stow:
   my_tool_joint: 0.0                # optional stow position, in "command" units (defaults to 0)
@@ -201,7 +212,11 @@ homing:
   wrist_roll: -0.4                  # optional final position after homing, in actuator units (defaults to 0)
 ```
 
-The `devices` entry adds your gripper's motor(s) to the end-of-arm chain. Pick an `id` no built-in tool uses. See `SE4_parallel_gripper_DW4` in `robot/robot_params_SE4.py` for a complete `eeprom_cfg` and `motion` example to copy.
+Any top-level key that is not a tool-level key — the class names above, `stow`, `homing`,
+`collision_mgmt`, `self_collision_mujoco`, `ros`, and the unit-conversion keys from Step 2 — is
+treated as a servo parameter and merged over the baseline. Omitting one of the five required
+keys is reported at startup, and `stretch_configure_tool`'s bus scan can mistake one tool for
+another if two share an `id`.
 
 `homing` sets where `wrist_pitch`, `wrist_roll` and `wrist_yaw` are left when each finishes homing, defaulting to 0. This can be helpful to keep the end effector out of the way while
 the wrist is homing and collision is off. The end-of-arm will home the yaw joint, then the roll joint, the pitch joint, and finally the tool joints. Each will hold its final position while the next homes to its hardstop.
@@ -225,8 +240,8 @@ its physical motion:
 tool's `tool_params.yaml`:
 
 ```yaml
-py_module_name: user_eoa_tool_driver
-py_class_name: UserEoaTool
+driver_module_name: user_eoa_tool_driver
+driver_class_name: UserEoaTool
 
 tool_joints: ['my_finger_left_joint', 'my_finger_right_joint']
 primary_joint: 'my_finger_left_joint'   # optional, defaults to the first tool_joints entry
@@ -253,8 +268,8 @@ linear scale can't describe it, write your own `ToolMetadata` subclass and regis
 in `tool_params.yaml`:
 
 ```yaml
-py_module_name: user_eoa_tool_driver
-py_class_name: UserEoaTool
+driver_module_name: user_eoa_tool_driver
+driver_class_name: UserEoaTool
 
 client_module_name: user_eoa_tool_client
 client_class_name: UserEoaToolClient
@@ -266,13 +281,16 @@ metadata_class_name: UserEoaToolMetadata
 Your subclass must implement every abstract member of `ToolMetadata`
 (`stretch4_body/utils/tool_metadata.py`) — `tool_joints`, `tool_links`, `client_class`,
 `driver_class`, `status_to_metadata`, the two ranges, and the six conversions between the five
-units above:
+units above. It must also define `tool_name`, returning your tool's own name: that is the key of
+its entry in `status['end_of_arm']` and the joint `ToolJointClient` commands, so the self-collision
+sentry and the client both reach the tool through it. `LinearToolMetadata` takes it from the
+tool's name; a subclass that leaves it undefined raises `ToolConfigurationError`.
 
 ```python
 from stretch4_body.utils.tool_metadata import ToolMetadata
 
 class UserEoaToolMetadata(ToolMetadata):
-    ...  # tool_joints, tool_links, client_class, driver_class
+    ...  # tool_name, tool_joints, tool_links, client_class, driver_class
 
     @property
     def actuator_range(self) -> tuple[float, float]:
@@ -309,8 +327,8 @@ The six cover three of the four edges between those units — `urdf`↔`command`
 `actuator`↔`normalized`, is derived from `actuator_range`, so the base class provides it along
 with `urdf_to_actuator`/`actuator_to_urdf`, the remaining chained pairs, and the differential
 conversions below. You only need the two ranges, the six conversions, and `status_to_metadata`
-shown above, plus `tool_joints`, `tool_links`, `client_class` and `driver_class`, unchanged from
-a normal user tool. See `ParallelGripperMetadata` (linkage-based) and `StretchGripperMetadata`
+shown above, plus `tool_name`, `tool_joints`, `tool_links`, `client_class` and `driver_class`,
+unchanged from a normal user tool. See `ParallelGripperMetadata` (linkage-based) and `StretchGripperMetadata`
 (near-linear) in `tool_metadata.py` for complete worked examples.
 
 `position_tolerance` is also provided by the base class, defaulting to 2% of the joint's URDF
@@ -431,5 +449,15 @@ stretch_configure_tool
 
 Your tool appears in the numbered list alongside the built-ins, under a display name derived from
 its directory name (`user_eoa_tool` shows as "User Eoa Tool").
+
+Before switching, check that your `tool_params.yaml` resolves to the classes it names:
+
+```bash
+stretch_check_user_tool
+```
+
+It reads configuration only — nothing there talks to hardware, so it is safe to run with no robot
+attached. It reports the metadata, driver and client classes it resolved, confirms `tool_name`
+names a servo on the wrist bus, and lists any pose models your tool ships.
 
 

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
 from functools import cache, cached_property
 from typing import TYPE_CHECKING
+
+import yaml
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
@@ -51,14 +54,17 @@ class RobotPose:
                 joint = RobotJoints.get_joint_by_name(joint_name)
                 normalized_key = joint.name if joint is not None else joint_name
                 joint_pose = dict(joint_pose)
-                joint_pose = joint_pose.setdefault("name", normalized_key)
+                joint_pose.setdefault("name", normalized_key)
                 pose.joints[normalized_key] = JointPose(**joint_pose)
         return pose
 
     @classmethod
     def load_tool_pose_models(cls, tool_name=None) -> dict[str, "RobotPose"]:
         """
-        Dynamically load pre-defined pose models from the custom tool directory.
+        Loads `pose_models.yaml` from a user tool's directory, keyed by pose name.
+
+        `tool_name` defaults to the configured tool. Returns {} when the tool is not a user tool
+        or has no pose file. Raises ValueError if the file is present but a pose is malformed.
         """
 
         if tool_name is None:
@@ -78,15 +84,23 @@ class RobotPose:
 
         try:
             with open(pose_yaml_path, "r") as f:
-                data = yaml.safe_load(f)
-            poses = {}
-            for p_dict in data:
-                p = cls.from_dict(p_dict)
-                poses[p.name] = p
-            return poses
-        except Exception as e:
-            print(f"Warning: Failed to load pose models from {pose_yaml_path}: {e}")
+                data = yaml.safe_load(f) or []
+        except (OSError, yaml.YAMLError) as e:
+            print(f"Warning: Failed to read pose models from {pose_yaml_path}: {e}")
             return {}
+
+        poses = {}
+        for index, p_dict in enumerate(data):
+            try:
+                pose = cls.from_dict(p_dict)
+            except (TypeError, KeyError, ValueError) as e:
+                name = p_dict.get("name") if isinstance(p_dict, dict) else None
+                label = repr(name) if name else f"at index {index}"
+                raise ValueError(
+                    f"Malformed pose {label} in {pose_yaml_path}: {e}"
+                ) from e
+            poses[pose.name] = pose
+        return poses
 
 
 class RobotJoints(Enum):
@@ -139,7 +153,7 @@ class RobotJoints(Enum):
         """Returns the robot_params key for this joint, or the configured gripper joint name for the gripper joint (None if unconfigured)."""
         if self.name == "gripper":
             if self.gripper_model:
-                return self.gripper_model.joint_name
+                return self.gripper_model.tool_name
             return self.gripper_name
         else:
             return self.name
