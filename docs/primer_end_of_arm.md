@@ -160,7 +160,7 @@ Both kinds end up as `nominal_params[<tool name>]` and are driven through the sa
 | Parameters | A dict in `robot/robot_params_SE4.py` | `tool_params.yaml`, deep-merged over `SE4_eoa_wrist_dw4_tool_nil` |
 | Module names | Dotted package paths | Bare names resolved against the tool's own directory by `RobotParams.import_user_tool_module` |
 | `EndOfArm` subclass | In `end_of_arm_tools.py` | Its own, or `EOA_Wrist_DW4_Tool_NIL`, which drives the three wrist joints and leaves a tool joint alone |
-| `EndOfArmClient` subclass | `<py_class_name>_Client` in `robot_client.py` | Its own, or one synthesized at runtime from `EndOfArmClient` bound to the tool's name |
+| `EndOfArmClient` subclass | Its own, or `EndOfArmClient` bound to the tool's name | the same |
 | Tool joint client | Declared by the tool's metadata | `ToolJointClient`, unless the tool declares one |
 | `ToolMetadata` | Looked up in `BUILTIN_TOOL_MODELS` | Its own subclass, or `LinearToolMetadata` built from YAML keys |
 
@@ -202,12 +202,14 @@ A user tool states these in `tool_params.yaml`; a built-in states the same keys 
 | Key | Meaning |
 |---|---|
 | `py_class_name` / `py_module_name` | The `EndOfArm` subclass. Built-ins use a dotted module path because they live in the package; a user tool uses a bare name like `end_of_arm`, resolved against its own directory. |
-| `client_class_name` / `client_module_name` | Optional `EndOfArmClient` subclass, same bare-name rule. |
+| `client_class_name` / `client_module_name` | Optional `EndOfArmClient` subclass, same bare-name rule. A tool that states neither gets `EndOfArmClient` bound to its own name, which is what every built-in uses. |
 | `metadata_class_name` / `metadata_module_name` | Optional `ToolMetadata` subclass, for hardware the generic unit conversions do not fit. |
 | `tool_joints` / `tool_links` / `actuator_command_range` / `aperture_range` | Read by `LinearToolMetadata`, and required once `tool_joints` is set — a missing one raises `ToolConfigurationError` at startup rather than degrading quietly. `primary_joint` (defaults to the first `tool_joints` entry), `urdf_to_actuator_scale` (defaults to 1.0) and `position_tolerance` are optional. A passive tool sets none of these. |
 | `stow` | Per-joint stow targets, each in that joint's command units. `EOA_Wrist_DW4_Tool_NIL` stows only the three wrist joints, so a target for a tool joint needs an `EndOfArm` subclass that moves it. |
 | `homing` | Where `wrist_pitch`, `wrist_roll` and `wrist_yaw` are left when each finishes homing, in radians, defaulting to 0. Joints home yaw, then roll, then pitch, so a value on yaw or roll holds that joint clear while pitch sweeps to its hardstop. |
-| `devices` | One entry per servo on the wrist bus. **Key order sets the order motors are added to the Feetech chain** — a user tool's entries land after the three inherited wrist joints. `device_params` names one of the per-servo dicts above; a custom servo inlines its motor parameters instead. Each servo needs an `id` no other tool uses, or `stretch_configure_tool`'s bus scan can mistake one tool for the other. |
+| `driver_class_name` / `driver_module_name` | The `FeetechSMHello` subclass driving this tool's servo, same bare-name rule. Stating both is what makes the loader synthesize the tool's `devices` entry. |
+| Servo parameters | Any top-level key the tool-level list does not claim — `id`, `range_deg`, `homing_pwm` and the rest — is a servo parameter, deep-merged over `SE4_eoa_tool_servo_DW4` into the synthesized `devices` entry. `SE4_eoa_tool_servo_required_DW4` lists the ones a tool must state: `id`, `range_deg`, `homing_pwm`, `homing_to_neg_limit` and `flip_encoder_polarity` describe one piece of hardware's travel, homing direction and bus address, so the baseline leaves them out and the loader reports a tool that omits any of them. Each servo needs an `id` no other tool uses, or `stretch_configure_tool`'s bus scan can mistake one tool for the other. |
+| `devices` | One entry per servo on the wrist bus. **Key order sets the order motors are added to the Feetech chain** — a user tool's entry lands after the three inherited wrist joints. `device_params` names one of the per-servo dicts above. A built-in states the whole block; a user tool gets its own entry synthesized under the tool's name, which is what `ToolMetadata.tool_name` returns. |
 | `collision_mgmt` | Brake distances and collision pairs against the robot body. A tool hanging below the wrist needs this so the lift brakes before the tool reaches the base; `SE4_eoa_wrist_dw4_tool_pg4` is the worked example. |
 | `self_collision_mujoco` | `exclusions` are link pairs that touch by design and must not be reported as self-collisions. Link names must match the tool's URDF. |
 | `ros` | Extra ROS command groups the tool contributes, appended to `nominal_params['ros']['joints']`. |
@@ -217,6 +219,8 @@ A user tool states these in `tool_params.yaml`; a built-in states the same keys 
 * A velocity is not converted like a position. If your tool's unit conversions are affine or nonlinear, use `ToolMetadata`'s differential conversions (`convert_velocity`, `convert_delta`, `conversion_gain`) rather than passing a rate through `urdf_to_command()` and other position conversions, and override `_analytic_gain()` if your transmission is nonlinear. See "Converting velocities" under Path B in the top-level README.
 
 * `move_to(x, v_r, a_r)` takes its position in the tool's command units but its `v_r` and `a_r` in actuator rad/s, since those are servo motion-profile limits. Convert a rate held in command units with `command_to_actuator_velocity()` first.
+
+* A custom `ToolMetadata` subclass must define `tool_name`, returning its tool's own name, which is the key of its entry in the `devices` block. That name keys the tool's entry in `status['end_of_arm']` and names the joint `ToolJointClient` commands, so the self-collision sentry and the client both reach the tool through it. `LinearToolMetadata` takes it from the tool's own name; a subclass that leaves it undefined raises `ToolConfigurationError`, and `stretch_check_user_tool` reports it up front. Note that `tool_name` is distinct from `primary_joint` and `tool_joints`, which are URDF joint names.
 
 * If your tool defines a custom `ToolMetadata` subclass, your driver and your metadata module will reference each other: the driver uses the metadata class to convert command units to actuator radians, and the metadata's `driver_class` property has to return the driver class. To avoid circularity, import the driver module from inside that property rather than at module scope.
 
