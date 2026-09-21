@@ -447,7 +447,7 @@ SE4_eoa_tool_level_keys=frozenset(SE4_eoa_wrist_dw4_tool_nil) | frozenset({
     'client_class_name', 'client_module_name',
     'metadata_class_name', 'metadata_module_name',
     'driver_class_name', 'driver_module_name',
-    'homing', 'collision_mgmt', 'self_collision_mujoco', 'ros',
+    'homing', 'collision_mgmt', 'self_collision_mujoco', 'pose_models',
     'tool_joints', 'tool_links', 'actuator_command_range', 'aperture_range',
     'urdf_to_actuator_scale', 'position_tolerance', 'primary_joint',
     'i_feedforward_payload', 'wrist', 'tool', 'dxl_latency_timer',
@@ -494,13 +494,6 @@ SE4_eoa_wrist_dw4_tool_sg4={
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.stretch_gripper',
                 'device_params': 'SE4_stretch_gripper_DW4'
             }
-            },
-        'ros': {
-            'joints': 
-            [{
-                'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'GripperCommandGroup',
-            }]
             }
         }
 
@@ -552,12 +545,6 @@ SE4_eoa_wrist_dw4_tool_pg4={
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.parallel_gripper',
                 'device_params': 'SE4_parallel_gripper_DW4'
             }
-            },
-        'ros': {'joints': 
-            [{
-                'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'ParallelGripperCommandGroup',
-            }]
             }
         }
 
@@ -1548,6 +1535,14 @@ try:
 
     from stretch4_body.core.user_tool_paths import user_tool_dirs
 
+    def _merge_dicts(d1, d2):
+        """Recursively deep-merges d2 into d1."""
+        for k, v in d2.items():
+            if isinstance(v, dict) and k in d1 and isinstance(d1[k], dict):
+                _merge_dicts(d1[k], v)
+            else:
+                d1[k] = copy.deepcopy(v)
+
     _user_tools_dirs = user_tool_dirs()
     for _user_tools_dir in _user_tools_dirs:
         if os.path.exists(_user_tools_dir):
@@ -1576,13 +1571,6 @@ try:
                         try:
                             with open(_params_file, 'r') as _f:
                                 _tool_custom_params = yaml.safe_load(_f) or {}
-                            # Recursive update function to merge deep dictionaries
-                            def _merge_dicts(d1, d2):
-                                for k, v in d2.items():
-                                    if isinstance(v, dict) and k in d1 and isinstance(d1[k], dict):
-                                        _merge_dicts(d1[k], v)
-                                    else:
-                                        d1[k] = copy.deepcopy(v)
                             _merge_dicts(_default_tool_params, _tool_custom_params)
                         except Exception as _pe:
                             print(f"Warning: Failed to load tool_params.yaml for {_tool_name}: {_pe}")

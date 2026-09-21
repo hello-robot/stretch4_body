@@ -9,8 +9,10 @@ import yaml
 
 class TestRobotPose(unittest.TestCase):
     def setUp(self):
+        from stretch4_body.core.robot_params import RobotParams
         from stretch4_body.utils.stretch_pose_models import RobotPose
 
+        self.RobotParams = RobotParams
         self.RobotPose = RobotPose
         self.fleet_path = os.environ.get('HELLO_FLEET_PATH', os.path.expanduser('~/stretch_user'))
         self.user_tools_dir = os.path.join(self.fleet_path, "user_tools")
@@ -18,14 +20,17 @@ class TestRobotPose(unittest.TestCase):
         self.tool_dir = os.path.join(self.user_tools_dir, self.tool_name)
         os.makedirs(self.tool_dir, exist_ok=True)
         os.environ['HELLO_FLEET_PATH'] = self.fleet_path
+        self.RobotParams.reload()
 
     def tearDown(self):
         if os.path.exists(self.tool_dir):
             shutil.rmtree(self.tool_dir)
+        self.RobotParams.reload()
 
     def _write_poses(self, poses):
-        with open(os.path.join(self.tool_dir, "pose_models.yaml"), 'w') as f:
-            yaml.safe_dump(poses, f)
+        with open(os.path.join(self.tool_dir, "tool_params.yaml"), 'w') as f:
+            yaml.safe_dump({'pose_models': poses}, f)
+        self.RobotParams.reload()
 
     def test_from_dict_keeps_joint_mapping(self):
         # setdefault fills in a missing 'name' without discarding the rest of the joint dict.
@@ -68,12 +73,11 @@ class TestRobotPose(unittest.TestCase):
         self.assertEqual(sorted(poses), ['stow', 'zero'])
         self.assertAlmostEqual(poses['zero'].joints['lift'].position, 0.15)
 
-    def test_load_tool_pose_models_empty_file(self):
-        with open(os.path.join(self.tool_dir, "pose_models.yaml"), 'w') as f:
-            f.write("")
+    def test_load_tool_pose_models_empty_list(self):
+        self._write_poses([])
         self.assertEqual(self.RobotPose.load_tool_pose_models(self.tool_name), {})
 
-    def test_load_tool_pose_models_without_file(self):
+    def test_load_tool_pose_models_without_tool_params(self):
         self.assertEqual(self.RobotPose.load_tool_pose_models(self.tool_name), {})
 
     def test_load_tool_pose_models_reports_malformed_pose(self):

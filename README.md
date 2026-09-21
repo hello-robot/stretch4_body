@@ -122,6 +122,7 @@ Custom tools should be placed in your fleet's `user_tools` directory:
 - If `HELLO_FLEET_PATH` is set: `<HELLO_FLEET_PATH>/user_tools/`
 - Otherwise (fallback): `~/stretch_user/user_tools/`
 
+
 Create a subdirectory named after your tool (e.g., `user_eoa_tool`). The directory name is the
 tool name, and it must not collide with a built-in tool name — a user directory named after a
 built-in is ignored.
@@ -210,16 +211,67 @@ stow:
 
 homing:
   wrist_roll: -0.4                  # optional final position after homing, in actuator units (defaults to 0)
+
+i_feedforward_payload: 0.3          # optional lift feedforward current for this tool's weight, in amps (defaults to 0.0)
 ```
 
 Any top-level key that is not a tool-level key — the class names above, `stow`, `homing`,
-`collision_mgmt`, `self_collision_mujoco`, `ros`, and the unit-conversion keys from Step 2 — is
-treated as a servo parameter and merged over the baseline. Omitting one of the five required
-keys is reported at startup, and `stretch_configure_tool`'s bus scan can mistake one tool for
-another if two share an `id`.
+`i_feedforward_payload`, `collision_mgmt`, `self_collision_mujoco`, `pose_models`, and the
+unit-conversion keys from Step 2 — is treated as a servo parameter and merged over the baseline.
+Omitting one of the five required keys is reported at startup, and `stretch_configure_tool`'s bus
+scan can mistake one tool for another if two share an `id`.
 
 `homing` sets where `wrist_pitch`, `wrist_roll` and `wrist_yaw` are left when each finishes homing, defaulting to 0. This can be helpful to keep the end effector out of the way while
 the wrist is homing and collision is off. The end-of-arm will home the yaw joint, then the roll joint, the pitch joint, and finally the tool joints. Each will hold its final position while the next homes to its hardstop.
+
+`i_feedforward_payload` adds to the lift's feedforward current (amps, 0.0-1.0) to counterbalance
+the added weight of the arm, wrist and tool, so the lift doesn't have to close a position error to
+hold against gravity. It defaults to 0.0; a tool with real mass that leaves it unset will sag
+under its own weight and lean on the lift's position control to hold height. See
+`Lift.set_i_feedforward_payload` in `subsystem/lift.py`.
+
+`collision_mgmt` declares brake distances and collision pairs against the rest of the robot body
+for a tool that can reach the base or mast, so the lift or arm brakes before contact rather than
+after. `k_brake_distance` pads a joint's stopping distance by the given multiplier;
+`collision_pairs` names which of the tool's links to check against which robot links (as a point
+against a bounding box, via `detect_as: 'pts'`); `joints` maps a joint to the collision pairs and
+direction (`motion_dir`) that should brake it. Omitting `collision_mgmt` means the tool
+participates in no such check. See `SE4_eoa_wrist_dw4_tool_pg4` in `robot/robot_params_SE4.py` for
+a worked example — its parallel gripper hangs below the wrist and needs the lift to brake before
+it reaches the base.
+
+`self_collision_mujoco` configures this tool's participation in the self-collision system (see
+`docs/primer_self_collision.md`), which uses MuJoCo to check the tool's links against the rest of
+the robot at runtime. Omitting it leaves the tool with no exclusions: every pair of its links,
+including pairs that naturally overlap at a joint (e.g. adjacent fingers), is checked, and an
+overlapping pair with no exclusion falsely reports a collision.
+
+```yaml
+self_collision_mujoco:
+  exclusions:
+    - ['my_tool_finger_left_link', 'my_tool_finger_right_link']  # allowed to touch/overlap
+  ignore_links: ['my_tool_camera_link']    # skipped by the collision engine entirely
+  k_brake_distance:
+    wrist_pitch: 1.1                       # multiplies this joint's required braking distance
+```
+
+`pose_models` is a list of named joint poses for this tool, readable with
+`RobotPose.load_tool_pose_models(tool_name)` (`stretch4_body/utils/stretch_pose_models.py`). Each
+entry needs `name` and `timestamp`; `joints` maps a joint name to a `position` (that joint's
+command units), plus `velocity` and `effort` — recorded alongside a live capture, harmless to
+leave at `0.0` for a pose you write by hand. `base` and `delay_before_start` are optional. For
+example, a "stow" pose that tucks `my_tool_joint` to zero:
+
+```yaml
+pose_models:
+  - name: stow
+    timestamp: 0.0
+    joints:
+      my_tool_joint:
+        position: 0.0    # command units, same as tool_joints/stow above
+        velocity: 0.0
+        effort: 0.0
+```
 
 ### 2. Configuring Unit Conversions
 
@@ -441,14 +493,6 @@ written any way at all is normalized.
 
 ### 4. Switching to Your Tool
 
-To switch your robot to the custom tool, run the configuration tool and pick it from the menu:
-
-```bash
-stretch_configure_tool
-```
-
-Your tool appears in the numbered list alongside the built-ins, under a display name derived from
-its directory name (`user_eoa_tool` shows as "User Eoa Tool").
 
 Before switching, check that your `tool_params.yaml` resolves to the classes it names:
 
@@ -460,4 +504,11 @@ It reads configuration only — nothing there talks to hardware, so it is safe t
 attached. It reports the metadata, driver and client classes it resolved, confirms `tool_name`
 names a servo on the wrist bus, and lists any pose models your tool ships.
 
+To switch your robot to the custom tool, run the configuration tool and pick it from the menu:
 
+```bash
+stretch_configure_tool
+```
+
+Your tool appears in the numbered list alongside the built-ins, under a display name derived from
+its directory name (`user_eoa_tool` shows as "User Eoa Tool").

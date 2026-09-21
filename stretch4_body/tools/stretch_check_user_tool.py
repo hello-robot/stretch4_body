@@ -78,7 +78,6 @@ def check_tool(tool_name):
     except Exception as e:
         report.fail(f"get_tool_metadata: {e}")
         return False
-    report.ok(f"metadata: {type(meta).__name__}")
     report.note(f"primary_joint={meta.primary_joint}")
 
     _check_tool_name(meta, params, tool_name, robot_params, report)
@@ -86,25 +85,181 @@ def check_tool(tool_name):
         f"command_range={meta.command_range}  aperture_range={meta.aperture_range}"
     )
 
+    _report_resolved_modules(meta, params, report)
+
+    _check_metadata_components(meta, report)
+    _check_driver_components(meta, tool_name, report)
+    _check_client_components(meta, report)
+
+    _check_subsystem_client(params, tool_name, report)
+    _check_pose_models(params, tool_name, report)
+    return report.passed
+
+
+def _callable_name(obj):
+    """Display name for a class or a `functools.partial` wrapping one (e.g. `partial(ToolJointClient, self)`)."""
+    name = getattr(obj, "__name__", None)
+    if name:
+        return name
+    inner = getattr(obj, "func", None)
+    return getattr(inner, "__name__", str(obj))
+
+
+def _report_resolved_line(label, params, module_key, class_key, default_name, resolve, report):
+    """
+    Prints one `label: module.Class (user-defined|default)` line. When `tool_params.yaml`
+    declared the module/class pair, that's printed verbatim -- `resolve()`'s own `__module__`
+    would instead show the synthesized `sys.modules` key `import_user_tool_module` loads it
+    under (e.g. `user_tool_client_nyu_gripper_nyu_gripper_metadata`), not the file it's actually
+    in. For the default case there's no declared name to fall back on, so `resolve()` is used.
+    """
+    declared_module = params.get(module_key)
+    declared_class = params.get(class_key)
+    if declared_module and declared_class:
+        report.note(f"  {label}: {declared_module}.{declared_class} (user-defined)")
+        return
+    try:
+        resolved = resolve()
+        # Unwrap a `functools.partial(SomeClass, ...)` (e.g. the default tool joint client) to
+        # the class itself, so __module__/__name__ describe SomeClass, not `functools`.
+        resolved = resolved if isinstance(resolved, type) else getattr(resolved, "func", resolved)
+        name = getattr(resolved, "__name__", None) or str(resolved)
+        module = getattr(resolved, "__module__", default_name)
+        report.note(f"  {label}: {module}.{name} (default)")
+    except Exception as e:
+        report.note(f"  {label}: unresolved -- {e}")
+
+
+def _report_resolved_modules(meta, params, report):
+    """
+    Prints which module/class is actually used for metadata, driver, and client -- what
+    tool_params.yaml named (`metadata_module_name`/`driver_module_name`/`client_module_name`
+    and their `_class_name` pairs), or the built-in fallback (`LinearToolMetadata`, none, and
+    `ToolJointClient` respectively) when it named nothing.
+    """
+    report.note("Resolved modules:")
+    _report_resolved_line(
+        "metadata", params, "metadata_module_name", "metadata_class_name",
+        "stretch4_body.utils.tool_metadata", lambda: type(meta), report,
+    )
+    _report_resolved_line(
+        "driver", params, "driver_module_name", "driver_class_name",
+        "(none)", lambda: meta.driver_class, report,
+    )
+    _report_resolved_line(
+        "client", params, "client_module_name", "client_class_name",
+        "stretch4_body.robot.robot_client", lambda: meta.client_class, report,
+    )
+
+
+def _check_metadata_components(meta, report):
+    """
+    Exercises each of `ToolMetadata`'s required conversion methods with a real value from this
+    tool's own ranges. Python's ABC machinery already guarantees these methods exist once `meta`
+    constructs; this catches one that exists but reaches for a robot_params key tool_params.yaml
+    never set and raises only when actually called.
+    """
+    try:
+        urdf_mid = sum(meta.urdf_range) / 2.0
+        command_mid = sum(meta.command_range) / 2.0
+        actuator_mid = sum(meta.actuator_range) / 2.0
+        aperture_mid = sum(meta.aperture_range) / 2.0
+    except Exception as e:
+        report.fail(f"metadata: a required range property raised -- {e}")
+        return
+
+    checks = (
+        ("urdf_to_command", lambda: meta.urdf_to_command(urdf_mid)),
+        ("command_to_urdf", lambda: meta.command_to_urdf(command_mid)),
+        ("command_to_actuator", lambda: meta.command_to_actuator(command_mid)),
+        ("actuator_to_command", lambda: meta.actuator_to_command(actuator_mid)),
+        ("aperture_to_actuator", lambda: meta.aperture_to_actuator(aperture_mid)),
+        ("actuator_to_aperture", lambda: meta.actuator_to_aperture(actuator_mid)),
+        (
+            "status_to_metadata",
+            lambda: meta.status_to_metadata(
+                {"pos": actuator_mid, "vel": 0.0, "effort": 0.0}
+            ),
+        ),
+    )
+    failures = []
+    for name, fn in checks:
+        try:
+            fn()
+        except Exception as e:
+            failures.append(f"{name}: {e}")
+
+    if failures:
+        report.fail("metadata: " + "; ".join(failures))
+    else:
+        report.ok(f"metadata conversion methods run cleanly ({len(checks)} checked)")
+
+
+def _check_driver_components(meta, tool_name, report):
+    """
+    The driver must subclass `FeetechSMHello` -- the base class every joint on the wrist chain
+    is built from, which is what actually guarantees `move_to`/`move_by`/`home`/`quick_stop`/
+    `pull_status` exist -- and must construct with no hardware attached.
+    """
     try:
         driver = meta.driver_class
-        report.ok(f"driver class: {driver.__module__}.{driver.__name__}")
     except Exception as e:
         report.fail(f"driver_class: {e}")
+        return
+
+    from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
+
+    if isinstance(driver, type) and issubclass(driver, FeetechSMHello):
+        report.ok("driver subclasses FeetechSMHello")
+    else:
+        report.fail(
+            f"driver '{driver.__module__}.{driver.__name__}' does not subclass FeetechSMHello -- "
+            "move_to/move_by/home/quick_stop/pull_status are not guaranteed"
+        )
+
+    _check_driver_instantiates(driver, tool_name, report)
+
+
+def _check_driver_instantiates(driver, tool_name, report):
+    """
+    Constructs the driver exactly as `FeetechSMChain.startup()` does -- `driver(chain=...)`, no
+    other arguments -- with `chain=None` since this check runs with no hardware attached. Catches
+    a driver whose `__init__` reaches for a robot_params key `tool_params.yaml` never set -- e.g.
+    a driver that expects `self.params['gripper_conversion']` -- which otherwise only surfaces
+    when `FeetechSMChain.startup()` hits it inside the `EndOfArmLoop` worker process and takes
+    the whole end-of-arm chain down with it.
+    """
+    try:
+        driver(chain=None)
+    except Exception as e:
+        report.fail(f"driver instantiation ({tool_name}(chain=None)): {e}")
+        return
+    report.ok("driver instantiates with no hardware attached")
+
+
+def _check_client_components(meta, report):
+    """
+    The resolved per-joint client -- the generic `ToolJointClient` default, or a bespoke
+    override -- must subclass `WristJointClient`, which is what guarantees `move_to`/`move_by`/
+    `pose`/`status` exist for application code and the gamepad to call.
+    """
+    from stretch4_body.robot.robot_client import WristJointClient
 
     try:
         client = meta.client_class
-        name = getattr(client, "__name__", None)
-        if name:
-            report.ok(f"tool joint client: {name}")
-        else:
-            report.ok("tool joint client: ToolJointClient (generic)")
     except Exception as e:
         report.fail(f"client_class: {e}")
+        return
 
-    _check_subsystem_client(params, tool_name, report)
-    _check_pose_models(tool_path, tool_name, report)
-    return report.passed
+    client_type = client if isinstance(client, type) else getattr(client, "func", None)
+    if isinstance(client_type, type) and issubclass(client_type, WristJointClient):
+        report.ok(f"client subclasses WristJointClient ({client_type.__name__})")
+    else:
+        report.fail(
+            f"client '{_callable_name(client)}' does not subclass WristJointClient -- "
+            "move_to/move_by/pose/status are not guaranteed"
+        )
+
 
 def _check_tool_name(meta, params, tool_name, robot_params, report):
     """`ToolMetadata.tool_name` has to name one of the tool's servos, not one of its URDF joints."""
@@ -166,15 +321,15 @@ def _check_subsystem_client(params, tool_name, report):
         report.ok("subsystem client: EndOfArmClient (generic)")
 
 
-def _check_pose_models(tool_path, tool_name, report):
-    if not os.path.exists(os.path.join(tool_path, "pose_models.yaml")):
+def _check_pose_models(params, tool_name, report):
+    if "pose_models" not in params:
         return
     try:
         poses = RobotPose.load_tool_pose_models(tool_name)
     except Exception as e:
-        report.fail(f"pose_models.yaml: {e}")
+        report.fail(f"pose_models: {e}")
         return
-    report.ok(f"pose_models.yaml: {len(poses)} pose(s) -- {', '.join(sorted(poses))}")
+    report.ok(f"pose_models: {len(poses)} pose(s) -- {', '.join(sorted(poses))}")
 
 
 def main():
@@ -201,7 +356,7 @@ def main():
     else:
         _, robot_params = RobotParams.get_params()
         configured = robot_params.get("robot", {}).get("tool")
-        if not RobotParams.is_user_defined_tool(configured):
+        if not RobotParams.get_user_defined_tool_path(configured):
             print(f"The configured tool '{configured}' is a built-in tool.")
             return 0
         tools = [configured]

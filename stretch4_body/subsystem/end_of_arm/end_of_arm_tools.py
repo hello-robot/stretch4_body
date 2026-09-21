@@ -20,6 +20,22 @@ def _home_joint(eoa: "EndOfArm", joint_name: str):
         return False
     return True
 
+def _home_tool_joints(eoa: "EndOfArm"):
+    """
+    Homes every configured joint besides the three wrist joints -- the tool's own actuated
+    joint(s), present only when the tool declared a driver. Each one's final position after
+    homing comes from `homing.<joint_name>` in the tool's params, in that joint's own
+    command/actuator units, defaulting to 0 (closed, for a gripper).
+    """
+    for joint in eoa.motors:
+        if joint in ('wrist_pitch', 'wrist_roll', 'wrist_yaw'):
+            continue
+        end_pos = eoa.params.get('homing', {}).get(joint, 0)
+        if not eoa.motors[joint].home(end_pos=end_pos) or eoa.cancel_homing_event.is_set():
+            eoa.logger.error(f"{joint} homing failed")
+            return False
+    return True
+
 def home_dw4_joints(eoa: "EndOfArm"):
     success = eoa.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
 
@@ -36,7 +52,7 @@ def home_dw4_joints(eoa: "EndOfArm"):
     if not _home_joint(eoa, 'pitch'):
         return False
 
-    return True
+    return _home_tool_joints(eoa)
 
 
 class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
@@ -110,7 +126,6 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
             start_time = time.time()
             self.status['is_homing'] = True
             success = home_dw4_joints(self)
-            success = success and self.motors['stretch_gripper'].home(end_pos=0)
             self.status['is_homing'] = False
             self.logger.debug(f'Homing {self.name} completed in {time.time() - start_time} seconds.')
             return success
@@ -158,7 +173,6 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
             success = home_dw4_joints(self)
-            success = success and self.motors['parallel_gripper'].home(end_pos=0)
             self.status['is_homing'] = False
             return success
 
