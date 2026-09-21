@@ -361,7 +361,13 @@ class GamePadTeleop(Device):
             robot = self.robot
         self.gamepad_controller.startup(ignore_singleton_check=ignore_singleton_check)
         if self.robot:
-            if self.robot.startup():
+            if isinstance(self.robot, RobotClient):
+                # The server may not be up yet, so wait for it instead of exiting
+                print("Connecting to Stretch Body Server...")
+                started = self.robot.startup(block=True)
+            else:
+                started = self.robot.startup()
+            if started:
                 pass #self.do_double_beep()
             else:
                 print('Exiting...')
