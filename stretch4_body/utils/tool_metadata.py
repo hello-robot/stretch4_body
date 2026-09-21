@@ -1073,7 +1073,7 @@ class LinearToolMetadata(ToolMetadata):
             return partial(ToolJointClient, self)
         return self._client_class
 
-    @property
+    @cached_property
     def driver_class(self) -> type:
         """The servo driver named by this tool's own 'devices' entry."""
         devices = self.tool_params.get("devices", {})
@@ -1191,6 +1191,11 @@ BUILTIN_TOOL_MODELS: dict[str, ToolMetadata] = {
     "eoa_wrist_dw4_tool_pg4": _pg_meta,
 }
 
+# Resolved ToolMetadata for tools not in BUILTIN_TOOL_MODELS, keyed by tool_name and filled in
+# by get_tool_metadata() on first resolution. Kept separate from BUILTIN_TOOL_MODELS so tests can
+# still patch that dict directly without affecting this one.
+_USER_TOOL_METADATA_CACHE: dict[str, ToolMetadata] = {}
+
 
 def is_tool_joint(name: str) -> bool:
     """
@@ -1217,6 +1222,12 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     1. Checks built-in grippers ('stretch_gripper', 'parallel_gripper') and standard tool aliases.
     2. Checks for custom metadata class in user_tools (metadata_module_name/metadata_class_name).
     3. Uses explicit LinearToolMetadata for YAML-configured tools (failing fast if required keys are missing).
+
+    A tool not in BUILTIN_TOOL_MODELS is resolved once and cached in _USER_TOOL_METADATA_CACHE
+    keyed by tool_name, so every call after the first for a given tool_name is a plain cache hit
+    with no re-parsing of robot_params or re-importing of the tool's module -- the same as a
+    built-in tool. A failed resolution is not cached, so a misconfigured tool can be fixed and
+    re-checked without restarting the process.
     """
     _, robot_params = RobotParams.get_params()
 
@@ -1232,10 +1243,15 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     if tool_name in BUILTIN_TOOL_MODELS:
         return BUILTIN_TOOL_MODELS[tool_name]
 
+    if tool_name in _USER_TOOL_METADATA_CACHE:
+        return _USER_TOOL_METADATA_CACHE[tool_name]
+
     tool_params = robot_params.get(tool_name, {})
     for device_name in tool_params.get("devices", {}):
         if device_name in BUILTIN_TOOL_MODELS:
-            return BUILTIN_TOOL_MODELS[device_name]
+            meta = BUILTIN_TOOL_MODELS[device_name]
+            _USER_TOOL_METADATA_CACHE[tool_name] = meta
+            return meta
 
     if not tool_params:
         raise ToolConfigurationError(
@@ -1253,14 +1269,18 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
                 tool_name, meta_module, is_server=False
             )
             MetadataClass = getattr(module, meta_class)
-            return MetadataClass()
+            meta = MetadataClass()
         except Exception as e:
             raise ToolConfigurationError(
                 f"Failed to import custom metadata class '{meta_class}' from '{meta_module}' for tool '{tool_name}': {e}"
             )
+        _USER_TOOL_METADATA_CACHE[tool_name] = meta
+        return meta
 
     # 3. Explicit LinearToolMetadata parser (fails fast on missing YAML parameters)
-    return LinearToolMetadata(tool_name)
+    meta = LinearToolMetadata(tool_name)
+    _USER_TOOL_METADATA_CACHE[tool_name] = meta
+    return meta
 
 
 def get_gripper_instance(

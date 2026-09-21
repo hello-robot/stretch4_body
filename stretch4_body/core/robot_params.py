@@ -236,6 +236,10 @@ class RobotParams:
         The tool's own directory is searched first and, being on `sys.path`, its modules import
         each other by bare name. A module that raises while executing propagates that exception;
         a name the tool does not supply is imported from `sys.path` instead.
+
+        A module already loaded under its collision-safe name in `sys.modules` is returned as-is
+        rather than re-executed, so repeated calls for the same (eoa_name, module_name, is_server)
+        are cheap.
         """
         module_name_clean = module_name[:-3] if module_name.endswith('.py') else module_name
 
@@ -250,6 +254,8 @@ class RobotParams:
                 continue
             side = "server" if is_server else "client"
             unique_mod_name = f"user_tool_{side}_{eoa_name}_{module_name_clean}"
+            if unique_mod_name in sys.modules:
+                return sys.modules[unique_mod_name]
             spec = importlib.util.spec_from_file_location(unique_mod_name, _py_file)
             current_module = importlib.util.module_from_spec(spec)
             sys.modules[unique_mod_name] = current_module
@@ -261,13 +267,6 @@ class RobotParams:
             return current_module
 
         return importlib.import_module(module_name_clean)
-
-    @classmethod
-    def is_user_defined_tool(cls, tool_name):
-        """
-        Dynamically check if a tool's folder exists under user_tools directories.
-        """
-        return cls.get_user_defined_tool_path(tool_name) is not None
 
     @classmethod
     def get_user_defined_tool_path(cls, tool_name):

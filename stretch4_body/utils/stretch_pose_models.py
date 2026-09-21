@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import os
 from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
 from functools import cache, cached_property
 from typing import TYPE_CHECKING
-
-import yaml
 
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
@@ -61,43 +58,30 @@ class RobotPose:
     @classmethod
     def load_tool_pose_models(cls, tool_name=None) -> dict[str, "RobotPose"]:
         """
-        Loads `pose_models.yaml` from a user tool's directory, keyed by pose name.
+        Loads the 'pose_models' list from a user tool's tool_params.yaml, keyed by pose name.
 
         `tool_name` defaults to the configured tool. Returns {} when the tool is not a user tool
-        or has no pose file. Raises ValueError if the file is present but a pose is malformed.
+        or declares no poses. Raises ValueError if a pose is malformed.
         """
 
+        _, robot_params = RobotParams.get_params()
         if tool_name is None:
-            _, robot_params = RobotParams.get_params()
             tool_name = robot_params.get("robot", {}).get("tool")
 
-        if not tool_name or not RobotParams.is_user_defined_tool(tool_name):
+        if not tool_name or not RobotParams.get_user_defined_tool_path(tool_name):
             return {}
 
-        tool_path = RobotParams.get_user_defined_tool_path(tool_name)
-        if not tool_path:
-            return {}
-
-        pose_yaml_path = os.path.join(tool_path, "pose_models.yaml")
-        if not os.path.exists(pose_yaml_path):
-            return {}
-
-        try:
-            with open(pose_yaml_path, "r") as f:
-                data = yaml.safe_load(f) or []
-        except (OSError, yaml.YAMLError) as e:
-            print(f"Warning: Failed to read pose models from {pose_yaml_path}: {e}")
-            return {}
+        pose_dicts = robot_params.get(tool_name, {}).get("pose_models") or []
 
         poses = {}
-        for index, p_dict in enumerate(data):
+        for index, p_dict in enumerate(pose_dicts):
             try:
                 pose = cls.from_dict(p_dict)
             except (TypeError, KeyError, ValueError) as e:
                 name = p_dict.get("name") if isinstance(p_dict, dict) else None
                 label = repr(name) if name else f"at index {index}"
                 raise ValueError(
-                    f"Malformed pose {label} in {pose_yaml_path}: {e}"
+                    f"Malformed pose {label} in robot_params['{tool_name}']['pose_models']: {e}"
                 ) from e
             poses[pose.name] = pose
         return poses
