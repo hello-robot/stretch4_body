@@ -212,7 +212,6 @@ A user tool states these in `tool_params.yaml`; a built-in states the same keys 
 | `devices` | One entry per servo on the wrist bus. **Key order sets the order motors are added to the Feetech chain** — a user tool's entry lands after the three inherited wrist joints. `device_params` names one of the per-servo dicts above. A built-in states the whole block; a user tool gets its own entry synthesized under the tool's name, which is what `ToolMetadata.tool_name` returns. |
 | `collision_mgmt` | Brake distances and collision pairs against the robot body. A tool hanging below the wrist needs this so the lift brakes before the tool reaches the base; `SE4_eoa_wrist_dw4_tool_pg4` is the worked example. |
 | `self_collision_mujoco` | `exclusions` are link pairs that touch by design and must not be reported as self-collisions. Link names must match the tool's URDF. |
-| `ros` | Extra ROS command groups the tool contributes, appended to `nominal_params['ros']['joints']`. |
 
 ## Heads Up
 
