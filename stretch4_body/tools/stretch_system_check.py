@@ -57,9 +57,6 @@ args = parser.parse_args()
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
 logging.getLogger('stretch_body_client').setLevel(logging.WARNING)
-# Some camera adapter lines are logged with a bare logging.info(), which lands on the root logger
-# rather than either of the above, and would print in the middle of this tool's report.
-logging.getLogger().setLevel(logging.WARNING)
 
 
 # ==============================================================================
@@ -1270,16 +1267,29 @@ def check_calibrations():
 
     click.secho('    Cameras:', fg='white', bold=True)
     cam_dir = os.path.join(cal_root, 'calibration_cameras')
-    for label, fname in {
-        'intrinsics: center': 'calibration_ros_camera_info_center.yaml',
-        'intrinsics: left':   'calibration_ros_camera_info_left.yaml',
-        'intrinsics: right':  'calibration_ros_camera_info_right.yaml',
-        'extrinsics':         'camera_extrinsics.yaml',
-    }.items():
-        ok = os.path.isfile(os.path.join(cam_dir, fname))
-        print_result(ok, label, indent=6)
-        if not ok:
+    from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+
+    # Load each camera's calibration the way the rest of the codebase does, rather than looking for
+    # files: it checks that the entry exists, parses, and matches the camera's configured size.
+    for label, camera_type in (
+        ('intrinsics: left',          RGBCameras.left()),
+        ('intrinsics: right',         RGBCameras.right()),
+        ('intrinsics: center',        RGBCameras.center()),
+        ('intrinsics: gripper left',  RGBCameras.gripper_left),
+        ('intrinsics: gripper right', RGBCameras.gripper_right),
+    ):
+        try:
+            calibration = camera_type.load_calibration()
+            print_result(True, f'{label}  ({calibration.width}x{calibration.height})', indent=6)
+        except Exception as e:
+            print_result(False, label, indent=6)
+            print_info(str(e).strip(), indent=8)
             all_pass = False
+
+    ok = os.path.isfile(os.path.join(cam_dir, 'camera_extrinsics.yaml'))
+    print_result(ok, 'extrinsics', indent=6)
+    if not ok:
+        all_pass = False
 
     click.secho('    Line Sensors:', fg='white', bold=True)
     ls_dir = os.path.join(cal_root, 'calibration_line_sensors')
@@ -1666,6 +1676,11 @@ def check_cameras():
         return True
 
     from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+
+    # That import pulls in Device, whose class body reapplies the fleet logging configuration and
+    # turns the root logger back up to INFO. Some adapter lines are logged with a bare
+    # logging.info(), so quieten the root logger again to keep them out of this report.
+    logging.getLogger().setLevel(logging.WARNING)
 
     all_pass = True
     # Each board is checked against the USB link speed it is expected to negotiate.
