@@ -13,13 +13,16 @@ Usage:
     stretch_system_check --verbose        # Show additional detail in all checks
     stretch_system_check --direct         # Use Robot API directly instead of server client
 """
+import os
+
+# Mute DepthAI warnings 
+os.environ.setdefault('DEPTHAI_LEVEL', 'error')
+
 import stretch4_body.core.hello_utils as hu
 hu.print_stretch_re_use()
 
-import os
 import sys
 import io
-import contextlib
 import re
 import json
 import fnmatch
@@ -54,6 +57,9 @@ args = parser.parse_args()
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
 logging.getLogger('stretch_body_client').setLevel(logging.WARNING)
+# Some camera adapter lines are logged with a bare logging.info(), which lands on the root logger
+# rather than either of the above, and would print in the middle of this tool's report.
+logging.getLogger().setLevel(logging.WARNING)
 
 
 # ==============================================================================
@@ -1474,20 +1480,6 @@ def _with_spinner(label, fn):
         thread.join()
 
 
-@contextlib.contextmanager
-def _suppressed_stderr():
-    """Silence the DepthAI SDK's calibration warnings, which its C++ threads write straight to fd 2."""
-    devnull_fd = os.open(os.devnull, os.O_WRONLY)
-    saved_fd = os.dup(2)
-    os.dup2(devnull_fd, 2)
-    os.close(devnull_fd)
-    try:
-        yield
-    finally:
-        os.dup2(saved_fd, 2)
-        os.close(saved_fd)
-
-
 def _collect_synced_frames(camera, duration_s, warmup_s=0.0):
     """Pull frames off a SyncedCamera and count them per stream.
 
@@ -1537,42 +1529,61 @@ def _collect_synced_frames(camera, duration_s, warmup_s=0.0):
 
 
 def _frame_resolution(frame):
-    """(height, width) of an ImageFrame, decoding it first when the device encoded it to MJPEG."""
-    image = frame.uncompress() if frame.is_compressed() else frame.image
+    """(height, width) of a captured frame, decoding it first when the device encoded it to MJPEG.
+
+    Takes either an ImageFrame or a raw depth array, so every stream can be measured the same way.
+    """
+    image = frame
+    if hasattr(image, 'image'):
+        image = frame.uncompress() if frame.is_compressed() else frame.image
     if image is None or getattr(image, 'ndim', 0) < 2:
         return None
     return image.shape[0], image.shape[1]
 
 
 def _check_camera_streams(counts, last_frames, elapsed, streams):
-    """Report stream activity, FPS and resolution for each (name, key, config) in streams."""
+    """Report every stream's activity, frame rate and resolution, grouped by check.
+
+    `streams` holds (name, key, expected_fps, expected_size) with expected_size as (height, width).
+    A stream that delivered nothing is reported once under "Stream active" and then left out of the
+    other two groups, rather than repeating the same failure three times.
+    """
     all_pass = True
+    active = []
 
-    for name, key, config in streams:
+    print_info('Stream active:')
+    for name, key, _, _ in streams:
         seen = counts.get(key, 0) > 0
-        print_result(seen, f'Stream active: {name}')
-        if not seen:
+        print_result(seen, name, indent=6)
+        if seen:
+            active.append(key)
+        else:
             all_pass = False
+
+    print_info('FPS:')
+    for name, key, expected_fps, _ in streams:
+        if key not in active:
             continue
-
         actual_fps = counts[key] / elapsed
-        fps_ok = actual_fps >= config.fps * (1 - CAMERA_FPS_TOLERANCE)
-        print_result(fps_ok, f'FPS {name}: {actual_fps:.1f}  (target {config.fps})')
-        if not fps_ok:
+        ok = actual_fps >= expected_fps * (1 - CAMERA_FPS_TOLERANCE)
+        print_result(ok, f'{name}: {actual_fps:.1f}  (target {expected_fps})', indent=6)
+        if not ok:
             all_pass = False
 
+    print_info('Resolution:')
+    for name, key, _, expected_size in streams:
+        if key not in active:
+            continue
         resolution = _frame_resolution(last_frames[key])
         if resolution is None:
-            print_result(False, f'Resolution {name}: frame could not be decoded')
+            print_result(False, f'{name}: frame could not be decoded', indent=6)
             all_pass = False
             continue
-
-        # Both the frames and CAMERA_CONFIGS carry (height, width); the report shows width x height.
-        expected = tuple(config.image_size)
-        res_ok = resolution == expected
-        print_result(res_ok, f'Resolution {name}: {resolution[1]}×{resolution[0]}  '
-                             f'(expected {expected[1]}×{expected[0]})')
-        if not res_ok:
+        # Frames and CAMERA_CONFIGS both carry (height, width); the report shows width x height.
+        ok = resolution == expected_size
+        print_result(ok, f'{name}: {resolution[1]}×{resolution[0]}  '
+                         f'(expected {expected_size[1]}×{expected_size[0]})', indent=6)
+        if not ok:
             all_pass = False
 
     return all_pass
@@ -1588,8 +1599,7 @@ def _check_camera(label, camera_type, expected_usb_speed, check_depth=False):
     import depthai as dai
 
     try:
-        with _suppressed_stderr():
-            camera = _with_spinner(f'{label}: connecting...', camera_type.start_synced)
+        camera = _with_spinner(f'{label}: connecting...', camera_type.start_synced)
     except Exception as e:
         click.secho(f'  {label}', fg='cyan', bold=True)
         print_result(False, f'Could not open camera: {e}')
@@ -1613,35 +1623,25 @@ def _check_camera(label, camera_type, expected_usb_speed, check_depth=False):
             all_pass = False
 
         measure_secs = CAMERA_WARMUP_SECS + CAMERA_MEASURE_SECS
-        with _suppressed_stderr():
-            counts, last_frames, elapsed = _with_spinner(
-                f'{label}: measuring streams ({measure_secs:.0f} s)...',
-                lambda: _collect_synced_frames(camera, CAMERA_MEASURE_SECS, warmup_s=CAMERA_WARMUP_SECS),
-            )
+        counts, last_frames, elapsed = _with_spinner(
+            f'{label}: measuring streams ({measure_secs:.0f} s)...',
+            lambda: _collect_synced_frames(camera, CAMERA_MEASURE_SECS, warmup_s=CAMERA_WARMUP_SECS),
+        )
 
-        streams = [('Left', 'left', camera.left), ('Right', 'right', camera.right)]
+        def described(name, key, config):
+            return name, key, config.fps, tuple(config.image_size)
+
+        streams = [described('Left', 'left', camera.left), described('Right', 'right', camera.right)]
         # Only the head adapter has a center camera; the gripper adapter has no such attribute.
         center = getattr(camera, 'center', None)
         if center is not None:
-            streams.append(('Center', 'center', center))
+            streams.append(described('Center', 'center', center))
+        if check_depth:
+            # The gripper's stereo depth is aligned to its right camera, so it matches it.
+            streams.append(described('Depth', 'depth', camera.right))
 
         if not _check_camera_streams(counts, last_frames, elapsed, streams):
             all_pass = False
-
-        if check_depth:
-            # The gripper's stereo depth is aligned to its right camera, so it runs at that rate.
-            seen = counts.get('depth', 0) > 0
-            print_result(seen, 'Stream active: Depth')
-            if not seen:
-                all_pass = False
-            else:
-                actual_fps = counts['depth'] / elapsed
-                fps_ok = actual_fps >= camera.right.fps * (1 - CAMERA_FPS_TOLERANCE)
-                print_result(fps_ok, f'FPS Depth: {actual_fps:.1f}  (target {camera.right.fps})')
-                if not fps_ok:
-                    all_pass = False
-                height, width = last_frames['depth'].shape[:2]
-                print_info(f'Depth resolution: {width}×{height}')
 
     except Exception as e:
         print_result(False, f'Camera check error: {e}')
