@@ -16,7 +16,6 @@ parser.add_argument("--on", help="Power on", action="store_true")
 parser.add_argument("--off", help="Power off", action="store_true")
 parser.add_argument("--status", help="Print current status", action="store_true")
 parser.add_argument("-y", "--yes", help="Don't prompt before stopping and starting the stretch_body_server", action="store_true")
-parser.add_argument("-d", "--direct", help=argparse.SUPPRESS, action="store_true")  # deprecated: always direct now
 args, _ = parser.parse_known_args()
 
 if args.status:

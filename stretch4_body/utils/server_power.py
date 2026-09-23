@@ -1,15 +1,4 @@
-"""Helpers for changing actuator power while the stretch_body_server is running.
-
-Actuator power cannot be changed through the server. The server holds each
-motor's serial transport open, and those handles are inherited by its forked
-child processes, so dropping a rail underneath it leaves the tty held and the
-board cannot re-enumerate when power returns. The server also fails to start
-while a motor it expects is unpowered, which puts it into a restart loop.
-
-So every power change goes through the direct API with the server stopped. These
-helpers wrap that dance: stop the server, hand back whether it was running, and
-start it again afterwards.
-"""
+"""Helpers for managing stretch_body_server start/stop for tool like stretch_configure_tool and REx_actuator_control."""
 
 import subprocess
 import time
@@ -20,18 +9,18 @@ import click
 def is_server_running(timeout_tries=1):
     """True if a stretch_body_server is reachable, whoever owns it."""
     try:
-        from stretch4_body.robot.robot_client import PowerPeriphClient
+        from stretch4_body.robot.robot_client import RobotClient
     except ImportError:
         return False
     for _ in range(timeout_tries):
-        p = PowerPeriphClient()
+        r = RobotClient()
         try:
-            if p.startup(verbose=False, allow_different_user_connection=True):
+            if r.startup(verbose=False, allow_different_user_connection=True):
                 return True
         except Exception:
             pass
         finally:
-            p.stop()
+            r.stop()
     return False
 
 

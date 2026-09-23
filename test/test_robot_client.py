@@ -63,8 +63,6 @@ def main():
         test_api("power_periph.set_charger_off", r.power_periph.set_charger_off)
         test_api("power_periph.set_fan_on", r.power_periph.set_fan_on)
         test_api("power_periph.set_fan_off", r.power_periph.set_fan_off)
-        # actuator_control was removed from the client: power changes must go
-        # through REx_actuator_control, which stops the server first.
     else:
         print("FAIL: RobotClient has no 'power_periph' attribute")
 
