@@ -13,10 +13,14 @@ Usage:
     stretch_system_check --verbose        # Show additional detail in all checks
     stretch_system_check --direct         # Use Robot API directly instead of server client
 """
+import os
+
+# Mute DepthAI warnings 
+os.environ.setdefault('DEPTHAI_LEVEL', 'error')
+
 import stretch4_body.core.hello_utils as hu
 hu.print_stretch_re_use()
 
-import os
 import sys
 import io
 import re
@@ -1263,16 +1267,29 @@ def check_calibrations():
 
     click.secho('    Cameras:', fg='white', bold=True)
     cam_dir = os.path.join(cal_root, 'calibration_cameras')
-    for label, fname in {
-        'intrinsics: center': 'calibration_ros_camera_info_center.yaml',
-        'intrinsics: left':   'calibration_ros_camera_info_left.yaml',
-        'intrinsics: right':  'calibration_ros_camera_info_right.yaml',
-        'extrinsics':         'camera_extrinsics.yaml',
-    }.items():
-        ok = os.path.isfile(os.path.join(cam_dir, fname))
-        print_result(ok, label, indent=6)
-        if not ok:
+    from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+
+    # Load each camera's calibration the way the rest of the codebase does, rather than looking for
+    # files: it checks that the entry exists, parses, and matches the camera's configured size.
+    for label, camera_type in (
+        ('intrinsics: left',          RGBCameras.left()),
+        ('intrinsics: right',         RGBCameras.right()),
+        ('intrinsics: center',        RGBCameras.center()),
+        ('intrinsics: gripper left',  RGBCameras.gripper_left),
+        ('intrinsics: gripper right', RGBCameras.gripper_right),
+    ):
+        try:
+            calibration = camera_type.load_calibration()
+            print_result(True, f'{label}  ({calibration.width}x{calibration.height})', indent=6)
+        except Exception as e:
+            print_result(False, label, indent=6)
+            print_info(str(e).strip(), indent=8)
             all_pass = False
+
+    ok = os.path.isfile(os.path.join(cam_dir, 'camera_extrinsics.yaml'))
+    print_result(ok, 'extrinsics', indent=6)
+    if not ok:
+        all_pass = False
 
     click.secho('    Line Sensors:', fg='white', bold=True)
     ls_dir = os.path.join(cal_root, 'calibration_line_sensors')
@@ -1328,8 +1345,12 @@ def _ptc_call(fn, *args, label='', fail_ok=False):
         return None, str(exc)
 
 
-def _check_lidar_ptc(ip, side, all_pass):
-    """Run the full PTC config check for a single lidar. Returns updated all_pass."""
+def _check_lidar_ptc(ip):
+    """Report the PTC configuration of a single lidar.
+
+    These settings are advisory: a deviation is worth flagging but does not fail the sensor check,
+    unlike the lidar being unreachable.
+    """
     from stretch4_pyhesai_wrapper.ptc_client import (
         FILTER_NAMES, FILTER_STRONG,
         PTP_LOCK_OFFSET_US, PTP_STATUS_LOCKED, PTP_STATUS_NAMES,
@@ -1349,7 +1370,6 @@ def _check_lidar_ptc(ip, side, all_pass):
             print_result(True, f'Return mode = {mode_val} ({mode_name})')
         else:
             print_warn(f'Return mode = {mode_val} ({mode_name}){suffix}')
-            all_pass = False
 
     cfg_val, err = _ptc_call(get_point_cloud_config, ip)
     if err:
@@ -1363,7 +1383,6 @@ def _check_lidar_ptc(ip, side, all_pass):
             print_result(True, f'Filter = {filt} ({filter_name})')
         else:
             print_warn(f'Filter = {filt} ({filter_name}){suffix}')
-            all_pass = False
 
     offset_val, err = _ptc_call(get_ptp_lock_offset_us, ip)
     if err:
@@ -1375,7 +1394,6 @@ def _check_lidar_ptc(ip, side, all_pass):
             print_result(True, f'PTP lock offset = {offset_val} µs')
         else:
             print_warn(f'PTP lock offset = {offset_val} µs{suffix}')
-            all_pass = False
 
     ptp_val, err = _ptc_call(get_lidar_ptp_status, ip)
     if err:
@@ -1388,9 +1406,6 @@ def _check_lidar_ptc(ip, side, all_pass):
             print_result(True, f'PTP status = {status_name}')
         else:
             print_warn(f'PTP status = {status_name}  (expected: locked)')
-            all_pass = False
-
-    return all_pass
 
 
 def _check_lidar_streaming(lidars, timeout=5.0):
@@ -1437,8 +1452,250 @@ def _check_lidar_streaming(lidars, timeout=5.0):
     return {side: received.get(side, False) for side in lidars}
 
 
+# ==============================================================================
+# Camera checks
+# ==============================================================================
+
+CAMERA_FPS_TOLERANCE = 0.50
+CAMERA_WARMUP_SECS   = 2.0
+CAMERA_MEASURE_SECS  = 3.0
+
+SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+
+def _spin(label, stop_event):
+    """Animate a braille spinner on the label line until stop_event is set."""
+    import itertools, time
+    for frame in itertools.cycle(SPINNER_FRAMES):
+        if stop_event.is_set():
+            break
+        sys.stdout.write(f'\r  {frame} {label}  ')
+        sys.stdout.flush()
+        time.sleep(0.08)
+    # Clear the spinner line so the caller can print cleanly
+    sys.stdout.write(f'\r{" " * (len(label) + 8)}\r')
+    sys.stdout.flush()
+
+
+def _with_spinner(label, fn):
+    """Run fn() while a spinner animates next to label, and return whatever fn() returned."""
+    import threading
+    stop = threading.Event()
+    thread = threading.Thread(target=_spin, args=(label, stop), daemon=True)
+    thread.start()
+    try:
+        return fn()
+    finally:
+        stop.set()
+        thread.join()
+
+
+def _collect_synced_frames(camera, duration_s, warmup_s=0.0):
+    """Pull frames off a SyncedCamera and count them per stream.
+
+    Returns (counts, last_frames, elapsed), both dicts keyed by 'left', 'right', 'center' and 'depth'.
+    get_frames() blocks on the device, so it is pumped on a daemon thread: a camera that never
+    delivers leaves that thread parked until the caller stops the pipeline, instead of hanging the
+    system check.
+    """
+    import threading, time
+
+    counts, last_frames = {}, {}
+    measuring, stop = threading.Event(), threading.Event()
+
+    def pump():
+        try:
+            for synced in camera.get_frames():
+                if stop.is_set():
+                    return
+                if synced is None or not measuring.is_set():
+                    continue
+                for name in ('left', 'right', 'center'):
+                    frame = getattr(synced, name, None)
+                    # The gripper adapter substitutes a zero-timestamp placeholder when a side is
+                    # missing from the sync group; those never came off the sensor.
+                    if frame is None or frame.timestamp == 0:
+                        continue
+                    counts[name] = counts.get(name, 0) + 1
+                    last_frames[name] = frame
+                if synced.depth is not None:
+                    counts['depth'] = counts.get('depth', 0) + 1
+                    last_frames['depth'] = synced.depth
+        except Exception as e:
+            logging.debug(f'Stopped pulling frames from the camera: {e}')
+
+    thread = threading.Thread(target=pump, daemon=True)
+    thread.start()
+
+    time.sleep(warmup_s)
+    measuring.set()
+    t0 = time.time()
+    time.sleep(duration_s)
+    stop.set()
+    elapsed = time.time() - t0
+    thread.join(timeout=1.0)
+
+    return counts, last_frames, elapsed
+
+
+def _frame_resolution(frame):
+    """(height, width) of a captured frame, decoding it first when the device encoded it to MJPEG.
+
+    Takes either an ImageFrame or a raw depth array, so every stream can be measured the same way.
+    """
+    image = frame
+    if hasattr(image, 'image'):
+        image = frame.uncompress() if frame.is_compressed() else frame.image
+    if image is None or getattr(image, 'ndim', 0) < 2:
+        return None
+    return image.shape[0], image.shape[1]
+
+
+def _check_camera_streams(counts, last_frames, elapsed, streams):
+    """Report every stream's activity, frame rate and resolution, grouped by check.
+
+    `streams` holds (name, key, expected_fps, expected_size) with expected_size as (height, width).
+    A stream that delivered nothing is reported once under "Stream active" and then left out of the
+    other two groups, rather than repeating the same failure three times.
+    """
+    all_pass = True
+    active = []
+
+    print_info('Stream active:')
+    for name, key, _, _ in streams:
+        seen = counts.get(key, 0) > 0
+        print_result(seen, name, indent=6)
+        if seen:
+            active.append(key)
+        else:
+            all_pass = False
+
+    print_info('FPS:')
+    for name, key, expected_fps, _ in streams:
+        if key not in active:
+            continue
+        actual_fps = counts[key] / elapsed
+        ok = actual_fps >= expected_fps * (1 - CAMERA_FPS_TOLERANCE)
+        print_result(ok, f'{name}: {actual_fps:.1f}  (target {expected_fps})', indent=6)
+        if not ok:
+            all_pass = False
+
+    print_info('Resolution:')
+    for name, key, _, expected_size in streams:
+        if key not in active:
+            continue
+        resolution = _frame_resolution(last_frames[key])
+        if resolution is None:
+            print_result(False, f'{name}: frame could not be decoded', indent=6)
+            all_pass = False
+            continue
+        # Frames and CAMERA_CONFIGS both carry (height, width); the report shows width x height.
+        ok = resolution == expected_size
+        print_result(ok, f'{name}: {resolution[1]}×{resolution[0]}  '
+                         f'(expected {expected_size[1]}×{expected_size[0]})', indent=6)
+        if not ok:
+            all_pass = False
+
+    return all_pass
+
+
+def _check_camera(label, camera_type, expected_usb_speed, check_depth=False):
+    """Open one OAK camera through the adapter the robot streams with, and check its link and streams.
+
+    Going through `RGBCameras.start_synced()` rather than a hand-rolled DepthAI pipeline means this
+    check exercises the real pipeline, at the resolutions and frame rates in `CAMERA_CONFIGS`.
+    """
+    import time
+    import depthai as dai
+
+    try:
+        camera = _with_spinner(f'{label}: connecting...', camera_type.start_synced)
+    except Exception as e:
+        click.secho(f'  {label}', fg='cyan', bold=True)
+        print_result(False, f'Could not open camera: {e}')
+        return False
+
+    all_pass = True
+    try:
+        click.secho(f'  {label}', fg='cyan', bold=True)
+
+        is_open = camera.is_open()
+        print_result(is_open, f'Pipeline running  (id={camera.device.getDeviceId()})')
+        if not is_open:
+            return False
+
+        speed = camera.device.getUsbSpeed()
+        speed_ok = speed == getattr(dai.UsbSpeed, expected_usb_speed)
+        print_result(speed_ok, f'USB speed: {speed.name}'
+                               if speed_ok else
+                               f'USB speed: {speed.name}  (expected {expected_usb_speed} — check cable)')
+        if not speed_ok:
+            all_pass = False
+
+        measure_secs = CAMERA_WARMUP_SECS + CAMERA_MEASURE_SECS
+        counts, last_frames, elapsed = _with_spinner(
+            f'{label}: measuring streams ({measure_secs:.0f} s)...',
+            lambda: _collect_synced_frames(camera, CAMERA_MEASURE_SECS, warmup_s=CAMERA_WARMUP_SECS),
+        )
+
+        def described(name, key, config):
+            return name, key, config.fps, tuple(config.image_size)
+
+        streams = [described('Left', 'left', camera.left), described('Right', 'right', camera.right)]
+        # Only the head adapter has a center camera; the gripper adapter has no such attribute.
+        center = getattr(camera, 'center', None)
+        if center is not None:
+            streams.append(described('Center', 'center', center))
+        if check_depth:
+            # The gripper's stereo depth is aligned to its right camera, so it matches it.
+            streams.append(described('Depth', 'depth', camera.right))
+
+        if not _check_camera_streams(counts, last_frames, elapsed, streams):
+            all_pass = False
+
+    except Exception as e:
+        print_result(False, f'Camera check error: {e}')
+        all_pass = False
+    finally:
+        try:
+            camera.stop()
+        except Exception:
+            pass
+        # The device needs a moment to become re-enumerable before the next camera is opened.
+        time.sleep(1.0)
+
+    return all_pass
+
+
+def check_cameras():
+    """Check the head and gripper OAK cameras through the adapters the robot streams with."""
+    try:
+        import depthai  # noqa: F401
+    except ImportError:
+        print_warn('depthai not installed — cannot check OAK cameras')
+        return True
+
+    from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+
+    # That import pulls in Device, whose class body reapplies the fleet logging configuration and
+    # turns the root logger back up to INFO. Some adapter lines are logged with a bare
+    # logging.info(), so quieten the root logger again to keep them out of this report.
+    logging.getLogger().setLevel(logging.WARNING)
+
+    all_pass = True
+    # Each board is checked against the USB link speed it is expected to negotiate.
+    for label, camera_type, usb_speed, check_depth in (
+        ('Head camera (OAK-FFC-3P)',  RGBCameras.synced_left_right_center(), 'SUPER_PLUS', False),
+        ('Gripper camera (OAK-D-SR)', RGBCameras.gripper_rgbd,               'HIGH',      True),
+    ):
+        if not _check_camera(label, camera_type, usb_speed, check_depth=check_depth):
+            all_pass = False
+
+    return all_pass
+
+
 def check_sensors():
-    """Check Hesai lidars (PTC config + streaming) and OAK cameras (via DepthAI)."""
+    """Check Hesai lidars (PTC config + streaming) and the OAK cameras."""
     import socket, time
     print_section('Sensors')
     all_pass = True
@@ -1500,7 +1757,7 @@ def check_sensors():
             continue
 
         if ptc_available:
-            all_pass = _check_lidar_ptc(ip, side, all_pass)
+            _check_lidar_ptc(ip)
 
     click.secho(f'\n  Streaming check (listening 5 s for UDP packets)...', fg='white')
     stream_results = _check_lidar_streaming(LIDARS, timeout=5.0)
@@ -1511,233 +1768,8 @@ def check_sensors():
             all_pass = False
 
     print_section('Cameras')
-
-    HEAD_STREAMS = [
-        {'name': 'Center', 'socket_name': 'CAM_A', 'width': 4032, 'height': 3040, 'fps': 5},
-        {'name': 'Left',   'socket_name': 'CAM_C', 'width': 1280, 'height':  800, 'fps': 12},
-        {'name': 'Right',  'socket_name': 'CAM_B', 'width': 1280, 'height':  800, 'fps': 12},
-    ]
-    GRIPPER_STREAMS = [
-        {'name': 'Left',  'socket_name': 'CAM_C', 'width': 1280, 'height': 800, 'fps': 12},
-        {'name': 'Right', 'socket_name': 'CAM_B', 'width': 1280, 'height': 800, 'fps': 12},
-    ]
-    CAMERA_ROLES = [
-        {'label': 'Head camera (OAK-FFC-3P)',   'n_sensors': 3, 'streams': HEAD_STREAMS},
-        {'label': 'Gripper camera (OAK-D-SR)',   'n_sensors': 2, 'streams': GRIPPER_STREAMS},
-    ]
-    FPS_TOLERANCE    = 0.50
-    FPS_MEASURE_SECS = 3.0
-
-    SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-
-    def _spin(label, stop_event):
-        """Animate a braille spinner on the label line until stop_event is set."""
-        import itertools
-        for frame in itertools.cycle(SPINNER_FRAMES):
-            if stop_event.is_set():
-                break
-            sys.stdout.write(f'\r  {frame} {label}  ')
-            sys.stdout.flush()
-            time.sleep(0.08)
-        # Clear the spinner line so the caller can print cleanly
-        sys.stdout.write(f'\r{" " * (len(label) + 8)}\r')
-        sys.stdout.flush()
-
-    try:
-        import depthai as dai
-    except ImportError:
-        print_warn('depthai not installed — cannot check OAK cameras')
-        return all_pass
-
-    for role in CAMERA_ROLES:
-        label    = role['label']
-        n_expect = role['n_sensors']
-        streams  = role['streams']
-
-        import threading
-        stop_spin = threading.Event()
-        spin_thread = threading.Thread(target=_spin, args=(label, stop_spin), daemon=True)
-        spin_thread.start()
-
-        # Re-enumerate fresh — stale DeviceInfo becomes invalid after the previous
-        # camera's pipeline closes, causing the next probe to fail.
-        try:
-            device_infos = dai.Device.getAllAvailableDevices()
-        except Exception as e:
-            stop_spin.set()
-            spin_thread.join()
-            print_warn(f'DepthAI enumeration failed: {e}')
-            all_pass = False
-            continue
-
-        # Find device with matching sensor count
-        target_info = None
-        for info in device_infos:
-            try:
-                tmp = dai.Device(info)
-                n = len(tmp.getConnectedCameras())
-                tmp.close()
-                if n == n_expect:
-                    target_info = info
-                    break
-            except Exception:
-                pass
-
-        if target_info is None:
-            stop_spin.set()
-            spin_thread.join()
-            print_result(False, f'No OAK device with {n_expect} sensors found')
-            all_pass = False
-            continue
-
-        try:
-            device = dai.Device(target_info)
-        except Exception as e:
-            stop_spin.set()
-            spin_thread.join()
-            print_result(False, f'Could not open device: {e}')
-            all_pass = False
-            continue
-
-        try:
-            mxid  = device.getDeviceId()
-            speed = device.getUsbSpeed()
-            connected = device.getConnectedCameras()
-            n_actual  = len(connected)
-
-            pipeline = dai.Pipeline(defaultDevice=device)
-            queues = {}
-            socket_map = dai.CameraBoardSocket.__members__
-
-            for cfg in streams:
-                sock = socket_map.get(cfg['socket_name'])
-                if sock is None or sock not in connected:
-                    continue
-                cam_node = pipeline.create(dai.node.Camera)
-                cam_node.setSensorType(dai.CameraSensorType.COLOR)
-                cam_node.build(boardSocket=sock, sensorFps=cfg['fps'])
-                cam_out = cam_node.requestOutput(
-                    size=(cfg['width'], cfg['height']),
-                    fps=cfg['fps'],
-                    type=dai.ImgFrame.Type.NV12,
-                    resizeMode=dai.ImgResizeMode.CROP,
-                    enableUndistortion=False,
-                )
-                queues[cfg['name']] = cam_out.createOutputQueue(maxSize=4, blocking=False)
-
-            stop_spin.set()
-            spin_thread.join()
-            click.secho(f'  {label}', fg='cyan', bold=True)
-
-            ok = n_actual == n_expect
-            print_result(ok, f'Sensors detected: {n_actual}  (id={mxid})')
-            if not ok:
-                all_pass = False
-
-            speed_ok = speed == dai.UsbSpeed.SUPER
-            if speed_ok:
-                print_result(True, f'USB speed: {speed.name}')
-            else:
-                print_warn(f'USB speed: {speed.name}  (expected SUPER / USB 3 — check cable)')
-
-            # Suppress SDK calibration warnings (C++ threads emit during start + warmup)
-            print_info('Starting pipeline...')
-            _devnull_fd = os.open(os.devnull, os.O_WRONLY)
-            _saved_stderr_fd = os.dup(2)
-            os.dup2(_devnull_fd, 2)
-            os.close(_devnull_fd)
-            try:
-                pipeline.start()
-                print_info('Warming up streams (2 s)...')
-                warmup_end = time.time() + 2.0
-                while time.time() < warmup_end:
-                    for q in queues.values():
-                        if q.has():
-                            q.get()
-                    time.sleep(0.01)
-            finally:
-                os.dup2(_saved_stderr_fd, 2)
-                os.close(_saved_stderr_fd)
-
-            print_info('Checking stream activity...')
-            frames_seen = {name: False for name in queues}
-            deadline = time.time() + 2.0
-            while time.time() < deadline:
-                for name, q in queues.items():
-                    if q.has():
-                        q.get()
-                        frames_seen[name] = True
-                if all(frames_seen.values()):
-                    break
-                time.sleep(0.01)
-
-            for name, seen in frames_seen.items():
-                print_result(seen, f'Stream active: {name}')
-                if not seen:
-                    all_pass = False
-
-            print_info(f'Measuring FPS ({FPS_MEASURE_SECS:.0f} s)...')
-            counters = {name: 0 for name in queues}
-            for q in queues.values():
-                while q.has():
-                    q.get()
-            t0 = time.time()
-            while time.time() - t0 < FPS_MEASURE_SECS:
-                for name, q in queues.items():
-                    while q.has():
-                        q.get()
-                        counters[name] += 1
-                time.sleep(0.001)
-            elapsed = time.time() - t0
-
-            for cfg in streams:
-                name = cfg['name']
-                if name not in queues:
-                    continue
-                actual_fps = counters[name] / elapsed
-                target_fps = cfg['fps']
-                min_fps    = target_fps * (1 - FPS_TOLERANCE)
-                fps_ok     = actual_fps >= min_fps
-                print_result(fps_ok, f'FPS {name}: {actual_fps:.1f}  (target {target_fps})')
-                if not fps_ok:
-                    all_pass = False
-
-            print_info('Capturing frames for resolution check...')
-            captured = {}
-            deadline = time.time() + 2.0
-            while time.time() < deadline and len(captured) < len(queues):
-                for name, q in queues.items():
-                    if name not in captured and q.has():
-                        captured[name] = q.get()
-                time.sleep(0.01)
-
-            for cfg in streams:
-                name = cfg['name']
-                if name not in queues:
-                    continue
-                if name not in captured:
-                    print_result(False, f'Resolution {name}: no frame captured')
-                    all_pass = False
-                    continue
-                frame = captured[name]
-                w, h  = frame.getWidth(), frame.getHeight()
-                res_ok = (w == cfg['width'] and h == cfg['height'])
-                print_result(res_ok, f'Resolution {name}: {w}×{h}  (expected {cfg["width"]}×{cfg["height"]})')
-                if not res_ok:
-                    all_pass = False
-
-            pipeline.stop()
-
-        except Exception as e:
-            stop_spin.set()
-            spin_thread.join()
-            print_result(False, f'Camera check error: {e}')
-            all_pass = False
-        finally:
-            try:
-                device.close()
-            except Exception:
-                pass
+    if not check_cameras():
+        all_pass = False
 
     return all_pass
 
