@@ -565,16 +565,15 @@ class PowerPeriphClient(SubsystemClient):
 
     def actuator_control(self, motor_type, enable):
         """
-        Control power to actuators (not typically used by end users).
-        
-        Parameters
-        ----------
-        motor_type : str
-            Motor type identifier.
-        enable : bool
-            True to enable, False to disable.
+        Actuator power cannot be changed through the client.
+
+        Use `REx_actuator_control`, which stops the server, changes power over
+        the direct API, and starts the server again.
         """
-        self._queue_command("power_periph","actuator_control",motor_type,enable)
+        raise NotImplementedError(
+            'Actuator power cannot be changed through the stretch_body_server. '
+            'Use REx_actuator_control (it stops the server, changes power directly, '
+            'then restarts it).')
 
 
 # #####################################################################

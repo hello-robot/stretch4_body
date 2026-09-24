@@ -63,8 +63,6 @@ def main():
         test_api("power_periph.set_charger_off", r.power_periph.set_charger_off)
         test_api("power_periph.set_fan_on", r.power_periph.set_fan_on)
         test_api("power_periph.set_fan_off", r.power_periph.set_fan_off)
-        # actuator_control(motor_type, enable)
-        test_api("power_periph.actuator_control('arm', True)", r.power_periph.actuator_control, 'arm', True)
     else:
         print("FAIL: RobotClient has no 'power_periph' attribute")
 

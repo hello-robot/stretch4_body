@@ -106,31 +106,30 @@ def main(quick, auto_detect, add_user_tool):
     supported_eoa = _robot_params.get('supported_eoa', [])
     supported_eoa_metadata = _robot_params.get('supported_eoa_metadata', {})
 
-    direct = False
     detected_tool = None
-    direct = False
+    server_was_running = False
     if not quick:
+        # Tool power is changed over the direct API with the server stopped. The
+        # server holds the eoa transport open, so cutting power underneath it
+        # leaves the servos unable to re-enumerate.
+        from stretch4_body.utils.server_power import stop_server_for_power_change
+
+        ok, server_was_running = stop_server_for_power_change(reason='swap the tool')
+        if not ok:
+            return print('Aborted. The tool was not changed.')
+
         try:
-            from stretch4_body.robot.robot_client import PowerPeriphClient as PowerPeriph
-            
+            from stretch4_body.subsystem.power_periph import PowerPeriph
+
             p = PowerPeriph()
-            
+
             if not p.startup():
-                # If the client can't connect, try without the client:
-                direct = True
-
-                from stretch4_body.subsystem.power_periph import PowerPeriph
-            
-                p = PowerPeriph()
-
-                if not p.startup():
-                    return print("Failed to connect to the robot's power management. Please run `stretch_system_check`.")
+                return print("Failed to connect to the robot's power management. Please run `stretch_system_check`.")
 
             if not auto_detect:
                 if click.confirm('Turn off power to the peripheral?', default=True):
                     print('Powering off eoa...')
                     p.actuator_control('eoa', enable=False)
-                    p.push_command()
                 
                 try:
                     click.pause('Connect the tool then press any key to continue...')
@@ -141,7 +140,6 @@ def main(quick, auto_detect, add_user_tool):
 
                 print('Powering on eoa...')
                 p.actuator_control('eoa', enable=True)
-                p.push_command()
                 time.sleep(2.0) # Wait for motors to boot
 
             # Auto-detect tool ID
@@ -255,21 +253,16 @@ def main(quick, auto_detect, add_user_tool):
     write_fleet_yaml(user_params_fn, _user_params, fleet_dir, user_params_header)
     print(f"Saved to {fleet_dir}{user_params_fn}")
 
-    is_do_home = False
-    if direct:
-        is_do_home = click.confirm("\nWould you like to home the end_of_arm?", default=True)
+    from stretch4_body.utils.server_power import start_server
+
+    if server_was_running:
+        is_do_home = click.confirm('\nWould you like to start the stretch_body_server and home the end_of_arm?', default=True)
     else:
-        is_do_home= click.confirm('\nWould you like to restart the stretch_body_server and home the end_of_arm?', default=True)
+        is_do_home = click.confirm("\nWould you like to home the end_of_arm?", default=True)
 
     if not quick and is_do_home:
-        p_restart = None
-        if not direct:
-            print('Restarting stretch_body_server...')
-            subprocess.run(['stretch_body_server', '--kill'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(2.0)
-            p_restart = subprocess.Popen(['stretch_body_server', '--restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            print('Waiting for stretch_body_server to come back online...')
+        if server_was_running and not start_server():
+            return print('Could not start the stretch_body_server. Home the tool once it is up.')
 
         # Reload RobotParams in-place to ensure the new tool settings are loaded from disk
         import stretch4_body.core.robot_params
@@ -294,10 +287,10 @@ def main(quick, auto_detect, add_user_tool):
         # Also restore the module reference to the old class to be safe
         stretch4_body.core.robot_params.RobotParams = old_robot_params_class
 
-        if direct:
-            from stretch4_body.robot.robot import Robot as RobotClient
-        else:
+        if server_was_running:
             from stretch4_body.robot.robot_client import RobotClient
+        else:
+            from stretch4_body.robot.robot import Robot as RobotClient
         r = RobotClient()
         connected = False
         for i in range(20): # try for 20 seconds
@@ -315,19 +308,18 @@ def main(quick, auto_detect, add_user_tool):
                 print(f"Error during homing: {e}")
             finally:
                 r.stop()
-            if p_restart is not None:
-                p_restart.terminate()
             print("Done! You are ready to use the tool.")
         else:
-            print("Failed to connect to robot server after restart. Please try homing manually.")
-            if p_restart is not None:
-                p_restart.terminate()
+            print("Failed to connect to the robot. Please try homing manually.")
     else:
-        print("""Done! You may need to home the robot or restart services for the tool to be recognized.
+        # The server was stopped to change tool power, so bring it back even
+        # when the user skips homing.
+        if server_was_running:
+            start_server()
+        print("""Done! You may need to home the robot for the tool to be recognized.
 
 It is strongly recommended to run:
 
-stretch_body_server --restart
 stretch_robot_home
 """)
 
