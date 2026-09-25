@@ -408,3 +408,65 @@ class RobotJoints(Enum):
     def aperture_to_urdf(self, aperture_m: float) -> float:
         """Converts fingertip aperture (meters) to URDF units."""
         return self.get_gripper_model("aperture_to_urdf").aperture_to_urdf(aperture_m)
+
+    #  ---------- Differential (velocity / delta) conversions (y' = f'(x) * x') ---------- 
+
+    def urdf_to_command_velocity(self, velocity: float, at_urdf: float) -> float:
+        """Converts a rate in URDF units/s to this tool's command units/s, evaluated at `at_urdf`."""
+        return self.get_gripper_model("urdf_to_command_velocity").urdf_to_command_velocity(
+            velocity, at_urdf
+        )
+
+    def command_to_urdf_velocity(self, velocity: float, at_command: float) -> float:
+        """Converts a rate in this tool's command units/s to URDF units/s, evaluated at `at_command`."""
+        return self.get_gripper_model("command_to_urdf_velocity").command_to_urdf_velocity(
+            velocity, at_command
+        )
+
+    def urdf_to_actuator_velocity(self, velocity: float, at_urdf: float) -> float:
+        """Converts a rate in URDF units/s to raw actuator rad/s, evaluated at `at_urdf`."""
+        return self.get_gripper_model("urdf_to_actuator_velocity").urdf_to_actuator_velocity(
+            velocity, at_urdf
+        )
+
+    def actuator_to_urdf_velocity(self, velocity: float, at_actuator: float) -> float:
+        """Converts a rate in raw actuator rad/s to URDF units/s, evaluated at `at_actuator`."""
+        return self.get_gripper_model("actuator_to_urdf_velocity").actuator_to_urdf_velocity(
+            velocity, at_actuator
+        )
+
+    def command_to_actuator_velocity(self, velocity: float, at_command: float) -> float:
+        """Converts a rate in this tool's command units/s to actuator rad/s, evaluated at `at_command`."""
+        return self.get_gripper_model(
+            "command_to_actuator_velocity"
+        ).command_to_actuator_velocity(velocity, at_command)
+
+    def actuator_to_command_velocity(self, velocity: float, at_actuator: float) -> float:
+        """Converts a rate in actuator rad/s to this tool's command units/s, evaluated at `at_actuator`."""
+        return self.get_gripper_model(
+            "actuator_to_command_velocity"
+        ).actuator_to_command_velocity(velocity, at_actuator)
+
+    def convert_delta(self, delta: float, frm: str, to: str, at: float) -> float:
+        """
+        Converts a finite displacement exactly, as f(at + delta) - f(at). Prefer this over the
+        velocity conversions for a move_by() amount.
+        """
+        return self.get_gripper_model("convert_delta").convert_delta(delta, frm, to, at)
+
+    def conversion_gain(self, frm: str, to: str, at: float) -> float:
+        """d(to)/d(frm) at position `at` (in `frm` units)."""
+        return self.get_gripper_model("conversion_gain").conversion_gain(frm, to, at)
+
+    def velocity_limit(self, unit_type: str, at: float, profile: str = "default") -> float:
+        """This tool's actuator velocity limit expressed in `unit_type` units, at position `at`."""
+        return self.get_gripper_model("velocity_limit").velocity_limit(unit_type, at, profile)
+
+    def position_independent_velocity_limit(self, unit_type: str, profile: str = "default") -> float:
+        """
+        The minimum of `velocity_limit` over the actuator range, so it needs no position. Use
+        where a single scalar is required.
+        """
+        return self.get_gripper_model(
+            "position_independent_velocity_limit"
+        ).position_independent_velocity_limit(unit_type, profile)
