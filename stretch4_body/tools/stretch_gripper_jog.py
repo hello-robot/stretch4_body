@@ -2,7 +2,7 @@
 import threading
 import stretch4_body.core.robot_params
 from stretch4_body.utils.stretch_pose_models import RobotJoints
-from stretch4_body.utils.user_tool_utils import add_user_tool_to_sys_path
+from stretch4_body.utils.tool_metadata import get_gripper_instance
 stretch4_body.core.robot_params.RobotParams.set_logging_level("DEBUG")
 import sys
 import argparse
@@ -13,9 +13,6 @@ parser=argparse.ArgumentParser(description='Jog the gripper from the keyboard')
 parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
 parser.add_argument("-i","--ip", help="IP address to remote server", type=str, default=None)
 args=parser.parse_args()
-
-
-from stretch4_body.utils.user_tool_utils import get_gripper_instance
 
 g, gripper_type, is_parallel = get_gripper_instance(direct=args.direct, ip_address=args.ip)
 if g is None:

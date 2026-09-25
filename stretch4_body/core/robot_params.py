@@ -186,6 +186,31 @@ class RobotParams:
         return (cls._user_params, cls._robot_params)
 
     @classmethod
+    def reload(cls):
+        """
+        Forces a fresh re-scan of the fleet's YAML/user_tools configuration from disk (e.g. after
+        `stretch_configure_tool` writes new tool settings, or a test writes a temporary user_tools
+        directory), then updates this class's already-loaded _user_params/_robot_params dicts
+        IN PLACE with the freshly-scanned content.
+        """
+        for mod_name in list(sys.modules):
+            if 'robot_params' in mod_name:
+                del sys.modules[mod_name]
+
+        import stretch4_body.core.robot_params as robot_params_module
+        new_user, new_robot = robot_params_module.RobotParams.get_params()
+
+        old_user, old_robot = cls.get_params()
+        old_user.clear()
+        old_user.update(new_user)
+        old_robot.clear()
+        old_robot.update(new_robot)
+
+        # Restore the module's RobotParams name to this (the original) class object, now updated,
+        # so it keeps being the single shared identity every caller resolves to.
+        robot_params_module.RobotParams = cls
+
+    @classmethod
     def add_params(cls, new_params):
         hello_utils.overwrite_dict(cls._robot_params, new_params)
 
@@ -277,5 +302,35 @@ class RobotParams:
             if os.path.exists(p):
                 return p
         return None
+
+    @classmethod
+    def add_user_tool_to_sys_path(cls, tool_name):
+        """
+        Finds and adds the user tool's directory to sys.path dynamically.
+        """
+        if not tool_name:
+            return
+        _dirs = []
+        _fleet_path = os.environ.get("HELLO_FLEET_PATH")
+        _fleet_id = os.environ.get("HELLO_FLEET_ID")
+        if _fleet_path:
+            if _fleet_id:
+                _specific_dir = os.path.join(_fleet_path, _fleet_id, "user_tools")
+                if os.path.exists(_specific_dir):
+                    _dirs.append(_specific_dir)
+            _shared_dir = os.path.join(_fleet_path, "user_tools")
+            if os.path.exists(_shared_dir):
+                _dirs.append(_shared_dir)
+        else:
+            _default_dir = os.path.expanduser("~/stretch_user/user_tools")
+            if os.path.exists(_default_dir):
+                _dirs.append(_default_dir)
+
+        for _user_tools_dir in _dirs:
+            _candidate = os.path.join(_user_tools_dir, tool_name)
+            if os.path.exists(_candidate):
+                if _candidate not in sys.path:
+                    sys.path.append(_candidate)
+                break
 
 
