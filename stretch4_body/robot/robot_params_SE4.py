@@ -1468,9 +1468,7 @@ nominal_params={
 # #################################################################################
 try:
     import os
-    import sys
     import copy
-    import ast
     import yaml
 
     def _get_user_tools_dirs():
@@ -1501,71 +1499,13 @@ try:
                         'description': f'User-defined custom end-of-arm tool located in {_user_tools_dir}/{_tool_name}.'
                     }
 
-                    # Default configuration inherits from NIL/passive tool, so users can override in stretch_user_params.yaml
+                    # Default configuration inherits from NIL/passive tool
                     _default_tool_params = copy.deepcopy(SE4_eoa_wrist_dw4_tool_nil)
-                    
-                    # Check for python class inside user tool folder
+                    _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
+                    _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
+
                     _tool_dir_path = os.path.join(_user_tools_dir, _tool_name)
-                    _py_file = None
-                    if os.path.exists(os.path.join(_tool_dir_path, "end_of_arm.py")):
-                        _py_file = os.path.join(_tool_dir_path, "end_of_arm.py")
-                        _module_name = "end_of_arm"
-                    elif os.path.exists(os.path.join(_tool_dir_path, "custom_tool_end_of_arm.py")):
-                        _py_file = os.path.join(_tool_dir_path, "custom_tool_end_of_arm.py")
-                        _module_name = "custom_tool_end_of_arm"
-                    elif os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}.py")):
-                        _py_file = os.path.join(_tool_dir_path, f"{_tool_name}.py")
-                        _module_name = _tool_name
-                    elif os.path.exists(os.path.join(_tool_dir_path, "tool.py")):
-                        _py_file = os.path.join(_tool_dir_path, "tool.py")
-                        _module_name = "tool"
 
-                    _class_name = None
-                    if _py_file:
-                        try:
-                            # Append the directory path to sys.path so the module can be dynamically imported
-                            if _tool_dir_path not in sys.path:
-                                sys.path.append(_tool_dir_path)
-                            with open(_py_file, 'r') as _f:
-                                _tree = ast.parse(_f.read())
-                            _classes = [node.name for node in ast.walk(_tree) if isinstance(node, ast.ClassDef)]
-                            if _classes:
-                                _class_name = _classes[0]
-                        except Exception:
-                            pass
-
-                    # Detect client file inside user tool folder
-                    _client_py_file = None
-                    if os.path.exists(os.path.join(_tool_dir_path, f"{_tool_name}_client.py")):
-                        _client_py_file = os.path.join(_tool_dir_path, f"{_tool_name}_client.py")
-                        _client_module_name = f"{_tool_name}_client"
-                    elif os.path.exists(os.path.join(_tool_dir_path, "tool_client.py")):
-                        _client_py_file = os.path.join(_tool_dir_path, "tool_client.py")
-                        _client_module_name = "tool_client"
-
-                    _client_class_name = None
-                    if _client_py_file:
-                        try:
-                            with open(_client_py_file, 'r') as _f:
-                                _tree = ast.parse(_f.read())
-                            _classes = [node.name for node in ast.walk(_tree) if isinstance(node, ast.ClassDef)]
-                            if _classes:
-                                _client_class_name = _classes[0]
-                        except Exception:
-                            pass
-
-                    if _class_name:
-                        _default_tool_params['py_class_name'] = _class_name
-                        _default_tool_params['py_module_name'] = _module_name
-                    else:
-                        _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
-                        _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
-
-                    if _client_class_name:
-                        _default_tool_params['client_class_name'] = _client_class_name
-                        _default_tool_params['client_module_name'] = _client_module_name
-
-                    # Check for tool_params.yaml inside user tool folder
                     _params_file = os.path.join(_tool_dir_path, "tool_params.yaml")
                     if os.path.exists(_params_file):
                         try:
