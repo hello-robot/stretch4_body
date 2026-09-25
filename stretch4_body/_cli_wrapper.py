@@ -281,6 +281,10 @@ def stretch_configure_tool():
     sys.argv[0] = "stretch_configure_tool"
     runpy.run_module("stretch4_body.tools.stretch_configure_tool", run_name="__main__")
 
+def stretch_check_user_tool():
+    sys.argv[0] = "stretch_check_user_tool"
+    runpy.run_module("stretch4_body.tools.stretch_check_user_tool", run_name="__main__")
+
 def REx_camera_focus():
     sys.argv[0] = "REx_camera_focus"
     runpy.run_module("stretch4_body.tools.factory.REx_camera_focus", run_name="__main__")

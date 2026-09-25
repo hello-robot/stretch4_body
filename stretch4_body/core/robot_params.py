@@ -1,4 +1,5 @@
 import stretch4_body.core.hello_utils as hello_utils
+from stretch4_body.core.user_tool_paths import find_user_tool_dir, user_tool_dirs
 import importlib
 import sys
 import os
@@ -231,106 +232,56 @@ class RobotParams:
         """
         Dynamically imports a user tool module in a collision-safe manner.
         Handles generic module names (e.g. 'client', 'tool', 'end_of_arm') without colliding.
-        """
-        _dirs = []
-        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-        if _fleet_path:
-            _shared_dir = os.path.join(_fleet_path, 'user_tools')
-            if os.path.exists(_shared_dir):
-                _dirs.append(_shared_dir)
-        else:
-            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
-            if os.path.exists(_default_dir):
-                _dirs.append(_default_dir)
 
+        The tool's own directory is searched first and, being on `sys.path`, its modules import
+        each other by bare name. A module that raises while executing propagates that exception;
+        a name the tool does not supply is imported from `sys.path` instead.
+
+        A module already loaded under its collision-safe name in `sys.modules` is returned as-is
+        rather than re-executed, so repeated calls for the same (eoa_name, module_name, is_server)
+        are cheap.
+        """
         module_name_clean = module_name[:-3] if module_name.endswith('.py') else module_name
 
-        current_module = None
-        for _user_tools_dir in _dirs:
+        for _user_tools_dir in user_tool_dirs():
             _candidate = os.path.join(_user_tools_dir, eoa_name)
-            if os.path.exists(_candidate):
-                if _candidate not in sys.path:
-                    sys.path.insert(0, _candidate)
-                _py_file = os.path.join(_candidate, f"{module_name_clean}.py")
-                if os.path.exists(_py_file):
-                    side = "server" if is_server else "client"
-                    unique_mod_name = f"user_tool_{side}_{eoa_name}_{module_name_clean}"
-                    spec = importlib.util.spec_from_file_location(unique_mod_name, _py_file)
-                    if spec and spec.loader:
-                        try:
-                            current_module = importlib.util.module_from_spec(spec)
-                            sys.modules[unique_mod_name] = current_module
-                            spec.loader.exec_module(current_module)
-                            break
-                        except Exception as e:
-                            print(f"Error loading custom tool module {module_name_clean} directly: {e}")
-                            current_module = None
-        if current_module is None:
+            if not os.path.exists(_candidate):
+                continue
+            if _candidate not in sys.path:
+                sys.path.insert(0, _candidate)
+            _py_file = os.path.join(_candidate, f"{module_name_clean}.py")
+            if not os.path.exists(_py_file):
+                continue
+            side = "server" if is_server else "client"
+            unique_mod_name = f"user_tool_{side}_{eoa_name}_{module_name_clean}"
+            if unique_mod_name in sys.modules:
+                return sys.modules[unique_mod_name]
+            spec = importlib.util.spec_from_file_location(unique_mod_name, _py_file)
+            current_module = importlib.util.module_from_spec(spec)
+            sys.modules[unique_mod_name] = current_module
             try:
-                current_module = importlib.import_module(module_name_clean)
+                spec.loader.exec_module(current_module)
             except Exception:
-                current_module = None
-        return current_module
+                del sys.modules[unique_mod_name]
+                raise
+            return current_module
 
-    @classmethod
-    def is_user_defined_tool(cls, tool_name):
-        """
-        Dynamically check if a tool's folder exists under user_tools directories.
-        """
-        return cls.get_user_defined_tool_path(tool_name) is not None
+        return importlib.import_module(module_name_clean)
 
     @classmethod
     def get_user_defined_tool_path(cls, tool_name):
         """
         Get the absolute path to a custom tool folder if it exists.
         """
-        if not tool_name:
-            return None
-        _dirs = []
-        _fleet_path = os.environ.get('HELLO_FLEET_PATH')
-        if _fleet_path:
-            _shared_dir = os.path.join(_fleet_path, 'user_tools')
-            if os.path.exists(_shared_dir):
-                _dirs.append(_shared_dir)
-        else:
-            _default_dir = os.path.expanduser('~/stretch_user/user_tools')
-            if os.path.exists(_default_dir):
-                _dirs.append(_default_dir)
-        
-        for _user_tools_dir in _dirs:
-            p = os.path.join(_user_tools_dir, tool_name)
-            if os.path.exists(p):
-                return p
-        return None
+        return find_user_tool_dir(tool_name)
 
     @classmethod
     def add_user_tool_to_sys_path(cls, tool_name):
         """
         Finds and adds the user tool's directory to sys.path dynamically.
         """
-        if not tool_name:
-            return
-        _dirs = []
-        _fleet_path = os.environ.get("HELLO_FLEET_PATH")
-        _fleet_id = os.environ.get("HELLO_FLEET_ID")
-        if _fleet_path:
-            if _fleet_id:
-                _specific_dir = os.path.join(_fleet_path, _fleet_id, "user_tools")
-                if os.path.exists(_specific_dir):
-                    _dirs.append(_specific_dir)
-            _shared_dir = os.path.join(_fleet_path, "user_tools")
-            if os.path.exists(_shared_dir):
-                _dirs.append(_shared_dir)
-        else:
-            _default_dir = os.path.expanduser("~/stretch_user/user_tools")
-            if os.path.exists(_default_dir):
-                _dirs.append(_default_dir)
-
-        for _user_tools_dir in _dirs:
-            _candidate = os.path.join(_user_tools_dir, tool_name)
-            if os.path.exists(_candidate):
-                if _candidate not in sys.path:
-                    sys.path.append(_candidate)
-                break
+        _candidate = cls.get_user_defined_tool_path(tool_name)
+        if _candidate and _candidate not in sys.path:
+            sys.path.append(_candidate)
 
 
