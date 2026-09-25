@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import math
 import subprocess
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import (
-    parallel_gripper_pos_mm_to_urdf_m,
-    parallel_gripper_rad_to_urdf_m
-)
+from unittest.mock import PropertyMock, patch
+from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
 from stretch4_body.utils.stretch_pose_models import RobotJoints
 from stretch4_body.core.gamepad_enums import MotionProfile
 
@@ -17,20 +15,27 @@ def test_conversions():
         'range_deg': [0, 116.5],
         'range_mm': 80.0
     }
-    
-    # Test pos_mm to URDF meters
-    val_closed = parallel_gripper_pos_mm_to_urdf_m(0.0, params)
-    val_open = parallel_gripper_pos_mm_to_urdf_m(80.0, params)
-    print(f"pos_mm to URDF: closed={val_closed}m, open={val_open}m")
-    assert math.isclose(val_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_closed}"
-    assert math.isclose(val_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_open}"
-    
-    # Test rad to URDF meters
-    val_rad_closed = parallel_gripper_rad_to_urdf_m(0.0, params)
-    val_rad_open = parallel_gripper_rad_to_urdf_m(math.radians(116.5), params)
-    print(f"rad to URDF: closed={val_rad_closed}m, open={val_rad_open}m")
-    assert math.isclose(val_rad_closed, 0.0, abs_tol=0.005), f"Expected close to 0.0, got {val_rad_closed}"
-    assert math.isclose(val_rad_open, -0.04, abs_tol=0.005), f"Expected close to -0.04, got {val_rad_open}"
+    metadata = ParallelGripperMetadata()
+
+    # gripper_conversion.py's free functions were folded into ToolMetadata; _params and
+    # _finger_joint_limits are patched directly so this exercises the same geometry with the
+    # same inputs, independent of whatever tool this test environment's robot_params configure.
+    with patch.object(ParallelGripperMetadata, '_params', new_callable=PropertyMock, return_value=params), \
+         patch.object(ParallelGripperMetadata, '_finger_joint_limits', new_callable=PropertyMock, return_value=(-0.04, 0.0)):
+
+        # Test aperture (meters) to URDF meters -- PG4's command units are aperture directly.
+        val_closed = metadata.command_to_urdf(0.0)
+        val_open = metadata.command_to_urdf(80.0 / 1000.0)
+        print(f"aperture to URDF: closed={val_closed}m, open={val_open}m")
+        assert math.isclose(val_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_closed}"
+        assert math.isclose(val_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_open}"
+
+        # Test servo radians to URDF meters
+        val_rad_closed = metadata.actuator_to_urdf(0.0)
+        val_rad_open = metadata.actuator_to_urdf(math.radians(116.5))
+        print(f"servo rad to URDF: closed={val_rad_closed}m, open={val_rad_open}m")
+        assert math.isclose(val_rad_closed, 0.0, abs_tol=0.005), f"Expected close to 0.0, got {val_rad_closed}"
+        assert math.isclose(val_rad_open, -0.04, abs_tol=0.005), f"Expected close to -0.04, got {val_rad_open}"
     print("Conversions tests passed!")
 
 def test_param_lookup():
@@ -85,28 +90,34 @@ def test_scripts_auto_detect():
 def test_parallel_gripper_direct_commands():
     from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
     from unittest.mock import MagicMock
-    
-    gripper = ParallelGripper()
-    gripper.params = {
-        'kL': 30.25,
-        'kR': 22.0,
-        'kT0': 44.0,
-        'kX0': 10.5,
-        'range_deg': [0, 116.5],
-        'range_mm': 80.0
+
+    # Mock RobotParams.get_params to provide parallel_gripper parameters during instantiation
+    dummy_params = {
+        'parallel_gripper': {
+            'kL': 30.25,
+            'kR': 22.0,
+            'kT0': 44.0,
+            'kX0': 10.5,
+            'range_deg': [0, 116.5],
+            'range_mm': 80.0
+        }
     }
-    
+    with patch('stretch4_body.core.device.RobotParams.get_params', return_value=({}, dummy_params)):
+        gripper = ParallelGripper()
+
     # Mock FeetechSMHello.move_to (the parent call)
     mock_move_to = MagicMock()
     from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
     FeetechSMHello.move_to = mock_move_to
-    
-    # Call move_to with 0.08 m
-    gripper.move_to(0.08)
-    
-    # Ensure it translated 0.08 m into servo radians using parallel_gripper_mm_to_servo_rad
-    from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_mm_to_servo_rad
-    expected_rad = parallel_gripper_mm_to_servo_rad(80.0, gripper.params)
+
+    with patch('stretch4_body.core.device.RobotParams.get_params', return_value=({}, dummy_params)):
+        # Call move_to with 0.05 m (comfortably inside command_range, away from the 'open' bound --
+        # the geometry model rounds to the nearest mm, so command_range's upper bound lands a hair
+        # under the nominal 0.08 m and would otherwise get silently clamped here)
+        gripper.move_to(0.05)
+
+        # Ensure it translated 0.05 m into servo radians using the tool metadata's own conversion
+        expected_rad = gripper.tool_metadata.aperture_to_actuator(0.05)
     mock_move_to.assert_called_once_with(gripper, x_des=expected_rad, v_des=None, a_des=None)
     print("ParallelGripper direct move_to test passed!")
 

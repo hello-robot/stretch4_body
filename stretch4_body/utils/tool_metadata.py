@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from functools import cached_property
+from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any
 
 from stretch4_urdf import get_joint_limits, get_urdf
@@ -285,9 +285,9 @@ class ParallelGripperMetadata(ToolMetadata):
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
         # Import here to avoid circular dependencies
-        from stretch4_body.robot.robot_client import ParallelGripperClient
+        from stretch4_body.robot.robot_client import ToolJointClient
 
-        return ParallelGripperClient
+        return partial(ToolJointClient, self)
 
     @property
     def driver_class(self) -> type:
@@ -462,9 +462,9 @@ class StretchGripperMetadata(ToolMetadata):
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
         # Import here to avoid circular dependencies
-        from stretch4_body.robot.robot_client import StretchGripperClient
+        from stretch4_body.robot.robot_client import ToolJointClient
 
-        return StretchGripperClient
+        return partial(ToolJointClient, self)
 
     @property
     def driver_class(self) -> type:
