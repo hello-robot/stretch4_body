@@ -12,6 +12,7 @@ Usage:
     stretch_system_check --repos          # ROS2 workspace (~/ament_ws/src) git status only
     stretch_system_check --verbose        # Show additional detail in all checks
     stretch_system_check --direct         # Use Robot API directly instead of server client
+    stretch_system_check --export [DIR]   # Save a diagnostics zip for support to DIR (default: cwd)
 """
 import os
 
@@ -53,6 +54,9 @@ parser.add_argument('--check_updates',  help='Check pip + firmware + workspace g
                                                                                         action='store_true')
 parser.add_argument('--repos',          help='Check the git status of the repos in ~/ament_ws/src',
                                                                                         action='store_true')
+parser.add_argument('--export',         help='Save a diagnostics zip (status history, system checks, server logs) '
+                                             'to the given directory (defaults to the current directory)',
+                                        nargs='?', const='.', metavar='DIR', default=None)
 args = parser.parse_args()
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
@@ -1802,6 +1806,249 @@ def _restart_server():
 
 
 # ==============================================================================
+# Diagnostics export
+# ==============================================================================
+
+_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+EXPORT_TIMEOUT_S = 900
+
+
+def _run_tool(tool, tool_args, label):
+    """Runs one of the sibling tools in a subprocess and returns its combined output."""
+    click.secho(f'  Running {label}...', fg='yellow')
+    cmd = [sys.executable, os.path.join(_TOOLS_DIR, tool)] + tool_args
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, timeout=EXPORT_TIMEOUT_S)
+        return proc.stdout
+    except subprocess.TimeoutExpired as e:
+        print_warn(f'{label} timed out after {EXPORT_TIMEOUT_S}s')
+        return (e.stdout or '') + f'\n[!] {label} timed out after {EXPORT_TIMEOUT_S}s\n'
+    except Exception as e:
+        print_warn(f'{label} failed: {e}')
+        return f'[!] {label} failed: {e}\n'
+
+
+def _run_shell(cmd, label, timeout=30):
+    """Runs a shell command and returns its combined output, prefixed with the command itself."""
+    click.secho(f'  Running {label}...', fg='yellow')
+    try:
+        proc = subprocess.run(['bash', '-c', cmd], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, timeout=timeout)
+        out = proc.stdout
+    except Exception as e:
+        print_warn(f'{label} failed: {e}')
+        out = f'[!] {label} failed: {e}\n'
+    return f'$ {cmd}\n\n{out}'
+
+
+def _bundle_info():
+    from datetime import datetime
+    return (
+        f'Exported      : {datetime.now().isoformat()}\n'
+        f'Model         : {_model_display}\n'
+        f'Serial Number : {stretch_serial_no}\n'
+        f'Batch         : {stretch_batch}\n'
+        f'Tool          : {TOOL_DISPLAY.get(stretch_tool, stretch_tool)}\n'
+        f'User          : {os.environ.get("USER", "N/A")}\n'
+        f'Fleet path    : {os.environ.get("HELLO_FLEET_PATH", "N/A")}\n'
+    )
+
+
+def _bundle_readme(status_zips, session_logs):
+    """Builds the README shipped inside the bundle, describing the files it actually contains."""
+    from datetime import datetime
+
+    if status_zips:
+        status_name = status_zips[0]
+        status_section = f"""### {status_name}
+Robot telemetry history (joint states, currents, voltages, temperatures, ...)
+written by `stretch_status --export`. It holds one JSON file per logged run.
+
+Replay it on any machine with stretch4_body installed -- pass the zip itself,
+do not unzip it first:
+
+    stretch_status --import {status_name}
+
+Useful variations:
+
+    # Visualize the whole file in Rerun instead of the console
+    stretch_status --import {status_name} --rerun
+
+    # Only show some fields
+    stretch_status --import {status_name} --fields robot.lift robot.power_periph.voltage
+
+    # Trim the replay window (seconds from the start / from the end of the file)
+    stretch_status --import {status_name} --start_seconds_offset 10 --end_seconds_offset 5
+
+This is the largest file in the bundle; it is usually where an intermittent
+hardware issue is visible."""
+    else:
+        status_section = """### stretch_status export
+Missing -- `stretch_status --export` produced no telemetry archive. This usually
+means no status history has been logged yet on this robot
+(see $HELLO_FLEET_PATH/log/stretch_status)."""
+
+    if session_logs:
+        log_lines = '\n'.join(f'    {name}' for name in session_logs)
+        logs_section = f"""### stretch_body_server_logs/
+The {len(session_logs)} most recent `stretch_body_server` session logs:
+
+{log_lines}
+
+`stretch_body_server.log` (and any `.log.N` rotations) is the session that was
+running when this bundle was exported, and is plain text -- open it directly.
+
+Each `stretch_body_server_logs_<YYYYMMDDhhmmss>.tar.gz` is one finished session,
+archived when that server shut down; the highest timestamp is the most recent.
+Extract one with:
+
+    tar -xzf stretch_body_server_logs_<timestamp>.tar.gz
+
+or read it without extracting:
+
+    tar -xzOf stretch_body_server_logs_<timestamp>.tar.gz stretch_body_server.log | less
+
+These same logs can be exported on their own, without the rest of this bundle:
+
+    stretch_body_server --export [DIR]"""
+    else:
+        logs_section = """### stretch_body_server_logs/
+Missing -- no `stretch_body_server` session logs were found on this robot
+(see $HELLO_FLEET_PATH/log/stretch_body_logger). The server may never have been
+started on this install."""
+
+    return f"""# Stretch 4 Diagnostics Bundle
+
+Robot         : {_model_display} ({stretch_serial_no})
+Tool          : {TOOL_DISPLAY.get(stretch_tool, stretch_tool)}
+Exported      : {datetime.now().isoformat()} by {os.environ.get('USER', 'N/A')}
+Created with  : stretch_system_check --export
+
+Send this bundle to support@hello-robot.com when reporting an issue. Everything
+in it was captured on the robot at export time; nothing here needs the robot to
+be present in order to be read back.
+
+
+## Contents
+
+### README.md
+This file.
+
+### bundle_info.txt
+Robot identity at export time: model, serial number, batch, tool, the user who
+ran the export, and HELLO_FLEET_PATH. Plain text.
+
+### stretch_system_check.txt
+Console output of a full `stretch_system_check` run, captured at export time.
+One [PASS] / [FAIL] / [SKIP] line per subsystem plus a summary at the end; it
+also records the installed software versions. Plain text.
+Reproduce on the robot with:
+
+    stretch_system_check
+
+Note: firmware checks show as [SKIP] here because they require stopping the
+server. Run `stretch_system_check --firmware` separately for those.
+
+### stretch_system_check_sensors.txt
+Console output of `stretch_system_check --sensors`: lidar reachability and
+streaming, plus camera stream rates, resolutions and USB link speeds. Plain text.
+Reproduce with:
+
+    stretch_system_check --sensors
+
+### dev_hello_devices.txt
+Output of `ls -la /dev/hello*` -- the udev symlinks for each board and the tty
+device each one currently points at. A board missing from this listing did not
+enumerate on USB, which explains most "device not found" failures elsewhere in
+the bundle.
+
+{status_section}
+
+{logs_section}
+"""
+
+
+def export_diagnostics(export_dir):
+    """Collects telemetry history, system check output and server session logs into one zip."""
+    import shutil
+    import tempfile
+    import zipfile
+    from datetime import datetime
+
+    export_dir = os.path.expanduser(export_dir)
+    if not os.path.isdir(export_dir):
+        click.secho(f'\n[FAIL] Export directory {export_dir} does not exist.', fg='red')
+        return False
+
+    print_section('Diagnostics Export')
+    staging = tempfile.mkdtemp(prefix='stretch_system_check_export_')
+    passthrough = (['--verbose'] if args.verbose else []) + (['--direct'] if args.direct else [])
+    try:
+        with open(os.path.join(staging, 'bundle_info.txt'), 'w') as f:
+            f.write(_bundle_info())
+
+        # 1. Telemetry history from stretch_status --export (writes its own zip into staging)
+        _run_tool('stretch_status.py', ['--export', staging], 'stretch_status --export')
+        status_zips = sorted(f for f in os.listdir(staging)
+                             if f.startswith('stretch_status_') and f.endswith('.zip'))
+        if not status_zips:
+            print_warn('stretch_status --export produced no telemetry archive')
+
+        # 2. The system check itself, run as a subprocess so this export cannot recurse
+        with open(os.path.join(staging, 'stretch_system_check.txt'), 'w') as f:
+            f.write(_run_tool('stretch_system_check.py', passthrough, 'stretch_system_check'))
+        with open(os.path.join(staging, 'stretch_system_check_sensors.txt'), 'w') as f:
+            f.write(_run_tool('stretch_system_check.py', ['--sensors'] + passthrough,
+                              'stretch_system_check --sensors'))
+
+        # 3. The udev symlinks for the robot's boards
+        with open(os.path.join(staging, 'dev_hello_devices.txt'), 'w') as f:
+            f.write(_run_shell('ls -la /dev/hello*', 'ls -la /dev/hello*'))
+
+        # 4. The most recent stretch_body_server session logs
+        try:
+            from stretch4_body.tools.stretch_body_server import get_recent_session_logs
+            session_logs = get_recent_session_logs()
+        except Exception as e:
+            print_warn(f'Could not collect stretch_body_server logs: {e}')
+            session_logs = []
+        if not session_logs:
+            print_warn('No stretch_body_server session logs found')
+        else:
+            click.secho(f'  Collecting {len(session_logs)} stretch_body_server session logs...', fg='yellow')
+            log_dir = os.path.join(staging, 'stretch_body_server_logs')
+            os.makedirs(log_dir, exist_ok=True)
+            for log in session_logs:
+                try:
+                    shutil.copy2(log, log_dir)
+                except OSError as e:
+                    print_warn(f'Could not copy {log}: {e}')
+            session_logs = sorted(os.listdir(log_dir))
+
+        # 5. A README describing the files the bundle actually ended up with
+        with open(os.path.join(staging, 'README.md'), 'w') as f:
+            f.write(_bundle_readme(status_zips, session_logs))
+
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        zip_path = os.path.join(export_dir, f'stretch_system_check_{stretch_serial_no}_{timestamp}.zip')
+        click.secho(f'  Writing {zip_path}...', fg='yellow')
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(staging):
+                for name in sorted(files):
+                    full = os.path.join(root, name)
+                    zf.write(full, os.path.relpath(full, staging))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+    click.echo()
+    click.secho(f'Export complete: {zip_path} ({size_mb:.2f} MB)', fg='green', bold=True)
+    click.secho('Send this file to support@hello-robot.com when reporting an issue.\n', fg='bright_white')
+    return True
+
+
+# ==============================================================================
 # Main
 # ==============================================================================
 
@@ -1819,6 +2066,9 @@ _REQUIRE_SERVER = {
 def main():
     global r
     results = {}
+
+    if args.export is not None:
+        sys.exit(0 if export_diagnostics(args.export) else 1)
 
     if args.repos:
         ok = check_repos()
