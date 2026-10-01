@@ -1844,6 +1844,11 @@ EXPORT_COMMANDS = [
     ('lsusb_verbose.txt', 'lsusb -v', 120,
      'Full USB descriptor dump for every device on the bus, including negotiated link speeds. '
      "\"Couldn't open device\" lines are expected -- the export does not run as root."),
+    ('apt_packages.txt', 'apt list --installed', 120,
+     'Every Debian package installed on the robot, with its version. The report pulls out the '
+     'robot-relevant ones (ROS 2, Hello Robot, camera and lidar drivers); the file holds all of '
+     'them. Pair it with the pip versions in the system check when a problem looks like a '
+     'version mismatch rather than hardware.'),
     ('repos_listing.txt', 'ls -la ~/repos', 30,
      "The user's ~/repos checkouts. \"No such file or directory\" simply means this install "
      'has no ~/repos directory.'),
@@ -2580,6 +2585,28 @@ def _parse_lsusb(text):
     return rows
 
 
+# Package name prefixes worth surfacing out of the full apt list
+APT_RELEVANT = ('ros-', 'hello', 'stretch', 'depthai', 'librealsense', 'realsense', 'hesai', 'luxonis')
+
+_RE_APT = re.compile(r'^(?P<name>[^/\s]+)/(?P<source>\S+)\s+(?P<version>\S+)\s+(?P<arch>\S+)'
+                     r'(?:\s+\[(?P<state>[^\]]*)\])?\s*$')
+
+
+def _parse_apt_packages(text):
+    """Installed Debian packages: the robot-relevant rows, and the total count."""
+    rows, total = [], 0
+    for line in text.splitlines():
+        m = _RE_APT.match(line.strip())
+        if not m:
+            continue
+        total += 1
+        name = m.group('name')
+        if name.startswith(APT_RELEVANT):
+            rows.append({'name': name, 'version': m.group('version'), 'arch': m.group('arch')})
+    rows.sort(key=lambda r: r['name'])
+    return rows, total
+
+
 def _parse_pip_rows(text):
     """Package rows from the pip section of `stretch_system_check --check_updates`."""
     rows = []
@@ -2644,12 +2671,29 @@ REPORT_CAPTURES = [
     ('stretch_system_check_updates.txt', 'Updates & firmware',    'updates'),
     ('dev_hello_devices.txt',            'Robot boards (/dev)',   'devices'),
     ('lsusb_verbose.txt',                'USB bus',               'usb'),
+    ('apt_packages.txt',                 'System packages (apt)', 'apt'),
     ('stretch_body_server_status.txt',   'Robot server',          'service'),
     ('fleet_dir_listing.txt',            'Fleet directory',       'listing'),
     ('repos_listing.txt',                '~/repos',               'listing'),
 ]
 
 _SEVERITY_ORDER = {'critical': 0, 'warning': 1, 'info': 2, 'good': 3}
+
+
+RAW_EMBED_MAX_LINES = 1200
+
+
+def _clip_raw(raw):
+    """Clips a capture before it is embedded in the page. The untouched file always
+    ships in commands/, so the report points there rather than carrying megabytes."""
+    lines = raw.splitlines()
+    if len(lines) <= RAW_EMBED_MAX_LINES:
+        return raw
+    keep = RAW_EMBED_MAX_LINES // 2
+    omitted = len(lines) - 2 * keep
+    return '\n'.join(lines[:keep]
+                     + ['', f'[... {omitted} lines omitted — see the full file in commands/ ...]', '']
+                     + lines[-keep:])
 
 
 def _capture_command(raw):
@@ -2772,7 +2816,7 @@ def _build_report(contents, captures):
             'kind': kind,
             'command': _capture_command(raw),
             'sections': [],
-            'raw': raw,
+            'raw': _clip_raw(raw),
         }
         if kind in ('check', 'updates'):
             capture['sections'] = _parse_check_output(raw)
@@ -2784,6 +2828,8 @@ def _build_report(contents, captures):
             capture['devices'] = _parse_dev_links(raw)
         elif kind == 'usb':
             capture['usb'] = _parse_lsusb(raw)
+        elif kind == 'apt':
+            capture['apt'], capture['apt_total'] = _parse_apt_packages(raw)
         elif kind == 'service':
             capture['service_state'] = _parse_service_state(raw)
         # A command that failed to run leaves no PASS/FAIL rows, so its own error
@@ -3245,6 +3291,16 @@ function renderCapture(capture) {
     card.appendChild(el('p', 'sub', capture.usb.length + ' devices on the bus (root hubs excluded)'));
     card.appendChild(table(['Bus', 'Device', 'ID', 'Name'], capture.usb,
       (row) => [row.bus, row.device, row.id, row.name]));
+  }
+  if (capture.apt && capture.apt.length) {
+    card.appendChild(el('p', 'sub', capture.apt_total + ' packages installed · ' +
+      capture.apt.length + ' robot-relevant (ROS 2, Hello Robot, camera and lidar drivers)'));
+    // Hundreds of rows would bury the rest of the report, so they fold away
+    const fold = el('details');
+    fold.appendChild(el('summary', null, 'Show ' + capture.apt.length + ' robot-relevant packages'));
+    fold.appendChild(table(['Package', 'Version', 'Arch'], capture.apt,
+      (row) => [row.name, row.version, row.arch]));
+    card.appendChild(fold);
   }
   if (capture.packages && capture.packages.length) {
     card.appendChild(el('div', 'section-title', 'Python packages'));
