@@ -11,6 +11,7 @@ import logging.config
 from colorama import Fore, Style
 import glob
 import tarfile
+import zipfile
 from datetime import datetime
 import fcntl
 import json
@@ -30,6 +31,7 @@ from stretch4_body.utils.file_access_utils import is_user_in_group
 
 LOG_DIR = hu.get_stretch_directory('log/stretch_body_logger')
 LOG_FILE = os.path.join(LOG_DIR,"stretch_body_server.log")
+NUM_EXPORTED_SESSION_LOGS = 5
 logger = logging.getLogger('stretch_body_server')
 
 def print_status(robot_client):
@@ -96,6 +98,93 @@ def archive_session_logs():
             except OSError:
                 pass
         print("Log aggregation complete!")
+
+def get_recent_session_logs(n:int=NUM_EXPORTED_SESSION_LOGS) -> list:
+    """Returns the paths of the n most recent session logs, newest first.
+
+    A session's logs are archived to a tarball when the server shuts down, so the
+    log segments of a currently running session are included as their own session.
+    """
+    active_logs = [f for f in glob.glob(os.path.join(LOG_DIR, 'stretch_body_server.log*'))
+                   if os.path.getsize(f) > 0]
+
+    archive_dir = os.path.join(LOG_DIR, 'archive')
+    archives = glob.glob(os.path.join(archive_dir, 'stretch_body_server_logs_*.tar.gz'))
+    archives.sort(key=os.path.getmtime, reverse=True)
+
+    # The active session counts as one of the n sessions
+    num_archives = n - 1 if active_logs else n
+    return sorted(active_logs) + archives[:max(num_archives, 0)]
+
+
+def _session_logs_readme(logs:list) -> str:
+    """Builds the README shipped inside the session log zip."""
+    log_lines = '\n'.join(f'    {os.path.basename(f)}' for f in logs)
+    return f"""# Stretch Body Server Session Logs
+
+Exported : {datetime.now().isoformat()} by {os.environ.get('USER', 'N/A')}
+Source   : {LOG_DIR}
+Created with: stretch_body_server --export
+
+The {len(logs)} most recent `stretch_body_server` sessions:
+
+{log_lines}
+
+
+## How to read them
+
+`stretch_body_server.log` (and any `.log.N` rotations) is the session that was
+running when this zip was exported. It is plain text -- open it directly.
+
+Each `stretch_body_server_logs_<YYYYMMDDhhmmss>.tar.gz` is one finished session,
+archived when that server shut down. The timestamp is local time, so the highest
+one is the most recent session. Extract a session with:
+
+    tar -xzf stretch_body_server_logs_<timestamp>.tar.gz
+
+or read it without extracting:
+
+    tar -xzOf stretch_body_server_logs_<timestamp>.tar.gz stretch_body_server.log | less
+
+Each line is formatted as:
+
+    [timestamp] [logger name] [LEVEL]: message
+
+On the robot itself, `stretch_body_server --print` tails the log of the running
+session, and `stretch_body_server --status` shows the server's control loop rate
+and daemon state.
+
+For a full diagnostics bundle -- these logs plus system checks, the robot's USB
+device listing and the `stretch_status` telemetry history -- run:
+
+    stretch_system_check --export [DIR]
+"""
+
+
+def export_session_logs(export_dir:str='.', n:int=NUM_EXPORTED_SESSION_LOGS):
+    """Zips the n most recent session logs into export_dir. Returns the zip path, or None on failure."""
+    export_dir = os.path.expanduser(export_dir)
+    if not os.path.isdir(export_dir):
+        print(f"Error: Export directory {export_dir} does not exist.")
+        return None
+
+    logs = get_recent_session_logs(n)
+    if not logs:
+        print(f"No log files found in {LOG_DIR}. Start stretch_body_server to initialize logging.")
+        return None
+
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    zip_path = os.path.join(export_dir, f'stretch_body_server_logs_{timestamp}.zip')
+    print(f"Exporting {len(logs)} session logs to {zip_path}...")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('README.md', _session_logs_readme(logs))
+        for f in logs:
+            zf.write(f, os.path.basename(f))
+
+    size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+    print(f"Export complete: {zip_path} ({size_mb:.2f} MB)")
+    return zip_path
+
 
 def print_last_log_from_archive():    
     archive_dir = os.path.join(LOG_DIR, 'archive')
@@ -274,6 +363,9 @@ def _parse_args():
     parser.add_argument("--print", help="Print the server log to console", action="store_true")
     parser.add_argument("--log_level", help="Set server logging level (DEBUG, INFO, WARN, ERROR, CRITICAL)",default="INFO")
 
+    group.add_argument("--export", help=f"Export the last {NUM_EXPORTED_SESSION_LOGS} session logs to a zip file in the given directory (defaults to the current directory)",
+                       nargs='?', const='.', metavar='DIR', default=None)
+
     group.add_argument("--kill", help="Kill a running server",action="store_true")
     group.add_argument("--restart", help="Restart a running server",action="store_true")
     group.add_argument("--cleanup", help="Force kill zombie server processes",action="store_true")
@@ -314,6 +406,10 @@ def main():
                 print(f"stretch4_body version: {stretch4_body.__version__}")
         else:
             print(f"stretch4_body version: {stretch4_body.__version__}")
+        return
+
+    if args.export is not None:
+        export_session_logs(args.export)
         return
 
     hu.print_stretch_re_use()
