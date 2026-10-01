@@ -2077,6 +2077,15 @@ this robot, and says why -- that absence is itself a diagnostic.
 
 ## Contents
 
+### report.html  <- start here
+An offline summary of everything below: an overall verdict, the failures and
+warnings grouped into recommended actions with the commands that address them,
+and every captured command rendered with its measurements charted against the
+ranges they are held to. Open it in any browser -- it needs no network access
+and loads nothing external. Every number in it was parsed from the raw captures
+in commands/, which it also embeds verbatim, so the report never says anything
+the raw output does not.
+
 ### README.md
 This file.
 
@@ -2151,6 +2160,7 @@ def export_diagnostics(export_dir):
     fleet_dir = _fleet_dir()
     contents = {'fleet_dir': fleet_dir, 'status_zips': [], 'session_logs': [],
                 'commands': [], 'params': [], 'udev': False, 'web_teleop': []}
+    captures = {}   # file name in commands/ -> captured text, for the HTML report
     try:
         with open(os.path.join(staging, 'bundle_info.txt'), 'w') as f:
             f.write(_bundle_info())
@@ -2165,17 +2175,20 @@ def export_diagnostics(export_dir):
         # 2. The system check itself, run as a subprocess so this export cannot recurse
         command_dir = os.path.join(staging, 'commands')
         os.makedirs(command_dir, exist_ok=True)
-        with open(os.path.join(command_dir, 'stretch_system_check.txt'), 'w') as f:
-            f.write(_run_tool('stretch_system_check.py', passthrough, 'stretch_system_check'))
-        with open(os.path.join(command_dir, 'stretch_system_check_sensors.txt'), 'w') as f:
-            f.write(_run_tool('stretch_system_check.py', ['--sensors'] + passthrough,
-                              'stretch_system_check --sensors'))
+        captures['stretch_system_check.txt'] = _run_tool(
+            'stretch_system_check.py', passthrough, 'stretch_system_check')
+        captures['stretch_system_check_sensors.txt'] = _run_tool(
+            'stretch_system_check.py', ['--sensors'] + passthrough, 'stretch_system_check --sensors')
+        for name in ('stretch_system_check.txt', 'stretch_system_check_sensors.txt'):
+            with open(os.path.join(command_dir, name), 'w') as f:
+                f.write(captures[name])
 
         # 3. Shell commands describing the robot's devices, environment and server state
         for name, cmd, timeout, _description in EXPORT_COMMANDS:
+            captures[name] = _run_shell(cmd, cmd, timeout=timeout)
             try:
                 with open(os.path.join(command_dir, name), 'w') as f:
-                    f.write(_run_shell(cmd, cmd, timeout=timeout))
+                    f.write(captures[name])
                 contents['commands'].append(name)
             except OSError as e:
                 print_warn(f'Could not save output of `{cmd}`: {e}')
@@ -2240,13 +2253,21 @@ def export_diagnostics(export_dir):
         #    firmware, which would otherwise disturb every capture above.
         print_warn('stretch_system_check --check_updates stops the robot server to query '
                    'firmware; it restarts in the background afterwards')
+        captures['stretch_system_check_updates.txt'] = _run_tool(
+            'stretch_system_check.py', ['--check_updates'] + passthrough,
+            'stretch_system_check --check_updates')
         with open(os.path.join(command_dir, 'stretch_system_check_updates.txt'), 'w') as f:
-            f.write(_run_tool('stretch_system_check.py', ['--check_updates'] + passthrough,
-                              'stretch_system_check --check_updates'))
+            f.write(captures['stretch_system_check_updates.txt'])
 
-        # 9. A README describing the files the bundle actually ended up with
+        # 9. The README, and the HTML report built from everything captured above
         with open(os.path.join(staging, 'README.md'), 'w') as f:
             f.write(_bundle_readme(contents))
+        click.secho('  Building report.html...', fg='yellow')
+        try:
+            with open(os.path.join(staging, 'report.html'), 'w') as f:
+                f.write(_report_html(_build_report(contents, captures)))
+        except Exception as e:
+            print_warn(f'Could not build report.html: {e}')
 
         # 10. Zip the staging directory
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
@@ -2392,6 +2413,983 @@ def main():
     if r is not None:
         r.stop()
     sys.exit(0 if all_pass else 1)
+
+
+# ==============================================================================
+# HTML report
+#
+# The export writes a self-contained report.html next to the raw captures. The
+# captured console output is parsed into structured results here, embedded as
+# JSON, and rendered by the page's own JavaScript, so the report opens offline
+# with no network access and no bundled libraries.
+# ==============================================================================
+
+_RE_SECTION   = re.compile(r'^-{4}\s(?P<title>.+?)\s-{4}$')
+_RE_RESULT    = re.compile(r'^(?P<indent>\s*)\[(?P<status>PASS|FAIL|WARN|SKIP)\]\s(?P<message>.*)$')
+_RE_RANGE     = re.compile(r'^(?P<label>.+?)\s=\s(?P<value>-?\d+(?:\.\d+)?)\s'
+                           r'\(range\s\[(?P<min>-?\d+(?:\.\d+)?),\s*(?P<max>-?\d+(?:\.\d+)?)\]\)$')
+_RE_TARGET    = re.compile(r'^(?P<label>.+?):\s(?P<value>-?\d+(?:\.\d+)?)\s+\(target\s(?P<target>-?\d+(?:\.\d+)?)\)$')
+_RE_DEV_LINK  = re.compile(r'^l\S*\s.*\s/dev/(?P<name>\S+)\s->\s(?P<target>\S+)$')
+_RE_LSUSB     = re.compile(r'^Bus\s(?P<bus>\d+)\sDevice\s(?P<device>\d+):\sID\s(?P<id>\S+)\s*(?P<name>.*)$')
+_RE_PIP       = re.compile(r'^\s{2,}(?P<name>[A-Za-z0-9_.-]+)\s+:\s+(?P<current>\S+)'
+                           r'(?:\s+→\s+(?P<latest>\S+))?\s*(?P<note>\(.*\))?\s*$')
+_RE_SPINNER   = re.compile(r'^[\s' + ''.join(SPINNER_FRAMES) + r']*$')
+_RE_SPINNER_PREFIX = re.compile(r'^(\s*)[' + ''.join(SPINNER_FRAMES) + r']\s*')
+_RE_SERVICE   = re.compile(r'^\s*Active:\s*(?P<state>\S+)')
+
+# A FAIL/WARN message matching one of these gets a concrete remedy in the
+# Recommended actions list: (pattern, title, what to do, commands to run)
+_ACTION_HINTS = [
+    (re.compile(r'in use by the following process', re.I),
+     'A camera is held by another process',
+     'Another program has the Luxonis device open. Close the process named in the capture '
+     '(or restart the robot), then re-run the sensor check.',
+     ['stretch_system_check --sensors']),
+    (re.compile(r'/dev/hello-\S+'),
+     'A board did not enumerate on USB',
+     'The udev symlink for this board is missing, so nothing can talk to it. Check the cable, '
+     'then power cycle the robot. If it stays missing, compare udev_rules.d/ against the '
+     'device listing.',
+     ['ls -la /dev/hello*', 'stretch_system_check --check_updates']),
+    (re.compile(r'could not connect to robot server|server offline', re.I),
+     'The robot server was not running',
+     'Live hardware checks were skipped because nothing could connect to the server.',
+     ['stretch_body_server --restart', 'stretch_system_check']),
+    (re.compile(r'calibration', re.I),
+     'A calibration is missing or stale',
+     'Re-run the calibration for the joint named in the capture before trusting its motion.',
+     []),
+    (re.compile(r'ptp', re.I),
+     'Lidar time sync is not locked',
+     'The lidars are free-running rather than PTP-locked, so their timestamps drift against '
+     'the rest of the robot. Check the PTP service on the robot if point clouds look skewed.',
+     []),
+]
+
+
+def _is_noise(line):
+    """True for spinner frames and the banner lines that every tool prints."""
+    stripped = line.strip()
+    if not stripped or _RE_SPINNER.match(line):
+        return True
+    return stripped.startswith(('For use with S T R E T C H', '---------------------', '========'))
+
+
+def _measurement(message):
+    """Pulls a plottable measurement out of a result message, if there is one."""
+    m = _RE_RANGE.match(message)
+    if m:
+        return {'kind': 'range', 'label': m.group('label'), 'value': float(m.group('value')),
+                'min': float(m.group('min')), 'max': float(m.group('max'))}
+    m = _RE_TARGET.match(message)
+    if m:
+        return {'kind': 'target', 'label': m.group('label'), 'value': float(m.group('value')),
+                'target': float(m.group('target'))}
+    return None
+
+
+def _parse_check_output(text):
+    """Parses captured stretch_system_check console output into sections of results.
+
+    Indentation carries the grouping (camera -> FPS -> per-stream result), so the
+    last plain line shallower than a result is kept as that result's group label.
+    """
+    sections = []
+    current = {'title': 'Output', 'results': [], 'rollup': False}
+    groups = []  # stack of (indent, label)
+
+    for line in text.splitlines():
+        if _is_noise(line):
+            continue
+        # A spinner frame prefixes the line it animates on; drop it but keep the text
+        line = _RE_SPINNER_PREFIX.sub(r'\1', line)
+
+        header = _RE_SECTION.match(line.strip())
+        if header:
+            if current['results']:
+                sections.append(current)
+            title = header.group('title')
+            # The tool's own Summary block repeats the checks above, so it is kept for
+            # display but marked as a recap: counting it would double every result.
+            current = {'title': title, 'results': [], 'rollup': title.lower() == 'summary'}
+            groups = []
+            continue
+
+        result = _RE_RESULT.match(line)
+        if result:
+            indent = len(result.group('indent'))
+            # <= : a heading often sits at the same indent as the results under it
+            # ('  Left lidar (...)' then '  [PASS] Ping reachable')
+            label = ' › '.join(g[1] for g in groups if g[0] <= indent)
+            message = result.group('message').strip()
+            current['results'].append({
+                'status': result.group('status'),
+                'message': message,
+                'group': label,
+                'measurement': _measurement(message),
+            })
+            continue
+
+        # A plain line is a group header for everything indented under it
+        stripped = line.strip().rstrip(':')
+        # '...' marks a transient progress line: it heads nothing, and must not
+        # displace the real heading it animates under
+        if stripped.endswith('...'):
+            continue
+        indent = len(line) - len(line.lstrip())
+        while groups and groups[-1][0] >= indent:
+            groups.pop()
+        if stripped and len(stripped) < 80:
+            groups.append((indent, stripped))
+
+    if current['results']:
+        sections.append(current)
+    return sections
+
+
+def _count_statuses(sections):
+    """Totals per status. A recap section contributes only its SKIPs — the tool lists
+    skipped checks nowhere else, while its other rows repeat the sections above."""
+    counts = {'PASS': 0, 'FAIL': 0, 'WARN': 0, 'SKIP': 0}
+    for section in sections:
+        for result in section['results']:
+            if section.get('rollup') and result['status'] != 'SKIP':
+                continue
+            counts[result['status']] = counts.get(result['status'], 0) + 1
+    return counts
+
+
+def _parse_dev_links(text):
+    """Rows of (device, target) from `ls -la /dev/hello*`."""
+    rows = []
+    for line in text.splitlines():
+        m = _RE_DEV_LINK.match(line.strip())
+        if m:
+            rows.append({'name': m.group('name'), 'target': m.group('target')})
+    return rows
+
+
+def _parse_lsusb(text):
+    """Rows of USB devices from `lsusb -v`, skipping root hubs."""
+    rows = []
+    for line in text.splitlines():
+        m = _RE_LSUSB.match(line.strip())
+        if m and 'root hub' not in m.group('name'):
+            rows.append({'bus': m.group('bus'), 'device': m.group('device'),
+                         'id': m.group('id'), 'name': m.group('name').strip() or 'Unknown device'})
+    return rows
+
+
+def _parse_pip_rows(text):
+    """Package rows from the pip section of `stretch_system_check --check_updates`."""
+    rows = []
+    in_section = False
+    for line in text.splitlines():
+        header = _RE_SECTION.match(line.strip())
+        if header:
+            in_section = header.group('title').startswith('Python / pip')
+            continue
+        if not in_section:
+            continue
+        m = _RE_PIP.match(line)
+        if m and m.group('name').startswith('hello-robot-'):
+            note = (m.group('note') or '').strip('()')
+            rows.append({'name': m.group('name'), 'current': m.group('current'),
+                         'latest': m.group('latest'), 'note': note})
+    return rows
+
+
+def _parse_firmware_table(text):
+    """Rows of the recommended-firmware table printed by `--check_updates`."""
+    rows = []
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.split('|')]
+        if len(parts) != 4 or parts[0] in ('DEVICE', '') or parts[0].startswith('-'):
+            continue
+        device, installed, recommended, action = parts
+        rows.append({'device': device, 'installed': installed, 'recommended': recommended,
+                     'action': action,
+                     'status': 'PASS' if action.lower().startswith('at most recent') else 'WARN'})
+    return rows
+
+
+def _parse_commands_to_run(text):
+    """The copy-paste commands from the 'Commands To Run' section of --check_updates."""
+    prefixes = ('python3', 'pip', 'REx_', 'git', 'cd ', 'sudo', 'stretch_', 'colcon')
+    commands, in_section = [], False
+    for line in text.splitlines():
+        header = _RE_SECTION.match(line.strip())
+        if header:
+            in_section = header.group('title') == 'Commands To Run'
+            continue
+        if in_section and line.strip().startswith(prefixes):
+            commands.append(line.strip())
+    return commands
+
+
+def _parse_service_state(text):
+    """The systemd Active: state from `stretch_body_server --status`, if present."""
+    for line in text.splitlines():
+        m = _RE_SERVICE.match(line)
+        if m:
+            return m.group('state')
+    return None
+
+
+# The captures the report renders, in the order they appear in the page:
+#   (file name in commands/, card title, how to parse it)
+REPORT_CAPTURES = [
+    ('stretch_system_check.txt',         'System check',          'check'),
+    ('stretch_system_check_sensors.txt', 'Sensors',               'check'),
+    ('stretch_system_check_updates.txt', 'Updates & firmware',    'updates'),
+    ('dev_hello_devices.txt',            'Robot boards (/dev)',   'devices'),
+    ('lsusb_verbose.txt',                'USB bus',               'usb'),
+    ('stretch_body_server_status.txt',   'Robot server',          'service'),
+    ('fleet_dir_listing.txt',            'Fleet directory',       'listing'),
+    ('repos_listing.txt',                '~/repos',               'listing'),
+]
+
+_SEVERITY_ORDER = {'critical': 0, 'warning': 1, 'info': 2, 'good': 3}
+
+
+def _capture_command(raw):
+    """The '$ cmd' line that every capture starts with."""
+    first = raw.splitlines()[0] if raw else ''
+    return first[2:].strip() if first.startswith('$ ') else ''
+
+
+def _match_hint(messages):
+    for pattern, title, detail, commands in _ACTION_HINTS:
+        for message in messages:
+            if pattern.search(message):
+                return {'title': title, 'detail': detail, 'commands': list(commands)}
+    return None
+
+
+def _build_actions(captures):
+    """Derives the Recommended actions list from the parsed captures."""
+    actions = []
+
+    for capture in captures:
+        for section in capture['sections']:
+            if section.get('rollup'):
+                continue  # its rows repeat the sections above
+            for status, severity in (('FAIL', 'critical'), ('WARN', 'warning')):
+                hits = [r for r in section['results'] if r['status'] == status]
+                if not hits:
+                    continue
+                # Without the group, two lidars' identical warnings read as duplicates
+                messages = [f'{r["group"]} — {r["message"]}' if r['group'] else r['message']
+                            for r in hits]
+                hint = _match_hint(messages)
+                count = len(hits)
+                summary = (f'{count} check{"" if count == 1 else "s"} failed' if status == 'FAIL'
+                           else f'{count} warning{"" if count == 1 else "s"}')
+                actions.append({
+                    'severity': severity,
+                    'title': hint['title'] if hint else f'{section["title"]}: {summary}',
+                    'detail': hint['detail'] if hint else (
+                        ('These checks failed. ' if status == 'FAIL' else
+                         'These checks passed with a warning. ') +
+                        f'The full output is in commands/{capture["file"]}.'),
+                    'where': f'{capture["title"]} › {section["title"]}',
+                    'items': messages[:8],
+                    'commands': (hint['commands'] if hint and hint['commands']
+                                 else [capture['command']]),
+                })
+
+    # Pending software and firmware updates
+    for capture in captures:
+        if capture['kind'] == 'updates' and capture.get('update_commands'):
+            outdated = [p['name'] for p in capture.get('packages', []) if p.get('latest')]
+            actions.append({
+                'severity': 'warning',
+                'title': 'Software or firmware updates are available',
+                'detail': 'The update check found newer versions. Run these in the order shown '
+                          '— a newer stretch4_body may recommend newer firmware.',
+                'where': capture['title'],
+                'items': [f'{name} is out of date' for name in outdated[:8]],
+                'commands': capture['update_commands'],
+            })
+
+    # Commands that did not complete, so the report says nothing about what they cover
+    failed_captures = [c for c in captures if c.get('errors')]
+    if failed_captures:
+        actions.append({
+            'severity': 'warning',
+            'title': f'{len(failed_captures)} command'
+                     f'{"" if len(failed_captures) == 1 else "s"} did not complete',
+            'detail': 'These commands errored or timed out during the export, so this report '
+                      'covers nothing they would have reported. Re-run them on the robot.',
+            'where': ', '.join(c['title'] for c in failed_captures),
+            'items': [f'{c["title"]}: {err}' for c in failed_captures for err in c['errors']][:8],
+            'commands': [c['command'] for c in failed_captures if c['command']],
+        })
+
+    # Checks that never ran. The firmware check is the exception: the system check
+    # skips it, but the bundle's --check_updates capture queries firmware itself, so
+    # that table is already here and there is nothing for the reader to go run.
+    covered = any(c.get('firmware') for c in captures)
+    skipped = [(c, r['message']) for c in captures for s in c['sections']
+               for r in s['results'] if r['status'] == 'SKIP'
+               and not (covered and 'firmware' in r['message'].lower())]
+    if skipped:
+        actions.append({
+            'severity': 'info',
+            'title': f'{len(skipped)} check{"" if len(skipped) == 1 else "s"} did not run',
+            'detail': 'These were skipped at export time, so this report says nothing about them '
+                      'either way.' + (' The firmware check was skipped too, but its table is in '
+                                       'the update check above.' if covered else ''),
+            'where': skipped[0][0]['title'],
+            'items': [message for _, message in skipped][:8],
+            'commands': ['stretch_system_check'],
+        })
+
+    actions.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 9))
+
+    if not any(a['severity'] in ('critical', 'warning') for a in actions):
+        actions.insert(0, {
+            'severity': 'good',
+            'title': 'No action needed',
+            'detail': 'Every check that ran passed. Nothing in this bundle points at a fault.',
+            'where': '', 'items': [], 'commands': [],
+        })
+    return actions
+
+
+def _build_report(contents, captures):
+    """Turns the raw captures into the JSON the report page renders."""
+    from datetime import datetime
+
+    parsed = []
+    for file_name, title, kind in REPORT_CAPTURES:
+        raw = captures.get(file_name)
+        if raw is None:
+            continue
+        capture = {
+            'file': file_name,
+            'title': title,
+            'kind': kind,
+            'command': _capture_command(raw),
+            'sections': [],
+            'raw': raw,
+        }
+        if kind in ('check', 'updates'):
+            capture['sections'] = _parse_check_output(raw)
+        if kind == 'updates':
+            capture['packages'] = _parse_pip_rows(raw)
+            capture['firmware'] = _parse_firmware_table(raw)
+            capture['update_commands'] = _parse_commands_to_run(raw)
+        elif kind == 'devices':
+            capture['devices'] = _parse_dev_links(raw)
+        elif kind == 'usb':
+            capture['usb'] = _parse_lsusb(raw)
+        elif kind == 'service':
+            capture['service_state'] = _parse_service_state(raw)
+        # A command that failed to run leaves no PASS/FAIL rows, so its own error
+        # lines are what tell the reader this part of the report is blind
+        capture['errors'] = [line.strip() for line in raw.splitlines()
+                             if line.startswith('[!]')
+                             and ('failed:' in line or 'timed out' in line)]
+        capture['counts'] = _count_statuses(capture['sections'])
+        capture['measurements'] = [
+            dict(r['measurement'], status=r['status'], group=r['group'])
+            for s in capture['sections'] for r in s['results'] if r['measurement']
+        ]
+        parsed.append(capture)
+
+    totals = {'PASS': 0, 'FAIL': 0, 'WARN': 0, 'SKIP': 0}
+    for capture in parsed:
+        for status, count in capture['counts'].items():
+            totals[status] += count
+
+    blind = any(capture['errors'] for capture in parsed)
+    verdict = ('critical' if totals['FAIL']
+               else 'warning' if (totals['WARN'] or blind)
+               else 'good')
+
+    return {
+        'robot': {
+            'model': _model_display,
+            'serial': stretch_serial_no,
+            'batch': stretch_batch,
+            'tool': TOOL_DISPLAY.get(stretch_tool, stretch_tool),
+            'user': os.environ.get('USER', 'N/A'),
+            'fleet_dir': contents.get('fleet_dir') or 'N/A',
+        },
+        'exported': datetime.now().isoformat(timespec='seconds'),
+        'totals': totals,
+        'verdict': verdict,
+        'captures': parsed,
+        'actions': _build_actions(parsed),
+        'bundle': {
+            'status_zips': contents.get('status_zips', []),
+            'session_logs': contents.get('session_logs', []),
+            'params': contents.get('params', []),
+            'web_teleop': contents.get('web_teleop', []),
+            'udev': bool(contents.get('udev')),
+        },
+    }
+
+
+# Status palette, chart chrome and ink. Status hues are fixed in both modes and
+# always ship with a glyph + label, so color never carries the meaning alone.
+REPORT_STYLE = """
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;  --surface: #fcfcfb;
+  --ink: #0b0b0b;   --ink-2: #52514e;  --muted: #898781;
+  --grid: #e1e0d9;  --axis: #c3c2b7;   --border: rgba(11,11,11,0.10);
+  --good-rgb: 12,163,12;    --warning-rgb: 250,178,25;
+  --serious-rgb: 236,131,90; --critical-rgb: 208,59,59;
+  --muted-rgb: 137,135,129;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;  --surface: #1a1a19;
+    --ink: #ffffff;   --ink-2: #c3c2b7;  --muted: #898781;
+    --grid: #2c2c2a;  --axis: #383835;   --border: rgba(255,255,255,0.10);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;  --surface: #1a1a19;
+  --ink: #ffffff;   --ink-2: #c3c2b7;  --muted: #898781;
+  --grid: #2c2c2a;  --axis: #383835;   --border: rgba(255,255,255,0.10);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 17px; margin: 40px 0 12px; letter-spacing: -0.01em; }
+h3 { font-size: 15px; margin: 0; }
+a { color: inherit; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.topbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+.sub { color: var(--ink-2); font-size: 13px; margin: 6px 0 0; }
+.sub b { font-weight: 600; color: var(--ink); }
+button.ghost {
+  font: inherit; font-size: 13px; color: var(--ink-2); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; cursor: pointer;
+}
+button.ghost:hover { color: var(--ink); }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin-bottom: 12px;
+}
+.card > header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.cmd { font-size: 12.5px; color: var(--ink-2); margin: 4px 0 0; overflow-wrap: anywhere; }
+.cmd::before { content: "$ "; color: var(--muted); }
+
+/* Hero figure + stat tiles */
+.hero { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
+.hero-figure { font-size: 52px; line-height: 1; font-weight: 650; letter-spacing: -0.03em; }
+.hero-note { color: var(--ink-2); font-size: 14px; max-width: 46ch; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; margin-top: 16px; }
+.tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.tile .label { font-size: 12px; color: var(--ink-2); }
+.tile .value { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+
+/* Part-to-whole bar */
+.stack { display: flex; gap: 2px; height: 12px; margin: 14px 0 10px; }
+.stack span { border-radius: 2px; min-width: 3px; }
+.stack.labelled { height: 24px; }
+.stack.labelled span {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.stack span:first-child { border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.stack span:last-child { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+.legend .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+.legend b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Status chips */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+}
+.chip .glyph { font-size: 10px; }
+
+/* Meters */
+.meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 24px; margin-top: 14px; }
+.meter .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.meter .name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meter .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter .track {
+  position: relative; height: 10px; border-radius: 4px; background: var(--grid); margin: 6px 0 3px;
+}
+.meter .band { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.meter .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; }
+.meter .mark { position: absolute; top: -3px; bottom: -3px; width: 3px; border-radius: 2px; }
+.meter .tick { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px; background: var(--axis); }
+.meter .scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Results */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 16px 0 4px; font-size: 13px; }
+.filters .spacer { flex: 1; }
+.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 0 6px; }
+.rows { display: grid; gap: 3px; }
+.row { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; padding: 2px 0; }
+.row .group { color: var(--muted); font-size: 12px; }
+.row .msg { overflow-wrap: anywhere; }
+.row.hidden { display: none; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 12px; }
+th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--grid); }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+td.mono { font-variant-numeric: tabular-nums; }
+
+/* Actions */
+.action { border-left: 3px solid var(--grid); padding: 2px 0 2px 14px; margin-bottom: 18px; }
+.action h3 { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.action p { margin: 4px 0 0; color: var(--ink-2); font-size: 13.5px; max-width: 76ch; }
+.action ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+.action .where { color: var(--muted); font-size: 12px; }
+pre.cmds {
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; font-size: 12.5px; overflow-x: auto; margin: 10px 0 0;
+}
+details { margin-top: 14px; }
+summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+details pre {
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; font-size: 12px; max-height: 460px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; }
+@media print { .noprint { display: none; } details { display: none; } }
+"""
+
+REPORT_SCRIPT = """
+const DATA = /*__REPORT_DATA__*/ null;
+
+const STATUS = {
+  PASS: { label: 'Pass',    glyph: '\\u25CF', rgb: 'var(--good-rgb)' },
+  FAIL: { label: 'Fail',    glyph: '\\u2715', rgb: 'var(--critical-rgb)' },
+  WARN: { label: 'Warning', glyph: '\\u25B2', rgb: 'var(--warning-rgb)' },
+  SKIP: { label: 'Skipped', glyph: '\\u2013', rgb: 'var(--muted-rgb)' },
+};
+const VERDICT = {
+  good:     { rgb: 'var(--good-rgb)',     word: 'Healthy' },
+  warning:  { rgb: 'var(--warning-rgb)',  word: 'Needs attention' },
+  critical: { rgb: 'var(--critical-rgb)', word: 'Faults found' },
+};
+const ORDER = ['PASS', 'WARN', 'FAIL', 'SKIP'];
+const solid = (rgb) => 'rgb(' + rgb + ')';
+const tint  = (rgb, a) => 'rgba(' + rgb + ',' + a + ')';
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function statusChip(status) {
+  const meta = STATUS[status] || STATUS.SKIP;
+  const chip = el('span', 'chip');
+  chip.style.color = solid(meta.rgb);
+  chip.style.background = tint(meta.rgb, 0.12);
+  chip.appendChild(el('span', 'glyph', meta.glyph));
+  chip.appendChild(el('span', null, meta.label));
+  return chip;
+}
+
+/* Part-to-whole: one stacked bar + a legend that always names every segment. */
+const INK_ON_FILL = { WARN: true };   // light fills take ink, the rest take white
+
+function stackedBar(counts, labelled) {
+  const total = ORDER.reduce((sum, key) => sum + (counts[key] || 0), 0);
+  const frag = document.createDocumentFragment();
+  if (!total) return frag;
+
+  const bar = el('div', labelled ? 'stack labelled' : 'stack');
+  ORDER.forEach((key) => {
+    const value = counts[key] || 0;
+    if (!value) return;
+    const seg = el('span');
+    seg.style.flex = value;
+    seg.style.background = solid(STATUS[key].rgb);
+    seg.title = value + ' ' + STATUS[key].label.toLowerCase() + ' of ' + total;
+    if (labelled && value / total > 0.07) {
+      seg.textContent = value;
+      seg.style.color = INK_ON_FILL[key] ? '#0b0b0b' : '#ffffff';
+    }
+    bar.appendChild(seg);
+  });
+  frag.appendChild(bar);
+
+  const legend = el('div', 'legend');
+  ORDER.forEach((key) => {
+    const value = counts[key] || 0;
+    if (!value) return;
+    const item = el('span');
+    const dot = el('span', 'dot');
+    dot.style.background = solid(STATUS[key].rgb);
+    item.appendChild(dot);
+    item.appendChild(el('b', null, String(value)));
+    item.appendChild(document.createTextNode(' ' + STATUS[key].label.toLowerCase()));
+    legend.appendChild(item);
+  });
+  frag.appendChild(legend);
+  return frag;
+}
+
+const fmt = (n) => {
+  if (Number.isInteger(n)) return String(n);
+  const abs = Math.abs(n);
+  const text = abs >= 100 ? n.toFixed(1) : abs >= 10 ? n.toFixed(2) : n.toFixed(3);
+  return text.indexOf('.') < 0 ? text : text.replace(/0+$/, '').replace(/\\.$/, '');
+};
+
+/* Meter: a measured value against the range or target it is held to. */
+function meter(m) {
+  const rgb = STATUS[m.status] ? STATUS[m.status].rgb : STATUS.SKIP.rgb;
+  const wrap = el('div', 'meter');
+
+  const top = el('div', 'top');
+  const name = el('span', 'name', m.group ? m.group + ' › ' + m.label : m.label);
+  name.title = name.textContent;
+  top.appendChild(name);
+  const val = el('span', 'val', fmt(m.value));
+  val.style.color = solid(rgb);
+  top.appendChild(val);
+  wrap.appendChild(top);
+
+  const track = el('div', 'track');
+  const scale = el('div', 'scale');
+
+  if (m.kind === 'range') {
+    const pad = Math.max((m.max - m.min) * 0.12, 1e-9);
+    const lo = Math.min(m.min - pad, m.value), hi = Math.max(m.max + pad, m.value);
+    const pct = (v) => ((v - lo) / (hi - lo)) * 100;
+    const band = el('div', 'band');
+    band.style.left = pct(m.min) + '%';
+    band.style.width = (pct(m.max) - pct(m.min)) + '%';
+    band.style.background = tint(rgb, 0.18);
+    band.title = 'Acceptable range ' + fmt(m.min) + ' to ' + fmt(m.max);
+    track.appendChild(band);
+    const mark = el('div', 'mark');
+    mark.style.left = 'calc(' + pct(m.value) + '% - 1.5px)';
+    mark.style.background = solid(rgb);
+    track.appendChild(mark);
+    wrap.title = m.label + ' = ' + fmt(m.value) + ' (acceptable ' + fmt(m.min) + ' to ' + fmt(m.max) + ')';
+    scale.appendChild(el('span', null, fmt(m.min)));
+    scale.appendChild(el('span', null, fmt(m.max)));
+  } else {
+    const hi = Math.max(m.value, m.target) * 1.2 || 1;
+    const fill = el('div', 'fill');
+    fill.style.width = Math.min((m.value / hi) * 100, 100) + '%';
+    fill.style.background = tint(rgb, 0.55);
+    track.appendChild(fill);
+    const tick = el('div', 'tick');
+    tick.style.left = 'calc(' + (m.target / hi) * 100 + '% - 1px)';
+    tick.title = 'Target ' + fmt(m.target);
+    track.appendChild(tick);
+    wrap.title = m.label + ' = ' + fmt(m.value) + ' (target ' + fmt(m.target) + ')';
+    scale.appendChild(el('span', null, '0'));
+    scale.appendChild(el('span', null, 'target ' + fmt(m.target)));
+  }
+
+  wrap.appendChild(track);
+  wrap.appendChild(scale);
+  return wrap;
+}
+
+function table(columns, rows, cells) {
+  const t = el('table');
+  const head = el('tr');
+  columns.forEach((c) => head.appendChild(el('th', null, c)));
+  t.appendChild(el('thead')).appendChild(head);
+  const body = el('tbody');
+  rows.forEach((row) => {
+    const tr = el('tr');
+    cells(row).forEach((cell) => {
+      const td = el('td', typeof cell === 'string' ? 'mono' : null);
+      if (cell instanceof Node) td.appendChild(cell); else td.textContent = cell;
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
+  t.appendChild(body);
+  return t;
+}
+
+function renderSummary(root) {
+  const verdict = VERDICT[DATA.verdict] || VERDICT.good;
+  const card = el('div', 'card');
+
+  const hero = el('div', 'hero');
+  const figure = el('div', 'hero-figure');
+  const failures = DATA.totals.FAIL || 0;
+  const warnings = DATA.totals.WARN || 0;
+  figure.textContent = failures ? String(failures) : (warnings ? String(warnings) : 'OK');
+  figure.style.color = solid(verdict.rgb);
+  hero.appendChild(figure);
+
+  const text = el('div');
+  const head = el('h3');
+  head.appendChild(statusChip(failures ? 'FAIL' : (warnings ? 'WARN' : 'PASS')));
+  head.appendChild(el('span', null, verdict.word));
+  text.appendChild(head);
+  text.appendChild(el('p', 'hero-note', failures
+    ? failures + ' check' + (failures === 1 ? '' : 's') + ' failed. Start with Recommended actions below.'
+    : warnings
+      ? warnings + ' check' + (warnings === 1 ? '' : 's') + ' raised a warning. Nothing failed outright.'
+      : 'Every check that ran passed.'));
+  hero.appendChild(text);
+  card.appendChild(hero);
+
+  card.appendChild(stackedBar(DATA.totals, true));
+
+  const tiles = el('div', 'tiles');
+  DATA.captures.forEach((capture) => {
+    const total = ORDER.reduce((sum, key) => sum + (capture.counts[key] || 0), 0);
+    if (!total) return;
+    const tile = el('div', 'tile');
+    tile.appendChild(el('div', 'label', capture.title));
+    const value = el('div', 'value');
+    const bad = (capture.counts.FAIL || 0), warn = (capture.counts.WARN || 0);
+    value.textContent = bad ? bad + ' failed' : warn ? warn + ' warned' : total + ' passed';
+    value.style.color = solid(bad ? STATUS.FAIL.rgb : warn ? STATUS.WARN.rgb : STATUS.PASS.rgb);
+    tile.appendChild(value);
+    tile.appendChild(stackedBar(capture.counts));
+    tiles.appendChild(tile);
+  });
+  card.appendChild(tiles);
+  root.appendChild(card);
+}
+
+function renderActions(root) {
+  DATA.actions.forEach((action) => {
+    const meta = STATUS[action.severity === 'critical' ? 'FAIL'
+      : action.severity === 'warning' ? 'WARN'
+      : action.severity === 'good' ? 'PASS' : 'SKIP'];
+    const node = el('div', 'action');
+    node.style.borderLeftColor = solid(meta.rgb);
+
+    const title = el('h3');
+    const dot = el('span', 'chip');
+    dot.style.color = solid(meta.rgb);
+    dot.style.background = tint(meta.rgb, 0.12);
+    dot.appendChild(el('span', 'glyph', meta.glyph));
+    dot.appendChild(el('span', null, action.severity === 'good' ? 'All clear' : meta.label));
+    title.appendChild(dot);
+    title.appendChild(el('span', null, action.title));
+    if (action.where) title.appendChild(el('span', 'where', action.where));
+    node.appendChild(title);
+
+    if (action.detail) node.appendChild(el('p', null, action.detail));
+    if (action.items && action.items.length) {
+      const list = el('ul');
+      action.items.forEach((item) => list.appendChild(el('li', null, item)));
+      node.appendChild(list);
+    }
+    if (action.commands && action.commands.length) {
+      node.appendChild(el('pre', 'cmds', action.commands.join('\\n')));
+    }
+    root.appendChild(node);
+  });
+}
+
+function renderCapture(capture) {
+  const card = el('div', 'card');
+  const header = el('header');
+  const left = el('div');
+  left.appendChild(el('h3', null, capture.title));
+  left.appendChild(el('p', 'cmd', capture.command || capture.file));
+  header.appendChild(left);
+  if (capture.service_state) {
+    header.appendChild(statusChip(capture.service_state === 'active' ? 'PASS' : 'FAIL'));
+  }
+  card.appendChild(header);
+
+  const total = ORDER.reduce((sum, key) => sum + (capture.counts[key] || 0), 0);
+  if (total) card.appendChild(stackedBar(capture.counts));
+
+  if (capture.measurements && capture.measurements.length) {
+    const grid = el('div', 'meters');
+    capture.measurements.forEach((m) => grid.appendChild(meter(m)));
+    card.appendChild(grid);
+  }
+
+  capture.sections.forEach((section) => {
+    if (!section.results.length) return;
+    card.appendChild(el('div', 'section-title',
+      section.rollup ? section.title + ' (recap of the checks above)' : section.title));
+    const rows = el('div', 'rows');
+    section.results.forEach((result) => {
+      const row = el('div', 'row');
+      row.dataset.status = result.status;
+      row.appendChild(statusChip(result.status));
+      const msg = el('span', 'msg', result.message);
+      row.appendChild(msg);
+      if (result.group) row.appendChild(el('span', 'group', result.group));
+      rows.appendChild(row);
+    });
+    card.appendChild(rows);
+  });
+
+  if (capture.devices && capture.devices.length) {
+    card.appendChild(table(['Board', 'Device'], capture.devices,
+      (row) => ['/dev/' + row.name, row.target]));
+  }
+  if (capture.usb && capture.usb.length) {
+    card.appendChild(el('p', 'sub', capture.usb.length + ' devices on the bus (root hubs excluded)'));
+    card.appendChild(table(['Bus', 'Device', 'ID', 'Name'], capture.usb,
+      (row) => [row.bus, row.device, row.id, row.name]));
+  }
+  if (capture.packages && capture.packages.length) {
+    card.appendChild(el('div', 'section-title', 'Python packages'));
+    card.appendChild(table(['Package', 'Installed', 'Latest', ''], capture.packages,
+      (row) => [row.name, row.current, row.latest || '\u2014',
+                statusChip(row.latest ? 'WARN' : 'PASS')]));
+  }
+  if (capture.firmware && capture.firmware.length) {
+    card.appendChild(el('div', 'section-title', 'Firmware'));
+    card.appendChild(table(['Board', 'Installed', 'Recommended', ''], capture.firmware,
+      (row) => [row.device, row.installed, row.recommended, statusChip(row.status)]));
+  }
+
+  const details = el('details');
+  details.appendChild(el('summary', null, 'Raw output — commands/' + capture.file));
+  details.appendChild(el('pre', null, capture.raw));
+  card.appendChild(details);
+  return card;
+}
+
+function renderBundle(root) {
+  const bundle = DATA.bundle;
+  const lines = [];
+  (bundle.status_zips || []).forEach((name) =>
+    lines.push(name + ' — telemetry history; replay with: stretch_status --import ' + name));
+  if ((bundle.session_logs || []).length)
+    lines.push('stretch_body_server_logs/ — ' + bundle.session_logs.length + ' most recent server sessions');
+  if ((bundle.params || []).length)
+    lines.push('robot_params/ — ' + bundle.params.join(', '));
+  if (bundle.udev) lines.push('udev_rules.d/ — copy of /etc/udev/rules.d');
+  if ((bundle.web_teleop || []).length)
+    lines.push('web_teleop_logs/ — ' + bundle.web_teleop.length + ' most recent web teleop sessions');
+  lines.push('README.md — what every file in this bundle is, and how to read it');
+
+  const card = el('div', 'card');
+  card.appendChild(el('h3', null, 'Also in this bundle'));
+  const list = el('ul');
+  lines.forEach((line) => list.appendChild(el('li', null, line)));
+  card.appendChild(list);
+  root.appendChild(card);
+}
+
+function renderFilters(root, captureRoot) {
+  const bar = el('div', 'filters noprint');
+  const label = el('span', 'sub', 'Show');
+  bar.appendChild(label);
+  [['all', 'Everything'], ['attention', 'Failures & warnings']].forEach(([mode, text], i) => {
+    const button = el('button', 'ghost', text);
+    button.addEventListener('click', () => {
+      bar.querySelectorAll('button').forEach((b) => (b.style.borderColor = 'var(--border)'));
+      button.style.borderColor = solid(STATUS.FAIL.rgb);
+      captureRoot.querySelectorAll('.row').forEach((row) => {
+        const hide = mode === 'attention' && (row.dataset.status === 'PASS');
+        row.classList.toggle('hidden', hide);
+      });
+    });
+    if (i === 0) button.style.borderColor = solid(STATUS.FAIL.rgb);
+    bar.appendChild(button);
+  });
+  root.appendChild(bar);
+}
+
+function init() {
+  const robot = DATA.robot;
+  document.getElementById('title').textContent = robot.model + ' diagnostics — ' + robot.serial;
+  document.getElementById('meta').innerHTML = '';
+  const meta = document.getElementById('meta');
+  [['Exported', DATA.exported.replace('T', ' ')], ['Tool', robot.tool],
+   ['Batch', robot.batch], ['User', robot.user]].forEach(([k, v], i) => {
+    if (i) meta.appendChild(document.createTextNode('  ·  '));
+    meta.appendChild(document.createTextNode(k + ' '));
+    meta.appendChild(el('b', null, v));
+  });
+
+  renderSummary(document.getElementById('summary'));
+  renderActions(document.getElementById('actions'));
+
+  const captures = document.getElementById('captures');
+  renderFilters(document.getElementById('filters'), captures);
+  DATA.captures.forEach((capture) => captures.appendChild(renderCapture(capture)));
+  renderBundle(document.getElementById('bundle'));
+
+  const toggle = document.getElementById('theme');
+  toggle.addEventListener('click', () => {
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+      || (!document.documentElement.hasAttribute('data-theme')
+          && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+  });
+}
+
+document.addEventListener('DOMContentLoaded', init);
+"""
+
+REPORT_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>__STYLE__</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1 id="title">Stretch diagnostics</h1>
+      <p class="sub" id="meta"></p>
+    </div>
+    <button class="ghost noprint" id="theme">Toggle theme</button>
+  </div>
+
+  <h2>Diagnostics summary</h2>
+  <div id="summary"></div>
+
+  <h2>Recommended actions</h2>
+  <div id="actions"></div>
+
+  <h2>Captured commands</h2>
+  <div id="filters"></div>
+  <div id="captures"></div>
+
+  <h2>Bundle contents</h2>
+  <div id="bundle"></div>
+
+  <footer>
+    Generated by <code>stretch_system_check --export</code> on the robot. Every number here was
+    parsed from the raw output in <code>commands/</code>, which is included verbatim under each card.
+    Send the whole bundle to support@hello-robot.com when reporting an issue.
+  </footer>
+</div>
+<script>__SCRIPT__</script>
+</body>
+</html>
+"""
+
+
+def _report_html(data):
+    """Renders the self-contained report page for the parsed capture data."""
+    blob = json.dumps(data, ensure_ascii=False).replace('</', '<\\/')
+    title = f'{data["robot"]["model"]} diagnostics — {data["robot"]["serial"]}'
+    return (REPORT_TEMPLATE
+            .replace('__TITLE__', title)
+            .replace('__STYLE__', REPORT_STYLE)
+            .replace('__SCRIPT__', REPORT_SCRIPT.replace('/*__REPORT_DATA__*/ null', blob)))
 
 
 if __name__ == '__main__':
