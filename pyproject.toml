@@ -93,6 +93,7 @@ re1_disable_audio_suspension = "stretch4_body._cli_wrapper:re1_disable_audio_sus
 REx_firmware_flash = "stretch4_body._cli_wrapper:REx_firmware_flash"
 REx_joint_sweep = "stretch4_body._cli_wrapper:REx_joint_sweep"
 REx_imu_viz = "stretch4_body._cli_wrapper:REx_imu_viz"
+REx_lidar = "stretch4_body._cli_wrapper:REx_lidar"
 REx_feetech_reboot = "stretch4_body._cli_wrapper:REx_feetech_reboot"
 REx_base_tuning = "stretch4_body._cli_wrapper:REx_base_tuning"
 REx_feetech_set_baud = "stretch4_body._cli_wrapper:REx_feetech_set_baud"

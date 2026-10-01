@@ -546,6 +546,18 @@ class PowerPeriphClient(SubsystemClient):
         """
         self._queue_command(subsystem="power_periph", command="set_fan_off")
 
+    def set_lidar_on(self):
+        """
+        Turn on power to the head lidars.
+        """
+        self._queue_command(subsystem="power_periph", command="set_lidar_on")
+
+    def set_lidar_off(self):
+        """
+        Turn off power to the head lidars.
+        """
+        self._queue_command(subsystem="power_periph", command="set_lidar_off")
+
     def trigger_motor_sync(self):
         """ Legacy function. No longer needed."""
         pass

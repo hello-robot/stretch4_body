@@ -161,6 +161,10 @@ def REx_joint_sweep():
     sys.argv[0] = "REx_joint_sweep"
     runpy.run_module("stretch4_body.tools.factory.REx_joint_sweep", run_name="__main__")
 
+def REx_lidar():
+    sys.argv[0] = "REx_lidar"
+    runpy.run_module("stretch4_body.tools.factory.REx_lidar", run_name="__main__")
+
 def REx_imu_viz():
     sys.argv[0] = "REx_imu_viz"
     runpy.run_module("stretch4_body.tools.factory.REx_imu_viz", run_name="__main__")
