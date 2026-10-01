@@ -13,86 +13,141 @@ import textwrap
 
 import yaml
 
+from stretch4_body.core.device import Device
+from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.user_tool_paths import list_user_tools, user_tool_dirs
 from stretch4_body.utils.stretch_pose_models import RobotPose
 from stretch4_body.utils.tool_metadata import get_tool_metadata
 
+_COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+_RESET = "\033[0m" if _COLOR else ""
+_BOLD = "\033[1m" if _COLOR else ""
+_DIM = "\033[2m" if _COLOR else ""
+_GREEN = "\033[32m" if _COLOR else ""
+_RED = "\033[31m" if _COLOR else ""
+_YELLOW = "\033[33m" if _COLOR else ""
+_CYAN = "\033[36m" if _COLOR else ""
+
+
+def _tag(color, label):
+    """A fixed-width `[ LABEL ]` badge, colored and bolded when the terminal supports it."""
+    return f"{_BOLD}{color}[ {label:<4} ]{_RESET}"
+
 
 class _Report:
-    """Collects pass/fail lines for one tool."""
+    """Collects pass/fail/skip lines for one tool."""
 
     def __init__(self):
         self.passed = True
+        self.counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
 
-    def ok(self, message):
-        print(f"  PASS  {message}")
+    def _line(self, tag, title, description):
+        print(f"  {tag}  {_BOLD}{title}{_RESET}: {_DIM}{description}{_RESET}")
 
-    def fail(self, message):
-        print(f"  FAIL  {message}")
+    def ok(self, title, description):
+        self.counts["PASS"] += 1
+        self._line(_tag(_GREEN, "PASS"), title, description)
+
+    def fail(self, title, description):
+        self.counts["FAIL"] += 1
+        self._line(_tag(_RED, "FAIL"), title, description)
         self.passed = False
 
+    def skip(self, title, description):
+        self.counts["SKIP"] += 1
+        self._line(_tag(_YELLOW, "SKIP"), title, description)
+
     def note(self, message):
-        print(f"        {message}")
+        print(f"            {message}")
 
     def para(self, message):
         """A note wrapped to the terminal, for explanations too long for one line."""
         for line in textwrap.wrap(" ".join(message.split()), width=92):
-            print(f"        {line}")
+            print(f"            {line}")
+
+    def summary(self):
+        """One colored `N passed, N failed, N skipped` tally line for this tool."""
+        parts = []
+        if self.counts["PASS"]:
+            parts.append(f"{_GREEN}{self.counts['PASS']} passed{_RESET}")
+        if self.counts["FAIL"]:
+            parts.append(f"{_RED}{self.counts['FAIL']} failed{_RESET}")
+        if self.counts["SKIP"]:
+            parts.append(f"{_YELLOW}{self.counts['SKIP']} skipped{_RESET}")
+        print(f"  {', '.join(parts)}")
 
 
 def check_tool(tool_name):
     """Runs every check against `tool_name`. Returns True when all of them pass."""
-    print(f"\n{tool_name}")
+    print(f"\n{_BOLD}{_CYAN}{tool_name}{_RESET}")
     report = _Report()
 
     tool_path = RobotParams.get_user_defined_tool_path(tool_name)
     if not tool_path:
         report.fail(
-            f"no directory named '{tool_name}' under {user_tool_dirs()}"
+            "Tool Directory",
+            f"No directory named '{tool_name}' under {user_tool_dirs()}. Are "
+            "HELLO_FLEET_PATH and HELLO_FLEET_ID set correctly?",
         )
+        report.summary()
         return False
-    report.ok(f"tool directory: {tool_path}")
+    report.ok("Tool Directory", f"found at {tool_path}")
 
     params_path = os.path.join(tool_path, "tool_params.yaml")
     if not os.path.exists(params_path):
-        report.fail("tool_params.yaml not found")
+        report.fail("Tool Configuration", f"not found in {tool_path}")
+        report.summary()
         return False
     try:
         with open(params_path, "r") as f:
             params = yaml.safe_load(f) or {}
     except (OSError, yaml.YAMLError) as e:
-        report.fail(f"tool_params.yaml could not be read: {e}")
+        report.fail("Tool Configuration", f"could not be read: {e}")
+        report.summary()
         return False
-    report.ok("tool_params.yaml parses")
+    report.ok("Tool Configuration", "parses as valid YAML")
 
     RobotParams.reload()
     _, robot_params = RobotParams.get_params()
     if tool_name in robot_params.get("robot", {}).get("supported_eoa", []) or tool_name in robot_params:
-        report.ok("registered in robot params")
+        report.ok("Robot Registration", "tool was successfully registered")
     else:
-        report.fail("not registered in robot params after reload")
+        report.fail(
+            "Robot Registration",
+            "Tool is NOT registered after a reload. Directory not found in "
+            f"user_tools: {user_tool_dirs()}.",
+        )
 
     try:
         meta = get_tool_metadata(tool_name)
     except Exception as e:
-        report.fail(f"get_tool_metadata: {e}")
+        report.fail("Tool Metadata", f"could not resolve for '{tool_name}': {e}")
+        report.summary()
         return False
+    report.ok("Tool Metadata", f"resolved as {type(meta).__name__}")
     report.note(f"primary_joint={meta.primary_joint}")
 
     _check_tool_name(meta, params, tool_name, robot_params, report)
-    report.note(
-        f"command_range={meta.command_range}  aperture_range={meta.aperture_range}"
-    )
+    try:
+        report.note(
+            f"command_range={meta.command_range}  aperture_range={meta.aperture_range}"
+        )
+    except Exception as e:
+        report.fail("Command and aperture ranges", str(e))
 
     _report_resolved_modules(meta, params, report)
 
     _check_metadata_components(meta, report)
     _check_driver_components(meta, tool_name, report)
+    _check_eoa_subsystem_class(tool_name, robot_params, report)
     _check_client_components(meta, report)
 
     _check_subsystem_client(params, tool_name, report)
     _check_pose_models(params, tool_name, report)
+    _check_stow_position(tool_name, robot_params, report)
+    _check_home_position(tool_name, robot_params, report)
+    report.summary()
     return report.passed
 
 
@@ -107,11 +162,8 @@ def _callable_name(obj):
 
 def _report_resolved_line(label, params, module_key, class_key, default_name, resolve, report):
     """
-    Prints one `label: module.Class (user-defined|default)` line. When `tool_params.yaml`
-    declared the module/class pair, that's printed verbatim -- `resolve()`'s own `__module__`
-    would instead show the synthesized `sys.modules` key `import_user_tool_module` loads it
-    under (e.g. `user_tool_client_nyu_gripper_nyu_gripper_metadata`), not the file it's actually
-    in. For the default case there's no declared name to fall back on, so `resolve()` is used.
+    Prints one line showing which module and class were used for a role (metadata, driver, or
+    client), noting whether it came from tool_params.yaml or a built-in default.
     """
     declared_module = params.get(module_key)
     declared_class = params.get(class_key)
@@ -120,22 +172,17 @@ def _report_resolved_line(label, params, module_key, class_key, default_name, re
         return
     try:
         resolved = resolve()
-        # Unwrap a `functools.partial(SomeClass, ...)` (e.g. the default tool joint client) to
-        # the class itself, so __module__/__name__ describe SomeClass, not `functools`.
         resolved = resolved if isinstance(resolved, type) else getattr(resolved, "func", resolved)
         name = getattr(resolved, "__name__", None) or str(resolved)
         module = getattr(resolved, "__module__", default_name)
         report.note(f"  {label}: {module}.{name} (default)")
     except Exception as e:
-        report.note(f"  {label}: unresolved -- {e}")
+        report.note(f"  {label}: unresolved: {e}")
 
 
 def _report_resolved_modules(meta, params, report):
     """
-    Prints which module/class is actually used for metadata, driver, and client -- what
-    tool_params.yaml named (`metadata_module_name`/`driver_module_name`/`client_module_name`
-    and their `_class_name` pairs), or the built-in fallback (`LinearToolMetadata`, none, and
-    `ToolJointClient` respectively) when it named nothing.
+    Prints which module/class is actually used for metadata, driver, and client.
     """
     report.note("Resolved modules:")
     _report_resolved_line(
@@ -154,10 +201,7 @@ def _report_resolved_modules(meta, params, report):
 
 def _check_metadata_components(meta, report):
     """
-    Exercises each of `ToolMetadata`'s required conversion methods with a real value from this
-    tool's own ranges. Python's ABC machinery already guarantees these methods exist once `meta`
-    constructs; this catches one that exists but reaches for a robot_params key tool_params.yaml
-    never set and raises only when actually called.
+    Exercises each of `ToolMetadata`'s required conversion methods with a real value.
     """
     try:
         urdf_mid = sum(meta.urdf_range) / 2.0
@@ -165,7 +209,7 @@ def _check_metadata_components(meta, report):
         actuator_mid = sum(meta.actuator_range) / 2.0
         aperture_mid = sum(meta.aperture_range) / 2.0
     except Exception as e:
-        report.fail(f"metadata: a required range property raised -- {e}")
+        report.fail("Metadata conversion", f"a required range property raised: {e}")
         return
 
     checks = (
@@ -190,74 +234,136 @@ def _check_metadata_components(meta, report):
             failures.append(f"{name}: {e}")
 
     if failures:
-        report.fail("metadata: " + "; ".join(failures))
+        report.fail("Metadata Conversion", "; ".join(failures))
     else:
-        report.ok(f"metadata conversion methods run cleanly ({len(checks)} checked)")
+        report.ok("Metadata Conversion", f"{len(checks)} methods run cleanly")
+
+
+_REQUIRED_DRIVER_METHODS = ("move_to", "move_by", "home", "quick_stop")
 
 
 def _check_driver_components(meta, tool_name, report):
     """
-    The driver must subclass `FeetechSMHello` -- the base class every joint on the wrist chain
-    is built from, which is what actually guarantees `move_to`/`move_by`/`home`/`quick_stop`/
-    `pull_status` exist -- and must construct with no hardware attached.
+    The driver must subclass `Device` and provide move_to/move_by/home/quick_stop. Standard Hello Robot tools
+    use Feetech motors with the custom FeetechSMHello superclass.
     """
     try:
         driver = meta.driver_class
     except Exception as e:
-        report.fail(f"driver_class: {e}")
+        report.fail("Driver", str(e))
         return
 
-    from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
-
-    if isinstance(driver, type) and issubclass(driver, FeetechSMHello):
-        report.ok("driver subclasses FeetechSMHello")
-    else:
+    if not (isinstance(driver, type) and issubclass(driver, Device)):
         report.fail(
-            f"driver '{driver.__module__}.{driver.__name__}' does not subclass FeetechSMHello -- "
-            "move_to/move_by/home/quick_stop/pull_status are not guaranteed"
+            "Driver",
+            f"'{driver.__module__}.{driver.__name__}' does not subclass Device. The "
+            "status, params, and logger plumbing every subsystem relies on is not "
+            "guaranteed.",
         )
+    else:
+        missing = [m for m in _REQUIRED_DRIVER_METHODS if not callable(getattr(driver, m, None))]
+        if missing:
+            report.fail(
+                "Driver",
+                f"'{driver.__module__}.{driver.__name__}' is missing required method(s) "
+                f"{missing}. Gamepad, ROS command groups, and the collision-stop sentry "
+                "call these on every end-of-arm joint.",
+            )
+        elif issubclass(driver, FeetechSMHello):
+            report.ok("Driver", "subclasses FeetechSMHello")
+        else:
+            report.ok(
+                "Driver",
+                "subclasses Device and provides move_to/move_by/home/quick_stop "
+                "(non-Feetech servo)",
+            )
 
     _check_driver_instantiates(driver, tool_name, report)
 
 
 def _check_driver_instantiates(driver, tool_name, report):
     """
-    Constructs the driver exactly as `FeetechSMChain.startup()` does -- `driver(chain=...)`, no
-    other arguments -- with `chain=None` since this check runs with no hardware attached. Catches
-    a driver whose `__init__` reaches for a robot_params key `tool_params.yaml` never set -- e.g.
-    a driver that expects `self.params['gripper_conversion']` -- which otherwise only surfaces
-    when `FeetechSMChain.startup()` hits it inside the `EndOfArmLoop` worker process and takes
-    the whole end-of-arm chain down with it.
+    Constructs the driver to catch any unset tool_params.yaml keys or other errors that will crash the
+    the whole `EndOfArmLoop` worker process on the real robot.
     """
     try:
         driver(chain=None)
     except Exception as e:
-        report.fail(f"driver instantiation ({tool_name}(chain=None)): {e}")
+        report.fail("Driver Instantiation", f"{tool_name}(chain=None): {e}")
         return
-    report.ok("driver instantiates with no hardware attached")
+    report.ok("Driver Instantiation", "succeeds with no hardware attached")
+
+
+def _check_eoa_subsystem_class(tool_name, robot_params, report):
+    """
+    Check the top-level 'py_module_name'/'py_class_name' module. It should be an EndOfArm subclass
+    constructed as `SomeClass(tool_name)`.
+    """
+    tool_params = robot_params.get(tool_name, {})
+    module_name = tool_params.get("py_module_name")
+    class_name = tool_params.get("py_class_name")
+    if not module_name or not class_name:
+        report.fail(
+            "End-of-arm subsystem class",
+            f"robot_params['{tool_name}'] has no driver class ('py_module_name'/"
+            "'py_class_name'). Was one defined in tool_params.yaml?",
+        )
+        return
+
+    try:
+        module = RobotParams.import_user_tool_module(tool_name, module_name, is_server=True)
+        EoaClass = getattr(module, class_name)
+    except Exception as e:
+        report.fail(
+            "End-of-arm subsystem class", f"could not import '{class_name}' from '{module_name}': {e}"
+        )
+        return
+
+    from stretch4_body.subsystem.end_of_arm.end_of_arm import EndOfArm
+
+    if not (isinstance(EoaClass, type) and issubclass(EoaClass, EndOfArm)):
+        report.fail(
+            "End-of-arm subsystem class",
+            f"Top-level '{class_name}' does not subclass EndOfArm. It will be "
+            f"constructed as {class_name}('{tool_name}') and must manage a chain of "
+            "servos, one per 'devices' entry, not act as a single servo's own driver. "
+            "Leave 'py_module_name'/'py_class_name' unset to inherit the default "
+            "EOA_Wrist_DW4_Tool_NIL, and name your driver only under a 'devices' entry "
+            "(or 'driver_module_name'/'driver_class_name').",
+        )
+        return
+
+    try:
+        EoaClass(tool_name)
+    except Exception as e:
+        report.fail(
+            "End-of-arm subsystem class", f"instantiation failed: {class_name}('{tool_name}'): {e}"
+        )
+        return
+    report.ok("End-of-arm subsystem class", f"instantiates: {class_name}('{tool_name}')")
 
 
 def _check_client_components(meta, report):
     """
-    The resolved per-joint client -- the generic `ToolJointClient` default, or a bespoke
-    override -- must subclass `WristJointClient`, which is what guarantees `move_to`/`move_by`/
-    `pose`/`status` exist for application code and the gamepad to call.
+    The resolved client must subclass `WristJointClient`, which guarantees move_to, move_by,
+    pose, and status exist for application code and the gamepad to call.
     """
     from stretch4_body.robot.robot_client import WristJointClient
 
     try:
         client = meta.client_class
     except Exception as e:
-        report.fail(f"client_class: {e}")
+        report.fail("Client", str(e))
         return
 
     client_type = client if isinstance(client, type) else getattr(client, "func", None)
     if isinstance(client_type, type) and issubclass(client_type, WristJointClient):
-        report.ok(f"client subclasses WristJointClient ({client_type.__name__})")
+        report.ok("Client", f"subclasses WristJointClient ({client_type.__name__})")
     else:
         report.fail(
-            f"client '{_callable_name(client)}' does not subclass WristJointClient -- "
-            "move_to/move_by/pose/status are not guaranteed"
+            "Client",
+            f"'{_callable_name(client)}' does not subclass WristJointClient. move_to, "
+            "move_by, pose, and status are not guaranteed.",
         )
 
 
@@ -267,15 +373,15 @@ def _check_tool_name(meta, params, tool_name, robot_params, report):
     try:
         declared = meta.tool_name
     except Exception as e:
-        report.fail(str(e))
+        report.fail("Tool name", str(e))
         _report_servos(devices, report)
         return
 
     if declared in devices:
-        report.ok(f"tool_name '{declared}' names a servo on the wrist bus")
+        report.ok("Tool name", f"'{declared}' names a servo on the wrist bus")
         return
 
-    report.fail(f"tool_name '{declared}' does not name a servo on the wrist bus")
+    report.fail("Tool name", f"'{declared}' does not name a servo on the wrist bus")
     _report_servos(devices, report)
     if declared == meta.primary_joint:
         report.para(
@@ -285,11 +391,9 @@ def _check_tool_name(meta, params, tool_name, robot_params, report):
 
 def _report_servos(devices, report):
     report.para(
-        f"tool_name must be one of this tool's servos: {', '.join(sorted(devices))}. Those are "
-        "the keys of the 'devices' block in tool_params.yaml, merged over the three wrist joints "
-        "every tool inherits. The name is how the rest of the stack reaches this tool: it keys "
-        "the tool's entry in status['end_of_arm'], and names the joint ToolJointClient sends "
-        "move_to/move_by to."
+        f"No 'devices' entry in tool_params.yaml matches tool_name (only "
+        f"{', '.join(sorted(devices))} are defined). Fix: add a devices entry keyed to "
+        "tool_name's value, naming this tool's own servo."
     )
 
 
@@ -300,11 +404,11 @@ def _check_subsystem_client(params, tool_name, report):
     module_name = params.get("client_module_name")
     class_name = params.get("client_class_name")
     if not (module_name or class_name):
-        report.ok("subsystem client: EndOfArmClient (generic)")
+        report.ok("Subsystem Client", "EndOfArmClient (generic)")
         return
     if not (module_name and class_name):
         report.fail(
-            "'client_module_name' and 'client_class_name' must be set together"
+            "Subsystem Client", "'client_module_name' and 'client_class_name' must be set together"
         )
         return
     try:
@@ -313,23 +417,69 @@ def _check_subsystem_client(params, tool_name, report):
         )
         declared = getattr(module, class_name)
     except Exception as e:
-        report.fail(f"could not import '{class_name}' from '{module_name}': {e}")
+        report.fail("Subsystem Client", f"could not import '{class_name}' from '{module_name}': {e}")
         return
     if isinstance(declared, type) and issubclass(declared, EndOfArmClient):
-        report.ok(f"subsystem client: {class_name}")
+        report.ok("Subsystem Client", class_name)
     else:
-        report.ok("subsystem client: EndOfArmClient (generic)")
+        report.ok("Subsystem Client", "EndOfArmClient (generic)")
 
 
 def _check_pose_models(params, tool_name, report):
+    """`pose_models` is optional. Most tools have none, so an absent key is a SKIP, not a FAIL."""
     if "pose_models" not in params:
+        report.skip("Pose models", "none declared in tool_params.yaml (optional)")
         return
     try:
         poses = RobotPose.load_tool_pose_models(tool_name)
     except Exception as e:
-        report.fail(f"pose_models: {e}")
+        report.fail("Pose models", f"failed to load: {e}")
         return
-    report.ok(f"pose_models: {len(poses)} pose(s) -- {', '.join(sorted(poses))}")
+    report.ok("Pose models", f"{len(poses)} pose(s) loaded: {', '.join(sorted(poses))}")
+
+
+def _check_stow_position(tool_name, robot_params, report):
+    """
+    The default end-of-arm subsystem never moves the gripper during stow. Only a custom
+    EndOfArm subclass with its own stow() override can stow a gripper.
+    """
+    tool_params = robot_params.get(tool_name, {})
+    module_name = tool_params.get("py_module_name")
+    class_name = tool_params.get("py_class_name")
+    if not module_name or not class_name:
+        return
+
+    try:
+        module = RobotParams.import_user_tool_module(tool_name, module_name, is_server=True)
+        EoaClass = getattr(module, class_name)
+    except Exception:
+        return
+
+    from stretch4_body.subsystem.end_of_arm.end_of_arm_tools import (
+        EOA_Wrist_DW4_Tool_NIL,
+    )
+
+    if getattr(EoaClass, "stow", None) is EOA_Wrist_DW4_Tool_NIL.stow:
+        report.skip(
+            "Stow Position",
+            "the gripper is not given a stow pose, it will not change position during the stow action",
+        )
+    else:
+        report.ok(
+            "Stow Position", f"{class_name} specifies a stow pose"
+        )
+
+
+def _check_home_position(tool_name, robot_params, report):
+    """Without a 'homing' entry, the tool's own joint homes to command=0, not fully open or closed."""
+    homing = robot_params.get(tool_name, {}).get("homing", {})
+    if tool_name in homing:
+        report.ok("Home Position", f"homes to {homing[tool_name]}")
+    else:
+        report.skip(
+            "Home Position",
+            "the gripper is not given a home pose, defaults to a 0 command",
+        )
 
 
 def main():
@@ -364,9 +514,12 @@ def main():
     failed = [name for name in tools if not check_tool(name)]
     print()
     if failed:
-        print(f"FAILED: {', '.join(failed)}")
+        print(
+            f"{_BOLD}{_RED}{len(failed)} of {len(tools)} tool(s) failed validation: "
+            f"{', '.join(failed)}{_RESET}"
+        )
         return 1
-    print(f"All checks passed ({len(tools)} tool(s)).")
+    print(f"{_BOLD}{_GREEN}All checks passed ({len(tools)} tool(s)).{_RESET}")
     return 0
 
 
