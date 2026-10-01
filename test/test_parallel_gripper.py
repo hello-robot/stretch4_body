@@ -97,10 +97,14 @@ def test_robot_joints_properties():
         print("PG4 urdf->command->urdf round trip:", 0.0, "->", command_val, "->", round_trip)
         assert math.isclose(round_trip, 0.0, abs_tol=1e-6)
     else:
-        sub_val = RobotJoints.gripper.urdf_to_command(0.08)
-        print("0.08 to command units:", sub_val)
-        # Stretch gripper converts radians to percent
-        assert math.isclose(sub_val, 4.58, abs_tol=0.1)
+        # SG4's command unit (Pct) isn't a simple rescaling of urdf (radians) -- both are
+        # affine in actuator, but via different chord/arc-derived scale factors -- so
+        # round-trip urdf -> command -> urdf rather than asserting a fixed pair tied to a
+        # specific URDF calibration.
+        command_val = RobotJoints.gripper.urdf_to_command(0.08)
+        round_trip = RobotJoints.gripper.command_to_urdf(command_val)
+        print("SG4 urdf->command->urdf round trip:", 0.08, "->", command_val, "->", round_trip)
+        assert math.isclose(round_trip, 0.08, abs_tol=1e-6)
 
     # Test true actuator (raw servo angle, radians) round trip, distinct from command above.
     actuator_val = RobotJoints.gripper.urdf_to_actuator(0.0)
@@ -111,10 +115,9 @@ def test_robot_joints_properties():
     # Test stretch_gripper conversion
     from unittest.mock import MagicMock, PropertyMock, patch
     with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
-        # For stretch_gripper, urdf_to_command converts radians to percent.
-        # -100 deg is -1.745329... rad.
-        # If position is -1.745329... rad, expected percent is -100.0% (closed).
-        val_pct = RobotJoints.gripper.urdf_to_command(-1.7453292519943295)
+        # For stretch_gripper, urdf is the real finger joint angle (radians), 0.0 at fully
+        # closed -- not a rescaling of Pct. Fully closed in urdf units maps to Pct=-100.
+        val_pct = RobotJoints.gripper.urdf_to_command(0.0)
         print("stretch_gripper rad to command units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
 

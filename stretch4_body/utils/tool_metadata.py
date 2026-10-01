@@ -24,7 +24,7 @@ class ToolMetadata(ABC):
     Abstract base class defining kinematic, hardware command, and physical unit conversions
     for Stretch 4 end-of-arm tools and grippers.
 
-    Five unit tiers, ROS-facing to hardware-facing:
+    Five unit types:
       - urdf: the ROS/URDF joint value (radians or meters), as seen on JointTrajectory/JointState.
       - command: the value this tool's own move_to()/move_by()/pose() take directly (e.g. Pct for
         SG4, fingertip aperture in meters for PG4). This is what ROS-facing code should convert
@@ -251,10 +251,11 @@ class ToolMetadata(ABC):
         "normalized": "actuator",
     }
 
-    #: Edges known to be affine, whose gain is exactly the full-range secant. Subclasses extend
-    #: this; unlisted edges use an analytic override, else central differencing.
     _LINEAR_CONVERSIONS: frozenset[tuple[str, str]] = frozenset(
-        {("normalized", "actuator"), ("actuator", "normalized")}
+        {
+            ("normalized", "actuator"),
+            ("actuator", "normalized")
+        }
     )
 
     @classmethod
@@ -627,10 +628,11 @@ class ParallelGripperMetadata(ToolMetadata):
         # Not rounded: quantizing a conversion makes its numeric derivative unusable.
         return x_mm / 1000.0
 
-    # urdf <-> command (aperture) is affine. command <-> actuator is the slider-crank linkage,
-    # since PG4's command unit is aperture; see _analytic_gain.
     _LINEAR_CONVERSIONS = ToolMetadata._LINEAR_CONVERSIONS | frozenset(
-        {("urdf", "command"), ("command", "urdf")}
+        {
+            ("urdf", "command"),
+            ("command", "urdf")
+        }
     )
 
     def _analytic_gain(self, frm: str, to: str, at: float) -> float | None:
@@ -762,24 +764,16 @@ class StretchGripperMetadata(ToolMetadata):
         )
 
     def urdf_to_command(self, urdf: float) -> float:
-        """Converts the URDF finger joint value (radians) to Pct — SG4's command units."""
-        _, robot_params = RobotParams.get_params()
-        sg_params = robot_params.get("stretch_gripper", {})
-        range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
-        return -100.0 * urdf / deg_to_rad(range_deg_0)
+        """Converts the URDF finger joint value (radians) to SG4's command units (percentage)."""
+        return self.actuator_to_command(self._finger_rad_to_actuator(urdf))
 
     def command_to_urdf(self, command: float) -> float:
-        """Converts Pct — SG4's command units — to the URDF finger joint value (radians)."""
-        _, robot_params = RobotParams.get_params()
-        sg_params = robot_params.get("stretch_gripper", {})
-        range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
-        return command * deg_to_rad(range_deg_0) / -100.0
+        """Converts command units (percentage) to the URDF finger joint value (radians)."""
+        return self._actuator_to_finger_rad(self.command_to_actuator(command))
 
     def command_to_actuator(self, command: float) -> float:
         """
-        Converts Pct — SG4's command units — to servo angle (radians). Promoted from
-        StretchGripper.pct_to_world_rad() so ToolMetadata owns this conversion the same way PG4
-        does via aperture_to_actuator(), instead of leaving it only on the driver.
+        Converts command units (percentage) to servo angle (radians).
         """
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
@@ -793,8 +787,6 @@ class StretchGripperMetadata(ToolMetadata):
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
         return -100.0 * actuator / deg_to_rad(range_deg_0)
 
-    # SG4's urdf/command/actuator conversions are pure scalings through the origin, so a rate
-    # converts like a position there. Only the aperture edge is nonlinear.
     _LINEAR_CONVERSIONS = ToolMetadata._LINEAR_CONVERSIONS | frozenset(
         {
             ("urdf", "command"),
@@ -814,7 +806,7 @@ class StretchGripperMetadata(ToolMetadata):
         return None
 
     @property
-    def _aperture_angle_per_actuator(self) -> float:
+    def _aperture_tick_per_actuator_tick(self) -> float:
         """
         d(aperture_angle)/d(actuator_angle), dimensionless.
 
@@ -834,7 +826,7 @@ class StretchGripperMetadata(ToolMetadata):
         d(theta)/d(actuator) is the constant `_map_range` ratio; the chord contributes
         d(aperture)/d(theta) = R*cos(theta/2).
         """
-        theta_per_actuator = self._aperture_angle_per_actuator
+        theta_per_actuator = self._aperture_tick_per_actuator_tick
         if theta_per_actuator == 0.0:
             return 0.0
         servo_closed_deg, servo_open_deg = self._range_deg
@@ -925,19 +917,25 @@ class StretchGripperMetadata(ToolMetadata):
         )
         return self._aperture_angle_degrees_to_aperture_m(aperture_angle_deg)
 
+    def _actuator_to_finger_rad(self, actuator: float) -> float:
+        """Servo angle (radians) -> finger_rad, the real URDF joint value (half the chord/arc
+        aperture angle)."""
+        aperture_m = self.actuator_to_aperture(actuator)
+        return math.radians(self._aperture_m_to_aperture_angle_degrees(aperture_m)) / 2.0
+
+    def _finger_rad_to_actuator(self, finger_rad: float) -> float:
+        """Inverse of `_actuator_to_finger_rad`."""
+        aperture_m = self._aperture_angle_degrees_to_aperture_m(math.degrees(finger_rad * 2.0))
+        return self.aperture_to_actuator(aperture_m)
+
     def status_to_metadata(self, status: dict) -> dict:
         aperture_m = self.actuator_to_aperture(status.get("pos", 0.0))
-        finger_rad = (
-            math.radians(self._aperture_m_to_aperture_angle_degrees(aperture_m)) / 2.0
-        )
+        finger_rad = self._actuator_to_finger_rad(status.get("pos", 0.0))
         return {
             "aperture_m": aperture_m,
             "finger_rad": finger_rad,
             "finger_effort": status["effort"],
-            # Time derivative of finger_rad above. finger_rad is half the chord-model aperture
-            # angle, not this tool's `urdf` unit type (actuator_to_urdf is the identity for SG4),
-            # so it cannot route through the urdf conversions.
-            "finger_vel": self._aperture_angle_per_actuator
+            "finger_vel": self._aperture_tick_per_actuator_tick
             * status.get("vel", 0.0)
             / 2.0,
         }
