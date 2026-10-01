@@ -1820,13 +1820,47 @@ def _run_tool(tool, tool_args, label):
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, timeout=EXPORT_TIMEOUT_S)
-        return proc.stdout
+        out = proc.stdout
     except subprocess.TimeoutExpired as e:
         print_warn(f'{label} timed out after {EXPORT_TIMEOUT_S}s')
-        return (e.stdout or '') + f'\n[!] {label} timed out after {EXPORT_TIMEOUT_S}s\n'
+        out = (e.stdout or '') + f'\n[!] timed out after {EXPORT_TIMEOUT_S}s\n'
     except Exception as e:
         print_warn(f'{label} failed: {e}')
-        return f'[!] {label} failed: {e}\n'
+        out = f'[!] {label} failed: {e}\n'
+    return f'$ {label}\n\n{out}'
+
+
+# Shell commands captured into the bundle's commands/ directory:
+#   (output file, command, timeout, what the output shows -- also used in the README)
+EXPORT_COMMANDS = [
+    ('dev_hello_devices.txt', 'ls -la /dev/hello*', 30,
+     'The udev symlink for each board and the tty device it currently points at. A board '
+     'missing from this listing never enumerated on USB, which explains most "device not '
+     'found" failures elsewhere in the bundle.'),
+    ('fleet_dir_listing.txt', 'ls -la "$HELLO_FLEET_PATH/$HELLO_FLEET_ID/"', 30,
+     "The robot's fleet directory: parameter files, calibration folders and any .bak files, "
+     'with their timestamps. Useful for spotting a parameter file that was edited or restored '
+     'around the time a problem started.'),
+    ('lsusb_verbose.txt', 'lsusb -v', 120,
+     'Full USB descriptor dump for every device on the bus, including negotiated link speeds. '
+     "\"Couldn't open device\" lines are expected -- the export does not run as root."),
+    ('repos_listing.txt', 'ls -la ~/repos', 30,
+     "The user's ~/repos checkouts. \"No such file or directory\" simply means this install "
+     'has no ~/repos directory.'),
+    ('stretch_body_server_status.txt', 'stretch_body_server --status', 180,
+     'Server state, control loop rate, loop overruns and daemon status at export time. If no '
+     'server was running, this instead shows the tail of the last archived session.'),
+]
+
+# Robot parameter files copied into the bundle's robot_params/ directory
+EXPORT_PARAM_FILES = [
+    'stretch_user_params.yaml',
+    'stretch_configuration_params.yaml',
+    'stretch_calibration_values.yaml',
+]
+
+UDEV_RULES_DIR = '/etc/udev/rules.d'
+NUM_EXPORTED_WEB_TELEOP_SESSIONS = 3
 
 
 def _run_shell(cmd, label, timeout=30):
@@ -1836,10 +1870,56 @@ def _run_shell(cmd, label, timeout=30):
         proc = subprocess.run(['bash', '-c', cmd], stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, text=True, timeout=timeout)
         out = proc.stdout
+        if proc.returncode != 0:
+            print_warn(f'{label} exited with code {proc.returncode} (output still captured)')
+            out += f'\n[!] exited with code {proc.returncode}\n'
+    except subprocess.TimeoutExpired as e:
+        print_warn(f'{label} timed out after {timeout}s')
+        out = (e.stdout or '') + f'\n[!] timed out after {timeout}s\n'
     except Exception as e:
         print_warn(f'{label} failed: {e}')
         out = f'[!] {label} failed: {e}\n'
     return f'$ {cmd}\n\n{out}'
+
+
+def _fleet_dir():
+    """Path to $HELLO_FLEET_PATH/$HELLO_FLEET_ID, or None if the environment does not define it."""
+    fleet_path = os.environ.get('HELLO_FLEET_PATH')
+    fleet_id = os.environ.get('HELLO_FLEET_ID')
+    if not fleet_path or not fleet_id:
+        return None
+    return os.path.join(fleet_path, fleet_id)
+
+
+def _copy_into(src, dest_dir, label, name=None):
+    """Copies a file or directory tree into dest_dir, optionally renaming it.
+
+    Returns the name it was copied as, or None if the copy failed.
+    """
+    import shutil
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        name = name or os.path.basename(os.path.normpath(src))
+        dest = os.path.join(dest_dir, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, dest, dirs_exist_ok=True, ignore_dangling_symlinks=True)
+        else:
+            shutil.copy2(src, dest)
+        return name
+    except Exception as e:
+        print_warn(f'Could not copy {label}: {e}')
+        return None
+
+
+def _recent_web_teleop_sessions(n=NUM_EXPORTED_WEB_TELEOP_SESSIONS):
+    """Returns the paths of the n most recent web_teleop session directories, newest first."""
+    teleop_dir = hu.get_stretch_directory('log/web_teleop')
+    if not os.path.isdir(teleop_dir):
+        return []
+    sessions = [os.path.join(teleop_dir, d) for d in os.listdir(teleop_dir)
+                if os.path.isdir(os.path.join(teleop_dir, d))]
+    sessions.sort(key=os.path.getmtime, reverse=True)
+    return sessions[:n]
 
 
 def _bundle_info():
@@ -1854,13 +1934,73 @@ def _bundle_info():
         f'Fleet path    : {os.environ.get("HELLO_FLEET_PATH", "N/A")}\n'
     )
 
-
-def _bundle_readme(status_zips, session_logs):
+def _bundle_readme(contents):
     """Builds the README shipped inside the bundle, describing the files it actually contains."""
+    import textwrap
     from datetime import datetime
 
-    if status_zips:
-        status_name = status_zips[0]
+    def wrap(text):
+        return textwrap.fill(text, width=78)
+
+    def missing(what, where):
+        return f'Missing -- {what} could not be collected ({where}).'
+
+    # commands/
+    command_sections = []
+    for name, cmd, _timeout, description in EXPORT_COMMANDS:
+        if name in contents['commands']:
+            command_sections.append(f'#### commands/{name}\n\n    $ {cmd}\n\n{wrap(description)}')
+    commands_section = '\n\n'.join(command_sections) if command_sections else missing(
+        'command output', 'every command failed to run')
+
+    # robot_params/
+    if contents['params']:
+        param_lines = '\n'.join(f'    {name}' for name in contents['params'])
+        params_section = f"""### robot_params/
+The robot's parameter files, copied from {contents['fleet_dir']}:
+
+{param_lines}
+
+{wrap('These are plain YAML. stretch_user_params.yaml holds the user overrides, '
+      'stretch_configuration_params.yaml the factory configuration, and '
+      'stretch_calibration_values.yaml the calibrated joint values. Together with the '
+      'installed version in commands/stretch_system_check.txt they define how this robot '
+      'was configured at export time. stretch_calibration_values.yaml is absent on a robot '
+      'that has not been calibrated.')}"""
+    else:
+        params_section = '### robot_params/\n' + wrap(missing(
+            'the robot parameter files',
+            'HELLO_FLEET_PATH/HELLO_FLEET_ID is unset, or the files are absent'))
+
+    # udev_rules.d/
+    if contents['udev']:
+        udev_section = f"""### udev_rules.d/
+{wrap(f'A copy of {UDEV_RULES_DIR} from the robot. The Hello Robot rules file is what '
+      'creates the /dev/hello-* symlinks in commands/dev_hello_devices.txt, so compare the '
+      'two when a board enumerates on USB but no /dev/hello-* entry appears for it.')}"""
+    else:
+        udev_section = '### udev_rules.d/\n' + wrap(missing(
+            f'{UDEV_RULES_DIR}', 'the directory is absent or unreadable'))
+
+    # web_teleop_logs/
+    if contents['web_teleop']:
+        teleop_lines = '\n'.join(f'    {name}' for name in contents['web_teleop'])
+        teleop_section = f"""### web_teleop_logs/
+The {len(contents['web_teleop'])} most recent web teleop session directories:
+
+{teleop_lines}
+
+{wrap('Each directory is one web teleop session, named for its start time. The .txt files '
+      'are the captured console output of the processes that session launched (ROS 2, the '
+      'web server and the robot browser), and are plain text. These are only present if web '
+      'teleop has been run on this robot.')}"""
+    else:
+        teleop_section = '### web_teleop_logs/\n' + wrap(missing(
+            'web teleop session logs', 'web teleop has not been run on this robot'))
+
+    # stretch_status export
+    if contents['status_zips']:
+        status_name = contents['status_zips'][0]
         status_section = f"""### {status_name}
 Robot telemetry history (joint states, currents, voltages, temperatures, ...)
 written by `stretch_status --export`. It holds one JSON file per logged run.
@@ -1881,18 +2021,19 @@ Useful variations:
     # Trim the replay window (seconds from the start / from the end of the file)
     stretch_status --import {status_name} --start_seconds_offset 10 --end_seconds_offset 5
 
-This is the largest file in the bundle; it is usually where an intermittent
-hardware issue is visible."""
+{wrap('This is the largest file in the bundle; it is usually where an intermittent hardware '
+      'issue is visible.')}"""
     else:
         status_section = """### stretch_status export
 Missing -- `stretch_status --export` produced no telemetry archive. This usually
 means no status history has been logged yet on this robot
 (see $HELLO_FLEET_PATH/log/stretch_status)."""
 
-    if session_logs:
-        log_lines = '\n'.join(f'    {name}' for name in session_logs)
+    # stretch_body_server_logs/
+    if contents['session_logs']:
+        log_lines = '\n'.join(f'    {name}' for name in contents['session_logs'])
         logs_section = f"""### stretch_body_server_logs/
-The {len(session_logs)} most recent `stretch_body_server` session logs:
+The {len(contents['session_logs'])} most recent `stretch_body_server` session logs:
 
 {log_lines}
 
@@ -1927,7 +2068,11 @@ Created with  : stretch_system_check --export
 
 Send this bundle to support@hello-robot.com when reporting an issue. Everything
 in it was captured on the robot at export time; nothing here needs the robot to
-be present in order to be read back.
+be present in order to be read back. Every file is plain text unless noted
+otherwise.
+
+A section below that says "Missing" means that file could not be collected on
+this robot, and says why -- that absence is itself a diagnostic.
 
 
 ## Contents
@@ -1937,31 +2082,50 @@ This file.
 
 ### bundle_info.txt
 Robot identity at export time: model, serial number, batch, tool, the user who
-ran the export, and HELLO_FLEET_PATH. Plain text.
+ran the export, and HELLO_FLEET_PATH.
 
-### stretch_system_check.txt
-Console output of a full `stretch_system_check` run, captured at export time.
-One [PASS] / [FAIL] / [SKIP] line per subsystem plus a summary at the end; it
-also records the installed software versions. Plain text.
-Reproduce on the robot with:
+### commands/
+Everything the export ran on the robot, one file per command, each starting
+with the command that produced it. A command that failed still has a file
+here, holding its error output and exit code. Re-running any of these on the
+robot reproduces that file.
 
-    stretch_system_check
+#### commands/stretch_system_check.txt
 
-Note: firmware checks show as [SKIP] here because they require stopping the
-server. Run `stretch_system_check --firmware` separately for those.
+    $ stretch_system_check
 
-### stretch_system_check_sensors.txt
-Console output of `stretch_system_check --sensors`: lidar reachability and
-streaming, plus camera stream rates, resolutions and USB link speeds. Plain text.
-Reproduce with:
+Console output of a full system check. One [PASS] / [FAIL] / [SKIP] line per
+subsystem plus a summary at the end; it also records the installed software
+versions. Firmware shows as [SKIP] here because checking it requires stopping
+the server -- see commands/stretch_system_check_updates.txt for the firmware
+table.
 
-    stretch_system_check --sensors
+#### commands/stretch_system_check_sensors.txt
 
-### dev_hello_devices.txt
-Output of `ls -la /dev/hello*` -- the udev symlinks for each board and the tty
-device each one currently points at. A board missing from this listing did not
-enumerate on USB, which explains most "device not found" failures elsewhere in
-the bundle.
+    $ stretch_system_check --sensors
+
+Lidar reachability and streaming, plus camera stream rates, resolutions and
+USB link speeds.
+
+#### commands/stretch_system_check_updates.txt
+
+    $ stretch_system_check --check_updates
+
+The installed hello-robot-* pip packages against the latest on PyPI, the git
+status of the ROS 2 workspace repos, the firmware version of every board
+against the version this software release expects, and the exact commands that
+would apply each update. This was the last thing the export ran, because it is
+the one capture that stops the robot server; the server was restarted
+immediately afterwards, so a matching stop/start in stretch_body_server_logs/
+around the export timestamp is expected, not a fault.
+
+{commands_section}
+
+{params_section}
+
+{udev_section}
+
+{teleop_section}
 
 {status_section}
 
@@ -1970,7 +2134,7 @@ the bundle.
 
 
 def export_diagnostics(export_dir):
-    """Collects telemetry history, system check output and server session logs into one zip."""
+    """Collects telemetry history, system check output, robot config and logs into one zip."""
     import shutil
     import tempfile
     import zipfile
@@ -1984,29 +2148,75 @@ def export_diagnostics(export_dir):
     print_section('Diagnostics Export')
     staging = tempfile.mkdtemp(prefix='stretch_system_check_export_')
     passthrough = (['--verbose'] if args.verbose else []) + (['--direct'] if args.direct else [])
+    fleet_dir = _fleet_dir()
+    contents = {'fleet_dir': fleet_dir, 'status_zips': [], 'session_logs': [],
+                'commands': [], 'params': [], 'udev': False, 'web_teleop': []}
     try:
         with open(os.path.join(staging, 'bundle_info.txt'), 'w') as f:
             f.write(_bundle_info())
 
         # 1. Telemetry history from stretch_status --export (writes its own zip into staging)
         _run_tool('stretch_status.py', ['--export', staging], 'stretch_status --export')
-        status_zips = sorted(f for f in os.listdir(staging)
-                             if f.startswith('stretch_status_') and f.endswith('.zip'))
-        if not status_zips:
+        contents['status_zips'] = sorted(f for f in os.listdir(staging)
+                                         if f.startswith('stretch_status_') and f.endswith('.zip'))
+        if not contents['status_zips']:
             print_warn('stretch_status --export produced no telemetry archive')
 
         # 2. The system check itself, run as a subprocess so this export cannot recurse
-        with open(os.path.join(staging, 'stretch_system_check.txt'), 'w') as f:
+        command_dir = os.path.join(staging, 'commands')
+        os.makedirs(command_dir, exist_ok=True)
+        with open(os.path.join(command_dir, 'stretch_system_check.txt'), 'w') as f:
             f.write(_run_tool('stretch_system_check.py', passthrough, 'stretch_system_check'))
-        with open(os.path.join(staging, 'stretch_system_check_sensors.txt'), 'w') as f:
+        with open(os.path.join(command_dir, 'stretch_system_check_sensors.txt'), 'w') as f:
             f.write(_run_tool('stretch_system_check.py', ['--sensors'] + passthrough,
                               'stretch_system_check --sensors'))
 
-        # 3. The udev symlinks for the robot's boards
-        with open(os.path.join(staging, 'dev_hello_devices.txt'), 'w') as f:
-            f.write(_run_shell('ls -la /dev/hello*', 'ls -la /dev/hello*'))
+        # 3. Shell commands describing the robot's devices, environment and server state
+        for name, cmd, timeout, _description in EXPORT_COMMANDS:
+            try:
+                with open(os.path.join(command_dir, name), 'w') as f:
+                    f.write(_run_shell(cmd, cmd, timeout=timeout))
+                contents['commands'].append(name)
+            except OSError as e:
+                print_warn(f'Could not save output of `{cmd}`: {e}')
 
-        # 4. The most recent stretch_body_server session logs
+        # 4. The robot's parameter files
+        if fleet_dir is None:
+            print_warn('HELLO_FLEET_PATH/HELLO_FLEET_ID unset — skipping robot parameter files')
+        else:
+            click.secho('  Collecting robot parameter files...', fg='yellow')
+            param_dir = os.path.join(staging, 'robot_params')
+            for name in EXPORT_PARAM_FILES:
+                src = os.path.join(fleet_dir, name)
+                if not os.path.exists(src):
+                    # stretch_calibration_values.yaml is absent on an uncalibrated robot
+                    print_warn(f'{src} does not exist')
+                    continue
+                copied = _copy_into(src, param_dir, src)
+                if copied:
+                    contents['params'].append(copied)
+
+        # 5. The udev rules that create the /dev/hello-* symlinks
+        if not os.path.isdir(UDEV_RULES_DIR):
+            print_warn(f'{UDEV_RULES_DIR} does not exist')
+        else:
+            click.secho(f'  Collecting {UDEV_RULES_DIR}...', fg='yellow')
+            contents['udev'] = _copy_into(UDEV_RULES_DIR, staging, UDEV_RULES_DIR,
+                                          name='udev_rules.d') is not None
+
+        # 6. The most recent web teleop sessions
+        teleop_sessions = _recent_web_teleop_sessions()
+        if not teleop_sessions:
+            print_warn('No web teleop session logs found')
+        else:
+            click.secho(f'  Collecting {len(teleop_sessions)} web teleop session logs...', fg='yellow')
+            teleop_dir = os.path.join(staging, 'web_teleop_logs')
+            for session in teleop_sessions:
+                copied = _copy_into(session, teleop_dir, session)
+                if copied:
+                    contents['web_teleop'].append(copied)
+
+        # 7. The most recent stretch_body_server session logs
         try:
             from stretch4_body.tools.stretch_body_server import get_recent_session_logs
             session_logs = get_recent_session_logs()
@@ -2024,12 +2234,21 @@ def export_diagnostics(export_dir):
                     shutil.copy2(log, log_dir)
                 except OSError as e:
                     print_warn(f'Could not copy {log}: {e}')
-            session_logs = sorted(os.listdir(log_dir))
+            contents['session_logs'] = sorted(os.listdir(log_dir))
 
-        # 5. A README describing the files the bundle actually ended up with
+        # 8. The update check. It runs last because it stops the robot server to query
+        #    firmware, which would otherwise disturb every capture above.
+        print_warn('stretch_system_check --check_updates stops the robot server to query '
+                   'firmware; it restarts in the background afterwards')
+        with open(os.path.join(command_dir, 'stretch_system_check_updates.txt'), 'w') as f:
+            f.write(_run_tool('stretch_system_check.py', ['--check_updates'] + passthrough,
+                              'stretch_system_check --check_updates'))
+
+        # 9. A README describing the files the bundle actually ended up with
         with open(os.path.join(staging, 'README.md'), 'w') as f:
-            f.write(_bundle_readme(status_zips, session_logs))
+            f.write(_bundle_readme(contents))
 
+        # 10. Zip the staging directory
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         zip_path = os.path.join(export_dir, f'stretch_system_check_{stretch_serial_no}_{timestamp}.zip')
         click.secho(f'  Writing {zip_path}...', fg='yellow')
@@ -2037,6 +2256,8 @@ def export_diagnostics(export_dir):
             for root, _, files in os.walk(staging):
                 for name in sorted(files):
                     full = os.path.join(root, name)
+                    if os.path.islink(full) and not os.path.exists(full):
+                        continue  # a broken symlink would raise when zipped
                     zf.write(full, os.path.relpath(full, staging))
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -2046,7 +2267,6 @@ def export_diagnostics(export_dir):
     click.secho(f'Export complete: {zip_path} ({size_mb:.2f} MB)', fg='green', bold=True)
     click.secho('Send this file to support@hello-robot.com when reporting an issue.\n', fg='bright_white')
     return True
-
 
 # ==============================================================================
 # Main
