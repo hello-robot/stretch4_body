@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-import importlib
-import logging
-import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
@@ -12,69 +9,6 @@ from stretch4_urdf import get_urdf
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.robot_params import RobotParams
-
-_custom_collision_mappers = {}
-_custom_collision_mapper_retry_at = {}
-CUSTOM_COLLISION_MAPPER_RETRY_S = 5.0
-_logger = logging.getLogger('collision_mapper')
-
-def get_custom_collision_mapper(tool_name):
-    """Return the cached collision mapper for a user tool, constructing it on
-    first use. Construction is retried at most every
-    CUSTOM_COLLISION_MAPPER_RETRY_S, so a failing mapper neither reloads on
-    every sentry cycle nor stays disabled once the user repairs it."""
-    mapper = _custom_collision_mappers.get(tool_name)
-    if mapper is not None:
-        return mapper
-    if time.time() < _custom_collision_mapper_retry_at.get(tool_name, 0.0):
-        return None
-
-    try:
-        sanitized_tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
-        if sanitized_tool_name and sanitized_tool_name[0].isdigit():
-            sanitized_tool_name = "_" + sanitized_tool_name
-
-        clean_class_base = re.sub(r'[^a-zA-Z0-9]', ' ', tool_name)
-        if clean_class_base and clean_class_base[0].isdigit():
-            clean_class_base = "Tool " + clean_class_base
-        server_class_name = clean_class_base.title().replace(' ', '')
-
-        module_name = f"{sanitized_tool_name}_collision"
-        class_name = f"{server_class_name}Collision"
-
-        mod = RobotParams.import_user_tool_module(tool_name, "collision.py")
-        if not mod:
-            mod = importlib.import_module(module_name)
-        mapper = getattr(mod, class_name)()
-    except Exception as e:
-        _custom_collision_mapper_retry_at[tool_name] = time.time() + CUSTOM_COLLISION_MAPPER_RETRY_S
-        _logger.warning("Collision mapper for user tool '%s' failed to load, so its joints are held at their "
-                        "default positions for collision checking. Retrying in %.0fs. %s",
-                        tool_name, CUSTOM_COLLISION_MAPPER_RETRY_S, e)
-        return None
-
-    _custom_collision_mappers[tool_name] = mapper
-    _custom_collision_mapper_retry_at.pop(tool_name, None)
-    return mapper
-
-
-def get_custom_tool_joints(tool_name, state):
-    """Map robot status to a user tool's joint positions, returning {} when no
-    mapper is available. A mapper that raises while mapping is evicted and
-    retried on the same backoff as one that fails to construct, so a repaired
-    collision.py recovers either way."""
-    mapper = get_custom_collision_mapper(tool_name)
-    if mapper is None:
-        return {}
-    try:
-        return mapper.get_mujoco_joints(state) or {}
-    except Exception as e:
-        _custom_collision_mappers.pop(tool_name, None)
-        _custom_collision_mapper_retry_at[tool_name] = time.time() + CUSTOM_COLLISION_MAPPER_RETRY_S
-        _logger.warning("Collision mapper for user tool '%s' raised while mapping, so its joints are held at "
-                        "their default positions for collision checking. Retrying in %.0fs. %s",
-                        tool_name, CUSTOM_COLLISION_MAPPER_RETRY_S, e)
-        return {}
 
 @dataclass
 class MujocoJointStates:
@@ -127,9 +61,8 @@ class MujocoJointStates:
         'wrist_pitch_joint': 0.12425244381873693, 'wrist_roll_joint': 0.07363107781851078}
 
         """
-        # A user tool's joints are mapped from raw robot status by
-        # get_urdf_joint_configuration and arrive here already in urdf
-        # convention, so no mapper runs on this side
+        # A tool's joints arrive here already in urdf convention, mapped from raw
+        # robot status by get_urdf_joint_configuration
         jgfl = state.get("gripper_finger_left_joint")
         jgfr = state.get("gripper_finger_right_joint")
         jfl = state.get("finger_left_joint")
