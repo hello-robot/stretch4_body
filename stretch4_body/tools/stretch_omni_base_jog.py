@@ -185,12 +185,12 @@ try:
                 except ValueError:
                     x = 1
                 ts=time.time()
-                b.set_omni_velocity('w',v_des=deg_to_rad(90),a_des=b.params['motion'][rate]['accel_w_r'])
+                b.set_velocity(0, 0, deg_to_rad(90), a_r=b.params['motion'][rate]['accel_w_r'])
                 b.push_command()
                 p.trigger_motor_sync()
                 while time.time()-ts<(x*4+0.5):
                     time.sleep(0.1)
-                b.set_omni_velocity('w',v_des=0,a_des=b.params['motion'][rate]['accel_w_r'])
+                b.set_velocity(0, 0, 0, a_r=b.params['motion'][rate]['accel_w_r'])
                 b.push_command()
                 p.trigger_motor_sync()
 

@@ -218,6 +218,12 @@ SE4_parallel_gripper_DW4={
         'stall_max_effort': 20.0,
         'stall_max_time': 1.0,
         'stall_min_vel': 0.1,
+        'contact_guard': {
+            # Detect contact while closing and hold a virtual goal just past it.
+            'enabled': 1,
+            'contact_mA': 200.0,  # Current while closing that means contact
+            'contact_s': 0.06,  # sustained this long
+            'squeeze_rad': 0.1},  # Virtual goal past contact
         'disable_torque_on_runstop': 0,
         'enable_torque_after_runstop': 1,
         'enable_runstop':1}
