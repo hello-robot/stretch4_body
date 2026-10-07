@@ -2149,12 +2149,14 @@ around the export timestamp is expected, not a fault.
 
 def export_diagnostics(export_dir):
     """Collects telemetry history, system check output, robot config and logs into one zip."""
+    import pathlib
     import shutil
     import tempfile
     import zipfile
     from datetime import datetime
 
-    export_dir = os.path.expanduser(export_dir)
+    # Absolute, so the final path printed below is ctrl+clickable in the terminal
+    export_dir = os.path.abspath(os.path.expanduser(export_dir))
     if not os.path.isdir(export_dir):
         click.secho(f'\n[FAIL] Export directory {export_dir} does not exist.', fg='red')
         return False
@@ -2291,6 +2293,8 @@ def export_diagnostics(export_dir):
     size_mb = os.path.getsize(zip_path) / (1024 * 1024)
     click.echo()
     click.secho(f'Export complete: {zip_path} ({size_mb:.2f} MB)', fg='green', bold=True)
+    # Terminals like GNOME Terminal only linkify URIs, not bare paths
+    click.secho(f'Open it: {pathlib.Path(zip_path).as_uri()}', fg='bright_white')
     click.secho('Send this file to support@hello-robot.com when reporting an issue.\n', fg='bright_white')
     return True
 
