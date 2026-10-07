@@ -93,3 +93,31 @@ def test_velocity_close_then_hold():
     assert cg.filter_velocity(1.0) is None  # Opening releases
     assert not cg.in_contact
 
+
+
+def test_open_hardstop_current_is_not_contact():
+    """Pushing open past the hardstop, then closing: the leftover opening current must not latch contact."""
+    cg = ContactGuard(PARAMS)
+    cg.filter_goal(2.03)  # Goal past the open hardstop at 1.98
+    for i in range(10):
+        assert cg.step(1.98, 400.0, i * 0.02) is None
+    cg.filter_goal(0.0)  # Close
+    for i in range(10):  # Current still high from pushing open, gripper hasn't moved yet
+        assert cg.step(1.98, 400.0, 0.2 + i * 0.02) is None
+    assert not cg.in_contact
+    for i in range(20):  # Now closing freely
+        assert cg.step(1.9 - i * 0.05, 50.0, 0.4 + i * 0.02) is None
+    assert not cg.in_contact
+
+
+def test_contact_after_open_hardstop_still_detected():
+    cg = ContactGuard(PARAMS)
+    cg.filter_goal(2.03)
+    cg.step(1.98, 400.0, 0.0)
+    cg.filter_goal(0.0)
+    cg.step(1.98, 400.0, 0.02)  # Leftover opening current
+    cg.step(1.5, 50.0, 0.2)  # Closing freely
+    assert cg.step(1.0, 300.0, 0.4) is None  # Hits an object
+    vg = cg.step(0.99, 300.0, 0.47)
+    assert cg.in_contact
+    assert vg == pytest.approx(0.9)

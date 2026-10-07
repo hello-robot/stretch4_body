@@ -35,6 +35,10 @@ class ContactGuard:
         self.virtual_goal = None
         self._t_hi = None
         self._pos_hi = None
+        self._closing = False  # Closing on the previous step
+        self._loaded = False  # Current was high on the previous step
+        self._armed = False  # Detection armed for the current close
+        self._pos_close_start = None
 
     def filter_goal(self, x):
         """Called with every requested position goal. Returns the goal to send to the servo."""
@@ -64,7 +68,20 @@ class ContactGuard:
         if self.in_contact:
             return None
         closing = self.closing_vel or (self.user_goal is not None and self.user_goal < pos - self.CLOSING_MARGIN_RAD)
-        if not closing or abs(current_mA) < self.contact_mA:
+        hi = abs(current_mA) >= self.contact_mA
+        if closing and not self._closing:  # A close just started
+            # Current is unsigned, so if it was already high before the close it is from pushing open
+            # (eg against the open hardstop). Then arm only once the current drops or the gripper starts closing.
+            self._armed = not self._loaded
+            self._pos_close_start = pos
+        self._closing = closing
+        self._loaded = hi
+        if not closing:
+            self._t_hi = None
+            return None
+        if not self._armed and (not hi or pos < self._pos_close_start - self.CLOSING_MARGIN_RAD):
+            self._armed = True
+        if not self._armed or not hi:
             self._t_hi = None
             return None
         if self._t_hi is None:  # Mark where the current first rose: that is the contact position
