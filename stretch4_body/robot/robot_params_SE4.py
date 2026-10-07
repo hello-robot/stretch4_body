@@ -204,7 +204,7 @@ SE4_parallel_gripper_DW4={
         'retry_on_comm_failure': 1,
         'baud': 1000000,
         'range_pad_deg': [ 0.0, 0.0 ],
-        'range_mm':78.0,
+        'range_mm':77.0,
         'range_deg': [0,116.5],
         'homing_offset_bias_t': 0,      
         'homing_to_neg_limit': 1,
