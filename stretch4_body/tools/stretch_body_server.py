@@ -161,9 +161,14 @@ device listing and the `stretch_status` telemetry history -- run:
 """
 
 
-def export_session_logs(export_dir:str='.', n:int=NUM_EXPORTED_SESSION_LOGS):
+def export_session_logs(export_dir:str='', n:int=NUM_EXPORTED_SESSION_LOGS):
     """Zips the n most recent session logs into export_dir. Returns the zip path, or None on failure."""
-    export_dir = os.path.expanduser(export_dir)
+    if not export_dir:
+        # No DIR given: default to $HELLO_FLEET_PATH/log/exports, creating it on first use
+        export_dir = os.path.join(os.environ.get('HELLO_FLEET_PATH', '~'), 'log', 'exports')
+        os.makedirs(os.path.expanduser(export_dir), exist_ok=True)
+    # Absolute, so the final path printed below is ctrl+clickable in the terminal
+    export_dir = os.path.abspath(os.path.expanduser(export_dir))
     if not os.path.isdir(export_dir):
         print(f"Error: Export directory {export_dir} does not exist.")
         return None
@@ -183,6 +188,8 @@ def export_session_logs(export_dir:str='.', n:int=NUM_EXPORTED_SESSION_LOGS):
 
     size_mb = os.path.getsize(zip_path) / (1024 * 1024)
     print(f"Export complete: {zip_path} ({size_mb:.2f} MB)")
+    # Terminals like GNOME Terminal only linkify URIs, not bare paths
+    print(f"Open it: {Path(zip_path).as_uri()}")
     return zip_path
 
 
@@ -363,8 +370,8 @@ def _parse_args():
     parser.add_argument("--print", help="Print the server log to console", action="store_true")
     parser.add_argument("--log_level", help="Set server logging level (DEBUG, INFO, WARN, ERROR, CRITICAL)",default="INFO")
 
-    group.add_argument("--export", help=f"Export the last {NUM_EXPORTED_SESSION_LOGS} session logs to a zip file in the given directory (defaults to the current directory)",
-                       nargs='?', const='.', metavar='DIR', default=None)
+    group.add_argument("--export", help=f"Export the last {NUM_EXPORTED_SESSION_LOGS} session logs to a zip file in the given directory (defaults to $HELLO_FLEET_PATH/log/exports)",
+                       nargs='?', const='', metavar='DIR', default=None)
 
     group.add_argument("--kill", help="Kill a running server",action="store_true")
     group.add_argument("--restart", help="Restart a running server",action="store_true")

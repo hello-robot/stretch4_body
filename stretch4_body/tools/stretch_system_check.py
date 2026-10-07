@@ -12,7 +12,7 @@ Usage:
     stretch_system_check --repos          # ROS2 workspace (~/ament_ws/src) git status only
     stretch_system_check --verbose        # Show additional detail in all checks
     stretch_system_check --direct         # Use Robot API directly instead of server client
-    stretch_system_check --export [DIR]   # Save a diagnostics zip for support to DIR (default: cwd)
+    stretch_system_check --export [DIR]   # Save a diagnostics zip for support to DIR (default: $HELLO_FLEET_PATH/log/exports)
 """
 import os
 
@@ -55,8 +55,8 @@ parser.add_argument('--check_updates',  help='Check pip + firmware + workspace g
 parser.add_argument('--repos',          help='Check the git status of the repos in ~/ament_ws/src',
                                                                                         action='store_true')
 parser.add_argument('--export',         help='Save a diagnostics zip (status history, system checks, server logs) '
-                                             'to the given directory (defaults to the current directory)',
-                                        nargs='?', const='.', metavar='DIR', default=None)
+                                             'to the given directory (defaults to $HELLO_FLEET_PATH/log/exports)',
+                                        nargs='?', const='', metavar='DIR', default=None)
 args = parser.parse_args()
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
@@ -2155,6 +2155,10 @@ def export_diagnostics(export_dir):
     import zipfile
     from datetime import datetime
 
+    if not export_dir:
+        # No DIR given: default to $HELLO_FLEET_PATH/log/exports, creating it on first use
+        export_dir = os.path.join(os.environ.get('HELLO_FLEET_PATH', '~'), 'log', 'exports')
+        os.makedirs(os.path.expanduser(export_dir), exist_ok=True)
     # Absolute, so the final path printed below is ctrl+clickable in the terminal
     export_dir = os.path.abspath(os.path.expanduser(export_dir))
     if not os.path.isdir(export_dir):
