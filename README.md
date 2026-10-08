@@ -435,11 +435,18 @@ For a tool directory to fit into the robot's URDF structure, all of the followin
 - Links that need collision checking reference a mesh in their `<collision>` tag.
 - Moving joints carry `velocity` and `effort` in their `<limit>` element.
 
-A convenience function is provided to help with these steps:
+A convenience script is provided to help with these steps. It is part of the
+[stretch4_urdf](https://github.com/hello-robot/stretch4_urdf) source repository, not the
+`hello-robot-stretch4-urdf` pip package, so clone the repository and run the script from the
+clone's root directory:
 
 ```bash
+git clone https://github.com/hello-robot/stretch4_urdf.git
+cd stretch4_urdf
 python3 -m stretch4_urdf.utils.preprocessing.process_new_user_tool ~/stretch_user/user_tools/user_eoa_tool
 ```
+
+Simplifying a collision mesh requires `open3d` (`python3 -m pip install open3d`).
 
 In order, it:
 
