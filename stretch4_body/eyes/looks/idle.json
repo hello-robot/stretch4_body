@@ -1,0 +1,17 @@
+{
+  "format": "stretch-eyes/1",
+  "name": "idle",
+  "title": "Idle glow",
+  "author": "",
+  "note": "The firmware boot default: idle glow in (40, 48, 60) at full intensity.",
+  "loop": false,
+  "steps": [
+    {
+      "left": "idle_glow",
+      "right": "idle_glow",
+      "color": "#28303c",
+      "intensity": 255,
+      "hold": 1.0
+    }
+  ]
+}

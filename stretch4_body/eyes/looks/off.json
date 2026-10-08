@@ -1,0 +1,15 @@
+{
+  "format": "stretch-eyes/1",
+  "name": "off",
+  "title": "Off",
+  "author": "",
+  "note": "Both eyes dark.",
+  "loop": false,
+  "steps": [
+    {
+      "left": "off",
+      "right": "off",
+      "hold": 1.0
+    }
+  ]
+}

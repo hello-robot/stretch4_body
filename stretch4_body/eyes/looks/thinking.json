@@ -1,0 +1,17 @@
+{
+  "format": "stretch-eyes/1",
+  "name": "thinking",
+  "title": "Thinking",
+  "author": "",
+  "note": "Blue bar circling clockwise, one turn per step. Needs hello-pimu2 v0.1.10p13 or newer.",
+  "loop": true,
+  "steps": [
+    {
+      "left": "circle_cw",
+      "right": "circle_cw",
+      "color": "#2060ff",
+      "intensity": 153,
+      "hold": 2.0
+    }
+  ]
+}

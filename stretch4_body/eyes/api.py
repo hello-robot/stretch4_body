@@ -1,6 +1,10 @@
+import atexit
+import functools
 import logging
 import numbers
 import threading
+import time
+import weakref
 from dataclasses import dataclass, asdict
 
 from stretch4_body.eyes.animations import ANIMATIONS, find_animation
@@ -26,6 +30,12 @@ LOW_SOC_RED = 12
 # longer: another client's lease frees 1.1 s after its last push.
 SENTRY_CONFIRM_S = 1.0
 CLOSE_RESUME_S = 3.0
+# How long stop() waits for the playback thread. A step blocked in a server push can
+# outlast it; that thread sends no more steps once it gets the lock, only stop()'s restore.
+STOP_PLAYBACK_S = 2.0
+# A step that went out later than this behind its schedule restarts the schedule, so a
+# stall skips the missed steps instead of sending them back to back
+PLAY_RESYNC_S = 0.05
 
 
 @dataclass
@@ -58,6 +68,7 @@ class EyeState:
     sentry_active: bool = None
     in_control: bool = False
     lease_holder: str = None
+    playing: dict = None           # Eyes.playing: None, or the sequence being played
 
     @property
     def color_hex(self):
@@ -87,6 +98,24 @@ def parse_intensity(value):
         raise ValueError('Intensity {} is a float, so it must be a fraction 0.0-1.0. '
                          'Pass an int for 0-255.'.format(value))
     raise ValueError('Intensity must be an int 0-255 or a float 0.0-1.0, not {!r}'.format(value))
+
+
+def _close_at_exit(ref):
+    # atexit runs before daemon threads are killed, so close() can still stop playback
+    eyes = ref()
+    if eyes is not None and (eyes._pause_sent or eyes._control_depth):
+        eyes.close()
+
+
+class _Playback:
+    """One play(): the events its thread, stop() and wait() share."""
+    def __init__(self, restore_to):
+        self.stop = threading.Event()
+        self.restore = threading.Event()  # set by stop(restore=True): send restore_to on the way out
+        # Set last, after the release. Not Thread.join: a Ctrl-C during a join leaves
+        # the thread reported as stopped while it still runs
+        self.done = threading.Event()
+        self.restore_to = restore_to
 
 
 class _Control:
@@ -133,7 +162,8 @@ class Eyes:
     Like RobotClient, an Eyes object and the client it wraps are meant for one thread.
     The methods take a lock so bookkeeping stays consistent, but a client= shared with
     another thread is still that thread's problem; Eyes Studio fronts Eyes with a single
-    writer thread for this reason.
+    writer thread for this reason. play() runs its own thread, which sends each step under
+    that lock; set(), off(), idle() and close() stop it before they send.
     """
     def __init__(self, backend='server', client=None):
         if backend == 'server':
@@ -152,7 +182,13 @@ class Eyes:
         self._source = 'assumed'
         self._control_depth = 0
         self._pause_sent = False  # a sentry pause went out and has not been undone
+        self._play_lock = threading.Lock()  # the playback swap in play() and stop(); the play thread never takes it
+        self._playback = None
+        self._playing = None      # replaced, never mutated, so readers need no lock
         self._backend.connect()
+        # A process that exits mid-sequence would otherwise leave the sentry paused
+        self._atexit = functools.partial(_close_at_exit, weakref.ref(self))
+        atexit.register(self._atexit)
 
     def __enter__(self):
         return self
@@ -182,13 +218,24 @@ class Eyes:
         firmware defaults (40, 48, 60) at 255 are sent.
 
         Returns the new EyeState; its source is 'dropped' when the server rejected the
-        push (see ServerBackend). The values are cached either way.
+        push (see ServerBackend). The values are cached either way. A sequence playing
+        is stopped first, unless the values are invalid.
         """
-        left = None if left is None else find_animation(left)
-        right = None if right is None else find_animation(right)
-        color = None if color is None else parse_color(color)
-        intensity = None if intensity is None else parse_intensity(intensity)
+        command = self._parse(left, right, color, intensity)
+        self.stop(restore=False)
+        return self._send(*command)
+
+    @staticmethod
+    def _parse(left, right, color, intensity):
+        return (None if left is None else find_animation(left),
+                None if right is None else find_animation(right),
+                None if color is None else parse_color(color),
+                None if intensity is None else parse_intensity(intensity))
+
+    def _send(self, left, right, color, intensity, stop_event=None):
         with self._lock:
+            if stop_event is not None and stop_event.is_set():
+                return None  # stop() came while this step waited for the lock
             left = left or self._left
             right = right or self._right
             color = color or self._color
@@ -239,7 +286,8 @@ class Eyes:
                         runstop_active=status.get('runstop'), low_soc_override=low_soc,
                         battery_soc=soc, sentry_active=self._backend.is_sentry_active(),
                         in_control=self._control_depth > 0,
-                        lease_holder=self._backend.lease_holder())
+                        lease_holder=self._backend.lease_holder(),
+                        playing=self.playing)
 
     def capabilities(self):
         """
@@ -314,12 +362,141 @@ class Eyes:
                 logger.warning('%s is still paused: the server did not confirm the resume', SENTRY_NAME)
             return False
 
+    def play(self, seq, loop=None):
+        """
+        Play a sequence in a background thread and return at once. seq is a Sequence, a
+        dict in the look file format, or the name of a look in Library(). loop None uses
+        the sequence's own loop flag. Each step goes out the way set() sends it, then is
+        held for its hold; a playback already running is replaced.
+
+        Control is taken for the playback (take_control(), so it nests with control you
+        already hold) and released when it ends or is stopped. A sequence that ends stays
+        on its last step; stop() puts back the look from before play() (see stop()). A
+        process that exits mid-sequence ends the look early the same way; call wait()
+        first if the whole look should play. Raises ValueError or KeyError for a bad
+        sequence and RuntimeError when the sentry pause is not confirmed; nothing plays
+        then.
+        """
+        from stretch4_body.eyes.looks import Library, Sequence
+        if isinstance(seq, str):
+            seq = Library().get(seq)
+        elif isinstance(seq, dict):
+            seq = Sequence.from_dict(seq)
+        elif not isinstance(seq, Sequence):
+            raise ValueError('play() takes a Sequence, a look dict or a look name, not {!r}'.format(seq))
+        loop = seq.loop if loop is None else bool(loop)
+        steps = [(self._parse(s.left, s.right, s.color, s.intensity), s.hold) for s in seq.steps]
+        with self._play_lock:
+            # Control for the new playback is taken before the old one lets go of its own,
+            # so a replaced playback does not resume the sentry only to pause it again
+            self.take_control()
+            try:
+                # A playback that replaces a running one restores what was there before both
+                old = self._playback
+                replacing = old is not None and not old.done.is_set()
+                self._stop_locked(restore=False)
+                pb = _Playback(old.restore_to if replacing else self._look_before_play())
+            except BaseException:
+                self.release()
+                raise
+            playing = {'name': seq.name, 'step': 0, 'steps': len(steps), 'loop': loop, 'started': time.time()}
+            # _playback first: an old thread still exiting clears _playing only while it is its own
+            self._playback = pb
+            self._playing = playing
+            threading.Thread(target=self._play_run, args=(pb, seq.name, steps, loop, playing),
+                             name='eyes-play-' + seq.name, daemon=True).start()
+
+    def _look_before_play(self):
+        """The command stop() sends to undo a playback: the cached look, or idle if none was sent."""
+        with self._lock:
+            if self._source == 'assumed':
+                return self._parse(IDLE_ANIMATION, IDLE_ANIMATION, IDLE_COLOR, IDLE_INTENSITY)
+            # An eye never commanded showed the firmware's own animation; idle is the closest
+            idle = find_animation(IDLE_ANIMATION)
+            return self._left or idle, self._right or idle, self._color, self._intensity
+
+    def _play_run(self, pb, name, steps, loop, playing):
+        try:
+            self._play_steps(pb, steps, loop, playing)
+            if pb.restore.is_set():
+                self._send(*pb.restore_to)
+        except Exception:
+            logger.exception('Eye sequence %s stopped', name)
+        finally:
+            if self._playback is pb:
+                self._playing = None
+            try:
+                self.release()
+            finally:
+                pb.done.set()
+
+    def _play_steps(self, pb, steps, loop, playing):
+        due = time.monotonic()
+        while not pb.stop.is_set():
+            for i, (command, hold) in enumerate(steps):
+                self._playing = dict(playing, step=i)
+                if self._send(*command, stop_event=pb.stop) is None:
+                    return
+                # Holds run from a schedule, not from each send, so a loop does not drift.
+                # A step that went out late holds from now.
+                now = time.monotonic()
+                if now - due > PLAY_RESYNC_S:
+                    due = now
+                due += hold
+                if pb.stop.wait(max(0.0, due - time.monotonic())):
+                    return
+            if not loop:
+                return
+
+    @property
+    def playing(self):
+        """{'name', 'step', 'steps', 'loop', 'started'} for the sequence playing, else None."""
+        playing = self._playing
+        return None if playing is None else dict(playing)
+
+    def stop(self, restore=True):
+        """
+        Stop playback and put back the look that was showing before play(): the left,
+        right, color and intensity last sent before it, or idle when nothing had been
+        sent (an eye never commanded goes to idle). restore=False leaves the eyes on the
+        step that was showing. Nothing is sent when no sequence is playing, so a sequence
+        that already ended stays on its last step.
+
+        Waits up to STOP_PLAYBACK_S for the playback thread to exit. Returns False when
+        it had not exited by then (a step stuck in a server push); it sends no more steps,
+        only the restore once that push gets through. True when nothing was playing.
+        """
+        with self._play_lock:
+            return self._stop_locked(restore)
+
+    def _stop_locked(self, restore):
+        pb = self._playback
+        if pb is None or pb.done.is_set():
+            return True
+        if restore:
+            pb.restore.set()
+        else:
+            pb.restore.clear()
+        pb.stop.set()
+        if not pb.done.wait(STOP_PLAYBACK_S):
+            logger.warning('Eye sequence thread did not exit within %.1f s; it sends no more steps', STOP_PLAYBACK_S)
+            return False
+        return True
+
+    def wait(self, timeout=None):
+        """Block until playback ends (a looped sequence only ends on stop()). Returns whether it has."""
+        pb = self._playback
+        return pb is None or pb.done.wait(timeout)
+
     def close(self):
         """
-        Release any control held, waiting up to CLOSE_RESUME_S for the sentry to resume,
-        and close the backend even when that fails or raises. Returns False when the
-        sentry could not be resumed.
+        Stop playback (restoring the look from before it, as stop() does), release any
+        control held, waiting up to CLOSE_RESUME_S for the sentry to resume, and close the
+        backend even when that fails or raises. Returns False when the sentry could not be
+        resumed. Runs at interpreter exit for an object still holding control.
         """
+        atexit.unregister(self._atexit)
+        self.stop()
         with self._lock:
             try:
                 self._control_depth = 0

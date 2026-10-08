@@ -52,6 +52,81 @@ A server that has died looks the same as a lease problem from the outside: it st
 
 Eye animations, color and intensity all need PIMU protocol p13 (hello-pimu2 v0.1.9p13 or newer; `circle_cw` and `circle_ccw` need v0.1.10p13, v0.1.9p13 ignores them). A released p12 PIMU (up to v0.1.7p12) has no eye RPC at all: the board ignores every push, `stretch_body_server` logs `Error RPC_REPLY_SET_EYE_ANIMATION` for each one, nothing changes on the rings, and `sentry_eye_animations` disables itself below p13. The server does not publish the PIMU protocol, so `Eyes` cannot tell: `capabilities()['protocol_version']` is `None` through the server and `capabilities()['requires_protocol']` is `'p13'`. `stretch_system_check` reports the board's version.
 
+## Sequences and the looks library
+
+A look is a named sequence of steps, each one an eye command and how long to hold it. A single look is a one-step sequence. Looks are JSON files, one per look, named after the look:
+
+```json
+{
+  "format": "stretch-eyes/1",
+  "name": "glance",
+  "title": "Glance left and right",
+  "author": "",
+  "note": "",
+  "loop": false,
+  "steps": [
+    {"left": "look_left", "right": "look_left", "color": "#00a0ff", "intensity": 128, "hold": 1.0},
+    {"left": "look_right", "right": "look_right", "hold": 1.0},
+    {"left": "idle_glow", "right": "idle_glow", "color": "#28303c", "intensity": 255, "hold": 0.5}
+  ]
+}
+```
+
+* `name` is 1-48 of `a-z`, `0-9`, `_` and `-`, starting with a letter or digit, and must match the file name (`glance.json`). `title` defaults to the name; `loop` is what `play()` does when not told otherwise.
+* A step takes `left`, `right`, `color` and `intensity` exactly as `Eyes.set()` does, and a `hold` in seconds (0.05-600, required). A field left out keeps the previous step's value; in the first step it keeps what the eyes were last commanded to. 1-200 steps.
+* Keys starting with `x-` are kept for tools; any other unknown key is an error. Errors name the field, for example `steps[2].hold: 0.01 s is outside 0.05-600.0 s`.
+* Saved files are canonical: color as `#rrggbb`, intensity as an int 0-255, so a look can be diffed and reviewed in git.
+* The firmware only restarts an animation when it changes, so a step that repeats the running animation (a looped one-step look, say) carries on without a jump.
+
+`Library()` finds a look by name, first match wins:
+
+1. Your looks: `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/eyes/` when both are set, else `~/stretch_user/eyes/`. The only place the library writes.
+2. Shared dirs in `STRETCH_EYES_LIBRARY`, separated by `:`, for a git checkout or a synced folder the team shares. Read-only here.
+3. Built-ins shipped in the package: `attention`, `glance`, `happy`, `idle`, `off`, `sleepy`, `thinking`. Read-only.
+
+So saving a look named `glance` hides the built-in for you, and deleting it brings the built-in back. `list()` marks a look that hides another with `shadowed`. Files that do not validate are skipped and listed by `errors()`.
+
+```python
+import time
+from stretch4_body.eyes import Eyes, Library, Sequence, Step
+
+lib = Library()
+for entry in lib.list():                            # name, title, source, path, steps, duration, loop, shadowed
+    print(entry['name'], entry['source'])
+
+nod = Sequence('nod', [Step(left='bottom_half', right='bottom_half', color='cyan', intensity=0.6, hold=0.4),
+                       Step(left='top_half', right='top_half', hold=0.4)], loop=True)
+lib.save(nod)                                       # FileExistsError unless overwrite=True
+
+with Eyes() as eyes:
+    eyes.play('glance')                             # a library name, a Sequence or a dict; returns at once
+    print(eyes.playing)                             # {'name', 'step', 'steps', 'loop', 'started'}
+    eyes.wait()                                     # until it ends
+    eyes.play(nod)
+    time.sleep(5)
+    eyes.stop()                                     # back to the look from before play()
+    eyes.play(nod)
+    eyes.stop(restore=False)                        # stays on the step that was showing
+```
+
+`play()` runs the steps in a background thread, through the same path as `set()`. It takes control (pauses the eye sentry) for the playback and releases it at the end, nesting with control you already hold. A new `play()` replaces the one running; `set()`, `off()`, `idle()` and `close()` stop playback before they send.
+
+A sequence that ends stays on its last step. `stop()` puts back the look that was showing before `play()`: the left, right, color and intensity last sent through this object, or idle when nothing had been sent (an eye never commanded goes to idle too). After a `play()` that replaced a running one, that is the look from before the first. `stop(restore=False)` leaves the eyes on the step that was showing; `set()`, `off()` and `idle()` stop that way, since they send their own look. `close()`, Ctrl-C during `stretch_eye_animations --play` and Stop in Eyes Studio restore. A process that exits mid-sequence restores too (an atexit hook closes the object, which also resumes the sentry), so call `wait()` first if the whole look should play.
+
+`stop()` returns once the thread has exited, within 2 s even if a step is stuck in a server push (it then returns `False`; that thread sends no more steps, only the restore once the push gets through). A stall longer than a step's hold (a slow push, a waiting lock) does not replay the missed steps: the step that went out late holds from when it went out. `state().playing` is the same as `eyes.playing`. A sequence plays through the server lease like any other eye command, so a step sent while another client holds the lease is dropped and logged.
+
+```bash
+stretch_eye_animations --looks                         # the library, with where each look comes from
+stretch_eye_animations --play glance                   # until it ends; Ctrl-C stops, puts back the eyes, releases the sentry
+stretch_eye_animations --play thinking --loop
+stretch_eye_animations --play ~/Downloads/nod.json     # a file, without importing it
+stretch_eye_animations --export glance > glance.json   # JSON only on stdout
+stretch_eye_animations --import glance.json [--overwrite]
+stretch_eye_animations --fake --play glance            # no robot, prints the payloads
+```
+
+`--play` takes a look name or a path (anything ending in `.json` or containing `/`). `--looks`, `--export` and `--import` never touch the robot. They exit 1 when the look is unknown, invalid or already in your looks, with the message on stderr.
+
 ## Command line
 
 ```bash
@@ -66,4 +141,4 @@ stretch_eye_animations --fake --both alert --color red              # no robot, 
 
 `--intensity` follows the API rule: a whole number is raw 0-255, a decimal is a fraction, so `--intensity 1` is raw 1 (nearly off) and `--intensity 1.0` is full. Exit codes: 2 when there is nothing to send (the usage is printed), 3 when the server dropped the command (a notice names the lease holder), 1 when the sentry could not be resumed on exit or the server could not be reached, 0 otherwise.
 
-`stretch_eyes_studio` opens a browser UI built on the same API.
+`stretch_eyes_studio` opens a browser UI built on the same API. The looks flags are under [Sequences and the looks library](#sequences-and-the-looks-library).

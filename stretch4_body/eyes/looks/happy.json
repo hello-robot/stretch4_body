@@ -1,0 +1,17 @@
+{
+  "format": "stretch-eyes/1",
+  "name": "happy",
+  "title": "Happy",
+  "author": "",
+  "note": "Green burst from 12 o'clock.",
+  "loop": false,
+  "steps": [
+    {
+      "left": "happy",
+      "right": "happy",
+      "color": "#30d060",
+      "intensity": 204,
+      "hold": 2.0
+    }
+  ]
+}
