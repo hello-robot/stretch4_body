@@ -99,8 +99,9 @@ def test_robot_joints_properties():
     else:
         sub_val = RobotJoints.gripper.urdf_to_command(0.08)
         print("0.08 to command units:", sub_val)
-        # Stretch gripper converts radians to percent
-        assert math.isclose(sub_val, 4.58, abs_tol=0.1)
+        # Stretch gripper converts the URDF finger angle (radians) to percent
+        assert math.isclose(RobotJoints.gripper.command_to_urdf(sub_val), 0.08, abs_tol=1e-9)
+        assert math.isclose(RobotJoints.gripper.urdf_to_command(0.0), -100.0, abs_tol=0.01)
 
     # Test actuator (servo angle, radians) round trip, distinct from command above.
     actuator_val = RobotJoints.gripper.urdf_to_actuator(0.0)
@@ -111,16 +112,14 @@ def test_robot_joints_properties():
     # Test stretch_gripper conversion
     from unittest.mock import MagicMock, PropertyMock, patch
     with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
-        # For stretch_gripper, urdf_to_command converts radians to percent.
-        # -100 deg is -1.745329... rad.
-        # If position is -1.745329... rad, expected percent is -100.0% (closed).
-        val_pct = RobotJoints.gripper.urdf_to_command(-1.7453292519943295)
+        # For stretch_gripper, urdf_to_command converts the URDF finger angle (radians) to
+        # percent. A finger angle of 0 rad is the closed end of the servo range, -100%.
+        val_pct = RobotJoints.gripper.urdf_to_command(0.0)
         print("stretch_gripper rad to command units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
 
-        # command_to_actuator/actuator_to_command are SG4's promoted pct_to_world_rad/
-        # world_rad_to_pct: at the fully-closed reference point, Pct=-100 maps to exactly
-        # deg_to_rad(range_deg[0]), the same value as the urdf input above.
+        # command_to_actuator/actuator_to_command: at the fully-closed reference point,
+        # Pct=-100 maps to exactly deg_to_rad(range_deg[0]).
         actuator_sg = RobotJoints.gripper.command_to_actuator(val_pct)
         assert math.isclose(actuator_sg, -1.7453292519943295, abs_tol=1e-6)
         assert math.isclose(RobotJoints.gripper.actuator_to_command(actuator_sg), val_pct, abs_tol=1e-6)
