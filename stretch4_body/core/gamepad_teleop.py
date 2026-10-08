@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 
+import os
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
-from stretch4_body.core.gamepad_control_mappings import ControlMapping
+import click
 import stretch4_body.core.gamepad_controller as gc
+from stretch4_body.core import gamepad_joints
 from stretch4_body.core.device import Device
+from stretch4_body.core.feetech.feetech_SM_hello import FeetechCommError
+from stretch4_body.core.gamepad_control_mappings import ControlMapping
 from stretch4_body.core.gamepad_enums import *
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
-from stretch4_body.core.feetech.feetech_SM_hello import FeetechCommError
-from stretch4_body.core import gamepad_joints
 from stretch4_body.robot.robot import Robot
 from stretch4_body.robot.robot_client import RobotClient
+from stretch4_body.utils.file_access_utils import (
+    acquire_lock_if_available,
+    setup_shared_directory,
+)
 from stretch4_body.utils.stretch_pose_models import RobotJoints
-import os
-import time
-import threading
-import sys
-import click
-import subprocess
-import threading
-
-from stretch4_body.utils.file_access_utils import acquire_lock_if_available, setup_shared_directory
-from stretch4_flying_gripper.teleop_config import get_base_planar_ik_urdf_file
 from stretch4_flying_gripper.kinematic_controller import KinematicController
+from stretch4_flying_gripper.teleop_config import get_base_planar_ik_urdf_file
 
 # Header constants
 STEP_SLEEP = 1/15
@@ -43,14 +44,14 @@ SOUND_DELAY_MEDIUM_S = 1.0
 SOUND_DELAY_LONG_S = 1.7
 
 """
-The GamePadTeleop runs the Stretch's main gamepad controller that ships with 
-the robot. The GamePadController is used to listen to the gamepad's inputs 
+The GamePadTeleop runs the Stretch's main gamepad controller that ships with
+the robot. The GamePadController is used to listen to the gamepad's inputs
 (button presses,analog stick, trigger) and convert them into robot motions
 using the gamepad_joints library's motion command classes.
 
-The gamepad controller key mappings can be customized by modifying `gamepad_control_mappings.py` to add or edit mappings. 
+The gamepad controller key mappings can be customized by modifying `gamepad_control_mappings.py` to add or edit mappings.
 
-Additionally this class provides other robot function through the gamepad to be 
+Additionally this class provides other robot function through the gamepad to be
 customized such as manage_shutdown(), manage_fn_button() and setting precision_mode.x`
 """
 
@@ -94,10 +95,10 @@ class GamePadTeleop(Device):
         self.sleep = STEP_SLEEP
         self.print_mode = False
         self._i = 0
-        
+
         self.fn_button_command = self.params['function_cmd'] # command to execute on pressing X(left button) for N seconds
         self.fn_button_detect_span = self.params['press_time_span'] #s
-        
+
         self._last_fn_btn_press = None
         self.start_button_counter = gc.ButtonPressCounter("start_button_pressed")
         self.top_button_counter = gc.ButtonPressCounter("top_button_pressed")
@@ -107,7 +108,11 @@ class GamePadTeleop(Device):
         self.is_gamepad_active = False
         self.gripper = None
 
-        self.gripper_name = RobotJoints.gripper.value
+        # Let A and B do nothing unless the tool's metadata resolves with actuated joints
+        gripper_model = RobotJoints.gripper.gripper_model
+        self.gripper_name = gripper_model.tool_name if gripper_model and gripper_model.actuated_joints else None
+        if self.gripper_name is None:
+            print(f"No actuated gripper for tool {RobotJoints.gripper.gripper_name}")
         self.use_devices={'arm':'arm' in self.robot.subsystems,
                           'eoa':'end_of_arm' in self.robot.subsystems,
                           'lift':'lift' in self.robot.subsystems,
@@ -115,7 +120,7 @@ class GamePadTeleop(Device):
                           'gripper':'end_of_arm' in self.robot.subsystems and self.gripper_name is not None }
 
 
-        
+
         self.effort_trackers = {
             'lift': gc.JointEffortTracker('lift', pos_thresholds=[34.0, 45.0], neg_thresholds= [25.0, 35.0]),
             'arm': gc.JointEffortTracker('arm', pos_thresholds=[10.0, 20.0], neg_thresholds=[10.0, 20.0]),
@@ -125,10 +130,10 @@ class GamePadTeleop(Device):
             self.gripper_name: gc.JointEffortTracker('eoa', pos_thresholds=[5.0, 20.0], neg_thresholds=[5.0, 20.0], joint_name=self.gripper_name),
         }
 
-            
+
         print(f"Key mapped to End-Of-Arm Tool: {self.end_of_arm_tool}")
         self.lock = lock or threading.Lock()
-        
+
         self.skip_x_button = False
         self.left_stick_button_fn = None
         self.right_stick_button_fn = None
@@ -157,7 +162,7 @@ class GamePadTeleop(Device):
         self.motion_profile = self.motion_profile.cycle(is_forward=True)
 
         print(f'Switched to {self.motion_profile.name} motion_profile.')
-        
+
         self.motion_profile.play_sound_file()
         duration = 150 * self.motion_profile.value
         self.gamepad_controller.vibrate(duration_ms=duration, strong_magnitude=1.0, weak_magnitude=1.0)
@@ -167,7 +172,7 @@ class GamePadTeleop(Device):
         self.control_mapping = self.control_mapping.cycle(is_forward=True)
 
         print(f'Switched to {self.control_mapping.name} gamepad mapping.')
-        
+
         self.control_mapping.play_sound_file()
         if self.control_mapping == ControlMapping.FLYING_GRIPPER_IK:
             self.gamepad_controller.vibrate_sequence(sequence_ms=[150, 100, 150], strong_magnitude=1.0, weak_magnitude=1.0, tag="mapping_fg", cooldown=0.0)
@@ -179,7 +184,7 @@ class GamePadTeleop(Device):
         self.contact_sensitivity_profile = self.contact_sensitivity_profile.cycle(is_forward=True)
 
         print(f'Switched to {self.contact_sensitivity_profile.name} contact_sensitivity_profile.')
-        
+
         self.contact_sensitivity_profile.play_sound_file()
         duration = 150 * self.contact_sensitivity_profile.value
         self.gamepad_controller.vibrate(duration_ms=duration, strong_magnitude=1.0, weak_magnitude=1.0)
@@ -188,7 +193,7 @@ class GamePadTeleop(Device):
     def _handle_vibration(self, actuated_joints):
         """
         Handle vibration feedback for the gamepad controller.
-        
+
         Parameters
         ----------
         actuated_joints : Dict[str, JointState]
@@ -199,7 +204,7 @@ class GamePadTeleop(Device):
             tracker.step(self.robot, is_actuated, actuated_joints.get(joint_id, 0))
 
             if not is_actuated: continue
-            
+
             def trigger_vibrate(effort, j_id=joint_id, t=tracker):
                 strong_mag = 1.0
                 weak_mag = 1.0
@@ -213,12 +218,12 @@ class GamePadTeleop(Device):
                         weak_mag = strong_mag
                 except Exception:
                     pass
-                
+
                 self.gamepad_controller.vibrate_sequence(
-                    sequence_ms=[100, 50, 100], 
-                    strong_magnitude=strong_mag, 
-                    weak_magnitude=weak_mag, 
-                    tag=f"effort_{j_id}", 
+                    sequence_ms=[100, 50, 100],
+                    strong_magnitude=strong_mag,
+                    weak_magnitude=weak_mag,
+                    tag=f"effort_{j_id}",
                     cooldown=0.1
                 )
             tracker.trigger_on_hold(0.25, trigger_vibrate)
@@ -226,12 +231,12 @@ class GamePadTeleop(Device):
     def do_motion(self, state = None, robot = None):
         """
         This method should called in the control loop (mainloop())
-    
+
         Parameters
         ----------
         state : Dict
             Override the gamepad controller state providing custom state, Checkout method GamePadController.get_state()
-        robot : robot.Robot 
+        robot : robot.Robot
             Valid robot instance
 
         Returns
@@ -240,7 +245,7 @@ class GamePadTeleop(Device):
         """
         if not robot:
             robot = self.robot
-        self._i = self._i + 1 
+        self._i = self._i + 1
         self._update_state(state)
         self._update_modes()
         with self.lock:
@@ -248,7 +253,7 @@ class GamePadTeleop(Device):
                 return False
             if not robot.is_homed():
                 qprint('press the start button to calibrate the robot')
-                
+
                 # Vibrate if trying to move unhomed
                 if self.controller_state:
                     state = self.controller_state
@@ -269,7 +274,7 @@ class GamePadTeleop(Device):
                     if is_movement_attempt:
                         play_sound(get_sounds_dir()+f'/homing_required.wav')
                         self.gamepad_controller.vibrate(duration_ms=400, strong_magnitude=1.0, weak_magnitude=1.0)
-                
+
             if self.controller_state is None: # No control if gamepad not being controlled
                 return False
 
@@ -282,14 +287,14 @@ class GamePadTeleop(Device):
                     self.gamepad_controller.vibrate(duration_ms=100, strong_magnitude=1.0, weak_magnitude=1.0)
                     self.logger.error("Robot is runstopped, cannot move.")
                     return False
-                
+
                 # Regular control
                 if self.gamepad_controller.is_gamepad_active or state:
                     self.manage_fn_button(robot, self.controller_state['left_button_pressed'])
 
                     self.precision_mode = self.controller_state['left_trigger_pulled']
                     self.use_arm_lift_mode = self.controller_state['right_trigger_pulled'] > TRIGGER_THRESHOLD
-                    
+
                     actuated_joints = self.control_mapping.do_motion(robot, self)
 
                     if actuated_joints:
@@ -299,7 +304,7 @@ class GamePadTeleop(Device):
                                 self.gamepad_controller.vibrate_sequence(sequence_ms=[150, 100, 200], strong_magnitude=1.0, weak_magnitude=1.0, tag="collision", cooldown=1.0)
                         except Exception:
                             pass
-                    
+
                         # if self.precision_mode:
                         #     self._handle_vibration(actuated_joints)
 
@@ -333,13 +338,13 @@ class GamePadTeleop(Device):
         else:
             self.do_double_beep(robot)
 
-    
+
     def do_single_beep(self, robot=None):
         if self.robot:
             robot = self.robot
         robot.power_periph.trigger_beep()
         robot.push_command()
-          
+
     def do_double_beep(self, robot = None):
         if self.robot:
             robot = self.robot
@@ -350,7 +355,7 @@ class GamePadTeleop(Device):
         robot.push_command()
         time.sleep(0.5)
 
-    
+
     def do_four_beep(self, robot = None):
         if self.robot:
             robot = self.robot
@@ -366,7 +371,7 @@ class GamePadTeleop(Device):
         robot.power_periph.trigger_beep()
         robot.push_command()
         time.sleep(0.5)
-                    
+
     def _update_modes(self):
         if self.use_devices['arm']:
             self.arm_command.precision_mode = self.precision_mode
@@ -418,7 +423,7 @@ class GamePadTeleop(Device):
         def on_select_hold():
             self.stow_robot()
         self.select_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, on_select_hold)
-            
+
 
     def change_gripper_handedness(self, robot, *, do_motion:bool):
         """
@@ -504,14 +509,14 @@ class GamePadTeleop(Device):
         """
         Detect function button press (Xbox button / Left button).
 
-        Executes a localized shell command (params['function_cmd']) if the button is held 
+        Executes a localized shell command (params['function_cmd']) if the button is held
         for FN_BUTTON_DETECT_SPAN_S.
 
         Args:
             robot (robot.Robot): Valid robot instance.
             button_state (bool): derived from controller_state['left_button_pressed'].
-        """    
-        if self.params['enable_fn_button']: 
+        """
+        if self.params['enable_fn_button']:
             if button_state:
                 if not self._last_fn_btn_press:
                     self._last_fn_btn_press = time.time()
@@ -523,11 +528,11 @@ class GamePadTeleop(Device):
                     self._execute_fn_cmd()
             else:
                 self._last_fn_btn_press = None
-    
+
     def _execute_fn_cmd(self):
         if self.fn_button_command:
             execute_command_non_blocking(self.fn_button_command)
-    
+
     def _safety_stop(self, robot):
         """
         Stop all robot motions.
@@ -570,7 +575,7 @@ class GamePadTeleop(Device):
             self.robot.stow()
             self.do_single_beep(self.robot)
             self.currently_stowing = False
-    
+
     def stop(self):
         """
         Stop the gamepad controller and the robot.
@@ -578,7 +583,7 @@ class GamePadTeleop(Device):
         self.robot.stop()
         self.gamepad_controller.stop()
 
-    
+
     def manage_start_button(self, robot:Robot|RobotClient):
         """
         Manage the state of the Start button.
@@ -590,7 +595,7 @@ class GamePadTeleop(Device):
             robot (robot.Robot): Valid robot instance.
         """
         self.start_button_counter.step(self.controller_state)
-            
+
         if not robot.is_homed():
             def do_home():
                 if self.robot.is_runstopped():
@@ -608,22 +613,22 @@ class GamePadTeleop(Device):
             """If the user holds the start button, it will do the automatic handedness change motion"""
             self.start_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, lambda:self.change_gripper_handedness(robot, do_motion=True))
             # self.start_button_counter.trigger_on_tap( lambda:self.change_gripper_handedness(robot, do_motion=False))
-    
+
     def manage_select_button(self, robot):
         pass
 
-            
-        
+
+
 
     def step_mainloop(self,robot=None):
         """
         Execute a single step of the main control loop.
-        
+
         This method:
         1. Calculates and sends motion commands based on gamepad input.
         2. Pushes commands to the robot.
         3. Sleeps for a short duration (STEP_SLEEP).
-        
+
         Args:
             robot (robot.Robot, optional): Valid robot instance.
         """
@@ -673,22 +678,22 @@ def execute_command_non_blocking(command):
             stderr=subprocess.DEVNULL,
             preexec_fn=os.setpgrp  # Detach the child process from the parent
         )
-        
+
         # Optionally, you can save the process ID (PID) for later management if needed
         tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_fn_command_process.pid"
 
         setup_shared_directory(Path(tmp_file).parent)
-        
+
         if not acquire_lock_if_available(tmp_file, remove_if_exists_and_unused=True):
             raise Exception("Could not acquire lock file for gamepad teleop.")
-            
+
         with open(tmp_file, "w") as pid_file:
             print(f"Process PID ID saved to `/tmp/gamepad_fn_command_process.pid`")
             pid_file.write(str(process.pid))
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        
+
 if __name__ == "__main__":
    gamepad_teleop = GamePadTeleop()
    gamepad_teleop.startup()
