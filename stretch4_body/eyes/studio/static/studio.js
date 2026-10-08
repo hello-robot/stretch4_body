@@ -306,8 +306,10 @@ const EYE_NAME = ['Left eye', 'Right eye'];
 const SWAP_KEY = 'eyes-studio.swap';
 // Orientation. The firmware mapping (commitPixels) implies the left board is fitted
 // rotated 18 degrees clockwise and the right board 162 degrees, which puts both
-// connector tabs toward the middle of the head. Whether the firmware's "left" is the
-// viewer's left is not verified on a robot: view.swap flips it, stored per browser.
+// connector tabs toward the middle of the head. Verified by camera on robot 4000 on
+// 2026-10-07: the firmware's "left" eye is the viewer's left, pixel 0 sits just
+// clockwise of 12 o'clock and the index runs clockwise, circle_cw turns clockwise as
+// the viewer sees it. view.swap flips left and right for an odd build, stored per browser.
 const view = { swap: false };
 try { view.swap = localStorage.getItem(SWAP_KEY) === '1'; } catch (err) { /* storage blocked */ }
 const sideOf = (e) => (view.swap ? 1 - e : e);        // firmware eye -> drawn side, 0 = viewer's left
@@ -1113,7 +1115,7 @@ function setSwap(on) {
   $('btn-swap').setAttribute('aria-pressed', String(on));
   $('orientation-caption').textContent = on
     ? 'Swapped on this browser: the firmware left eye is drawn on the viewer\'s right. Board LED numbers are not shown in this view because the firmware mapping no longer fixes them.'
-    : 'Orientation assumed, not verified on a robot: the firmware left eye is drawn on the viewer\'s left, pixel 0 just clockwise of 12 o\'clock. Swap it after looking at the robot.';
+    : 'Orientation verified by camera on robot 4000 (2026-10-07): the firmware left eye is the viewer\'s left, pixel 0 just clockwise of 12 o\'clock, index and circle_cw run clockwise. Swap only for a build that differs.';
   if (spot.pinned) { spot.pinned.el.setAttribute('aria-pressed', 'false'); spot.pinned = null; }
   stage.layout = null;   // boards, labels and hotspots move on the next frame
 }

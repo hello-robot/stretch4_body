@@ -537,7 +537,7 @@ async function startServer() {
       const win = await page.locator('.window').boundingBox();
       const mid = win.x + win.width / 2;
       expect(await spotX(0, 0) < mid, 'firmware left eye not drawn on the viewer\'s left by default');
-      expect((await page.textContent('#orientation-caption')).includes('assumed'), 'caption does not say assumed');
+      expect((await page.textContent('#orientation-caption')).includes('verified by camera'), 'caption does not say verified');
       await page.click('#btn-swap');
       await sleep(200);
       expect(await page.getAttribute('#btn-swap', 'aria-pressed') === 'true', 'aria-pressed');
