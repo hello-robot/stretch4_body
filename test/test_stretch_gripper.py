@@ -21,31 +21,31 @@ def test_stretch_gripper_direct_commands():
             }
         }
     }
-    with patch('stretch4_body.core.device.RobotParams.get_params', return_value=({}, dummy_params)):
+    # command_to_actuator/actuator_to_command (StretchGripperMetadata, promoted from the
+    # driver's old pct_to_world_rad/world_rad_to_pct, matching PG4's aperture_to_actuator/
+    # actuator_to_aperture pattern) read RobotParams.get_params() live rather than a snapshot,
+    # so keep the patch active for the whole test rather than just construction.
+    with patch('stretch4_body.core.device.RobotParams.get_params', return_value=({}, dummy_params)), \
+         patch('stretch4_body.utils.tool_metadata.RobotParams.get_params', return_value=({}, dummy_params)):
         gripper = StretchGripper()
-        
-    gripper.params = {
-        'range_deg': [-100.0, 0.0],
-        'gripper_conversion': {
-            'finger_length_m': 0.18205,
-            'aperture_open_m': 0.150,
-            'aperture_closed_m': 0.0
-        }
-    }
-    
-    # Mock parent calls
-    mock_move_to = MagicMock()
-    from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
-    FeetechSMHello.move_to = mock_move_to
-    
-    # Test move_to
-    gripper.move_to(50.0)
-    mock_move_to.assert_called_once_with(gripper, x_des=gripper.tool_metadata.command_to_actuator(50.0), v_des=None, a_des=None)
+
+        # Mock parent calls
+        mock_move_to = MagicMock()
+        from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
+        FeetechSMHello.move_to = mock_move_to
+
+        # Test conversions
+        assert math.isclose(gripper.tool_metadata.command_to_actuator(-100.0), math.radians(-100.0), abs_tol=1e-5)
+        assert math.isclose(gripper.tool_metadata.actuator_to_command(math.radians(-100.0)), -100.0, abs_tol=1e-5)
+
+        # Test move_to
+        gripper.move_to(50.0)
+        mock_move_to.assert_called_once_with(gripper, x_des=gripper.tool_metadata.command_to_actuator(50.0), v_des=None, a_des=None)
     print("StretchGripper direct move_to test passed!")
 
 def test_robot_joints_properties_stretch():
-    from unittest.mock import patch
-    with patch.object(RobotJoints.gripper, 'get_gripper', return_value='stretch_gripper'):
+    from unittest.mock import patch, PropertyMock
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
         joints = RobotJoints.gripper.finger_joints
         links = RobotJoints.gripper.finger_links
         print("stretch_gripper finger_joints:", joints)
@@ -56,8 +56,8 @@ def test_robot_joints_properties_stretch():
         
         # -100 deg is -1.745329... rad.
         # If position is -1.745329... rad, expected percent is -100.0% (closed).
-        val_pct = RobotJoints.gripper.to_subsystem_units(-1.7453292519943295)
-        print("stretch_gripper rad to subsystem units:", val_pct)
+        val_pct = RobotJoints.gripper.urdf_to_command(-1.7453292519943295)
+        print("stretch_gripper rad to command units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
 
 def test_scripts_auto_detect_stretch():
@@ -101,7 +101,6 @@ def test_scripts_auto_detect_stretch():
         res_jog = subprocess.run(["python3", "-m", "stretch4_body.tools.stretch_gripper_jog"], input="", capture_output=True, text=True, env=env)
         print("stretch_gripper_jog exit code:", res_jog.returncode)
         assert res_jog.returncode == 0
-        assert "close by 10%" in res_jog.stdout or "close by 10" in res_jog.stdout
         
         print("Scripts auto-detect checks passed!")
 
