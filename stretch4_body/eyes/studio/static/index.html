@@ -23,24 +23,44 @@
   </div>
 </header>
 
-<p class="notice notice-fault" id="protocol-notice" role="alert" hidden></p>
-<p class="notice" id="sentry-notice" hidden>Sentry eye animations are running and will overwrite these settings. Take control to pause them.</p>
-<p class="notice notice-fault" id="dropped-notice" role="alert" hidden></p>
-<div class="notice notice-fault" id="resume-notice" role="alert" hidden>
-  <span id="resume-text"></span>
-  <button type="button" class="key" id="btn-resume">Resume sentry</button>
+<div class="notices">
+  <p class="notice notice-fault" id="protocol-notice" role="alert" hidden></p>
+  <p class="notice" id="sentry-notice" hidden>Sentry eye animations are running and will overwrite these settings. Take control to pause them.</p>
+  <p class="notice notice-fault" id="dropped-notice" role="alert" hidden></p>
+  <div class="notice notice-fault" id="resume-notice" role="alert" hidden>
+    <span id="resume-text"></span>
+    <button type="button" class="key" id="btn-resume">Resume sentry</button>
+  </div>
+  <p class="notice notice-fault" id="error-notice" role="alert" hidden></p>
 </div>
-<p class="notice notice-fault" id="error-notice" role="alert" hidden></p>
 
 <main class="bench">
+  <section class="panel fx" aria-labelledby="fx-h">
+    <div class="fx-head">
+      <h2 id="fx-h"><span class="tp" aria-hidden="true"></span>Effect</h2>
+      <fieldset class="link">
+        <legend class="visually-hidden">Apply to</legend>
+        <label><input type="radio" name="link" value="left"><span>Left</span></label>
+        <label><input type="radio" name="link" value="both" checked><span>Both</span></label>
+        <label><input type="radio" name="link" value="right"><span>Right</span></label>
+      </fieldset>
+    </div>
+    <ul class="effects" id="effects" aria-label="Effects"></ul>
+  </section>
+
   <section class="stage" aria-labelledby="stage-h">
     <h2 id="stage-h" class="visually-hidden">Live preview</h2>
     <div class="window">
       <canvas id="rings" role="img" aria-label="Preview of both eye rings as the PIMU renders them"></canvas>
       <div class="spots" id="spots" role="group" aria-label="Pixels. Arrow keys move between them, Enter pins the readout, Escape unpins."></div>
       <p class="override-banner" id="override-banner" hidden></p>
+      <div class="play-badge" id="play-badge" hidden>
+        <span class="lamp ok" aria-hidden="true"></span>
+        <span id="play-text" aria-live="polite"></span>
+        <button type="button" class="key key-window" id="btn-play-stop" title="Stop, and put back the look from before Play">Stop</button>
+      </div>
+      <p class="led-readout" id="led-readout" aria-live="polite">Tap or hover a pixel for its index, chain position and board LED.</p>
     </div>
-    <p class="led-readout" id="led-readout" aria-live="polite">Tap or hover a pixel for its index, chain position and board LED.</p>
     <div class="readout" aria-live="polite">
       <span><b>Left</b> <span id="ro-left">?</span></span>
       <span><b>Right</b> <span id="ro-right">?</span></span>
@@ -48,24 +68,55 @@
       <span><b>Intensity</b> <span id="ro-intensity">?</span></span>
       <span><b>Source</b> <span id="ro-source">?</span></span>
     </div>
-    <p class="caption" id="stage-caption">Simulated from the PIMU renderer at 50 Hz.</p>
-    <div class="transport">
-      <button type="button" class="key key-wide" id="btn-idle">Idle</button>
-      <button type="button" class="key key-wide" id="btn-off">Off</button>
-      <button type="button" class="key" id="btn-swap" aria-pressed="false" aria-describedby="orientation-caption">Swap left and right</button>
-    </div>
-    <p class="caption" id="orientation-caption"></p>
-  </section>
 
-  <section class="panel fx" aria-labelledby="fx-h">
-    <h2 id="fx-h"><span class="tp" aria-hidden="true"></span>Effect</h2>
-    <fieldset class="link">
-      <legend>Apply to</legend>
-      <label><input type="radio" name="link" value="left"><span>Left</span></label>
-      <label><input type="radio" name="link" value="both" checked><span>Both</span></label>
-      <label><input type="radio" name="link" value="right"><span>Right</span></label>
-    </fieldset>
-    <ul class="effects" id="effects" aria-label="Effects"></ul>
+    <section class="seq" id="seq" aria-labelledby="seq-h" hidden>
+      <div class="seq-head">
+        <h2 id="seq-h"><span class="tp" aria-hidden="true"></span>Sequence</h2>
+        <label class="field field-inline">Name <input id="seq-name" type="text" maxlength="48" spellcheck="false" autocomplete="off" placeholder="my-look" aria-describedby="seq-msg"></label>
+        <label class="field field-inline field-grow">Title <input id="seq-title" type="text" maxlength="120" autocomplete="off" placeholder="What it says"></label>
+        <button type="button" class="key key-icon" id="seq-close" aria-label="Close the sequence editor" title="Close (Escape)">&#x2715;</button>
+      </div>
+      <div class="seq-body">
+        <div class="seq-keys">
+          <button type="button" class="key seq-wide" id="seq-add">Add step</button>
+          <button type="button" class="key key-go" id="seq-play">Play</button>
+          <button type="button" class="key" id="seq-stop" title="Stop, and put back the look from before Play">Stop</button>
+          <button type="button" class="key" id="seq-loop" aria-pressed="false">Loop</button>
+          <button type="button" class="key" id="seq-new">New</button>
+        </div>
+        <ol class="timeline" id="timeline" aria-label="Steps. Drag to reorder, or use the earlier and later keys."></ol>
+      </div>
+      <div class="seq-foot">
+        <p class="seq-msg" id="seq-msg" aria-live="polite">Pick an effect, color and intensity, then Add step captures them with a 1 s hold. Stop puts back the look from before Play; a sequence that ends stays on its last step.</p>
+        <div class="confirm" id="seq-confirm" role="alertdialog" aria-labelledby="seq-confirm-text" hidden>
+          <span id="seq-confirm-text"></span>
+          <button type="button" class="key key-danger" id="seq-confirm-yes">Overwrite</button>
+          <button type="button" class="key" id="seq-confirm-no">Cancel</button>
+        </div>
+        <div class="seq-file-keys">
+          <span class="seq-total" id="seq-total">0 steps</span>
+          <button type="button" class="key" id="seq-save">Save</button>
+          <button type="button" class="key" id="seq-export">Export</button>
+          <button type="button" class="key" id="seq-import">Import</button>
+          <input type="file" id="seq-file" accept=".json,application/json" hidden>
+        </div>
+      </div>
+    </section>
+
+    <nav class="softkeys" aria-label="Panels and transport">
+      <div class="softkey-group" role="toolbar" aria-label="Panels">
+        <button type="button" class="key softkey" id="key-swatches" data-pop="pop-swatches" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop-swatches">Swatches</button>
+        <button type="button" class="key softkey" id="key-looks" data-pop="pop-looks" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop-looks">Quick looks</button>
+        <button type="button" class="key softkey" id="key-library" data-pop="pop-library" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop-library">Library</button>
+        <button type="button" class="key softkey" id="key-seq" aria-expanded="false" aria-controls="seq">Sequence</button>
+        <button type="button" class="key softkey" id="key-overrides" data-pop="pop-overrides" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop-overrides"><span class="lamp" id="lamp-ovr" aria-hidden="true"></span>Overrides</button>
+        <button type="button" class="key softkey" id="key-details" data-pop="pop-details" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop-details">Details</button>
+      </div>
+      <div class="softkey-group transport" aria-label="Transport">
+        <button type="button" class="key" id="btn-idle">Idle</button>
+        <button type="button" class="key" id="btn-off">Off</button>
+      </div>
+    </nav>
   </section>
 
   <section class="panel colour" aria-labelledby="colour-h">
@@ -81,64 +132,97 @@
       <label class="field">G <input id="rgb-g" type="number" min="0" max="255"></label>
       <label class="field">B <input id="rgb-b" type="number" min="0" max="255"></label>
     </div>
-    <div class="swatches">
-      <ul id="swatches" aria-label="Swatches"></ul>
-      <div class="swatch-keys">
-        <button type="button" class="key" id="swatch-save">Save color</button>
-        <button type="button" class="key" id="swatch-clear">Clear saved</button>
+    <div class="level" id="level">
+      <h2 id="level-h"><span class="tp" aria-hidden="true"></span>Intensity</h2>
+      <p class="reason" id="intensity-reason"></p>
+      <div class="fader">
+        <input type="range" id="intensity" min="0" max="255" step="1" aria-labelledby="level-h" aria-describedby="intensity-out intensity-reason">
+        <output id="intensity-out" for="intensity">255</output>
       </div>
-      <p class="hint">Saved on this browser. Delete key removes a saved swatch.</p>
+      <p class="hint" id="intensity-hint">Scales every pixel. Rainbow never drops below 40.</p>
     </div>
-    <div class="cap" data-cap="per_eye_color">
-      <label class="check"><input type="checkbox" id="per-eye-color"> Separate color per eye</label>
-      <p class="reason" id="per-eye-color-reason"></p>
-    </div>
-  </section>
-
-  <section class="panel level" aria-labelledby="level-h">
-    <h2 id="level-h"><span class="tp" aria-hidden="true"></span>Intensity</h2>
-    <p class="reason" id="intensity-reason"></p>
-    <div class="fader">
-      <input type="range" id="intensity" min="0" max="255" step="1" aria-describedby="intensity-out intensity-reason">
-      <output id="intensity-out" for="intensity">255</output>
-    </div>
-    <p class="hint" id="intensity-hint">Scales every pixel. Rainbow never drops below 40.</p>
-  </section>
-
-  <section class="panel presets" aria-labelledby="presets-h">
-    <h2 id="presets-h"><span class="tp" aria-hidden="true"></span>Quick looks</h2>
-    <ul class="preset-list" id="presets"></ul>
-  </section>
-
-  <section class="panel overrides" aria-labelledby="ovr-h">
-    <h2 id="ovr-h"><span class="tp" aria-hidden="true"></span>Firmware overrides</h2>
-    <ul class="ovr-lamps">
-      <li><span class="lamp" id="lamp-runstop" aria-hidden="true"></span><span>Runstop <span id="runstop-text">off</span></span></li>
-      <li><span class="lamp" id="lamp-soc" aria-hidden="true"></span><span>Low battery <span id="soc-text">off</span></span></li>
-    </ul>
-    <fieldset class="link link-small">
-      <legend>Preview</legend>
-      <label><input type="radio" name="ovr" value="live" checked><span>Live</span></label>
-      <label><input type="radio" name="ovr" value="runstop"><span>Runstop</span></label>
-      <label><input type="radio" name="ovr" value="soc25"><span>SOC 25%</span></label>
-      <label><input type="radio" name="ovr" value="soc12"><span>SOC 12%</span></label>
-    </fieldset>
-    <p class="hint">These outrank the host. Preview only, nothing is sent.</p>
-  </section>
-
-  <section class="panel pixels" aria-labelledby="px-h">
-    <h2 id="px-h"><span class="tp" aria-hidden="true"></span>Pixels</h2>
-    <div class="cap" data-cap="per_pixel">
-      <button type="button" class="key" id="btn-paint" aria-pressed="false">Paint pixels</button>
-      <p class="reason" id="paint-reason"></p>
-    </div>
-    <p class="hint" id="px-hint">10 per eye</p>
   </section>
 </main>
 
-<footer class="foot">
-  <p>Preview is a port of <span id="port-source">EyeAnimationManager.cpp from hello_pimu2</span>: 50 Hz frames, 300 ms crossfade on an effect change, color and intensity snap. Overrides follow LightBarManager::step: runstop blinks every eye pixel at 500 ms, SOC at or below 25 shows yellow half rings, 12 red.</p>
-</footer>
+<!-- Pop-overs: modal while open (focus trapped), close on Escape and on a click outside. -->
+<div class="pop" id="pop-swatches" role="dialog" aria-modal="true" aria-labelledby="pop-swatches-h" hidden>
+  <div class="pop-head"><h2 id="pop-swatches-h"><span class="tp" aria-hidden="true"></span>Swatches</h2><button type="button" class="key key-icon pop-close" aria-label="Close swatches">&#x2715;</button></div>
+  <div class="swatches">
+    <ul id="swatches" aria-label="Swatches"></ul>
+    <div class="swatch-keys">
+      <button type="button" class="key" id="swatch-save">Save color</button>
+      <button type="button" class="key" id="swatch-clear">Clear saved</button>
+    </div>
+    <p class="hint">Round ones are factory, square ones saved on this browser. Delete key removes a saved swatch.</p>
+  </div>
+</div>
+
+<div class="pop" id="pop-looks" role="dialog" aria-modal="true" aria-labelledby="pop-looks-h" hidden>
+  <div class="pop-head"><h2 id="pop-looks-h"><span class="tp" aria-hidden="true"></span>Quick looks</h2><button type="button" class="key key-icon pop-close" aria-label="Close quick looks">&#x2715;</button></div>
+  <ul class="preset-list" id="presets"></ul>
+  <p class="hint">One click sends both eyes, color and intensity. Saved sequences live in the Library.</p>
+</div>
+
+<div class="pop pop-wide" id="pop-library" role="dialog" aria-modal="true" aria-labelledby="pop-library-h" hidden>
+  <div class="pop-head"><h2 id="pop-library-h"><span class="tp" aria-hidden="true"></span>Looks library</h2><button type="button" class="key key-icon pop-close" aria-label="Close the library">&#x2715;</button></div>
+  <p class="hint" id="library-where">Built-in looks ship with stretch4_body. Shared looks come from STRETCH_EYES_LIBRARY. Looks saved here go to this robot's folder.</p>
+  <ul class="library" id="library" aria-label="Looks"></ul>
+  <p class="seq-msg" id="library-msg" aria-live="polite"></p>
+</div>
+
+<div class="pop" id="pop-overrides" role="dialog" aria-modal="true" aria-labelledby="pop-overrides-h" hidden>
+  <div class="pop-head"><h2 id="pop-overrides-h"><span class="tp" aria-hidden="true"></span>Firmware overrides</h2><button type="button" class="key key-icon pop-close" aria-label="Close firmware overrides">&#x2715;</button></div>
+  <ul class="ovr-lamps">
+    <li><span class="lamp" id="lamp-runstop" aria-hidden="true"></span><span>Runstop <span id="runstop-text">off</span></span></li>
+    <li><span class="lamp" id="lamp-soc" aria-hidden="true"></span><span>Low battery <span id="soc-text">off</span></span></li>
+  </ul>
+  <fieldset class="link link-small">
+    <legend>Preview</legend>
+    <label><input type="radio" name="ovr" value="live" checked><span>Live</span></label>
+    <label><input type="radio" name="ovr" value="runstop"><span>Runstop</span></label>
+    <label><input type="radio" name="ovr" value="soc25"><span>SOC 25%</span></label>
+    <label><input type="radio" name="ovr" value="soc12"><span>SOC 12%</span></label>
+  </fieldset>
+  <p class="hint">These outrank the host. Preview only, nothing is sent. The choice stays on after this closes; the Overrides key lamp shows it.</p>
+</div>
+
+<div class="pop pop-wide" id="pop-details" role="dialog" aria-modal="true" aria-labelledby="pop-details-h" hidden>
+  <div class="pop-head"><h2 id="pop-details-h"><span class="tp" aria-hidden="true"></span>Details</h2><button type="button" class="key key-icon pop-close" aria-label="Close details">&#x2715;</button></div>
+  <div class="details">
+    <div class="det-col">
+      <section aria-labelledby="det-orient-h">
+        <h3 id="det-orient-h">Orientation</h3>
+        <button type="button" class="key" id="btn-swap" aria-pressed="false" aria-describedby="orientation-caption">Swap left and right</button>
+        <p class="caption" id="orientation-caption"></p>
+      </section>
+      <section aria-labelledby="det-caps-h">
+        <h3 id="det-caps-h">Capabilities</h3>
+        <div class="cap" data-cap="per_eye_color">
+          <label class="check"><input type="checkbox" id="per-eye-color"> Separate color per eye</label>
+          <p class="reason" id="per-eye-color-reason"></p>
+        </div>
+        <div class="cap" data-cap="per_pixel">
+          <button type="button" class="key" id="btn-paint" aria-pressed="false">Paint pixels</button>
+          <p class="reason" id="paint-reason"></p>
+        </div>
+        <p class="hint" id="px-hint">10 per eye</p>
+      </section>
+    </div>
+    <div class="det-col">
+      <section aria-labelledby="det-proto-h">
+        <h3 id="det-proto-h">Protocol and preview</h3>
+        <p class="caption" id="protocol-detail"></p>
+        <p class="caption" id="stage-caption">Simulated from the PIMU renderer at 50 Hz.</p>
+        <p class="caption">Preview is a port of <span id="port-source" class="mono">EyeAnimationManager.cpp from hello_pimu2</span>: 50 Hz frames, 300 ms crossfade on an effect change, color and intensity snap. Overrides follow LightBarManager::step: runstop blinks every eye pixel at 500 ms, SOC at or below 25 shows yellow half rings, 12 red.</p>
+      </section>
+      <section aria-labelledby="det-conn-h">
+        <h3 id="det-conn-h">Connection</h3>
+        <dl class="kv" id="conn"></dl>
+      </section>
+    </div>
+  </div>
+</div>
+
 <script src="studio.js"></script>
 </body>
 </html>

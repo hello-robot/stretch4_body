@@ -340,11 +340,22 @@ function roundRect(ctx, x, y, w, h, r) {
 const stage = { canvas: null, board: null, layout: null };
 
 // Ring centres 0.52 W apart and the scale chosen so the two 23 mm tab reaches
-// (pointing 18 degrees below horizontal, toward the middle) never meet.
-function ringLayout(W, H) {
-  const k = Math.min(W * 0.16, H * 0.36) / MM.ringOut;   // px per mm
-  const cy = H * 0.44;
-  return { k, cy, sides: [{ cx: W * 0.24, cy }, { cx: W * 0.76, cy }], W, H };
+// (pointing 18 degrees below horizontal, toward the middle) never meet. Hv is the
+// height left in view: the sequence drawer covers the lower window while it is
+// open, and the rings move up and shrink into what stays visible.
+function ringLayout(W, H, Hv = H) {
+  const k = Math.min(W * 0.16, Hv * 0.34) / MM.ringOut;   // px per mm
+  const cy = Hv * 0.46;   // clear of the override banner at the top
+  return { k, cy, sides: [{ cx: W * 0.24, cy }, { cx: W * 0.76, cy }], W, H, Hv };
+}
+
+// Canvas pixels of the window not covered by the drawer.
+function visibleWindowHeight(canvas) {
+  const seq = document.getElementById('seq');
+  if (!seq || seq.hidden || getComputedStyle(seq).position !== 'absolute') return canvas.height;
+  const c = canvas.getBoundingClientRect(), d = seq.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  return Math.max(60, Math.min(canvas.height, Math.round((d.top - c.top - 6) * dpr)));
 }
 
 // Static layer: boards, pads, unlit packages, labels. Redrawn on resize and swap.
@@ -514,8 +525,9 @@ function placeSpots() {
 
 function drawStage() {
   const canvas = stage.canvas;
-  if (fitCanvas(canvas) || !stage.layout) {
-    stage.layout = ringLayout(canvas.width, canvas.height);
+  const resized = fitCanvas(canvas), hv = visibleWindowHeight(canvas);
+  if (resized || !stage.layout || stage.layout.Hv !== hv) {
+    stage.layout = ringLayout(canvas.width, canvas.height, hv);
     drawBoards();
   }
   const { W, H, k, sides } = stage.layout, n = sim.engine.n;
@@ -560,21 +572,16 @@ function drawStage() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-// Effect thumbnails: one engine per preset, left eye only, no overrides.
-const thumbs = [];
 
-function drawThumb(t) {
-  const c = t.canvas;
-  fitCanvas(c);
-  const ctx = c.getContext('2d'), W = c.width, n = t.engine.n, px = t.engine.out[0];
-  const cx = W / 2, rr = W * 0.33, dot = W * 0.075;
+// Mini rings: effect thumbnails (one eye), step chips and library previews (both
+// eyes). Same engine, drawn as dots without the board.
+function drawMiniRing(ctx, px, n, cx, cy, rr, dot) {
   ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = '#0A0B0C'; ctx.fillRect(0, 0, W, W);
-  ctx.beginPath(); ctx.arc(cx, cx, rr + dot * 1.6, 0, Math.PI * 2);
-  ctx.arc(cx, cx, rr - dot * 1.6, 0, Math.PI * 2, true);
+  ctx.beginPath(); ctx.arc(cx, cy, rr + dot * 1.6, 0, Math.PI * 2);
+  ctx.arc(cx, cy, rr - dot * 1.6, 0, Math.PI * 2, true);
   ctx.fillStyle = '#17181B'; ctx.fill('evenodd');
   for (let i = 0; i < n; i++) {
-    const a = ledAngle(i, n), x = cx + rr * Math.sin(a), y = cx - rr * Math.cos(a);
+    const a = ledAngle(i, n), x = cx + rr * Math.sin(a), y = cy - rr * Math.cos(a);
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#5A564E';
     ctx.fillRect(x - dot, y - dot, dot * 2, dot * 2);
@@ -594,6 +601,65 @@ function drawThumb(t) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+// Effect thumbnails: one engine per preset, left eye only, no overrides.
+const thumbs = [];
+
+function drawThumb(t) {
+  const c = t.canvas;
+  fitCanvas(c);
+  const ctx = c.getContext('2d'), W = c.width;
+  ctx.fillStyle = '#0A0B0C'; ctx.fillRect(0, 0, W, W);
+  drawMiniRing(ctx, t.engine.out[0], t.engine.n, W / 2, W / 2, W * 0.33, W * 0.075);
+}
+
+// Both eyes side by side, in the drawn orientation (swap respected).
+function drawPair(canvas, engine) {
+  fitCanvas(canvas);
+  const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0A0B0C'; ctx.fillRect(0, 0, W, H);
+  const rr = Math.min(H * 0.3, W * 0.15), dot = rr * 0.24;
+  for (let s = 0; s < 2; s++) drawMiniRing(ctx, engine.out[eyeAtSide(s)], engine.n, W * (s ? 0.73 : 0.27), H / 2, rr, dot);
+}
+
+// A sequence on its own engine, for chips and library previews. Steps are resolved
+// (every field filled in); a single step just runs its animation. wrap is the set the
+// passes after the first play (see wrapSteps).
+class MiniPlayer {
+  constructor(steps, wrap = steps) {
+    this.steps = steps; this.wrap = wrap; this.idx = 0; this.t = 0;
+    this.engine = new EyeEngine(sim.engine.n);
+    this.apply(true);
+  }
+  apply(snap) {
+    const s = this.steps[this.idx];
+    if (!s) return;
+    this.engine.setAnimation(animId(s.left), animId(s.right), s.intensity, ...s.color);
+    if (snap) { this.engine.snap(0, animId(s.left)); this.engine.snap(1, animId(s.right)); }
+  }
+  frame() {
+    if (this.steps.length > 1) {
+      this.t += FRAME_MS;
+      if (this.t >= Math.max(50, this.steps[this.idx].hold * 1000)) {
+        this.t = 0; this.idx = (this.idx + 1) % this.steps.length;
+        if (this.idx === 0) this.steps = this.wrap;
+        this.apply(false);
+      }
+    }
+    this.engine.step();
+  }
+}
+// Canvas -> MiniPlayer for every chip and library preview on the page. Only the
+// visible ones are stepped and drawn.
+const minis = new Map();
+function visibleMinis() {
+  const out = [];
+  for (const [canvas, player] of minis) {
+    if (!canvas.isConnected) { minis.delete(canvas); continue; }
+    if (canvas.offsetParent) out.push([canvas, player]);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // 4. Server link.
 // ---------------------------------------------------------------------------
@@ -601,9 +667,10 @@ let server = {};           // last /api/state
 let caps = {};
 let anims = [];
 const animByName = {};
+const animById = {};
 
 const queue = [];
-let draining = false, lastEyesPost = 0, lastLocalEdit = 0, polls = 0;
+let draining = false, lastEyesPost = 0, lastLocalEdit = 0, lastCaps = 0;
 const EYES_SPACING_MS = 50;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
@@ -614,12 +681,19 @@ async function api(path, body) {
   };
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data && data.error) || `${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const err = new Error((data && data.error) || `${res.status} ${res.statusText}`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
 // Writes go out in order; consecutive /api/eyes writes merge, latest value wins.
+// A direct write stops a playing sequence on the server (Eyes.set does), so the
+// preview drops its copy of the playback at once.
 function request(path, body) {
+  if (path === '/api/eyes' || path === '/api/off' || path === '/api/idle') stopLocalPlayback();
   const tail = queue[queue.length - 1];
   if (path === '/api/eyes' && tail && tail.path === '/api/eyes') Object.assign(tail.body, body);
   else queue.push({ path, body: { ...body } });
@@ -644,6 +718,7 @@ async function drain() {
         showError('');
       } catch (err) {
         showError(`Could not apply: ${err.message}`);
+        if (job.path === '/api/play') { play.pending = null; seqMessage(`Could not play: ${err.message}`, true); }
       }
     }
   } finally {
@@ -656,13 +731,20 @@ async function poll() {
     const st = await api('/api/state');
     setLink(true);
     if (!queue.length && !draining) adoptState(st);
-    if (++polls % 5 === 0) {
+    if (performance.now() - lastCaps > 5000) {
+      lastCaps = performance.now();
       const c = await api('/api/capabilities');
       if (JSON.stringify(c) !== JSON.stringify(caps)) { caps = c || {}; applyCapabilities(); renderControls(); }
     }
   } catch (err) {
     setLink(false);
   }
+}
+
+// 1 Hz, 4 Hz while a sequence plays so the running step is highlighted promptly.
+async function pollLoop() {
+  await poll();
+  setTimeout(pollLoop, server.playing ? 250 : 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +781,13 @@ const FACTORY_SWATCHES = [
 ];
 const SWATCH_KEY = 'eyes-studio.swatches';
 const MAX_SAVED = 12;
+
+// stretch4_body.eyes.colors.NAMED_COLORS, for previewing looks that name a color.
+const NAMED_COLORS = {
+  black: [0, 0, 0], white: [255, 255, 255], red: [255, 0, 0], green: [0, 255, 0], blue: [0, 0, 255],
+  cyan: [0, 255, 255], magenta: [255, 0, 255], yellow: [255, 255, 0], orange: [255, 80, 0],
+  purple: [128, 0, 255], pink: [255, 192, 203], hot_pink: [255, 105, 180], stretch: [40, 48, 60],
+};
 
 const hex2 = (x) => x.toString(16).padStart(2, '0');
 const toHex = (rgb) => '#' + rgb.map(hex2).join('');
@@ -755,6 +844,9 @@ function applyToEngine() {
 function adoptState(st) {
   server = st && typeof st === 'object' ? st : {};
   renderStatus();
+  followPlayback();
+  // While a sequence plays the preview follows its own copy of the timeline.
+  if (play.local) return;
   // Only adopt server values when no local edit is queued or under way, so a
   // reply to an older write never drags the controls back mid-gesture.
   if (queue.length || dragging || performance.now() - lastLocalEdit < 400) return;
@@ -773,6 +865,7 @@ function setLink(ok) {
   $('lamp-link').className = 'lamp ' + (ok ? 'ok' : 'fault');
   const backend = server.studio ? server.studio.backend : caps.backend;
   $('link-text').textContent = ok ? `Connected, ${backend === 'fake' ? 'fake backend' : 'robot'}` : 'No connection';
+  renderConnection(ok);
 }
 
 function showError(msg) {
@@ -820,6 +913,32 @@ function renderStatus() {
     : src === 'commanded' ? 'last command'
     : src === 'dropped' ? `dropped, lease held by ${holder}` : (src || 'unknown');
   renderBanner();
+  renderPlayback();
+  renderConnection(true);
+}
+
+function renderConnection(linked) {
+  const dl = $('conn');
+  if (!dl) return;
+  const st = server.studio || {};
+  const rows = [
+    ['Link', linked ? `connected to ${location.host}` : 'no connection'],
+    ['Backend', st.backend || caps.backend || 'unknown'],
+    ['Writes', st.write_hz ? `${st.writes || 0} sent, merged to at most ${st.write_hz} Hz` : 'unknown'],
+    ['Host control', st.control ? 'held by this studio' : 'not held'],
+    ['Sentry', server.sentry_active == null ? 'not installed' : server.sentry_active ? 'running' : 'paused'],
+    ['Lease', server.lease_holder || 'free'],
+    ['Library', caps.library === false ? `unavailable: ${caps.library_error || 'no looks API'}` : 'built-in, shared and this robot'],
+  ];
+  const key = JSON.stringify(rows);
+  if (dl.dataset.key === key) return;
+  dl.dataset.key = key;
+  dl.textContent = '';
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    dl.append(dt, dd);
+  }
 }
 
 function renderBanner() {
@@ -834,6 +953,8 @@ function renderBanner() {
     banner.className = 'override-banner warn';
   }
   banner.hidden = !(runstop || soc <= 25);
+  // The Overrides softkey carries a lamp, so a preview left on is never forgotten.
+  $('lamp-ovr').className = 'lamp ' + (runstop || soc <= 12 ? 'fault' : soc <= 25 ? 'warn' : '');
 }
 
 function renderControls() {
@@ -877,14 +998,16 @@ function buildEffects() {
     btn.title = a.description || '';
     const canvas = document.createElement('canvas');
     canvas.setAttribute('aria-hidden', 'true');
-    const text = document.createElement('span');
     const name = document.createElement('span'); name.className = 'fx-name'; name.textContent = a.label || a.name;
     const desc = document.createElement('span'); desc.className = 'fx-desc'; desc.textContent = a.description || '';
-    text.append(name, desc);
+    if (a.description) {
+      desc.id = `fx-desc-${a.name}`;
+      btn.setAttribute('aria-describedby', desc.id);
+    }
     const eyes = document.createElement('span'); eyes.className = 'fx-eyes'; eyes.setAttribute('aria-hidden', 'true');
     const mk = (label) => { const s = document.createElement('span'); const l = document.createElement('span'); l.className = 'lamp'; s.append(l, label); eyes.append(s); return l; };
     const lampL = mk('L'), lampR = mk('R');
-    btn.append(canvas, text, eyes);
+    btn.append(canvas, name, desc, eyes);
     btn.addEventListener('click', () => chooseEffect(a.name));
     li.append(btn);
     list.append(li);
@@ -1080,7 +1203,10 @@ function bindSwatches() {
     storeSaved(list.slice(-MAX_SAVED));
     renderSwatches();
   });
-  $('swatch-clear').addEventListener('click', () => { storeSaved([]); renderSwatches(); });
+  $('swatch-clear').addEventListener('click', () => {
+    storeSaved([]); renderSwatches();
+    $('swatch-save').focus();   // the clear key just disabled itself; keep focus in the plate
+  });
 }
 
 // --- Presets, transport, link, overrides, control, orientation ---
@@ -1150,6 +1276,7 @@ function bindKeys() {
     applyToEngine(); renderControls();
     request('/api/eyes', { intensity: ui.intensity });
   });
+  $('btn-play-stop').addEventListener('click', () => { seqMessage(STOP_NOTE); request('/api/stop', {}); });
 }
 
 function applyCapabilities() {
@@ -1160,6 +1287,9 @@ function applyCapabilities() {
   const need = protoLabel(caps.requires_protocol || 'p13');
   const have = caps.protocol_version ? protoLabel(caps.protocol_version) : '';
   $('protocol').textContent = have ? `PIMU protocol ${have}` : `PIMU protocol unknown, ${need} assumed`;
+  $('protocol-detail').textContent = have
+    ? `The PIMU reports protocol ${have}. The eye RPC with its color and intensity bytes needs ${need} (hello-pimu2 v0.1.9p13 or newer).`
+    : `stretch_body_server does not publish the PIMU protocol, so ${need} is assumed. stretch_system_check reports the board's version.`;
   document.querySelectorAll('.cap').forEach((el) => {
     const cap = el.dataset.cap;
     const control = el.querySelector('input, button');
@@ -1182,7 +1312,8 @@ function applyCapabilities() {
     : `This PIMU runs protocol ${have || 'unknown'} and the eye RPC needs ${need} (hello-pimu2 v0.1.9p13 or newer): no eye command reaches the rings. The preview still simulates the ${need} firmware.`;
   pn.hidden = allowed;
   $('colour-h').parentElement.classList.toggle('unsupported', !allowed);
-  $('level-h').parentElement.classList.toggle('unsupported', !allowed);
+  $('level').classList.toggle('unsupported', !allowed);
+  document.querySelector('.swatches').classList.toggle('unsupported', !allowed);
   for (const id of ['hex', 'rgb-r', 'rgb-g', 'rgb-b', 'intensity']) $(id).disabled = !allowed;
   for (const id of ['hue-ring', 'sv-square']) {
     $(id).tabIndex = allowed ? 0 : -1;
@@ -1192,7 +1323,706 @@ function applyCapabilities() {
   $('stage-caption').textContent = caps.readback
     ? 'Simulated from the PIMU renderer at 50 Hz.'
     : `Simulated from the PIMU renderer at 50 Hz using the last command. ${need} firmware has no eye readback.`;
+  // Library and saving need the looks API on the server.
+  const lib = caps.library !== false;
+  for (const id of ['seq-save', 'seq-import']) $(id).disabled = !lib;
+  if (!lib) $('library-where').textContent = `The looks library is not available on this server: ${caps.library_error || 'the eyes API has no Library'}.`;
   renderSwatches();
+}
+
+// ---------------------------------------------------------------------------
+// 6. Pop-over plates and the sequence drawer.
+//    Plates are modal while open: focus is trapped, Escape or a click outside
+//    closes them and focus goes back to the softkey. The drawer is not modal on
+//    purpose: building a sequence means picking effects and colors from the
+//    faceplate while it is open. Escape closes it while focus is inside it.
+// ---------------------------------------------------------------------------
+const pop = { open: null, opener: null };
+const POP_HOOKS = { 'pop-library': () => refreshLibrary() };
+const desktop = () => matchMedia('(min-width: 1024px) and (min-height: 600px)').matches;
+
+function focusables(root) {
+  return Array.from(root.querySelectorAll('button, input, a[href], [tabindex="0"]')).filter((el) => {
+    if (el.disabled || el.hidden || el.type === 'file' || el.getClientRects().length === 0) return false;
+    if (el.type === 'radio' && !el.checked) return false;
+    return el.tabIndex >= 0;
+  });
+}
+
+function placePop(el, opener) {
+  if (!desktop()) { el.style.left = el.style.top = el.style.bottom = el.style.maxHeight = ''; return; }
+  const r = opener.getBoundingClientRect(), w = el.offsetWidth;
+  const left = Math.max(12, Math.min(window.innerWidth - w - 12, r.left + r.width / 2 - w / 2));
+  el.style.left = `${left}px`;
+  // Above the key when there is more room above (softkeys sit low), else below.
+  if (r.top > window.innerHeight - r.bottom) {
+    el.style.top = ''; el.style.bottom = `${window.innerHeight - r.top + 8}px`;
+    el.style.maxHeight = `${r.top - 20}px`;
+  } else {
+    el.style.bottom = ''; el.style.top = `${r.bottom + 8}px`;
+    el.style.maxHeight = `${window.innerHeight - r.bottom - 20}px`;
+  }
+}
+
+function openPop(id, opener) {
+  if (pop.open) closePop({ restore: false });
+  const el = $(id);
+  el.hidden = false;
+  placePop(el, opener);
+  opener.setAttribute('aria-expanded', 'true');
+  pop.open = el; pop.opener = opener;
+  if (POP_HOOKS[id]) POP_HOOKS[id]();
+  const first = focusables(el).find((f) => !f.classList.contains('pop-close')) || focusables(el)[0];
+  if (first) first.focus();
+}
+
+function closePop({ restore = true } = {}) {
+  if (!pop.open) return;
+  if (pop.open.id === 'pop-library') library.confirmDelete = null;   // a closed plate drops the question
+  pop.open.hidden = true;
+  pop.opener.setAttribute('aria-expanded', 'false');
+  const opener = pop.opener;
+  pop.open = null; pop.opener = null;
+  if (restore) opener.focus();
+}
+
+function openSeq() {
+  $('seq').hidden = false;
+  document.querySelector('.stage').classList.add('seq-open');
+  $('key-seq').setAttribute('aria-expanded', 'true');
+  placeDrawer();
+  renderTimeline();
+  $('seq-add').focus();
+}
+function closeSeq({ restore = true } = {}) {
+  $('seq').hidden = true;
+  document.querySelector('.stage').classList.remove('seq-open');
+  $('seq-confirm').hidden = true;
+  $('key-seq').setAttribute('aria-expanded', 'false');
+  if (restore) $('key-seq').focus();
+}
+// The drawer sits just above the softkeys on a desktop.
+function placeDrawer() {
+  const st = document.querySelector('.stage'), sk = document.querySelector('.softkeys');
+  const h = st.getBoundingClientRect().bottom - sk.getBoundingClientRect().top + 8;
+  st.style.setProperty('--softkeys-h', `${Math.round(h)}px`);
+}
+
+function bindPops() {
+  document.querySelectorAll('.softkey[data-pop]').forEach((key) => key.addEventListener('click', () => {
+    if (pop.open && pop.opener === key) closePop();
+    else openPop(key.dataset.pop, key);
+  }));
+  document.querySelectorAll('.pop-close').forEach((b) => b.addEventListener('click', () => closePop()));
+  $('key-seq').addEventListener('click', () => { if ($('seq').hidden) openSeq(); else closeSeq(); });
+  $('seq-close').addEventListener('click', () => closeSeq());
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !ev.defaultPrevented) {
+      if (pop.open) { closePop(); ev.preventDefault(); return; }
+      const seq = $('seq');
+      if (!seq.hidden && seq.contains(document.activeElement)) {
+        if (!$('seq-confirm').hidden) { $('seq-confirm').hidden = true; confirmState.no(); } else closeSeq();
+        ev.preventDefault();
+      }
+      return;
+    }
+    if (ev.key === 'Tab' && pop.open) {
+      const list = focusables(pop.open);
+      if (!list.length) { ev.preventDefault(); return; }
+      const i = list.indexOf(document.activeElement);
+      let to = null;
+      if (i < 0) to = ev.shiftKey ? list[list.length - 1] : list[0];
+      else if (!ev.shiftKey && i === list.length - 1) to = list[0];
+      else if (ev.shiftKey && i === 0) to = list[list.length - 1];
+      if (to) { to.focus(); ev.preventDefault(); }
+    }
+  });
+  // A press anywhere outside the open plate (and not on its own key) closes it.
+  document.addEventListener('pointerdown', (ev) => {
+    if (pop.open && !pop.open.contains(ev.target) && !pop.opener.contains(ev.target)) closePop({ restore: false });
+  }, true);
+  window.addEventListener('resize', () => { if (pop.open) placePop(pop.open, pop.opener); if (!$('seq').hidden) placeDrawer(); });
+}
+
+// ---------------------------------------------------------------------------
+// 7. Looks: the sequence editor, the library and playback.
+//    File format stretch-eyes/1 (stretch4_body.eyes.looks). A step's missing
+//    left, right, color or intensity keeps the previous step's value, as
+//    Eyes.set(None) does; the editor always captures all four.
+// ---------------------------------------------------------------------------
+const LOOK_NAME = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+const HOLD_MIN = 0.05, HOLD_MAX = 600, HOLD_STEP = 0.25, MAX_STEPS = 200;
+const BOOT_LOOK = { left: IDLE_NAME, right: IDLE_NAME, color: [40, 48, 60], intensity: 255 };
+const round2 = (x) => Math.round(x * 100) / 100;
+const fmtS = (x) => `${round2(x)} s`;
+
+function colorToRgb(c) {
+  if (Array.isArray(c) && c.length === 3) return c.map((x) => Math.max(0, Math.min(255, x | 0)));
+  if (typeof c !== 'string') return null;
+  const key = c.trim().toLowerCase().replace(/[- ]/g, '_');
+  if (NAMED_COLORS[key]) return NAMED_COLORS[key].slice();
+  let t = c.trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(t)) t = t.split('').map((x) => x + x).join('');
+  return parseHex(t);
+}
+// Eyes.set: an int is the raw byte, a float a fraction. JSON cannot tell 1 from 1.0,
+// so a preview reads a whole number as raw; saved files always hold the raw int.
+function intensityByte(x) {
+  if (typeof x !== 'number' || !isFinite(x)) return null;
+  return Number.isInteger(x) ? Math.max(0, Math.min(255, x)) : Math.round(Math.max(0, Math.min(1, x)) * 255);
+}
+function animName(x) {
+  if (typeof x === 'number') return animById[x] ? animById[x].name : null;
+  if (typeof x === 'string') return animByName[x] ? x : (/^\d+$/.test(x) && animById[+x] ? animById[+x].name : null);
+  return null;
+}
+function resolveSteps(steps, start) {
+  let cur = { ...start, color: start.color.slice() };
+  return (steps || []).map((s) => {
+    cur = {
+      left: s.left != null ? animName(s.left) || cur.left : cur.left,
+      right: s.right != null ? animName(s.right) || cur.right : cur.right,
+      color: s.color != null ? colorToRgb(s.color) || cur.color : cur.color,
+      intensity: s.intensity != null ? intensityByte(s.intensity) ?? cur.intensity : cur.intensity,
+      hold: Number(s.hold) > 0 ? Number(s.hold) : 1,
+    };
+    return cur;
+  });
+}
+// The steps of every pass after the first: on the robot a looped step 0 that leaves a
+// field out keeps the last step's value, not the look from before the play.
+function wrapSteps(raw, first) {
+  return first.length ? resolveSteps(raw, first[first.length - 1]) : first;
+}
+const totalHold = (steps) => (steps || []).reduce((a, s) => a + (Number(s.hold) || 0), 0);
+function currentLook() {
+  return { left: previewName(ui.left), right: previewName(ui.right), color: ui.color.slice(), intensity: ui.intensity };
+}
+
+// --- Editor model ---
+const editor = { name: '', title: '', loop: false, extra: {}, steps: [] };
+let stepSeq = 0;
+const newStep = (data) => ({ key: ++stepSeq, data });
+
+function editorDict(nameFallback) {
+  const name = editor.name || nameFallback;
+  const d = { format: 'stretch-eyes/1', name, title: editor.title || name };
+  Object.assign(d, editor.extra);
+  d.loop = editor.loop;
+  d.steps = editor.steps.map((s) => ({ ...s.data }));
+  return d;
+}
+
+function loadIntoEditor(dict) {
+  const { format, name, title, loop, steps, ...extra } = dict || {};
+  editor.name = typeof name === 'string' ? name : '';
+  editor.title = typeof title === 'string' && title !== name ? title : '';
+  editor.loop = !!loop;
+  editor.extra = extra;
+  editor.steps = (Array.isArray(steps) ? steps : []).map((s) => newStep({ ...s }));
+  $('seq-name').value = editor.name;
+  $('seq-title').value = editor.title;
+  $('seq-name').removeAttribute('aria-invalid');
+  $('seq-loop').setAttribute('aria-pressed', String(editor.loop));
+  renderTimeline();
+}
+
+function seqMessage(text, bad = false) {
+  const el = $('seq-msg');
+  el.textContent = text;
+  el.classList.toggle('bad', bad);
+}
+
+function checkName() {
+  const el = $('seq-name');
+  const ok = LOOK_NAME.test(editor.name);
+  if (ok) el.removeAttribute('aria-invalid'); else el.setAttribute('aria-invalid', 'true');
+  if (!ok) {
+    seqMessage(editor.name ? 'Name: lower case letters, digits, - and _, starting with a letter or digit, up to 48.' : 'Give the look a name first (lower case, digits, - and _).', true);
+    el.focus();
+  }
+  return ok;
+}
+
+const confirmState = { yes: () => {}, no: () => {} };
+function askConfirm(text, yesLabel) {
+  return new Promise((resolve) => {
+    $('seq-confirm-text').textContent = text;
+    $('seq-confirm-yes').textContent = yesLabel;
+    $('seq-confirm').hidden = false;
+    confirmState.yes = () => { $('seq-confirm').hidden = true; resolve(true); };
+    confirmState.no = () => { $('seq-confirm').hidden = true; resolve(false); };
+    $('seq-confirm-no').focus();
+  });
+}
+
+// Save a sequence dict to this robot's library, asking before an overwrite. With text
+// (an imported file) the server parses the file itself: JSON.parse turns intensity 1.0
+// (full) into 1, which the API reads as raw 1.
+async function saveLook(dict, { focusAfter, text } = {}) {
+  const body = (overwrite) => (text != null ? { text, overwrite } : { sequence: dict, overwrite });
+  try {
+    return await api('/api/library', body(false));
+  } catch (err) {
+    if (err.status !== 409) throw err;
+    const ok = await askConfirm(`A look named ${dict.name} is already saved on this robot. Overwrite it?`, 'Overwrite');
+    if (focusAfter) focusAfter.focus();
+    if (!ok) return null;
+    return api('/api/library', body(true));
+  }
+}
+
+function renderTimeline() {
+  const ol = $('timeline');
+  const resolved = resolveSteps(editor.steps.map((s) => s.data), currentLookForEditor());
+  const keep = document.activeElement && ol.contains(document.activeElement)
+    ? { key: document.activeElement.closest('.step')?.dataset.key, role: document.activeElement.dataset.role } : null;
+  ol.textContent = '';
+  let t = 0;
+  editor.steps.forEach((s, i) => {
+    const r = resolved[i], n = i + 1;
+    const li = document.createElement('li');
+    li.className = 'step'; li.draggable = true; li.dataset.key = String(s.key); li.dataset.index = String(i);
+    li.setAttribute('aria-label', `Step ${n}`);
+    const chip = document.createElement('canvas'); chip.className = 'chip'; chip.setAttribute('aria-hidden', 'true');
+    minis.set(chip, new MiniPlayer([r]));
+    const label = document.createElement('div'); label.className = 'step-label';
+    const no = document.createElement('span'); no.className = 'step-no';
+    const lamp = document.createElement('span'); lamp.className = 'lamp'; lamp.setAttribute('aria-hidden', 'true');
+    no.append(lamp, `#${n} at ${fmtS(t)}`);
+    const what = document.createElement('span'); what.className = 'step-what';
+    what.textContent = r.left === r.right ? animLabel(r.left) : `${animLabel(r.left)}, ${animLabel(r.right)}`;
+    what.title = `Left ${animLabel(r.left)}, right ${animLabel(r.right)}`;
+    const col = document.createElement('span'); col.className = 'step-col';
+    col.textContent = `${toHex(r.color)} ${r.intensity}`;
+    label.append(no, what, col);
+    // Hold: number field with - and + keys.
+    const hold = document.createElement('div'); hold.className = 'hold';
+    const dec = mkKey('-', `Shorter hold for step ${n}`, 'hold-dec');
+    const inc = mkKey('+', `Longer hold for step ${n}`, 'hold-inc');
+    const lab = document.createElement('label');
+    const sr = document.createElement('span'); sr.className = 'visually-hidden'; sr.textContent = `Hold for step ${n}, seconds`;
+    const input = document.createElement('input');
+    input.type = 'number'; input.min = String(HOLD_MIN); input.max = String(HOLD_MAX); input.step = '0.05';
+    input.inputMode = 'decimal'; input.className = 'hold-input'; input.dataset.role = 'hold-input';
+    input.value = String(round2(Number(s.data.hold) || 1));
+    const unit = document.createElement('span'); unit.className = 'unit'; unit.textContent = 's'; unit.setAttribute('aria-hidden', 'true');
+    lab.append(sr, input, unit);
+    hold.append(dec, lab, inc);
+    dec.addEventListener('click', () => setHold(s, (Number(s.data.hold) || 1) - HOLD_STEP));
+    inc.addEventListener('click', () => setHold(s, (Number(s.data.hold) || 1) + HOLD_STEP));
+    input.addEventListener('change', () => {
+      const v = Number(input.value);
+      if (!isFinite(v) || v < HOLD_MIN || v > HOLD_MAX) {
+        input.setAttribute('aria-invalid', 'true');
+        seqMessage(`Hold must be ${HOLD_MIN} to ${HOLD_MAX} s.`, true);
+        return;
+      }
+      setHold(s, v);
+    });
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.dispatchEvent(new Event('change')); });
+    // Order, duplicate, delete.
+    const keys = document.createElement('div'); keys.className = 'step-keys';
+    const up = mkKey('‹', `Move step ${n} earlier`, 'step-up');
+    const down = mkKey('›', `Move step ${n} later`, 'step-down');
+    const dup = mkKey('Copy', `Duplicate step ${n}`, 'step-dup');
+    const del = mkKey('✕', `Delete step ${n}`, 'step-del');
+    up.disabled = i === 0; down.disabled = i === editor.steps.length - 1;
+    dup.disabled = editor.steps.length >= MAX_STEPS;
+    up.addEventListener('click', () => moveStep(i, i - 1, 'step-up'));
+    down.addEventListener('click', () => moveStep(i, i + 1, 'step-down'));
+    dup.addEventListener('click', () => {
+      editor.steps.splice(i + 1, 0, newStep({ ...s.data }));
+      seqMessage(`Step ${n} duplicated.`);
+      renderTimeline(); focusStep(i + 1, 'step-dup');
+    });
+    del.addEventListener('click', () => {
+      editor.steps.splice(i, 1);
+      seqMessage(`Step ${n} deleted.`);
+      renderTimeline();
+      if (editor.steps.length) focusStep(Math.min(i, editor.steps.length - 1), 'step-del'); else $('seq-add').focus();
+    });
+    keys.append(up, down, dup, del);
+    li.append(chip, label, hold, keys);
+    bindDrag(li, i);
+    ol.append(li);
+    t += Number(s.data.hold) || 0;
+  });
+  const n = editor.steps.length;
+  $('seq-total').textContent = `${n} step${n === 1 ? '' : 's'}, ${fmtS(totalHold(editor.steps.map((s) => s.data)))}${editor.loop ? ', loops' : ''}`;
+  $('seq-add').disabled = n >= MAX_STEPS;
+  for (const id of ['seq-play', 'seq-export']) $(id).disabled = n === 0;
+  $('seq-save').disabled = n === 0 || caps.library === false;
+  if (keep && keep.key) {
+    const li = ol.querySelector(`.step[data-key="${keep.key}"]`);
+    const el = li && li.querySelector(`[data-role="${keep.role}"]`);
+    if (el && !el.disabled) el.focus();
+  }
+  renderRunning();
+}
+// The editor previews steps from the look the eyes would start from.
+function currentLookForEditor() { return play.local ? BOOT_LOOK : currentLook(); }
+
+function mkKey(text, label, role) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'key'; b.textContent = text;
+  b.setAttribute('aria-label', label); b.title = label; b.dataset.role = role;
+  return b;
+}
+function focusStep(i, role) {
+  const li = $('timeline').children[i];
+  const el = li && li.querySelector(`[data-role="${role}"]`);
+  if (el && !el.disabled) el.focus();
+  else if (li) (li.querySelector('[data-role="hold-input"]') || li).focus();
+}
+function setHold(s, v) {
+  s.data.hold = round2(Math.max(HOLD_MIN, Math.min(HOLD_MAX, v)));
+  renderTimeline();
+}
+function moveStep(from, to, role) {
+  if (to < 0 || to >= editor.steps.length || from === to) return;
+  const [s] = editor.steps.splice(from, 1);
+  editor.steps.splice(to, 0, s);
+  seqMessage(`Step moved to position ${to + 1}.`);
+  renderTimeline();
+  focusStep(to, role);
+}
+
+// Drag to reorder: a copper bar marks where the step will land.
+let dragFrom = null;
+function bindDrag(li, i) {
+  li.addEventListener('dragstart', (ev) => {
+    dragFrom = i; li.classList.add('dragging');
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', String(i));
+  });
+  li.addEventListener('dragend', () => {
+    dragFrom = null;
+    document.querySelectorAll('.step').forEach((el) => el.classList.remove('dragging', 'drop-before', 'drop-after'));
+  });
+  li.addEventListener('dragover', (ev) => {
+    if (dragFrom === null) return;
+    ev.preventDefault();
+    const r = li.getBoundingClientRect(), after = ev.clientX > r.left + r.width / 2;
+    document.querySelectorAll('.step').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+    li.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  li.addEventListener('drop', (ev) => {
+    if (dragFrom === null) return;
+    ev.preventDefault();
+    const r = li.getBoundingClientRect(), after = ev.clientX > r.left + r.width / 2;
+    let to = i + (after ? 1 : 0);
+    if (dragFrom < to) to -= 1;
+    const from = dragFrom;
+    dragFrom = null;
+    if (to !== from) moveStep(from, to, 'hold-input'); else renderTimeline();
+  });
+}
+
+function bindEditor() {
+  $('seq-name').addEventListener('input', (ev) => { editor.name = ev.target.value.trim(); ev.target.removeAttribute('aria-invalid'); });
+  $('seq-title').addEventListener('input', (ev) => { editor.title = ev.target.value; });
+  $('seq-loop').addEventListener('click', () => {
+    editor.loop = !editor.loop;
+    $('seq-loop').setAttribute('aria-pressed', String(editor.loop));
+    renderTimeline();
+  });
+  $('seq-add').addEventListener('click', () => {
+    if (editor.steps.length >= MAX_STEPS) return;
+    const look = currentLook();
+    editor.steps.push(newStep({ left: look.left, right: look.right, color: toHex(look.color), intensity: look.intensity, hold: 1 }));
+    seqMessage(`Step ${editor.steps.length} added: ${animLabel(look.left)}${look.left === look.right ? '' : `, ${animLabel(look.right)}`}, ${toHex(look.color)} at ${look.intensity}.`);
+    renderTimeline();
+    const ol = $('timeline');
+    ol.scrollLeft = ol.scrollWidth;
+  });
+  $('seq-new').addEventListener('click', () => { loadIntoEditor({}); seqMessage('New empty sequence.'); $('seq-name').focus(); });
+  $('seq-play').addEventListener('click', () => {
+    if (!editor.steps.length) return;
+    const dict = editorDict(LOOK_NAME.test(editor.name) ? editor.name : 'draft');
+    if (!LOOK_NAME.test(dict.name)) dict.name = 'draft';
+    play.pending = { name: dict.name, dict };
+    seqMessage(`Playing ${dict.name}${editor.loop ? ' on a loop' : ''}.`);
+    request('/api/play', { sequence: dict, loop: editor.loop });
+  });
+  $('seq-stop').addEventListener('click', () => {
+    seqMessage(STOP_NOTE);
+    request('/api/stop', {});
+  });
+  $('seq-save').addEventListener('click', async () => {
+    if (!checkName()) return;
+    const dict = editorDict();
+    try {
+      const saved = await saveLook(dict, { focusAfter: $('seq-save') });
+      if (saved) seqMessage(`Saved ${dict.name} to this robot's library.`);
+      else seqMessage('Not saved.');
+      if (saved && pop.open === $('pop-library')) refreshLibrary();
+    } catch (err) { seqMessage(`Not saved: ${err.message}`, true); }
+  });
+  $('seq-export').addEventListener('click', () => {
+    if (!editor.steps.length) return;
+    const dict = editorDict(LOOK_NAME.test(editor.name) ? editor.name : 'look');
+    download(`${dict.name}.json`, JSON.stringify(dict, null, 2) + '\n');
+    seqMessage(`Exported ${dict.name}.json.`);
+  });
+  $('seq-import').addEventListener('click', () => $('seq-file').click());
+  $('seq-file').addEventListener('change', async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const text = await file.text();
+    let dict;
+    try { dict = JSON.parse(text); }   // only for the name; the server parses the file
+    catch (err) { seqMessage(`${file.name} is not JSON: ${err.message}`, true); return; }
+    try {
+      const saved = await saveLook(dict, { focusAfter: $('seq-import'), text });
+      if (!saved) { seqMessage('Import cancelled.'); return; }
+      loadIntoEditor(await api(`/api/library/${encodeURIComponent(dict.name)}`));
+      seqMessage(`Imported ${file.name} as ${dict.name} into this robot's library.`);
+      if (pop.open === $('pop-library')) refreshLibrary();
+    } catch (err) { seqMessage(`Not imported: ${err.message}`, true); }
+  });
+  $('seq-confirm-yes').addEventListener('click', () => confirmState.yes());
+  $('seq-confirm-no').addEventListener('click', () => confirmState.no());
+}
+
+function download(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.hidden = true;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// --- Library ---
+const library = { looks: [], seqs: {}, confirmDelete: null };
+const SOURCE_LABEL = { builtin: 'built-in', shared: 'shared', user: 'this robot' };
+
+function libMessage(text, bad = false) {
+  const el = $('library-msg');
+  el.textContent = text; el.classList.toggle('bad', bad);
+}
+
+async function refreshLibrary() {
+  if (caps.library === false) { renderLibrary(); return; }
+  try {
+    const r = await api('/api/library');
+    library.looks = Array.isArray(r.looks) ? r.looks : [];
+    // Files the library skipped (bad JSON, a name that does not match its file name).
+    const skipped = Array.isArray(r.errors) ? r.errors : [];
+    libMessage(skipped.length ? `Skipped ${skipped.map((e) => `${e.file} (${e.source}): ${e.error}`).join('; ')}` : '', skipped.length > 0);
+    library.seqs = r.sequences && typeof r.sequences === 'object' ? r.sequences : {};
+    renderLibrary();
+  } catch (err) {
+    libMessage(`Could not read the library: ${err.message}`, true);
+  }
+}
+
+function renderLibrary() {
+  const ul = $('library');
+  const active = document.activeElement && ul.contains(document.activeElement)
+    ? { name: document.activeElement.closest('.lib-row')?.dataset.name, role: document.activeElement.dataset.role } : null;
+  ul.textContent = '';
+  for (const l of library.looks) {
+    const li = document.createElement('li');
+    li.className = 'lib-row'; li.dataset.name = l.name; li.dataset.source = l.source;
+    const canvas = document.createElement('canvas'); canvas.setAttribute('aria-hidden', 'true');
+    const dict = library.seqs[l.name];
+    if (dict) {
+      const steps = resolveSteps(dict.steps, BOOT_LOOK);
+      minis.set(canvas, new MiniPlayer(steps, wrapSteps(dict.steps, steps)));
+    }
+    const info = document.createElement('div');
+    const title = document.createElement('div'); title.className = 'lib-title'; title.textContent = l.title || l.name;
+    const meta = document.createElement('div'); meta.className = 'lib-meta';
+    const nm = document.createElement('span'); nm.className = 'mono'; nm.textContent = l.name;
+    const badge = document.createElement('span'); badge.className = `badge badge-${l.source}`; badge.textContent = SOURCE_LABEL[l.source] || l.source;
+    const count = document.createElement('span');
+    const steps = typeof l.steps === 'number' ? l.steps : (dict ? dict.steps.length : 0);
+    const dur = typeof l.duration === 'number' ? l.duration : totalHold(dict && dict.steps);
+    count.textContent = `${steps} step${steps === 1 ? '' : 's'}, ${fmtS(dur)}${l.loop ? ', loops' : ''}`;
+    meta.append(nm, badge, count);
+    if (l.shadowed) { const sh = document.createElement('span'); sh.textContent = 'overrides a look of the same name'; meta.append(sh); }
+    info.append(title, meta);
+    const keys = document.createElement('div'); keys.className = 'lib-keys';
+    const playK = mkKey('Play', `Play ${l.name}`, 'lib-play');
+    playK.textContent = 'Play'; playK.classList.add('key-go');
+    const load = mkKey('Load', `Load ${l.name} into the sequence editor`, 'lib-load');
+    const dup = mkKey('Duplicate', `Duplicate ${l.name} into this robot's library`, 'lib-dup');
+    const exp = document.createElement('a');
+    exp.className = 'key'; exp.textContent = 'Export'; exp.dataset.role = 'lib-export';
+    exp.href = `/api/library/${encodeURIComponent(l.name)}`; exp.download = `${l.name}.json`;
+    exp.setAttribute('aria-label', `Export ${l.name} as JSON`); exp.title = `Export ${l.name} as JSON`;
+    keys.append(playK, load, dup, exp);
+    playK.addEventListener('click', () => {
+      play.pending = dict ? { name: l.name, dict } : null;
+      libMessage(`Playing ${l.name}.`);
+      request('/api/play', { name: l.name });
+    });
+    load.addEventListener('click', () => {
+      if (!dict) return;
+      loadIntoEditor(dict);
+      closePop({ restore: false });
+      openSeq();
+      seqMessage(`Loaded ${l.name} (${SOURCE_LABEL[l.source] || l.source}). Save writes a copy to this robot's library.`);
+    });
+    dup.addEventListener('click', () => duplicateLook(l, dict));
+    if (l.source === 'user') {
+      const del = mkKey('Delete', `Delete ${l.name} from this robot's library`, 'lib-del');
+      del.classList.add('key-danger');
+      del.addEventListener('click', () => { library.confirmDelete = l.name; renderLibrary(); focusLib(l.name, 'lib-del-no'); });
+      keys.append(del);
+    }
+    li.append(canvas, info, keys);
+    if (library.confirmDelete === l.name) {
+      const c = document.createElement('div'); c.className = 'lib-confirm'; c.setAttribute('role', 'alert');
+      const t = document.createElement('span'); t.textContent = `Delete ${l.name} from this robot? This cannot be undone.`;
+      const yes = mkKey('Delete', `Confirm delete ${l.name}`, 'lib-del-yes'); yes.classList.add('key-danger');
+      const no = mkKey('Cancel', 'Keep it', 'lib-del-no');
+      yes.addEventListener('click', async () => {
+        library.confirmDelete = null;
+        try { await api('/api/library/delete', { name: l.name }); libMessage(`Deleted ${l.name}.`); }
+        catch (err) { libMessage(`Not deleted: ${err.message}`, true); }
+        await refreshLibrary();
+        const first = $('library').querySelector('[data-role="lib-play"]');
+        if (first) first.focus();
+      });
+      no.addEventListener('click', () => { library.confirmDelete = null; renderLibrary(); focusLib(l.name, 'lib-del'); });
+      c.append(t, yes, no);
+      li.append(c);
+    }
+    ul.append(li);
+  }
+  if (!library.looks.length) {
+    const li = document.createElement('li'); li.className = 'hint';
+    li.textContent = caps.library === false ? 'No library on this server.' : 'No looks found.';
+    ul.append(li);
+  }
+  if (active && active.name) focusLib(active.name, active.role);
+  renderRunning();
+}
+function focusLib(name, role) {
+  const row = Array.from($('library').children).find((li) => li.dataset.name === name);
+  const el = row && row.querySelector(`[data-role="${role}"]`);
+  if (el) el.focus();
+}
+
+async function duplicateLook(l, dict) {
+  if (!dict) return;
+  const taken = new Set(library.looks.map((x) => x.name));
+  const base = l.name.slice(0, 40);
+  let name = `${base}-copy`;
+  for (let k = 2; taken.has(name); k++) name = `${base}-copy${k}`;
+  const copy = { ...dict, name, title: `${dict.title || l.name} (copy)` };
+  try {
+    await api('/api/library', { sequence: copy, overwrite: false });
+    libMessage(`Saved ${name} to this robot's library.`);
+  } catch (err) { libMessage(`Not duplicated: ${err.message}`, true); }
+  await refreshLibrary();
+  focusLib(name, 'lib-load');
+}
+
+// --- Playback: the server plays (Eyes.play); the page follows it. ---
+// play.local is the page's copy of the running timeline: it drives the preview at
+// 50 Hz with the exact holds and is pulled back to the server's step when they
+// disagree for longer than a step boundary race.
+const play = { local: null, pending: null, fetching: null };
+const STOP_NOTE = 'Stopped. The eyes are back on the look from before Play.';
+
+function stopLocalPlayback() {
+  if (!play.local) return;
+  play.local = null;
+  renderPlayback();
+}
+
+function startLocal(name, dict, loop, started) {
+  const steps = resolveSteps(dict.steps, currentLook());
+  if (!steps.length) return;
+  play.local = { name, steps, wrap: loop ? wrapSteps(dict.steps, steps) : steps, loop, started, idx: 0, t: 0, done: false };
+  applyPlayStep();
+}
+
+// A page that did not start the playback asks once what is playing.
+async function fetchPlaying(p) {
+  if (play.fetching === p.started) return;
+  play.fetching = p.started;
+  let r;
+  try { r = await api('/api/playing'); } catch (err) { play.fetching = null; return; }   // the next poll asks again
+  const now = server.playing;
+  if (!r.sequence || !now || !r.playing || r.playing.started !== now.started || r.playing.name !== now.name) return;
+  if (play.local && play.local.started === now.started) return;
+  startLocal(now.name, r.sequence, now.loop == null ? false : !!now.loop, now.started);
+}
+
+function applyPlayStep() {
+  const L = play.local, s = L.steps[L.idx];
+  ui.left = s.left; ui.right = s.right; ui.intensity = s.intensity;
+  setColor(s.color, { send: false });
+  applyToEngine();
+  renderControls();
+}
+
+// One 50 Hz frame of the local timeline.
+function playTick() {
+  const L = play.local;
+  if (!L || L.done) return;
+  L.t += FRAME_MS;
+  if (L.t < L.steps[L.idx].hold * 1000) return;
+  if (L.idx + 1 < L.steps.length) L.idx++;
+  else if (L.loop) { L.idx = 0; L.steps = L.wrap; }
+  else { L.done = true; return; }   // the last step stays on, as on the robot
+  L.t = 0;
+  applyPlayStep();
+}
+
+function followPlayback() {
+  const p = server.playing;
+  if (!p) {
+    if (play.local && !queue.some((j) => j.path === '/api/play')) { play.local = null; play.pending = null; renderPlayback(); }
+    return;
+  }
+  const step = typeof p.step === 'number' ? p.step : 0;
+  const loop = p.loop == null ? false : !!p.loop;
+  // A new playback (another name, or the same one started again) restarts the copy.
+  if (!play.local || play.local.name !== p.name || play.local.started !== p.started) {
+    // A page that started it already knows the sequence; any other asks the server.
+    const dict = play.pending && play.pending.name === p.name ? play.pending.dict : null;
+    play.pending = null;
+    if (!dict) { fetchPlaying(p); return; }
+    startLocal(p.name, dict, loop, p.started);
+  }
+  const L = play.local;
+  if (L && step !== L.idx && step < L.steps.length && L.t > 300) {
+    if (L.loop && step < L.idx) L.steps = L.wrap;   // the server has wrapped
+    L.idx = step; L.t = 0; L.done = false; applyPlayStep();
+  }
+}
+
+function renderPlayback() {
+  const p = server.playing;
+  const badge = $('play-badge');
+  badge.hidden = !p;
+  if (p) {
+    const n = p.steps || (play.local ? play.local.steps.length : 0);
+    const step = (typeof p.step === 'number' ? p.step : 0) + 1;
+    $('play-text').textContent = `${p.name}, step ${step} of ${n}${p.loop ? ', loop' : ''}`;
+  }
+  $('seq-stop').disabled = !p;
+  renderRunning();
+}
+
+// Highlight the running step in the editor and the playing look in the library.
+function renderRunning() {
+  const p = server.playing;
+  const mine = p && (p.name === editor.name || (!LOOK_NAME.test(editor.name) && p.name === 'draft'))
+    && (p.steps == null || p.steps === editor.steps.length);
+  document.querySelectorAll('#timeline .step').forEach((li) => {
+    const on = !!mine && Number(li.dataset.index) === p.step;
+    li.classList.toggle('running', on);
+    if (on) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+    li.querySelector('.lamp').className = 'lamp' + (on ? ' ok' : '');
+  });
+  document.querySelectorAll('#library .lib-row').forEach((li) => li.classList.toggle('running', !!p && li.dataset.name === p.name));
 }
 
 // --- Main loop ---
@@ -1201,9 +2031,16 @@ function frame(t) {
   const dt = lastT ? Math.min(250, t - lastT) : 0;
   lastT = t;
   sim.acc += dt;
-  while (sim.acc >= FRAME_MS) { sim.acc -= FRAME_MS; simFrame(); }
+  const shown = visibleMinis();
+  while (sim.acc >= FRAME_MS) {
+    sim.acc -= FRAME_MS;
+    playTick();
+    simFrame();
+    for (const [, player] of shown) player.frame();
+  }
   drawStage();
   for (const th of thumbs) drawThumb(th);
+  for (const [canvas, player] of shown) drawPair(canvas, player.engine);
   requestAnimationFrame(frame);
 }
 
@@ -1211,7 +2048,7 @@ async function start() {
   stage.canvas = $('rings');
   stage.board = document.createElement('canvas');
   $('port-source').textContent = PORT_SOURCE;
-  bindPicker(); bindSwatches(); bindKeys();
+  bindPicker(); bindSwatches(); bindKeys(); bindPops(); bindEditor();
   setSwap(view.swap);
   try {
     [caps, anims, server] = await Promise.all([api('/api/capabilities'), api('/api/animations'), api('/api/state')]);
@@ -1223,7 +2060,8 @@ async function start() {
   caps = caps && typeof caps === 'object' ? caps : {};
   anims = Array.isArray(anims) ? anims.filter((a) => a && a.name) : [];
   server = server && typeof server === 'object' ? server : {};
-  anims.forEach((a) => { animByName[a.name] = a; });
+  anims.forEach((a) => { animByName[a.name] = a; animById[a.id] = a; });
+  lastCaps = performance.now();
   applyCapabilities();
   setLink(true);
   ui.left = commandedEye(server, 'left'); ui.right = commandedEye(server, 'right');
@@ -1233,14 +2071,15 @@ async function start() {
   buildEffects(); buildPresets();
   applyToEngine();
   sim.engine.snap(0, animId(previewName(ui.left))); sim.engine.snap(1, animId(previewName(ui.right)));
-  renderStatus(); renderControls();
+  renderStatus(); renderControls(); renderTimeline();
+  followPlayback();
   window.addEventListener('resize', () => { stage.layout = null; renderPicker(); });
-  setInterval(poll, 1000);
+  setTimeout(pollLoop, 1000);
   requestAnimationFrame(frame);
   // Hook for the browser test suite and for poking at the model from devtools.
   window.eyesStudio = {
     sim, ui, view, EyeEngine, MM, PORT_SOURCE, sideOf, chainIndex, designator, shownPixels,
-    caps: () => caps, layout: () => stage.layout,
+    caps: () => caps, layout: () => stage.layout, editor, play, library, server: () => server,
   };
 }
 

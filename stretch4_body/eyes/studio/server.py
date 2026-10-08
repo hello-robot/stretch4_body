@@ -14,11 +14,33 @@ http.server, so it runs on a robot with no extra packages:
     POST /api/fake           --fake only: {runstop, battery_soc, sentry_active, drop,
                              lease_holder, sentry_refuse, protocol}
 
+Looks library and sequence playback (stretch4_body.eyes Library, Sequence, Eyes.play):
+
+    GET  /api/library         {"looks": Library.list() without paths, "errors": [...],
+                              "sequences": {name: Sequence.to_dict()}}, from one scan
+    GET  /api/library/<name>  Sequence.to_dict(), the browser's Export downloads this
+    POST /api/library         {"sequence": {...}, "overwrite": bool}: save to this robot's
+                              user library, returns the saved entry (409 when it exists).
+                              {"text": "<file>", "overwrite": bool} parses a look file here,
+                              as stretch_eye_animations --import does: JSON in a browser
+                              cannot tell intensity 1.0 (full) from 1 (raw 1)
+    POST /api/library/delete  {"name": ...}: user looks only (403 for shared or built-in)
+    POST /api/play            {"name": ...} or {"sequence": {...}}, optional "loop"
+    POST /api/stop            stop playback and put back the look from before it (Eyes.stop)
+    GET  /api/playing         {"playing": ..., "sequence": Sequence.to_dict() or None}
+
+GET /api/state carries 'playing' (Eyes.playing: name, step, steps, loop, started) or None.
+The page fetches /api/playing once when 'started' changes, not on every poll.
+Library errors come back as 4xx with the library's message: 400 invalid look, 403
+read-only look, 404 unknown name, 409 name taken.
+
 The /api/fake hook sets the fake backend's robot state so the override, sentry,
 dropped-command and protocol paths can be exercised without a robot.
 
 All writes go through one worker thread so they reach the PIMU in the order
-they were made. Consecutive /api/eyes writes are merged (latest value per
+they were made. Play and stop are writer ops too, so a slider write and a play
+never race: whichever was submitted first runs first, and a set during playback
+stops it (Eyes.set does). Consecutive /api/eyes writes are merged (latest value per
 field wins) and sent at most WRITE_HZ times a second, so dragging a colour
 wheel or a slider does not flood the PIMU link.
 
@@ -44,6 +66,7 @@ import dataclasses
 import enum
 import json
 import os
+import re
 import signal
 import socket
 import sys
@@ -52,12 +75,14 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 # 8765 is the foxglove_bridge default, which a ROS robot may already run.
 DEFAULT_PORT = 8770
 WRITE_HZ = 20
 MAX_BODY = 4096
+MAX_LOOK_BODY = 256 * 1024   # /api/library and /api/play carry a whole sequence, up to 200 steps
+LOOK_PATHS = ('/api/library', '/api/play')
 WRITE_TIMEOUT_S = 5.0   # a release may wait CLOSE_RELEASE_TIMEOUT_S for the sentry to resume
 
 STATIC_DIR = Path(__file__).resolve().parent / 'static'
@@ -99,6 +124,13 @@ def to_jsonable(obj):
 
 class BadRequest(ValueError):
     pass
+
+
+class LibraryUnavailable(RuntimeError):
+    pass
+
+
+LOOK_NAME = re.compile(r'[a-z0-9][a-z0-9_-]{0,47}')  # fullmatch, as stretch4_body.eyes.looks does
 
 
 def make_fake_backend():
@@ -164,6 +196,7 @@ class EyeWriter:
         self._cv = threading.Condition()
         self._last_set = 0.0
         self.writes = 0  # set calls that reached the backend
+        self.played = None   # the last sequence played, so every open page can follow it
         threading.Thread(target=self._run, name='eyes-writer', daemon=True).start()
 
     def submit_set(self, fields):
@@ -177,8 +210,8 @@ class EyeWriter:
             self._cv.notify()
         return op
 
-    def submit(self, kind):
-        op = _Op(kind)
+    def submit(self, kind, kwargs=None):
+        op = _Op(kind, kwargs)
         with self._cv:
             self._queue.append(op)
             self._cv.notify()
@@ -225,6 +258,12 @@ class EyeWriter:
                 self.has_control = False
                 # release() returns False when the server refused to resume the sentry.
                 self.sentry_resume_failed = ok is False
+        elif op.kind == 'play':
+            seq = op.kwargs['seq']
+            eyes.play(seq, loop=op.kwargs.get('loop'))
+            self.played = to_jsonable(seq.to_dict()) if hasattr(seq, 'to_dict') else None
+        elif op.kind == 'stop':
+            eyes.stop()
         elif op.kind == 'resume':
             self.sentry_resume_failed = not eyes.resume_sentry()
             if self.sentry_resume_failed:
@@ -255,9 +294,19 @@ def _parse_color(value):
 class Studio:
     """Request validation and JSON shaping around an EyeWriter."""
 
-    def __init__(self, eyes, backend_name):
+    def __init__(self, eyes, backend_name, library=None):
         self.writer = EyeWriter(eyes)
         self.backend_name = backend_name
+        self.library_error = None
+        self._lib_lock = threading.Lock()   # list, save and delete touch the same folder
+        self.Sequence = None
+        try:
+            from stretch4_body.eyes import Library, Sequence
+            self.Sequence = Sequence
+            self.library = library if library is not None else Library()
+        except Exception as exc:   # an older API without looks, or an unreadable library folder
+            self.library = None
+            self.library_error = f'{type(exc).__name__}: {exc}'
         self.animations = list(eyes.animations())
         self._anim_keys = {}
         for a in self.animations:
@@ -270,17 +319,23 @@ class Studio:
         if not isinstance(caps, dict):
             caps = {'raw': caps}
         caps['backend'] = self.backend_name
+        caps['library'] = self.library is not None
+        if self.library_error:
+            caps['library_error'] = self.library_error
         return caps
 
     def animations_json(self):
         return [to_jsonable(a) for a in self.animations]
 
     def state(self):
-        raw = self.writer.read(self.writer.eyes.state)
+        eyes = self.writer.eyes
+        raw, playing = self.writer.read(lambda: (eyes.state(), getattr(eyes, 'playing', None)))
         state = raw.to_dict() if hasattr(raw, 'to_dict') else to_jsonable(raw)
         if not isinstance(state, dict):
             state = {'raw': state}
         state = to_jsonable(state)
+        if 'playing' not in state:
+            state['playing'] = to_jsonable(playing)
         state['studio'] = {
             'control': self.writer.has_control,
             'sentry_resume_failed': self.writer.sentry_resume_failed,
@@ -289,6 +344,13 @@ class Studio:
             'writes': self.writer.writes,
         }
         return state
+
+    def playing(self):
+        """What is playing and its sequence, for a page that did not start it."""
+        playing = to_jsonable(self.writer.read(lambda: getattr(self.writer.eyes, 'playing', None)))
+        played = self.writer.played
+        match = playing and played and played.get('name') == playing.get('name')
+        return {'playing': playing, 'sequence': played if match else None}
 
     def parse_set(self, body):
         if not isinstance(body, dict):
@@ -313,6 +375,90 @@ class Studio:
         if not fields:
             raise BadRequest('nothing to set')
         return fields
+
+    # --- Looks library and playback ---
+
+    def _lib(self):
+        if self.library is None:
+            raise LibraryUnavailable(f'the looks library is not available: {self.library_error}')
+        return self.library
+
+    @staticmethod
+    def _entry(entry):
+        return to_jsonable({k: v for k, v in dict(entry).items() if k != 'path'})
+
+    def library_list(self):
+        lib = self._lib()
+        # One scan for the list, the errors and every sequence: the page draws its
+        # previews from these instead of one GET per look
+        with self._lib_lock:
+            entries, errors, seqs = lib.scan_all()
+        # Files the library skipped (bad JSON, a name that does not match the file name).
+        errors = [{'file': os.path.basename(str(e.get('path', ''))), 'source': e.get('source'), 'error': str(e.get('error'))}
+                  for e in errors]
+        return {'looks': [self._entry(e) for e in entries], 'errors': errors,
+                'sequences': {name: to_jsonable(seq.to_dict()) for name, seq in seqs.items()}}
+
+    def library_get(self, name):
+        lib = self._lib()
+        if not LOOK_NAME.fullmatch(name):
+            raise KeyError(f'no look named {name!r}')
+        with self._lib_lock:
+            return to_jsonable(lib.get(name).to_dict())
+
+    def _sequence(self, value):
+        if not isinstance(value, dict):
+            raise BadRequest('sequence must be a JSON object')
+        return self.Sequence.from_dict(value)
+
+    def library_save(self, body):
+        lib = self._lib()
+        if not isinstance(body, dict) or set(body) - {'sequence', 'text', 'overwrite'} or ('sequence' in body) == ('text' in body):
+            raise BadRequest('body must be {"sequence": {...}} or {"text": "<look file>"}, with "overwrite": false')
+        overwrite = body.get('overwrite', False)
+        if not isinstance(overwrite, bool):
+            raise BadRequest('overwrite must be true or false')
+        if 'text' in body:
+            if not isinstance(body['text'], str):
+                raise BadRequest('text must be the look file as a string')
+            try:
+                seq = self._sequence(json.loads(body['text']))
+            except json.JSONDecodeError as exc:
+                raise BadRequest(f'not JSON ({exc})') from None
+        else:
+            seq = self._sequence(body['sequence'])
+        with self._lib_lock:
+            lib.save(seq, overwrite=overwrite)
+            for e in lib.list():
+                if e['name'] == seq.name:
+                    return self._entry(e)
+        return {'name': seq.name}
+
+    def library_delete(self, body):
+        lib = self._lib()
+        if not isinstance(body, dict) or set(body) != {'name'} or not isinstance(body['name'], str):
+            raise BadRequest('body must be {"name": "..."}')
+        with self._lib_lock:
+            lib.delete(body['name'])
+            return {'deleted': body['name'], 'looks': [self._entry(e) for e in lib.list()]}
+
+    def parse_play(self, body):
+        if not isinstance(body, dict) or set(body) - {'name', 'sequence', 'loop'} or ('name' in body) == ('sequence' in body):
+            raise BadRequest('body must be {"name": "..."} or {"sequence": {...}}, with an optional "loop"')
+        loop = body.get('loop')
+        if loop is not None and not isinstance(loop, bool):
+            raise BadRequest('loop must be true, false or null')
+        if 'name' in body:
+            if not isinstance(body['name'], str):
+                raise BadRequest('name must be a string')
+            lib = self._lib()
+            with self._lib_lock:
+                seq = lib.get(body['name'])
+        else:
+            if self.Sequence is None:
+                self._lib()
+            seq = self._sequence(body['sequence'])
+        return {'seq': seq, 'loop': loop}
 
     def set_fake(self, body):
         backend = self.writer.eyes.backend
@@ -365,9 +511,31 @@ def make_handler(studio, verbose=False):
                     return self._send(HTTPStatus.OK, studio.animations_json())
                 if path == '/api/state':
                     return self._send(HTTPStatus.OK, studio.state())
+                if path == '/api/playing':
+                    return self._send(HTTPStatus.OK, studio.playing())
+                if path == '/api/library':
+                    return self._send(HTTPStatus.OK, studio.library_list())
+                if path.startswith('/api/library/'):
+                    return self._send(HTTPStatus.OK, studio.library_get(unquote(path[len('/api/library/'):])))
             except Exception as exc:
-                return self._error(HTTPStatus.BAD_GATEWAY, f'{type(exc).__name__}: {exc}')
+                return self._fail(exc)
             self._static(path)
+
+        def _fail(self, exc):
+            """Map an exception to a status: library errors are the caller's, the rest the backend's."""
+            if isinstance(exc, KeyError):            # unknown look; KeyError quotes its str()
+                return self._error(HTTPStatus.NOT_FOUND, str(exc.args[0]) if exc.args else 'not found')
+            if isinstance(exc, FileExistsError):
+                return self._error(HTTPStatus.CONFLICT, str(exc))
+            if isinstance(exc, PermissionError):
+                return self._error(HTTPStatus.FORBIDDEN, str(exc))
+            if isinstance(exc, LibraryUnavailable):
+                return self._error(HTTPStatus.SERVICE_UNAVAILABLE, str(exc))
+            if isinstance(exc, (ValueError, TypeError)):   # BadRequest, or rejected by the eyes API
+                return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            if isinstance(exc, OSError) and not isinstance(exc, TimeoutError):
+                return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f'{type(exc).__name__}: {exc}')
+            return self._error(HTTPStatus.BAD_GATEWAY, f'{type(exc).__name__}: {exc}')
 
         def _static(self, path):
             if path in ('', '/'):
@@ -395,7 +563,8 @@ def make_handler(studio, verbose=False):
                 if origin and origin != 'null' and urlsplit(origin).netloc.lower() != (self.headers.get('Host') or '').lower():
                     return self._error(HTTPStatus.FORBIDDEN, 'cross-origin request refused')
                 length = int(self.headers.get('Content-Length') or 0)
-                if not 0 <= length <= MAX_BODY:
+                limit = MAX_LOOK_BODY if path.startswith(LOOK_PATHS) else MAX_BODY
+                if not 0 <= length <= limit:
                     raise BadRequest('bad Content-Length')
                 raw = self.rfile.read(length) if length else b''
                 try:
@@ -416,6 +585,14 @@ def make_handler(studio, verbose=False):
                     if not isinstance(body, dict) or not isinstance(body.get('take'), bool):
                         raise BadRequest('body must be {"take": true|false}')
                     op = studio.writer.submit('take' if body['take'] else 'release')
+                elif path == '/api/library':
+                    return self._send(HTTPStatus.OK, studio.library_save(body))
+                elif path == '/api/library/delete':
+                    return self._send(HTTPStatus.OK, studio.library_delete(body))
+                elif path == '/api/play':
+                    op = studio.writer.submit('play', studio.parse_play(body))
+                elif path == '/api/stop':
+                    op = studio.writer.submit('stop')
                 elif path == '/api/sentry':
                     if not isinstance(body, dict) or body.get('active') is not True:
                         raise BadRequest('body must be {"active": true}')
@@ -424,12 +601,8 @@ def make_handler(studio, verbose=False):
                     return self._error(HTTPStatus.NOT_FOUND, 'not found')
                 studio.wait(op)
                 self._send(HTTPStatus.OK, studio.state())
-            except BadRequest as exc:
-                self._error(HTTPStatus.BAD_REQUEST, str(exc))
-            except (ValueError, TypeError) as exc:  # rejected by the eyes API
-                self._error(HTTPStatus.BAD_REQUEST, str(exc))
             except Exception as exc:
-                self._error(HTTPStatus.BAD_GATEWAY, f'{type(exc).__name__}: {exc}')
+                self._fail(exc)
 
     return Handler
 
