@@ -51,42 +51,40 @@ class RobotPose:
                 joint = RobotJoints.get_joint_by_name(joint_name)
                 normalized_key = joint.name if joint is not None else joint_name
                 joint_pose = dict(joint_pose)
-                joint_pose = joint_pose.setdefault("name", normalized_key)
+                joint_pose.setdefault("name", normalized_key)
                 pose.joints[normalized_key] = JointPose(**joint_pose)
         return pose
 
     @classmethod
     def load_tool_pose_models(cls, tool_name=None) -> dict[str, "RobotPose"]:
         """
-        Dynamically load pre-defined pose models from the custom tool directory.
+        Loads the 'pose_models' list from a user tool's tool_params.yaml, keyed by pose name.
+
+        `tool_name` defaults to the configured tool. Returns {} when the tool is not a user tool
+        or declares no poses. Raises ValueError if a pose is malformed.
         """
 
+        _, robot_params = RobotParams.get_params()
         if tool_name is None:
-            _, robot_params = RobotParams.get_params()
             tool_name = robot_params.get("robot", {}).get("tool")
 
-        if not tool_name or not RobotParams.is_user_defined_tool(tool_name):
+        if not tool_name or not RobotParams.get_user_defined_tool_path(tool_name):
             return {}
 
-        tool_path = RobotParams.get_user_defined_tool_path(tool_name)
-        if not tool_path:
-            return {}
+        pose_dicts = robot_params.get(tool_name, {}).get("pose_models") or []
 
-        pose_yaml_path = os.path.join(tool_path, "pose_models.yaml")
-        if not os.path.exists(pose_yaml_path):
-            return {}
-
-        try:
-            with open(pose_yaml_path, "r") as f:
-                data = yaml.safe_load(f)
-            poses = {}
-            for p_dict in data:
-                p = cls.from_dict(p_dict)
-                poses[p.name] = p
-            return poses
-        except Exception as e:
-            print(f"Warning: Failed to load pose models from {pose_yaml_path}: {e}")
-            return {}
+        poses = {}
+        for index, p_dict in enumerate(pose_dicts):
+            try:
+                pose = cls.from_dict(p_dict)
+            except (TypeError, KeyError, ValueError) as e:
+                name = p_dict.get("name") if isinstance(p_dict, dict) else None
+                label = repr(name) if name else f"at index {index}"
+                raise ValueError(
+                    f"Malformed pose {label} in robot_params['{tool_name}']['pose_models']: {e}"
+                ) from e
+            poses[pose.name] = pose
+        return poses
 
 
 class RobotJoints(Enum):
@@ -139,7 +137,7 @@ class RobotJoints(Enum):
         """Returns the robot_params key for this joint, or the configured gripper joint name for the gripper joint (None if unconfigured)."""
         if self.name == "gripper":
             if self.gripper_model:
-                return self.gripper_model.joint_name
+                return self.gripper_model.tool_name
             return self.gripper_name
         else:
             return self.name
@@ -199,7 +197,7 @@ class RobotJoints(Enum):
 
     @property
     def actuator_range(self) -> tuple[float, float] | None:
-        """Returns (min, max) in true raw actuator units (radians) for this joint, or None if no tool configured."""
+        """Returns (min, max) in actuator units (radians) for this joint, or None if no tool configured."""
         if self.name != "gripper":
             raise NotImplementedError(
                 f"actuator_range is not yet implemented for joint '{self.name}'."
@@ -336,21 +334,21 @@ class RobotJoints(Enum):
         return self.get_gripper_model("command_to_urdf").command_to_urdf(command)
 
     def urdf_to_actuator(self, urdf_units: float) -> float:
-        """Converts URDF units (radians/meters) to true raw actuator units (radians)."""
+        """Converts URDF units (radians/meters) to actuator units (radians)."""
         return self.get_gripper_model("urdf_to_actuator").urdf_to_actuator(urdf_units)
 
     def actuator_to_urdf(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to URDF units (radians/meters)."""
+        """Converts actuator units (radians) to URDF units (radians/meters)."""
         return self.get_gripper_model("actuator_to_urdf").actuator_to_urdf(actuator)
 
     def command_to_actuator(self, command: float) -> float:
-        """Converts this tool's own move_to()/move_by() command units to true raw actuator units"""
+        """Converts this tool's own move_to()/move_by() command units to actuator units"""
         return self.get_gripper_model("command_to_actuator").command_to_actuator(
             command
         )
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to this tool's own move_to()/move_by() command units."""
+        """Converts actuator units (radians) to this tool's own move_to()/move_by() command units."""
         return self.get_gripper_model("actuator_to_command").actuator_to_command(
             actuator
         )

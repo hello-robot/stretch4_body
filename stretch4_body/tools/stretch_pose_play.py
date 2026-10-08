@@ -59,7 +59,8 @@ class KeyframePlayer:
             if not joint in self.joints_allowed_to_move:
                 continue
 
-            position = joint.command_to_actuator(joint_pose.position)
+            # Poses store the gripper in URDF units; move_to takes the tool's command units
+            position = joint.urdf_to_command(joint_pose.position) if joint is RobotJoints.gripper else joint_pose.position
             if joint is RobotJoints.arm:
                 self.robot.arm.move_to(position, *joint.get_joint_params(self.motion_profile))
             elif joint is RobotJoints.lift:

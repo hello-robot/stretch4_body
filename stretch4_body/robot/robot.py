@@ -28,7 +28,7 @@ class Robot(RobotCore):
 
             from stretch4_body.core.robot_params import RobotParams
             mod = RobotParams.import_user_tool_module(self.eoa_name, module_name, is_server=True)
-            self.subsystems['end_of_arm'] = getattr(mod, class_name)()
+            self.subsystems['end_of_arm'] = getattr(mod, class_name)(self.eoa_name)
             self.end_of_arm = self.subsystems['end_of_arm']
             self.status['end_of_arm'] = self.subsystems['end_of_arm'].status
             self.status_aux['end_of_arm'] = self.subsystems['end_of_arm'].status_aux

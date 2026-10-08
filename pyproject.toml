@@ -41,7 +41,7 @@ dependencies = [
     "meson",
     "ninja",
     "pyzmq",
-    "hello-robot-stretch4-urdf>=2026.6.25",
+    "hello-robot-stretch4-urdf>=2026.10.08",
     "hello-robot-stretch4-flying-gripper>=2026.6.25",
     "hello-robot-stretch4-pyhesai-wrapper>=2026.8.25",
 ]
@@ -51,6 +51,7 @@ Homepage = "https://github.com/hello-robot/stretch4_body"
 
 [project.scripts]
 stretch_configure_tool = "stretch4_body._cli_wrapper:stretch_configure_tool"
+stretch_check_user_tool = "stretch4_body._cli_wrapper:stretch_check_user_tool"
 stretch_robot_rates = "stretch4_body._cli_wrapper:stretch_robot_rates"
 stretch_robot_stow = "stretch4_body._cli_wrapper:stretch_robot_stow"
 stretch_robot_home = "stretch4_body._cli_wrapper:stretch_robot_home"

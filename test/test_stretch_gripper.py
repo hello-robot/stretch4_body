@@ -54,11 +54,14 @@ def test_robot_joints_properties_stretch():
         assert "gripper_finger_left_joint" in joints
         assert "gripper_finger_left_link" in links
         
-        # -100 deg is -1.745329... rad.
-        # If position is -1.745329... rad, expected percent is -100.0% (closed).
-        val_pct = RobotJoints.gripper.urdf_to_command(-1.7453292519943295)
+        # The URDF finger angle is 0 rad at the closed end of the servo range (-100%).
+        val_pct = RobotJoints.gripper.urdf_to_command(0.0)
         print("stretch_gripper rad to command units:", val_pct)
         assert math.isclose(val_pct, -100.0, abs_tol=0.01)
+        urdf_open = RobotJoints.gripper.urdf_range[1]
+        assert math.isclose(
+            RobotJoints.gripper.urdf_to_command(urdf_open), RobotJoints.gripper.command_range[1], abs_tol=0.01
+        )
 
 def test_scripts_auto_detect_stretch():
     print("Testing auto-detection on scripts for stretch_gripper...")

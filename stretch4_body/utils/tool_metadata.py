@@ -24,13 +24,13 @@ class ToolMetadata(ABC):
     Abstract base class defining kinematic, hardware command, and physical unit conversions
     for Stretch 4 end-of-arm tools and grippers.
 
-    Five unit tiers, ROS-facing to hardware-facing:
+    Five unit types, ROS-facing to hardware-facing:
       - urdf: the ROS/URDF joint value (radians or meters), as seen on JointTrajectory/JointState.
       - command: the value this tool's own move_to()/move_by()/pose() take directly (e.g. Pct for
         SG4, fingertip aperture in meters for PG4). This is what ROS-facing code should convert
         into (via urdf_to_command) before calling move_to()/move_by(), and convert out of (via
         command_to_urdf) when reading status back.
-      - actuator: the true raw servo/motor register value (radians). This is the boundary every
+      - actuator: the servo/motor register value (radians). This is the boundary every
         Feetech-driven joint bottoms out at -- FeetechSMHello.move_to()'s own argument -- the
         same for every tool, gripper or not (e.g. WristYaw has no ToolMetadata and passes URDF
         radians straight through, because for a direct-drive joint urdf IS actuator).
@@ -39,9 +39,12 @@ class ToolMetadata(ABC):
     """
 
     @property
-    def joint_name(self) -> str:
-        """Name of the joint/device in robot_params used for motion params lookup."""
-        return self.primary_joint
+    def tool_name(self) -> str:
+        """
+        This tool's name in robot_params, used as a key for end_of_arm devices, robot status, and client commands.
+        """
+        raise ToolConfigurationError(
+            f"{type(self).__name__} does not define tool_name")
 
     @property
     @abstractmethod
@@ -92,7 +95,7 @@ class ToolMetadata(ABC):
     @property
     @abstractmethod
     def actuator_range(self) -> tuple[float, float]:
-        """(min_val, max_val) bounds in true raw actuator/servo units (radians, for every tool)."""
+        """(min_val, max_val) bounds in actuator units (radians, for every tool)."""
 
     @property
     @abstractmethod
@@ -117,11 +120,6 @@ class ToolMetadata(ABC):
         return self.aperture_range
 
     # Default fraction of urdf_range treated as "close enough" by position_tolerance below.
-    # urdf_range is a real physical quantity (radians/meters, from the joint's own URDF limits)
-    # for every tool, unlike command_range -- which is e.g. a percent scale for SG4 but aperture
-    # meters for PG4 -- so a fraction of it means the same thing (physical closeness) regardless
-    # of how a given tool chose to define its own command units. Subclasses may override this
-    # constant, or the property itself, with a hardware-tuned value.
     _POSITION_TOLERANCE_FRACTION: float = 0.02
 
     @property
@@ -147,19 +145,19 @@ class ToolMetadata(ABC):
 
     @abstractmethod
     def command_to_actuator(self, command: float) -> float:
-        """Converts from this tool's own move_to()/move_by() command units to true raw actuator units (radians)."""
+        """Converts from this tool's own move_to()/move_by() command units to actuator units (radians)."""
 
     @abstractmethod
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts from true raw actuator units (radians) to this tool's own move_to()/move_by() command units."""
+        """Converts from actuator units (radians) to this tool's own move_to()/move_by() command units."""
 
     @abstractmethod
     def aperture_to_actuator(self, aperture: float) -> float:
-        """Converts from physical opening aperture to true raw actuator units (radians)."""
+        """Converts from physical opening aperture to actuator units (radians)."""
 
     @abstractmethod
     def actuator_to_aperture(self, actuator: float) -> float:
-        """Converts from true raw actuator units (radians) to physical opening aperture."""
+        """Converts from actuator units (radians) to physical opening aperture."""
 
     @abstractmethod
     def status_to_metadata(self, status: dict) -> dict:
@@ -181,12 +179,12 @@ class ToolMetadata(ABC):
     # --- Normalized <-> Actuator Conversions ---
 
     def normalized_to_actuator(self, normalized: float) -> float:
-        """Converts a normalized scale value (0.0=closed/min, 1.0=open/max) to true raw actuator units (radians)."""
+        """Converts a normalized scale value (0.0=closed/min, 1.0=open/max) to actuator units (radians)."""
         low, high = self.actuator_range
         return low + normalized * (high - low)
 
     def actuator_to_normalized(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to a normalized scale value (0.0=closed/min, 1.0=open/max)."""
+        """Converts actuator units (radians) to a normalized scale value (0.0=closed/min, 1.0=open/max)."""
         low, high = self.actuator_range
         if high == low:
             return 0.0
@@ -195,11 +193,11 @@ class ToolMetadata(ABC):
     # --- Chained Layer Conversions ---
 
     def urdf_to_actuator(self, urdf: float) -> float:
-        """Converts URDF units to true raw actuator units (radians), via this tool's command units."""
+        """Converts URDF units to actuator units (radians), via this tool's command units."""
         return self.command_to_actuator(self.urdf_to_command(urdf))
 
     def actuator_to_urdf(self, actuator: float) -> float:
-        """Converts true raw actuator units (radians) to URDF units, via this tool's command units."""
+        """Converts actuator units (radians) to URDF units, via this tool's command units."""
         return self.command_to_urdf(self.actuator_to_command(actuator))
 
     def urdf_to_normalized(self, urdf: float) -> float:
@@ -415,12 +413,12 @@ class ToolMetadata(ABC):
         configured one.
         """
         _, robot_params = RobotParams.get_params()
-        motion = robot_params.get(self.joint_name, {}).get("motion", {})
+        motion = robot_params.get(self.tool_name, {}).get("motion", {})
         prof = motion.get(profile) or motion.get("default")
         if not prof or "vel" not in prof:
             raise ToolConfigurationError(
-                f"No motion velocity limit for tool '{self.joint_name}' "
-                f"(looked for robot_params['{self.joint_name}']['motion']['{profile}']['vel']). "
+                f"No motion velocity limit for tool '{self.tool_name}' "
+                f"(looked for robot_params['{self.tool_name}']['motion']['{profile}']['vel']). "
                 "Is this the configured tool?"
             )
         return float(prof["vel"])
@@ -480,7 +478,7 @@ class ToolMetadata(ABC):
 
 class ParallelGripperMetadata(ToolMetadata):
     @property
-    def joint_name(self) -> str:
+    def tool_name(self) -> str:
         return "parallel_gripper"
 
     @property
@@ -704,7 +702,7 @@ class ParallelGripperMetadata(ToolMetadata):
 
 class StretchGripperMetadata(ToolMetadata):
     @property
-    def joint_name(self) -> str:
+    def tool_name(self) -> str:
         return "stretch_gripper"
 
     @property
@@ -735,7 +733,7 @@ class StretchGripperMetadata(ToolMetadata):
 
     @property
     def poses(self) -> dict[str, float]:
-        """Named command positions in pct (command units): 'zero' (fingertips just touching), plus
+        """Named command positions in percentage (command units): 'zero' (fingertips just touching), plus
         'close'/'open' bounding the full range."""
         low_deg, high_deg = self._range_deg
         pct_max_open = 100.0 * abs(high_deg / low_deg) if low_deg else 100.0
@@ -743,7 +741,7 @@ class StretchGripperMetadata(ToolMetadata):
 
     @property
     def command_range(self) -> tuple[float, float]:
-        """(closed, open) bounds in Pct — SG4's command units, matching move_to()/move_by()'s own public parameter."""
+        """(closed, open) bounds in percent, matching move_to()/move_by()'s own public parameter."""
         return self.poses["close"], self.poses["open"]
 
     @property
@@ -762,24 +760,34 @@ class StretchGripperMetadata(ToolMetadata):
         )
 
     def urdf_to_command(self, urdf: float) -> float:
-        """Converts the URDF finger joint value (radians) to Pct — SG4's command units."""
-        _, robot_params = RobotParams.get_params()
-        sg_params = robot_params.get("stretch_gripper", {})
-        range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
-        return -100.0 * urdf / deg_to_rad(range_deg_0)
+        """Converts the URDF finger joint angle (radians) to a percent."""
+        servo_closed_deg, servo_open_deg = self._range_deg
+        servo_deg = self._map_range(
+            math.degrees(2.0 * urdf),
+            0.0,
+            self._aperture_open_deg,
+            servo_closed_deg,
+            servo_open_deg,
+        )
+        return self.actuator_to_command(deg_to_rad(servo_deg))
 
     def command_to_urdf(self, command: float) -> float:
-        """Converts Pct — SG4's command units — to the URDF finger joint value (radians)."""
-        _, robot_params = RobotParams.get_params()
-        sg_params = robot_params.get("stretch_gripper", {})
-        range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
-        return command * deg_to_rad(range_deg_0) / -100.0
+        """
+        Converts percentage to the URDF finger joint angle (radians)
+        """
+        servo_closed_deg, servo_open_deg = self._range_deg
+        aperture_angle_deg = self._map_range(
+            rad_to_deg(self.command_to_actuator(command)),
+            servo_closed_deg,
+            servo_open_deg,
+            0.0,
+            self._aperture_open_deg,
+        )
+        return math.radians(aperture_angle_deg) / 2.0
 
     def command_to_actuator(self, command: float) -> float:
         """
-        Converts Pct — SG4's command units — to servo angle (radians). Promoted from
-        StretchGripper.pct_to_world_rad() so ToolMetadata owns this conversion the same way PG4
-        does via aperture_to_actuator(), instead of leaving it only on the driver.
+        Converts percentage to servo angle (radians)
         """
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
@@ -787,14 +795,14 @@ class StretchGripperMetadata(ToolMetadata):
         return deg_to_rad(range_deg_0) * command / -100.0
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Converts true raw servo angle (radians) to Pct — SG4's command units"""
+        """Converts servo angle (radians) to percentage"""
         _, robot_params = RobotParams.get_params()
         sg_params = robot_params.get("stretch_gripper", {})
         range_deg_0 = sg_params.get("range_deg", [-100.0, 0.0])[0]
         return -100.0 * actuator / deg_to_rad(range_deg_0)
 
-    # SG4's urdf/command/actuator conversions are pure scalings through the origin, so a rate
-    # converts like a position there. Only the aperture edge is nonlinear.
+    # SG4's urdf/command/actuator conversions are affine, so their gain is constant. Only the
+    # aperture edge is nonlinear.
     _LINEAR_CONVERSIONS = ToolMetadata._LINEAR_CONVERSIONS | frozenset(
         {
             ("urdf", "command"),
@@ -899,7 +907,7 @@ class StretchGripperMetadata(ToolMetadata):
     def aperture_to_actuator(self, aperture: float) -> float:
         """
         Models the SG4 gripper's finger as a circular arc to map an aperture (chord length,
-        meters) to true raw servo angle (radians). Note: this is a simplified model, not
+        meters) to servo angle (radians). Note: this is a simplified model, not
         accurate to the gripper's real motion.
         """
         aperture_angle_deg = self._aperture_m_to_aperture_angle_degrees(aperture)
@@ -914,7 +922,7 @@ class StretchGripperMetadata(ToolMetadata):
         return deg_to_rad(servo_angle_deg)
 
     def actuator_to_aperture(self, actuator: float) -> float:
-        """Converts true raw servo angle (radians) to fingertip aperture (meters), the inverse of `aperture_to_actuator`."""
+        """Converts servo angle (radians) to fingertip aperture (meters), the inverse of `aperture_to_actuator`."""
         servo_closed_deg, servo_open_deg = self._range_deg
         aperture_angle_deg = self._map_range(
             rad_to_deg(actuator),
@@ -926,20 +934,13 @@ class StretchGripperMetadata(ToolMetadata):
         return self._aperture_angle_degrees_to_aperture_m(aperture_angle_deg)
 
     def status_to_metadata(self, status: dict) -> dict:
-        aperture_m = self.actuator_to_aperture(status.get("pos", 0.0))
-        finger_rad = (
-            math.radians(self._aperture_m_to_aperture_angle_degrees(aperture_m)) / 2.0
-        )
+        pos = status.get("pos", 0.0)
         return {
-            "aperture_m": aperture_m,
-            "finger_rad": finger_rad,
+            "aperture_m": self.actuator_to_aperture(pos),
+            "finger_rad": self.actuator_to_urdf(pos),
             "finger_effort": status["effort"],
-            # Time derivative of finger_rad above. finger_rad is half the chord-model aperture
-            # angle, not this tool's `urdf` unit type (actuator_to_urdf is the identity for SG4),
-            # so it cannot route through the urdf conversions.
-            "finger_vel": self._aperture_angle_per_actuator
-            * status.get("vel", 0.0)
-            / 2.0,
+            # Time derivative of finger_rad above.
+            "finger_vel": self.actuator_to_urdf_velocity(status.get("vel", 0.0), pos),
         }
 
 
@@ -950,7 +951,7 @@ class LinearToolMetadata(ToolMetadata):
     """
 
     def __init__(self, tool_name: str):
-        self.tool_name = tool_name
+        self._tool_name = tool_name
         _, self.robot_params = RobotParams.get_params()
 
         if tool_name not in self.robot_params:
@@ -983,10 +984,12 @@ class LinearToolMetadata(ToolMetadata):
             )
         self._tool_links = list(links)
 
-        # 2. Client Class (optional: a single-joint tool can omit this and fall back to the
-        # generic ToolJointClient instead of a bespoke class)
+        # 2. Client Class. 'client_class_name' names either the EndOfArmClient subclass that
+        # RobotClient installs as the subsystem, or a client for this tool's own joint. An
+        # EndOfArmClient leaves the joint on ToolJointClient.
         client_module = self.tool_params.get("client_module_name")
         client_class_name = self.tool_params.get("client_class_name")
+        self._client_class = None
         if client_module or client_class_name:
             if not client_module or not client_class_name:
                 raise ToolConfigurationError(
@@ -997,14 +1000,16 @@ class LinearToolMetadata(ToolMetadata):
                 module = RobotParams.import_user_tool_module(
                     self.tool_name, client_module, is_server=False
                 )
-                self._client_class = getattr(module, client_class_name)
+                declared = getattr(module, client_class_name)
             except Exception as e:
                 raise ToolConfigurationError(
                     f"Failed to import client class '{client_class_name}' from module '{client_module}' "
                     f"for user tool '{self.tool_name}': {e}"
                 )
-        else:
-            self._client_class = None
+            from stretch4_body.robot.robot_client import EndOfArmClient
+
+            if not (isinstance(declared, type) and issubclass(declared, EndOfArmClient)):
+                self._client_class = declared
 
         # 3. Ranges
         act_range = self.tool_params.get("actuator_command_range")
@@ -1052,32 +1057,37 @@ class LinearToolMetadata(ToolMetadata):
     def tool_links(self) -> list[str]:
         return self._tool_links
 
+    @property
+    def tool_name(self) -> str:
+        return self._tool_name
+
     @cached_property
     def client_class(self) -> Callable[..., WristJointClient]:
+        """The tool's own joint client if it declares one, else the generic ToolJointClient."""
         if self._client_class is None:
-            raise ToolConfigurationError(
-                f"No client class available for user tool '{self.tool_name}': set "
-                "'client_module_name' and 'client_class_name' in robot_params."
-            )
+            # Import here to avoid circular dependencies
+            from stretch4_body.robot.robot_client import ToolJointClient
+
+            return partial(ToolJointClient, self)
         return self._client_class
 
-    @property
+    @cached_property
     def driver_class(self) -> type:
-        device_params = self.tool_params.get("devices", {}).get(self.joint_name, {})
-        py_module = (
-            device_params.get("py_module_name")
-            or self.tool_params.get("server_module_name")
-            or self.tool_params.get("py_module_name")
-        )
-        py_class = (
-            device_params.get("py_class_name")
-            or self.tool_params.get("server_class_name")
-            or self.tool_params.get("py_class_name")
-        )
+        """The servo driver named by this tool's own 'devices' entry."""
+        devices = self.tool_params.get("devices", {})
+        if self.tool_name not in devices:
+            raise ToolConfigurationError(
+                f"robot_params['{self.tool_name}']['devices'] has no '{self.tool_name}' entry "
+                f"naming this tool's servo; it holds {sorted(devices)}."
+            )
+        device_params = devices[self.tool_name]
+        py_module = device_params.get("py_module_name")
+        py_class = device_params.get("py_class_name")
 
         if not py_module or not py_class:
             raise ToolConfigurationError(
-                f"Direct driver configuration for tool '{self.tool_name}' must specify 'py_module_name' and 'py_class_name'."
+                f"robot_params['{self.tool_name}']['devices']['{self.tool_name}'] must specify "
+                "'py_module_name' and 'py_class_name' naming this tool's driver."
             )
         RobotParams.add_user_tool_to_sys_path(self.tool_name)
         try:
@@ -1098,7 +1108,7 @@ class LinearToolMetadata(ToolMetadata):
     @property
     def actuator_range(self) -> tuple[float, float]:
         """
-        User tools have no YAML mechanism to describe a true actuator/servo scale distinct from
+        User tools have no YAML mechanism to describe an actuator/servo scale distinct from
         move_to()/move_by()'s own command units, so actuator is assumed to coincide with command
         -- see command_to_actuator/actuator_to_command.
         """
@@ -1127,11 +1137,11 @@ class LinearToolMetadata(ToolMetadata):
         return command / self._urdf_scale if self._urdf_scale != 0 else command
 
     def command_to_actuator(self, command: float) -> float:
-        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
+        """Identity: user tools assume the actuator range coincides with command (see actuator_range)."""
         return command
 
     def actuator_to_command(self, actuator: float) -> float:
-        """Identity: user tools assume the true actuator range coincides with command (see actuator_range)."""
+        """Identity: user tools assume the actuator range coincides with command (see actuator_range)."""
         return actuator
 
     def aperture_to_actuator(self, aperture: float) -> float:
@@ -1179,6 +1189,11 @@ BUILTIN_TOOL_MODELS: dict[str, ToolMetadata] = {
     "eoa_wrist_dw4_tool_pg4": _pg_meta,
 }
 
+# Resolved ToolMetadata for tools not in BUILTIN_TOOL_MODELS, keyed by tool_name and filled in
+# by get_tool_metadata() on first resolution. Kept separate from BUILTIN_TOOL_MODELS so tests can
+# still patch that dict directly without affecting this one.
+_USER_TOOL_METADATA_CACHE: dict[str, ToolMetadata] = {}
+
 
 def is_tool_joint(name: str) -> bool:
     """
@@ -1205,6 +1220,12 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     1. Checks built-in grippers ('stretch_gripper', 'parallel_gripper') and standard tool aliases.
     2. Checks for custom metadata class in user_tools (metadata_module_name/metadata_class_name).
     3. Uses explicit LinearToolMetadata for YAML-configured tools (failing fast if required keys are missing).
+
+    A tool not in BUILTIN_TOOL_MODELS is resolved once and cached in _USER_TOOL_METADATA_CACHE
+    keyed by tool_name, so every call after the first for a given tool_name is a plain cache hit
+    with no re-parsing of robot_params or re-importing of the tool's module -- the same as a
+    built-in tool. A failed resolution is not cached, so a misconfigured tool can be fixed and
+    re-checked without restarting the process.
     """
     _, robot_params = RobotParams.get_params()
 
@@ -1220,10 +1241,15 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
     if tool_name in BUILTIN_TOOL_MODELS:
         return BUILTIN_TOOL_MODELS[tool_name]
 
+    if tool_name in _USER_TOOL_METADATA_CACHE:
+        return _USER_TOOL_METADATA_CACHE[tool_name]
+
     tool_params = robot_params.get(tool_name, {})
     for device_name in tool_params.get("devices", {}):
         if device_name in BUILTIN_TOOL_MODELS:
-            return BUILTIN_TOOL_MODELS[device_name]
+            meta = BUILTIN_TOOL_MODELS[device_name]
+            _USER_TOOL_METADATA_CACHE[tool_name] = meta
+            return meta
 
     if not tool_params:
         raise ToolConfigurationError(
@@ -1241,14 +1267,18 @@ def get_tool_metadata(tool_name: str | None = None) -> ToolMetadata:
                 tool_name, meta_module, is_server=False
             )
             MetadataClass = getattr(module, meta_class)
-            return MetadataClass()
+            meta = MetadataClass()
         except Exception as e:
             raise ToolConfigurationError(
                 f"Failed to import custom metadata class '{meta_class}' from '{meta_module}' for tool '{tool_name}': {e}"
             )
+        _USER_TOOL_METADATA_CACHE[tool_name] = meta
+        return meta
 
     # 3. Explicit LinearToolMetadata parser (fails fast on missing YAML parameters)
-    return LinearToolMetadata(tool_name)
+    meta = LinearToolMetadata(tool_name)
+    _USER_TOOL_METADATA_CACHE[tool_name] = meta
+    return meta
 
 
 def get_gripper_instance(
@@ -1262,7 +1292,7 @@ def get_gripper_instance(
     except Exception:
         return None, None
 
-    gripper_type = meta.joint_name
+    gripper_type = meta.tool_name
 
     try:
         if direct:
