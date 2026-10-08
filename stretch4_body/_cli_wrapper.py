@@ -317,6 +317,10 @@ def stretch_eye_animations():
     sys.argv[0] = "stretch_eye_animations"
     runpy.run_module("stretch4_body.tools.stretch_eye_animations", run_name="__main__")
 
+def stretch_eyes_studio():
+    sys.argv[0] = "stretch_eyes_studio"
+    runpy.run_module("stretch4_body.eyes.studio", run_name="__main__")
+
 def stretch_change_param():
     sys.argv[0] = "stretch_change_param"
     runpy.run_module("stretch4_body.tools.stretch_change_param", run_name="__main__")

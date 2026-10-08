@@ -70,6 +70,7 @@ For an in-depth understanding of how specific parts of the system are designed, 
 | [Self-Collision](./docs/primer_self_collision.md) | Details the MuJoCo-based collision checking system, its background loop, and configuration parameters. |
 | [Gamepad Teleop](./docs/primer_gamepad_teleop.md) | Explains how different control schemes can be mapped onto a standard gamepad controller + how to extend it. |
 | [Cameras](./docs/primer_cameras.md) | A guide to the cameras on Stretch 4's head and wrist, with an overview of the CLIs and API. |
+| [Eye LEDs](./docs/primer_eyes.md) | Python API and CLI for the eye ring animations, color and intensity, and what overrides them. |
 
 ## Installation
  1. `pip3 install -e .`

@@ -18,7 +18,8 @@ src_dir = 'stretch4_body'
 
 # Recursively install Python package
 install_subdir(src_dir,
-  install_dir: py.get_install_dir()
+  install_dir: py.get_install_dir(),
+  exclude_directories: ['eyes/studio/tests']
 )
 
 # SCServo Library
