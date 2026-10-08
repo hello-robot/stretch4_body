@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Eyes Studio</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+<header class="head">
+  <div class="brand">
+    <span class="tp" aria-hidden="true"></span>
+    <h1>Eyes Studio</h1>
+    <span class="brand-sub">Stretch 4 eye rings, <span id="protocol">PIMU protocol unknown</span></span>
+  </div>
+  <div class="head-status">
+    <span class="status-item"><span class="lamp" id="lamp-link" aria-hidden="true"></span><span id="link-text">Connecting</span></span>
+    <span class="status-item"><span class="lamp" id="lamp-command" aria-hidden="true"></span><span id="command-text">No command sent yet</span></span>
+    <span class="status-item"><span class="lamp" id="lamp-control" aria-hidden="true"></span><span id="control-text">Host control off</span></span>
+    <button type="button" class="key" id="btn-control" aria-pressed="false">Take control</button>
+  </div>
+</header>
+
+<p class="notice notice-fault" id="protocol-notice" role="alert" hidden></p>
+<p class="notice" id="sentry-notice" hidden>Sentry eye animations are running and will overwrite these settings. Take control to pause them.</p>
+<p class="notice notice-fault" id="dropped-notice" role="alert" hidden></p>
+<div class="notice notice-fault" id="resume-notice" role="alert" hidden>
+  <span id="resume-text"></span>
+  <button type="button" class="key" id="btn-resume">Resume sentry</button>
+</div>
+<p class="notice notice-fault" id="error-notice" role="alert" hidden></p>
+
+<main class="bench">
+  <section class="stage" aria-labelledby="stage-h">
+    <h2 id="stage-h" class="visually-hidden">Live preview</h2>
+    <div class="window">
+      <canvas id="rings" role="img" aria-label="Preview of both eye rings as the PIMU renders them"></canvas>
+      <div class="spots" id="spots" role="group" aria-label="Pixels. Arrow keys move between them, Enter pins the readout, Escape unpins."></div>
+      <p class="override-banner" id="override-banner" hidden></p>
+    </div>
+    <p class="led-readout" id="led-readout" aria-live="polite">Tap or hover a pixel for its index, chain position and board LED.</p>
+    <div class="readout" aria-live="polite">
+      <span><b>Left</b> <span id="ro-left">?</span></span>
+      <span><b>Right</b> <span id="ro-right">?</span></span>
+      <span><b>Color</b> <span id="ro-color">?</span></span>
+      <span><b>Intensity</b> <span id="ro-intensity">?</span></span>
+      <span><b>Source</b> <span id="ro-source">?</span></span>
+    </div>
+    <p class="caption" id="stage-caption">Simulated from the PIMU renderer at 50 Hz.</p>
+    <div class="transport">
+      <button type="button" class="key key-wide" id="btn-idle">Idle</button>
+      <button type="button" class="key key-wide" id="btn-off">Off</button>
+      <button type="button" class="key" id="btn-swap" aria-pressed="false" aria-describedby="orientation-caption">Swap left and right</button>
+    </div>
+    <p class="caption" id="orientation-caption"></p>
+  </section>
+
+  <section class="panel fx" aria-labelledby="fx-h">
+    <h2 id="fx-h"><span class="tp" aria-hidden="true"></span>Effect</h2>
+    <fieldset class="link">
+      <legend>Apply to</legend>
+      <label><input type="radio" name="link" value="left"><span>Left</span></label>
+      <label><input type="radio" name="link" value="both" checked><span>Both</span></label>
+      <label><input type="radio" name="link" value="right"><span>Right</span></label>
+    </fieldset>
+    <ul class="effects" id="effects" aria-label="Effects"></ul>
+  </section>
+
+  <section class="panel colour" aria-labelledby="colour-h">
+    <h2 id="colour-h"><span class="tp" aria-hidden="true"></span>Color</h2>
+    <p class="reason" id="colour-reason"></p>
+    <div class="picker" id="picker">
+      <canvas id="hue-ring" tabindex="0" role="slider" aria-label="Hue" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0" aria-describedby="colour-reason"></canvas>
+      <canvas id="sv-square" tabindex="0" role="slider" aria-label="Saturation and value" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-describedby="colour-reason"></canvas>
+    </div>
+    <div class="colour-fields">
+      <label class="field">Hex <input id="hex" type="text" inputmode="text" maxlength="7" spellcheck="false" autocomplete="off" aria-describedby="colour-reason"></label>
+      <label class="field">R <input id="rgb-r" type="number" min="0" max="255"></label>
+      <label class="field">G <input id="rgb-g" type="number" min="0" max="255"></label>
+      <label class="field">B <input id="rgb-b" type="number" min="0" max="255"></label>
+    </div>
+    <div class="swatches">
+      <ul id="swatches" aria-label="Swatches"></ul>
+      <div class="swatch-keys">
+        <button type="button" class="key" id="swatch-save">Save color</button>
+        <button type="button" class="key" id="swatch-clear">Clear saved</button>
+      </div>
+      <p class="hint">Saved on this browser. Delete key removes a saved swatch.</p>
+    </div>
+    <div class="cap" data-cap="per_eye_color">
+      <label class="check"><input type="checkbox" id="per-eye-color"> Separate color per eye</label>
+      <p class="reason" id="per-eye-color-reason"></p>
+    </div>
+  </section>
+
+  <section class="panel level" aria-labelledby="level-h">
+    <h2 id="level-h"><span class="tp" aria-hidden="true"></span>Intensity</h2>
+    <p class="reason" id="intensity-reason"></p>
+    <div class="fader">
+      <input type="range" id="intensity" min="0" max="255" step="1" aria-describedby="intensity-out intensity-reason">
+      <output id="intensity-out" for="intensity">255</output>
+    </div>
+    <p class="hint" id="intensity-hint">Scales every pixel. Rainbow never drops below 40.</p>
+  </section>
+
+  <section class="panel presets" aria-labelledby="presets-h">
+    <h2 id="presets-h"><span class="tp" aria-hidden="true"></span>Quick looks</h2>
+    <ul class="preset-list" id="presets"></ul>
+  </section>
+
+  <section class="panel overrides" aria-labelledby="ovr-h">
+    <h2 id="ovr-h"><span class="tp" aria-hidden="true"></span>Firmware overrides</h2>
+    <ul class="ovr-lamps">
+      <li><span class="lamp" id="lamp-runstop" aria-hidden="true"></span><span>Runstop <span id="runstop-text">off</span></span></li>
+      <li><span class="lamp" id="lamp-soc" aria-hidden="true"></span><span>Low battery <span id="soc-text">off</span></span></li>
+    </ul>
+    <fieldset class="link link-small">
+      <legend>Preview</legend>
+      <label><input type="radio" name="ovr" value="live" checked><span>Live</span></label>
+      <label><input type="radio" name="ovr" value="runstop"><span>Runstop</span></label>
+      <label><input type="radio" name="ovr" value="soc25"><span>SOC 25%</span></label>
+      <label><input type="radio" name="ovr" value="soc12"><span>SOC 12%</span></label>
+    </fieldset>
+    <p class="hint">These outrank the host. Preview only, nothing is sent.</p>
+  </section>
+
+  <section class="panel pixels" aria-labelledby="px-h">
+    <h2 id="px-h"><span class="tp" aria-hidden="true"></span>Pixels</h2>
+    <div class="cap" data-cap="per_pixel">
+      <button type="button" class="key" id="btn-paint" aria-pressed="false">Paint pixels</button>
+      <p class="reason" id="paint-reason"></p>
+    </div>
+    <p class="hint" id="px-hint">10 per eye</p>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>Preview is a port of <span id="port-source">EyeAnimationManager.cpp from hello_pimu2</span>: 50 Hz frames, 300 ms crossfade on an effect change, color and intensity snap. Overrides follow LightBarManager::step: runstop blinks every eye pixel at 500 ms, SOC at or below 25 shows yellow half rings, 12 red.</p>
+</footer>
+<script src="studio.js"></script>
+</body>
+</html>
