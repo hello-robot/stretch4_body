@@ -62,25 +62,6 @@ class ParallelGripper(FeetechSMHello):
         x_final = (self.status.get('pos_mm', 0.0) / 1000.0) + x_m
         self.move_to(x_final, v_r, a_r)
 
-    def set_velocity(self, v_r, a_r=None):
-        """
-        v_r: commanded velocity (rad/s)
-        a_r: acceleration motion profile (rad/s^2)
-        """
-        if self.contact_guard.enabled and not self.status['is_homing']:
-            hold = self.contact_guard.filter_velocity(v_r)
-            if hold is not None:  # In contact: closing (or zero) velocity holds the virtual goal in position mode
-                if self.in_vel_mode:
-                    self._contact_guard_hold(hold)
-                return
-        FeetechSMHello.set_velocity(self, v_r, a_r)
-
-    def move_to_mm(self, x_mm, v_r=None, a_r=None):
-        self.move_to(x_mm / 1000.0, v_r, a_r)
-
-    def move_by_mm(self, x_mm, v_r=None, a_r=None):
-        self.move_by(x_mm / 1000.0, v_r, a_r)
-
     ############### Utilities ###############
 
     def pull_status(self,data=None):
