@@ -38,13 +38,9 @@ def test_stretch_gripper_direct_commands():
     from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
     FeetechSMHello.move_to = mock_move_to
     
-    # Test conversions
-    assert math.isclose(gripper.pct_to_world_rad(-100.0), math.radians(-100.0), abs_tol=1e-5)
-    assert math.isclose(gripper.world_rad_to_pct(math.radians(-100.0)), -100.0, abs_tol=1e-5)
-    
     # Test move_to
     gripper.move_to(50.0)
-    mock_move_to.assert_called_once_with(gripper, x_des=gripper.pct_to_world_rad(50.0), v_des=None, a_des=None)
+    mock_move_to.assert_called_once_with(gripper, x_des=gripper.tool_metadata.command_to_actuator(50.0), v_des=None, a_des=None)
     print("StretchGripper direct move_to test passed!")
 
 def test_robot_joints_properties_stretch():

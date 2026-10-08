@@ -1,10 +1,11 @@
 import termios
 import time
+
+import stretch4_body.core.hello_utils as hu
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
 from stretch4_body.core.feetech.feetech_SM_servo import FeetechCommError
-import stretch4_body.core.hello_utils as hu
-from stretch4_body.subsystem.end_of_arm.contact_guard import ContactGuard
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm, parallel_gripper_mm_to_servo_rad
+from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
+
 
 class ParallelGripper(FeetechSMHello):
     """
@@ -19,14 +20,8 @@ class ParallelGripper(FeetechSMHello):
     def __init__(self, chain=None, usb=None, name='parallel_gripper',is_direct=False):
         FeetechSMHello.__init__(self, name, chain, usb,is_direct=is_direct)
         self.status['pos_mm'] = 0.0
-        self.contact_guard = ContactGuard(self.params.get('contact_guard'))
-        self.status['contact_guard'] = self.contact_guard.get_status()
-        open_m = parallel_gripper_servo_rad_to_mm(hu.deg_to_rad(self.params['range_deg'][1]), self.params) / 1000.0
-        self.poses = {
-            'open': open_m,
-            'mid': open_m / 2.0,
-            'close': 0.0,
-            'zero': 0.0}
+        self.tool_metadata = ParallelGripperMetadata()
+        self.poses = self.tool_metadata.poses
 
     def startup(self):
         return FeetechSMHello.startup(self)
@@ -51,11 +46,9 @@ class ParallelGripper(FeetechSMHello):
         v_r: velocity for trapezoidal motion profile (rad/s).
         a_r: acceleration for trapezoidal motion profile (rad/s^2)
         """
-        x_mm = x_m * 1000.0
-        x_mm = min(max(x_mm, 0.0), self.params.get('range_mm', 80.0))
-        x_r = parallel_gripper_mm_to_servo_rad(x_mm, self.params)
-        if self.contact_guard.enabled and not self.status['is_homing']:
-            x_r = self.contact_guard.filter_goal(x_r)  # Clamp closing goals to the virtual goal while in contact
+        low, high = self.tool_metadata.command_range
+        x_m = min(max(x_m, low), high)
+        x_r = self.tool_metadata.aperture_to_actuator(x_m)
         FeetechSMHello.move_to(self, x_des=x_r, v_des=v_r, a_des=a_r)
 
     def move_by(self, x_m, v_r=None, a_r=None):
@@ -66,7 +59,8 @@ class ParallelGripper(FeetechSMHello):
         """
         if self.is_direct:
             self.pull_status()
-        self.move_to((self.status.get('pos_mm', 0.0) / 1000.0) + x_m, v_r, a_r)
+        x_final = (self.status.get('pos_mm', 0.0) / 1000.0) + x_m
+        self.move_to(x_final, v_r, a_r)
 
     def set_velocity(self, v_r, a_r=None):
         """
@@ -92,17 +86,7 @@ class ParallelGripper(FeetechSMHello):
     def pull_status(self,data=None):
         current_was_read = self.status_mux_id == 0  # The base class reads current only every 3rd cycle
         FeetechSMHello.pull_status(self,data)
-        self.status['pos_mm']=parallel_gripper_servo_rad_to_mm(self.status['pos'], self.params)
-        if self.contact_guard.enabled and self.hw_valid:
-            if data is None and not current_was_read:  # Contact detection needs current every cycle
-                try:
-                    i_mA = self.motor.get_current_mA()
-                    if self.motor.last_comm_success:
-                        self.status['current_mA'] = i_mA
-                        self.status['effort'] = self.current_to_effort_pct(float(i_mA))
-                except (termios.error, FeetechCommError, IndexError):
-                    self.comm_errors.add_error(rx=True, gsr=False)
-            self._step_contact_guard()
+        self.status['pos_mm']=self.tool_metadata.actuator_to_aperture(self.status['pos']) * 1000.0
 
     def step_sentry(self, robot):
         pass
