@@ -31,6 +31,7 @@ with Eyes() as eyes, eyes.take_control():          # take_control pauses the eye
 |---|---|---|
 | `sentry_eye_animations` | Picks a new animation every 0.5-5 s while active (default on) | `eyes.take_control()` pauses it, `release()` or leaving the `with` block restores it |
 | `stretch_body_server` restart | The sentry comes back active while `Eyes` still reports `in_control` | `release()` and `take_control()` again; for the CLI, rerun `--hold` |
+| No eye sentry in the robot's params | Nothing overwrites the eyes; `capabilities()['sentry_installed']` is `False` and `state().sentry_active` is `None` | Nothing; `take_control()` sends no pause and `release()` returns at once (the CLI says "no eye sentry on this robot") |
 | Runstop | Firmware shows all 20 pixels blinking with the runstop LED | Nothing; clears with the runstop. `state().runstop_active` |
 | Battery at or below 25% / 12% | Firmware shows half rings in yellow / red | Nothing; `state().low_soc_override` |
 | PIMU reset | Firmware returns to idle glow, (40, 48, 60) | Send the command again |
