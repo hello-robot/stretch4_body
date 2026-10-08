@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from stretch4_body.core.hello_utils import *
 import argparse
+import select
 
 print_stretch_re_use()
 
@@ -51,6 +52,61 @@ def get_keystroke():
         termios.tcsetattr(fd,termios.TCSADRAIN,old_settings)
     return ch
 
+def prompt_float(msg,default,limit):
+    """Prompt until a value within +/-limit is entered. Blank / invalid input keeps the default."""
+    while True:
+        print('%s, max +/-%f [%f]'%(msg,limit,default))
+        try:
+            v = float(input())
+        except ValueError:
+            return default
+        if abs(v) > limit:
+            print('Rejected: %f exceeds the max of %f in params'%(v,limit))
+        else:
+            return v
+
+def command_velocity(vx,vy,vw):
+    b.set_velocity(vx,vy,vw,a_m=b.params['motion'][rate]['accel_xy_m'],a_r=b.params['motion'][rate]['accel_w_r'])
+    b.push_command()
+    p.trigger_motor_sync()
+
+def set_base_velocity():
+    """Prompt for a base velocity and hold it until a key is pressed. The wheel firmware runs a
+    velocity watchdog (gains['enable_vel_watchdog']) that stops the motors ~1s after the last
+    command, so the command is re-sent at 10Hz for as long as the motion should continue."""
+    limits = b.params['motion']['max']
+    vx = prompt_float('Enter Vx (m/s), forward',0.0,limits['vel_xy_m'])
+    vy = prompt_float('Enter Vy (m/s), left',0.0,limits['vel_xy_m'])
+    vw = prompt_float('Enter Vtheta (rad/s), CCW',0.0,limits['vel_w_r'])
+    print('Commanding Vx: %.3f m/s | Vy: %.3f m/s | Vtheta: %.3f rad/s. Press any key to stop'%(vx,vy,vw))
+    fd=sys.stdin.fileno()
+    old_settings=termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while True:
+            command_velocity(vx,vy,vw)
+            b.pull_status()
+            print_base_status()
+            print('Commanding Vx: %.3f m/s | Vy: %.3f m/s | Vtheta: %.3f rad/s. Press any key to stop'%(vx,vy,vw))
+            if select.select([sys.stdin],[],[],0.1)[0]:
+                sys.stdin.read(1)
+                break
+    finally:
+        termios.tcsetattr(fd,termios.TCSADRAIN,old_settings)
+        command_velocity(0,0,0)
+
+def print_base_status():
+    """Pose and per-wheel velocity. Stepper 'vel' is motor-shaft rad/s, so divide by
+    the gear ratio for wheel rad/s and multiply by the wheel radius for ground speed."""
+    r_wheel = b.params['wheel_diameter_m']/2.0
+    print('---------- Base ----------')
+    print('X (m): %.4f | Y (m): %.4f | Theta (rad): %.4f'%(b.status['x'],b.status['y'],b.status['theta']))
+    print('Vx (m/s): %.4f | Vy (m/s): %.4f | Vtheta (rad/s): %.4f'%(b.status['x_vel'],b.status['y_vel'],b.status['theta_vel']))
+    for i in range(3):
+        v_motor = b.status['wheel_%d'%i]['vel']
+        v_wheel = v_motor/b.params['gr']
+        print('Wheel %d | motor %.3f rad/s | wheel %.3f rad/s | ground %.4f m/s'%(i,v_motor,v_wheel,v_wheel*r_wheel))
+
 def menu():
     print('--------------')
     print('m: menu')
@@ -70,6 +126,8 @@ def menu():
     print('F / B / L / R : large forward / back / left / right')
     print('u / v : small rotate CCW/CW')
     print('U / V : large rotate CCW/CW')
+    print('c: hold base velocity (Vx, Vy, Vtheta) until a key is pressed')
+    print('k: stop (zero velocity)')
     print('')
     print('')
     print('w: cycle CCW/CW 90 deg')
@@ -112,6 +170,7 @@ try:
 
             # ################################################################################################
             if c=='p':
+                print_base_status()
                 b.pretty_print()
             if c == 'o':
                 b.enable_freewheel_mode()
@@ -160,6 +219,10 @@ try:
             if c == 'V':
                 b.rotate_by(w_r=-1*large_rotate_rad, v_r=b.params['motion'][rate]['vel_w_r'],
                             a_r=b.params['motion'][rate]['accel_w_r'])
+            if c == 'c':
+                set_base_velocity()
+            if c == 'k':
+                command_velocity(0,0,0)
             # ################################################################################################
             if c == '1':
                 rate = 'slow'
