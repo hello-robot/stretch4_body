@@ -482,19 +482,30 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._dirty_trigger = True
 
     def set_eye_animation(self, left_idx=None, right_idx=None, intensity=255, r=255, g=255, b=255):
-        if left_idx is not None:
-            self._eye_animation_left = left_idx
-        else:
-            self._eye_animation_left = 0
-        if right_idx is not None:
-            self._eye_animation_right = right_idx
-        else:
-            self._eye_animation_right = 0   
-        self._eye_animation_intensity = intensity
-        self._eye_animation_r = r
-        self._eye_animation_g = g
-        self._eye_animation_b = b
+        """
+        Queue RPC_SET_EYE_ANIMATION for the next push_command. None for an eye sends
+        EYE_ANIM_NOP (keep that eye). intensity and r, g, b are sent on every call.
+        Runs inside the server control loop when called through the client, so a bad
+        value is logged and the command dropped instead of raised: pack_uint8_t would
+        otherwise end the loop. Returns whether the command was queued.
+        """
+        fields = [('left_idx', 0 if left_idx is None else left_idx), ('right_idx', 0 if right_idx is None else right_idx),
+                  ('intensity', intensity), ('r', r), ('g', g), ('b', b)]
+        clean = []
+        for name, value in fields:
+            try:
+                byte = int(value)
+                ok = byte == value and not isinstance(value, bool) and 0 <= byte <= 255
+            except (TypeError, ValueError, OverflowError):
+                ok = False
+            if not ok:
+                self.logger.warning('set_eye_animation: {} = {!r} is not an integer 0-255, command dropped'.format(name, value))
+                return False
+            clean.append(byte)
+        (self._eye_animation_left, self._eye_animation_right, self._eye_animation_intensity,
+         self._eye_animation_r, self._eye_animation_g, self._eye_animation_b) = clean
         self._dirty_eye_animation = True
+        return True
 
     def actuator_control(self, motor_type, enable, blocking=True):
         mt = [None, 'lift', 'omni-0', 'omni-1', 'omni-2', 'arm', 'eoa']

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import numbers
 import os
 import sys
 import time
@@ -13,7 +14,7 @@ from stretch4_body.subsystem.end_of_arm.stretch_gripper import GripperConversion
 from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
 from stretch4_body.core.hello_utils import rad_to_deg, deg_to_rad
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
-from stretch4_body.subsystem.power_periph import PowerPeriphStatus
+from stretch4_body.subsystem.power_periph import PowerPeriphDefn, PowerPeriphStatus
 
 class RobotClient(SubsystemClient):
     """
@@ -562,18 +563,41 @@ class PowerPeriphClient(SubsystemClient):
         """ Legacy function. No longer needed."""
         pass
 
-    def set_eye_animation(self, left_idx=None, right_idx=None):
+    def set_eye_animation(self, left_idx=None, right_idx=None, intensity=255, r=255, g=255, b=255):
         """
         Set the eye animations for the left and right eyes.
-        
+        Color and intensity are shared by both eyes and are applied on every call, so a
+        call that names only one eye still repaints both in the color given (white at
+        full brightness by default). Pass the current color to keep it, or use
+        stretch4_body.eyes.Eyes, which caches and resends it and adds names, color
+        parsing and sentry handling.
+
+        Values are checked here and raise ValueError, because the server packs them
+        into single bytes inside its control loop.
+
         Parameters
         ----------
         left_idx : int, optional
-            Animation index for the left eye.
+            Animation index for the left eye, 0-14 (PowerPeriphDefn.EYE_ANIM_*). None
+            sends EYE_ANIM_NOP, which leaves that eye's animation as it is.
         right_idx : int, optional
-            Animation index for the right eye.
+            Animation index for the right eye. None leaves that eye's animation as it is.
+        intensity : int
+            Brightness 0-255.
+        r, g, b : int
+            Color 0-255.
         """
-        self._queue_command(subsystem="power_periph", command="set_eye_animation", left_idx=left_idx, right_idx=right_idx)
+        last_anim = PowerPeriphDefn.EYE_ANIM_COUNT - 1
+        for name, value, upper in (('left_idx', left_idx, last_anim), ('right_idx', right_idx, last_anim),
+                                   ('intensity', intensity, 255), ('r', r, 255), ('g', g, 255), ('b', b, 255)):
+            if value is None and name in ('left_idx', 'right_idx'):
+                continue
+            if isinstance(value, bool) or not isinstance(value, numbers.Integral) or not 0 <= value <= upper:
+                raise ValueError('set_eye_animation: {} must be an int 0-{}, not {!r}'.format(name, upper, value))
+        self._queue_command(subsystem="power_periph", command="set_eye_animation",
+                            left_idx=None if left_idx is None else int(left_idx),
+                            right_idx=None if right_idx is None else int(right_idx),
+                            intensity=int(intensity), r=int(r), g=int(g), b=int(b))
 
     def actuator_control(self, motor_type, enable):
         """
