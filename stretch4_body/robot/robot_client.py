@@ -1154,6 +1154,32 @@ class WristJointClient(SubsystemClient):
             return False
         self._queue_command(f'{self.joint_name}.end_of_arm', "pose", self.joint_name, p, v_r, a_r)
         return True
+
+    def quick_stop(self) -> bool:
+        """
+        Quickly stop the joint.
+
+        Returns:
+            True if command was queued, False otherwise.
+        """
+        if not self.is_homed():
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
+        self._queue_command(f'{self.joint_name}.end_of_arm', "quick_stop", self.joint_name)
+        return True
+
+    def hold_position(self) -> bool:
+        """
+        Stop and hold the current position of the joint with torque maintained.
+
+        Returns:
+            True if command was queued, False otherwise.
+        """
+        if not self.is_homed():
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
+        self._queue_command(f'{self.joint_name}.end_of_arm', "hold_position", self.joint_name)
+        return True
     def disable_torque(self):
         """
         Disable torque on the joint to make it backdrivable.
@@ -1402,6 +1428,22 @@ class EndOfArmClient(SubsystemClient):
             self.logger.error(f"Joint {joint} not found in end of arm tool.")
             return False
         self._queue_command(f'{joint}.end_of_arm', "quick_stop",joint)
+        return True
+
+    def hold_position(self, joint: str) -> bool:
+        """
+        Stop and hold the current position of a specific joint with torque maintained.
+
+        Args:
+            joint: Name of the joint.
+
+        Returns:
+            True if command was queued, False otherwise.
+        """
+        if joint not in self.joints:
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
+        self._queue_command(f'{joint}.end_of_arm', "hold_position", joint)
         return True
 
     def disable_torque(self, joint):

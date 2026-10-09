@@ -199,7 +199,7 @@ def _check_driver_components(meta, tool_name, report):
     """
     The driver must subclass `FeetechSMHello` -- the base class every joint on the wrist chain
     is built from, which is what actually guarantees `move_to`/`move_by`/`home`/`quick_stop`/
-    `pull_status` exist -- and must construct with no hardware attached.
+    `hold_position`/`pull_status` exist -- and must construct with no hardware attached.
     """
     try:
         driver = meta.driver_class
@@ -214,7 +214,7 @@ def _check_driver_components(meta, tool_name, report):
     else:
         report.fail(
             f"driver '{driver.__module__}.{driver.__name__}' does not subclass FeetechSMHello -- "
-            "move_to/move_by/home/quick_stop/pull_status are not guaranteed"
+            "move_to/move_by/home/quick_stop/hold_position/pull_status are not guaranteed"
         )
 
     _check_driver_instantiates(driver, tool_name, report)
@@ -241,7 +241,7 @@ def _check_client_components(meta, report):
     """
     The resolved per-joint client -- the generic `ToolJointClient` default, or a bespoke
     override -- must subclass `WristJointClient`, which is what guarantees `move_to`/`move_by`/
-    `pose`/`status` exist for application code and the gamepad to call.
+    `pose`/`status`/`hold_position` exist for application code and the gamepad to call.
     """
     from stretch4_body.robot.robot_client import WristJointClient
 
@@ -257,7 +257,7 @@ def _check_client_components(meta, report):
     else:
         report.fail(
             f"client '{_callable_name(client)}' does not subclass WristJointClient -- "
-            "move_to/move_by/pose/status are not guaranteed"
+            "move_to/move_by/pose/status/hold_position are not guaranteed"
         )
 
 

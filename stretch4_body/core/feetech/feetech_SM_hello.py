@@ -1,15 +1,16 @@
-import threading
+import math
 import os
-from typing import TypedDict
+import termios
+import threading
+import time
+from typing import Any, TypedDict
 
-from stretch4_body.core.feetech.feetech_SM_servo import *
+import numpy
+
 from stretch4_body.core.device import Device
+from stretch4_body.core.feetech.feetech_SM_servo import *
 from stretch4_body.core.feetech.protocol_packet_handler import *
 from stretch4_body.core.hello_utils import *
-import termios
-import numpy
-import math
-import time
 class FeetechCommErrorStats(Device):
     def __init__(self, name, logger):
         Device.__init__(self, name='fee_comm_errors')
@@ -125,6 +126,7 @@ class FeetechSMHello(Device):
             self.dist_to_min_max = None  # track dist to min,max limits
             self.vel_brake_zone_thresh = 0.2  # initial/minimum brake zone thresh value
             self._prev_set_vel_ts = None
+            self._is_moving = False
 
             self.ts_collision_stop = {'pos': 0.0, 'neg': 0.0}
 
@@ -138,9 +140,19 @@ class FeetechSMHello(Device):
             self.motor = None
 
 
-    def stop(self, close_port=True):
+    def stop(self, close_port: bool = True) -> None:
+        """
+        Stop device operation and release hardware resources.
+
+        Args:
+            close_port: Whether to close the serial port communication channel.
+
+        Returns:
+            None.
+        """
         Device.stop(self)
         self._waypoint_ts, self._waypoint_vel, self._waypoint_accel = None, None, None
+        self._is_moving = False
         if self.hw_valid:
             if self.in_vel_mode:
                 self.quick_stop()
@@ -447,7 +459,17 @@ class FeetechSMHello(Device):
         else:
             return value
 
-    def pull_status(self, data=None):
+    def pull_status(self, data: dict[str, Any] | None = None) -> None:
+        """
+        Update the device status dictionary from servo hardware or sync read data.
+
+        Args:
+            data: Optional dictionary containing pre-fetched telemetry data from
+                a group sync read. If None, queries the servo directly.
+
+        Returns:
+            None.
+        """
         if not self.hw_valid:
             return
 
@@ -534,7 +556,7 @@ class FeetechSMHello(Device):
         if vel_valid:
             self.status['vel_ticks'] = v
             self.status['vel'] = self.ticks_to_world_rad_per_sec(float(v))
-            self.status['is_moving']= abs(self.status['vel'])>self.params['motion']['vel_is_moving_thresh']
+            self.status['is_moving'] = abs(self.status['vel']) > self.params['motion']['vel_is_moving_thresh']
         if i_mA_valid:
             self.status['current_mA'] = i_mA
             self.status['effort'] = self.current_to_effort_pct(float(i_mA))
@@ -594,25 +616,94 @@ class FeetechSMHello(Device):
         except TypeError:
             return False
 
-    def quick_stop(self):
+    def quick_stop(self) -> None:
+        """
+        Toggle torque to stop motion by briefly cycling motor torque off and on.
+
+        Warning:
+            Unsuitable for streaming control or holding load, as de-energizing
+            coils allows the joint to slip under gravity or external force.
+
+        Returns:
+            None.
+        """
         if not self.hw_valid:
             return
         try:
             self.motor.disable_torque()
             self.motor.enable_torque()
+            self._is_moving = False
         except (termios.error, FeetechCommError):
             self.logger.warning('FeetechSMHello communication error during quick_stop on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
             if self.bubble_up_comm_exception:
                 raise FeetechCommError
 
-    def set_pwm(self, x):
+    def hold_position(self) -> bool:
+        """
+        Stop and hold the current motor position using edge-detected motion state.
+
+        If the motor was marked as moving (_is_moving is True), switches the motor
+        to position mode (if needed), reads the current encoder position, commands
+        the motor to hold at that position with torque fully preserved, and resets
+        _is_moving to False. If the motor is already stationary, acts as an explicit
+        no-op to prevent setpoint drift, sensor feedback ratcheting, and bus traffic.
+
+        Returns:
+            True if a hold command was dispatched to the motor, False if skipped
+            due to inactivity, runstop, or invalid hardware state.
+        """
+        if not self.hw_valid or self.was_runstopped:
+            return False
+
+        if not self._is_moving:
+            return False
+
+        if self.in_vel_mode or not self.status['torque_enabled']:
+            self.enable_pos()
+
+        if not self.is_direct:
+            x_ticks = self.status['pos_ticks']
+        else:
+            x_ticks = self.motor.get_pos()
+            if not self.motor.last_comm_success and self.params.get('retry_on_comm_failure', False):
+                x_ticks = self.motor.get_pos()
+
+        if x_ticks is None:
+            x_ticks = self.motor.get_pos()
+            if x_ticks is None:
+                return False
+
+        nretry = 2
+        for _ in range(nretry):
+            try:
+                self.motor.go_to_pos(int(x_ticks))
+                self._is_moving = False
+                return True
+            except (termios.error, FeetechCommError):
+                self.logger.warning('FeetechSMHello communication error during hold_position on %s: ' % self.name)
+                self.comm_errors.add_error(rx=False, gsr=False)
+                if self.bubble_up_comm_exception:
+                    raise FeetechCommError
+        return False
+
+    def set_pwm(self, x: float) -> None:
+        """
+        Set open-loop PWM output on the motor.
+
+        Args:
+            x: Raw PWM duty cycle value to apply to the motor.
+
+        Returns:
+            None.
+        """
         if self.was_runstopped:
             return
         if not self.hw_valid:
             return
         try:
             self.motor.set_goal_pwm(x)
+            self._is_moving = abs(x) > 0
         except (termios.error, FeetechCommError):
             self.logger.warning('FeetechSMHello communication error during set_pwm on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
@@ -686,7 +777,18 @@ class FeetechSMHello(Device):
 
     # ############## Position Control  #####################################
 
-    def move_to(self, x_des, v_des=None, a_des=None):
+    def move_to(self, x_des: float, v_des: float | None = None, a_des: float | None = None) -> None:
+        """
+        Command the motor to move to a target position.
+
+        Args:
+            x_des: Target joint position in radians.
+            v_des: Optional target joint velocity in radians per second.
+            a_des: Optional target joint acceleration in radians per second squared.
+
+        Returns:
+            None.
+        """
         if True in [self.check_nan_value(d) for d in (x_des, v_des, a_des)]:
             self.logger.warning('Received NaN value. dropping the command.')
             return
@@ -731,6 +833,7 @@ class FeetechSMHello(Device):
         for i in range(nretry):
             try:
                 self.motor.go_to_pos(t_des)
+                self._is_moving = True
                 success = True
                 break
             except (termios.error, FeetechCommError, IndexError):
@@ -790,11 +893,25 @@ class FeetechSMHello(Device):
 
     # #############Safe Velocity Control ########################
 
-    def set_velocity(self, v_des, a_des=None):
+    def set_velocity(self, v_des: float, a_des: float | None = None) -> None:
+        """
+        Command the motor to move at a target velocity.
+
+        Args:
+            v_des: Target velocity in radians per second.
+            a_des: Optional target acceleration in radians per second squared.
+
+        Returns:
+            None.
+        """
         if True in [self.check_nan_value(d) for d in (v_des, a_des)]:
             self.logger.warning('Received NaN value. dropping the command.')
             return
         if self.was_runstopped:
+            return
+
+        if abs(v_des) <= self.params['motion']['vel_is_moving_thresh']:
+            self.hold_position()
             return
 
         v = min(self.params['motion']['max']['vel'], abs(v_des))
@@ -839,6 +956,7 @@ class FeetechSMHello(Device):
                     t_des = self.world_rad_to_ticks_per_sec(v_des)
                     self.motor.set_vel(t_des)
                     self._prev_set_vel_ts = time.time()
+                self._is_moving = True
                 success = True
                 break
             except(termios.error, FeetechCommError, IndexError):
