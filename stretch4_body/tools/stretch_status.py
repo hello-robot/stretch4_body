@@ -435,12 +435,18 @@ def validate_xy_fields_or_exit(rs, fields_x, fields_y):
     paths = flat.keys()
     
     invalid_parts = []
+    non_numeric_parts = []
     for part in fields_x + fields_y:
         if part not in paths:
             invalid_parts.append(part)
+        elif isinstance(flat[part], str):
+            non_numeric_parts.append(f"{part}={flat[part]}")
             
     if invalid_parts:
         print(f"\n[!] Error: The following fields provided via --fields_x or --fields_y do not exist: {', '.join(invalid_parts)}")
+        sys.exit(1)
+    if non_numeric_parts:
+        print(f"\n[!] Error: The following fields provided via --fields_x or --fields_y are not numeric and cannot be plotted: {', '.join(non_numeric_parts)}")
         sys.exit(1)
 
 

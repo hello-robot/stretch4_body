@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from stretch4_body.core.hello_utils import *
 import argparse
+import math
 import select
 
 print_stretch_re_use()
@@ -60,7 +61,9 @@ def prompt_float(msg,default,limit):
             v = float(input())
         except ValueError:
             return default
-        if abs(v) > limit:
+        if not math.isfinite(v):
+            print('Rejected: %s is not a finite number'%v)
+        elif abs(v) > limit:
             print('Rejected: %f exceeds the max of %f in params'%(v,limit))
         else:
             return v
