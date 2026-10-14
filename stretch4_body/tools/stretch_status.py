@@ -166,7 +166,7 @@ def get_default_fields(sample_status):
     # Defaults: server, base x/y/theta, wrist orientation, and non-motor joint positions
     defaults = ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta']
     if 'end_of_arm' in sample_status: # These are None until the wrist is homed, so not in flat
-        defaults += ['robot.end_of_arm.wrist_flip', 'robot.end_of_arm.tool_facing']
+        defaults += ['robot.end_of_arm.invert_pitch_to_keep_camera_upright', 'robot.end_of_arm.camera_upright', 'robot.end_of_arm.tool_facing']
     joint_positions = [
         k for k in paths 
         if (k.endswith('.pos') or k.endswith('.pos_pct')) 

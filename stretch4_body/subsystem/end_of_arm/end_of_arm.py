@@ -9,18 +9,35 @@ from stretch4_body.core.robot_params import RobotParams
 
 
 # Half-width of the band around the robot's x-z plane where the tool is reported as facing 'center'
-TOOL_FACING_CENTER_BAND_DEG = 20.0
+TOOL_FACING_CENTER_BAND_DEG = 10.0
 
 
-def is_wrist_flipped(pitch_rad):
+def should_invert_pitch(roll_rad):
     """
-    The yaw-pitch-roll wrist reaches every tool orientation with two joint solutions:
-    (yaw, pitch, roll) and (yaw + pi, pi - pitch, roll + pi). The two solutions are separated
-    by the wrist singularity at pitch = +/-pi/2, so the branch is set by the pitch joint alone:
-        not flipped: cos(pitch) >= 0  (pitch in [-pi/2, pi/2])
-        flipped:     cos(pitch) <  0  (pitch beyond pi/2, i.e. the wrist is folded over)
+    Returns True when wrist pitch must be inverted so that pitching up still moves the gripper camera image up.
+
+    A +pitch motion moves the tool along -(0, sin(roll), cos(roll)) in wrist_roll_link, whose +z is the
+    camera's image-up axis. So seen through the camera, +pitch moves the image down when cos(roll) > 0 and
+    up when cos(roll) < 0, regardless of yaw and pitch. Pitch must be inverted once roll crosses +/-pi/2:
+        roll in [-pi/2, pi/2]: not inverted
+        roll beyond pi/2:      inverted
     """
-    return bool(np.cos(pitch_rad) < 0)
+    return bool(np.cos(roll_rad) < 0)
+
+
+def is_camera_upright(pitch_rad, roll_rad):
+    """
+    Returns True when the gripper camera is upright in the world (image-up points above the horizon).
+
+    The camera's image-up axis (wrist_roll_link +z) has a world-up component of cos(pitch)*cos(roll);
+    yaw spins about world-up, so it does not contribute:
+        pitch    roll    camera
+          0        0     upright
+          0       pi     upside down
+         pi        0     upside down
+         pi       pi     upright
+    """
+    return bool(np.cos(pitch_rad) * np.cos(roll_rad) > 0)
 
 
 def get_tool_facing(yaw_rad, pitch_rad):
@@ -44,7 +61,7 @@ def get_tool_facing(yaw_rad, pitch_rad):
 
 class GripperHandedness(Enum):
     """
-    Teleop handedness of the gripper, which is the wrist's joint-space branch (see is_wrist_flipped):
+    Teleop handedness of the gripper, set by which way pitch moves the camera image (see should_invert_pitch):
         RIGHT: wrist not flipped
         LEFT:  wrist flipped
     """
@@ -52,14 +69,14 @@ class GripperHandedness(Enum):
     RIGHT = 1
 
     @classmethod
-    def from_wrist_flip(cls, wrist_flip):
-        return cls.LEFT if wrist_flip else cls.RIGHT
+    def from_invert_pitch(cls, invert_pitch):
+        return cls.LEFT if invert_pitch else cls.RIGHT
 
     @classmethod
     def from_status(cls, status):
-        """Returns the handedness implied by an end_of_arm status dict's 'wrist_flip', or None if unknown"""
-        wrist_flip = status.get('wrist_flip')
-        return None if wrist_flip is None else cls.from_wrist_flip(wrist_flip)
+        """Returns the handedness implied by an end_of_arm status dict's 'invert_pitch_to_keep_camera_upright', or None if unknown"""
+        invert_pitch = status.get('invert_pitch_to_keep_camera_upright')
+        return None if invert_pitch is None else cls.from_invert_pitch(invert_pitch)
 
     def get_name(self):
         return self.name.lower()
@@ -111,7 +128,8 @@ class EndOfArm(FeetechSMChain):
         FeetechSMChain.__init__(self, usb=usb, name=name)
         self.status['is_homing']=False
         self.status['is_homed']=False
-        self.status['wrist_flip']=None #True | False | None if no calibrated wrist_pitch. See is_wrist_flipped()
+        self.status['invert_pitch_to_keep_camera_upright']=None #True | False | None if no calibrated wrist_roll. See should_invert_pitch()
+        self.status['camera_upright']=None #True | False | None if no calibrated wrist_pitch/roll. See is_camera_upright()
         self.status['tool_facing']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch. See get_tool_facing()
         #NOTE: This may be a general bug. Fix. We make motors before port handler is set.
         #self.joints = self.params.get('devices', {}).keys()
@@ -147,12 +165,14 @@ class EndOfArm(FeetechSMChain):
             return m.status['pos']
         yaw = calibrated_pos('wrist_yaw')
         pitch = calibrated_pos('wrist_pitch')
-        self.status['wrist_flip'] = None if pitch is None else is_wrist_flipped(pitch)
+        roll = calibrated_pos('wrist_roll')
+        self.status['invert_pitch_to_keep_camera_upright'] = None if roll is None else should_invert_pitch(roll)
+        self.status['camera_upright'] = None if pitch is None or roll is None else is_camera_upright(pitch, roll)
         self.status['tool_facing'] = None if yaw is None or pitch is None else get_tool_facing(yaw, pitch)
 
     def change_handedness(self):
         """
-        Moves the wrist to the opposite handedness of status['wrist_flip'].
+        Moves the wrist to the opposite handedness of status['invert_pitch_to_keep_camera_upright'].
         Returns the target GripperHandedness, or None if the current handedness is unknown.
         """
         current = GripperHandedness.from_status(self.status)

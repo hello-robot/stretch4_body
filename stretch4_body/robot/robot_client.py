@@ -1418,7 +1418,7 @@ class EndOfArmClient(SubsystemClient):
 
     def change_handedness(self):
         """
-        Queue a wrist motion to the opposite handedness of status['wrist_flip'].
+        Queue a wrist motion to the opposite handedness of status['invert_pitch_to_keep_camera_upright'].
         Call push_command() to execute.
 
         Returns

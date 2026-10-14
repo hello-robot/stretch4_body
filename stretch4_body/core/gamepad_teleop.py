@@ -150,7 +150,7 @@ class GamePadTeleop(Device):
     @property
     def gripper_handedness(self):
         """
-        Handedness derived from the wrist joint configuration (end_of_arm status['wrist_flip']).
+        Handedness derived from the wrist joint configuration (end_of_arm status['invert_pitch_to_keep_camera_upright']).
         Falls back to RIGHT when there is no wrist or it is not homed.
         """
         if not self.use_devices['eoa']:
