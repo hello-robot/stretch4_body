@@ -11,7 +11,7 @@ from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
-from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness, get_handedness_lift_min
 from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
@@ -1439,14 +1439,22 @@ class EndOfArmClient(SubsystemClient):
         Queue a wrist motion to the opposite handedness of status['invert_pitch_to_keep_camera_upright'].
         Call push_command() to execute.
 
+        Refused if the lift is at or below get_handedness_lift_min(), so the wrist does not swing into
+        the ground or base.
+
         Returns
         -------
         GripperHandedness or None
-            The target handedness, or None if the current handedness is unknown.
+            The target handedness, or None if refused or the current handedness is unknown.
         """
+        lift = getattr(self.parent, 'lift', None)
+        lift_min = get_handedness_lift_min()
+        if lift is not None and lift.status['pos'] <= lift_min:
+            self.logger.error(f"Cannot change handedness. Lift too low ({lift.status['pos']:.3f} <= {lift_min}).")
+            return None
         current = GripperHandedness.from_status(self.status)
         if current is None:
-            self.logger.error("Cannot change handedness. Handedness unknown (wrist_pitch absent or not homed).")
+            self.logger.error("Cannot change handedness. Handedness unknown (wrist_roll absent or not homed).")
             return None
         target = current.opposite()
         target.move_to(self)

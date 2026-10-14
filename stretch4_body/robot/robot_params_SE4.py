@@ -1210,8 +1210,9 @@ nominal_params={
     'routine_wrist_handedness':{
         'py_module_name': 'stretch4_body.behavior.routines.routine_wrist_handedness',
         'py_class_name': 'RoutineWristHandedness',
-        'lift_min': 0.35, # Refuse to run below this lift height (m), so the wrist clears the base
+        'lift_min': 0.35, # No handedness change (routine, gamepad or EndOfArmClient) at or below this lift height (m), so the wrist clears the ground and base
         'pos_tolerance_rad': 0.05,
+        't_motion_start': 0.5,
         'timeout': 15.0,
         'enabled': 1
     },

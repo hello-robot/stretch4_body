@@ -18,7 +18,7 @@ from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot import Robot
 from stretch4_body.robot.robot_client import RobotClient
-from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness, get_handedness_lift_min
 from stretch4_body.utils.file_access_utils import (
     acquire_lock_if_available,
     setup_shared_directory,
@@ -470,7 +470,7 @@ class GamePadTeleop(Device):
             print("No eoa device")
             return
 
-        if self.use_devices['lift'] and robot.lift.status['pos'] <= 0.35:
+        if self.use_devices['lift'] and robot.lift.status['pos'] <= get_handedness_lift_min():
             print("Lift too low for handedness change")
             self.gamepad_controller.vibrate(duration_ms=400, strong_magnitude=1.0, weak_magnitude=1.0)
             return

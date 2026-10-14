@@ -59,6 +59,14 @@ def get_tool_facing(yaw_rad, pitch_rad):
     return 'center'
 
 
+def get_handedness_lift_min():
+    """
+    Lift height (m) at or below which a handedness change is refused, so the wrist does not swing
+    into the ground or base. Shared by routine_wrist_handedness, EndOfArmClient and gamepad teleop.
+    """
+    return RobotParams.get_params()[1].get('routine_wrist_handedness', {}).get('lift_min', 0.35)
+
+
 class GripperHandedness(Enum):
     """
     Teleop handedness of the gripper, set by which way pitch moves the camera image (see should_invert_pitch_to_keep_camera_upright):
@@ -175,10 +183,14 @@ class EndOfArm(FeetechSMChain):
         """
         Moves the wrist to the opposite handedness of status['invert_pitch_to_keep_camera_upright'].
         Returns the target GripperHandedness, or None if the current handedness is unknown.
+
+        The end of arm cannot see the lift, so callers must first check that the lift is above
+        get_handedness_lift_min() so the wrist does not swing into the ground or base
+        (as routine_wrist_handedness does).
         """
         current = GripperHandedness.from_status(self.status)
         if current is None:
-            print("EndOfArm: Ignoring change_handedness, handedness unknown (wrist_pitch absent or not homed)")
+            print("EndOfArm: Ignoring change_handedness, handedness unknown (wrist_roll absent or not homed)")
             return None
         target = current.opposite()
         target.move_to(self)
