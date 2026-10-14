@@ -10,6 +10,8 @@ from stretch4_body.core.robot_params import RobotParams
 
 # Half-width of the band around the robot's x-z plane where the tool is reported as facing 'center'
 TOOL_FACING_CENTER_BAND_DEG = 10.0
+# Half-width of the band around the arm's centre line where the tool mount is reported as being on the 'center'
+TOOL_SIDE_CENTER_BAND_M = 0.01
 
 
 def should_invert_pitch_to_keep_camera_upright(roll_rad):
@@ -57,6 +59,41 @@ def get_tool_facing(yaw_rad, pitch_rad):
     if lateral < -band:
         return 'right'
     return 'center'
+
+
+def get_tool_side(yaw_rad, pitch_rad, tool_reach_m, wrist_offset_m):
+    """
+    Returns which side of the arm the tool is mounted on: 'left' | 'right' | 'center'.
+    (Which way the tool points is get_tool_facing(); e.g. a tool mounted on the left can point right.)
+
+    The wrist yaw axis lies on the arm's centre line, and the pitch and roll housings hold the tool
+    wrist_offset_m to the right (-y) of it. The tool mount lies on the roll axis, tool_reach_m from the
+    pitch axis, so its lateral position from the arm's centre line depends only on yaw and pitch:
+        lateral = tool_reach_m * cos(pitch) * sin(yaw) - wrist_offset_m * cos(yaw)
+    Base frame +y is the robot's left. 'center' is within TOOL_SIDE_CENTER_BAND_M of the centre line.
+    See get_wrist_tool_geometry() for the two lengths.
+    """
+    lateral = tool_reach_m * np.cos(pitch_rad) * np.sin(yaw_rad) - wrist_offset_m * np.cos(yaw_rad)
+    if lateral > TOOL_SIDE_CENTER_BAND_M:
+        return 'left'
+    if lateral < -TOOL_SIDE_CENTER_BAND_M:
+        return 'right'
+    return 'center'
+
+
+def get_wrist_tool_geometry():
+    """
+    Returns (tool_reach_m, wrist_offset_m) for get_tool_side(), read from the robot's URDF:
+        tool_reach_m:   pitch axis to the tool mount (tool_attachment_site_link) along the roll axis
+        wrist_offset_m: lateral offset of the roll axis from the yaw axis
+    """
+    from stretch4_urdf import get_transform, get_urdf
+    robot = RobotParams.get_params()[1]['robot']
+    urdf = get_urdf(robot['model_name'], robot['batch_name'], robot['tool'], do_add_file_prefix_to_absolute_paths=False)
+    pitch_origin = get_transform(urdf, 'wrist_pitch_link', 'wrist_yaw_link')[:3, 3]
+    roll_origin = get_transform(urdf, 'wrist_roll_link', 'wrist_pitch_link')[:3, 3]
+    mount_x = get_transform(urdf, 'tool_attachment_site_link', 'wrist_roll_link')[0, 3]
+    return roll_origin[0] + mount_x, -(pitch_origin[1] + roll_origin[1])
 
 
 def get_handedness_lift_min():
@@ -140,6 +177,7 @@ class EndOfArm(FeetechSMChain):
         self.status['invert_pitch_to_keep_camera_upright']=None #True | False | None if no calibrated wrist_roll. See should_invert_pitch_to_keep_camera_upright()
         self.status['camera_upright']=None #True | False | None if no calibrated wrist_pitch/roll. See is_camera_upright()
         self.status['tool_facing']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch. See get_tool_facing()
+        self.status['tool_side']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch or no URDF. See get_tool_side()
         #NOTE: This may be a general bug. Fix. We make motors before port handler is set.
         #self.joints = self.params.get('devices', {}).keys()
         # for j in self.joints:
@@ -149,6 +187,8 @@ class EndOfArm(FeetechSMChain):
         #     self.add_motor(servo_device)
         self.urdf_map={} #Override
         self.status_aux = {}
+        self._wrist_tool_geometry = None # (tool_reach_m, wrist_offset_m), loaded from the URDF on first use
+        self._wrist_tool_geometry_failed = False
 
     def startup(self):
         if FeetechSMChain.startup(self):
@@ -178,6 +218,17 @@ class EndOfArm(FeetechSMChain):
         self.status['invert_pitch_to_keep_camera_upright'] = None if roll is None else should_invert_pitch_to_keep_camera_upright(roll)
         self.status['camera_upright'] = None if pitch is None or roll is None else is_camera_upright(pitch, roll)
         self.status['tool_facing'] = None if yaw is None or pitch is None else get_tool_facing(yaw, pitch)
+        geometry = None if yaw is None or pitch is None else self._get_wrist_tool_geometry()
+        self.status['tool_side'] = None if geometry is None else get_tool_side(yaw, pitch, *geometry)
+
+    def _get_wrist_tool_geometry(self):
+        if self._wrist_tool_geometry is None and not self._wrist_tool_geometry_failed:
+            try:
+                self._wrist_tool_geometry = get_wrist_tool_geometry()
+            except Exception as e:
+                self._wrist_tool_geometry_failed = True
+                self.logger.warning(f"EndOfArm: tool_side unavailable, could not read wrist geometry from URDF: {e}")
+        return self._wrist_tool_geometry
 
     def change_handedness(self):
         """
