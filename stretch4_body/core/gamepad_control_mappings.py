@@ -2,7 +2,7 @@
 from enum import auto
 from enum import Enum
 from typing import TYPE_CHECKING
-from stretch4_body.core.gamepad_enums import GripperHandedness
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.gamepad_enums import MotionProfile
 import math
@@ -58,6 +58,7 @@ class ControlMapping(Enum):
                 ("  D-Pad Left / Right", "Arm In / Out"),
                 ("  A / B Buttons", "Close / Open Gripper"),
                 ("  RT + Left Stick", "Straight Line Base Move"),
+                ("  RT + Right Stick", "Wrist Pitch or Yaw Only"),
                 ("  RT + LB / RB", "Wrist Roll"),
                 ("Modifiers", ""),
                 ("  LT", "Reduce Speed"),
@@ -142,6 +143,7 @@ class ControlMapping(Enum):
         - Left Stick for Omnibase translation
         - Right Trigger + Left Stick: Move in straight line
         - Right Stick for Pitch and Yaw
+        - Right Trigger + Right Stick: Pitch or Yaw only (locked to dominant axis)
         - Right Trigger + D-pad for Pitch and Yaw
         - Shoulder buttons for Omnibase rotate
         - Right Trigger + Shoulder buttons for Roll
@@ -255,6 +257,7 @@ class ControlMapping(Enum):
         if gamepad_teleop.use_devices['eoa']:
             def _control_eoa():
                 # Use the right stick for controlling pitch and yaw as long as the right and left bumpers and not depressed
+                # With Right Trigger held, the right stick is locked to its dominant axis
                 # Use the bumpers for roll as long as Right Trigger is held AND the right and left bumpers are not depressed 
                 if right_stick_for_base_rotate:
                     return
@@ -273,36 +276,44 @@ class ControlMapping(Enum):
                     else:
                         if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
                             gamepad_teleop.wrist_roll_command.stop_motion(robot)
-                else:
-                    handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
-                    
-                    rs_y = state.get('right_stick_y', 0.0)
-                    cmd_pitch = 0.0
-                    if abs(rs_y) > 0.1:
-                        cmd_pitch = rs_y
-                    elif dpad_pitch != 0:
-                        cmd_pitch = dpad_pitch
-                        
-                    if cmd_pitch != 0:
-                        gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd_pitch * handedness_inversion, robot)
-                        actuated_joints['wrist_pitch_joint'] = cmd_pitch
-                    else:
-                        if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                            gamepad_teleop.wrist_pitch_command.stop_motion(robot)
 
-                    rs_x = state.get('right_stick_x', 0.0)
-                    cmd_yaw = 0.0
-                    if abs(rs_x) > 0.1:
-                        cmd_yaw = -rs_x
-                    elif dpad_yaw != 0:
-                        cmd_yaw = dpad_yaw
-                        
-                    if cmd_yaw != 0:
-                        gamepad_teleop.wrist_yaw_command.command_stick_to_motion(cmd_yaw, robot)
-                        actuated_joints['wrist_yaw_joint'] = cmd_yaw
+                handedness_inversion = -1 if gamepad_teleop.gripper_handedness is GripperHandedness.RIGHT else 1
+
+                rs_x = state.get('right_stick_x', 0.0)
+                rs_y = state.get('right_stick_y', 0.0)
+                if rt_pulled:
+                    # If Right-Trigger is pulled, lock the right-stick to its dominant axis (like the left-stick),
+                    # so pitch or yaw can be moved alone without drifting the other.
+                    if abs(rs_y) > abs(rs_x):
+                        rs_x = 0.0
                     else:
-                        if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
-                            gamepad_teleop.wrist_yaw_command.stop_motion(robot)
+                        rs_y = 0.0
+
+                cmd_pitch = 0.0
+                if abs(rs_y) > 0.1:
+                    cmd_pitch = rs_y
+                elif dpad_pitch != 0:
+                    cmd_pitch = dpad_pitch
+                    
+                if cmd_pitch != 0:
+                    gamepad_teleop.wrist_pitch_command.command_stick_to_motion(cmd_pitch * handedness_inversion, robot)
+                    actuated_joints['wrist_pitch_joint'] = cmd_pitch
+                else:
+                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                        gamepad_teleop.wrist_pitch_command.stop_motion(robot)
+
+                cmd_yaw = 0.0
+                if abs(rs_x) > 0.1:
+                    cmd_yaw = -rs_x
+                elif dpad_yaw != 0:
+                    cmd_yaw = dpad_yaw
+                    
+                if cmd_yaw != 0:
+                    gamepad_teleop.wrist_yaw_command.command_stick_to_motion(cmd_yaw, robot)
+                    actuated_joints['wrist_yaw_joint'] = cmd_yaw
+                else:
+                    if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
+                        gamepad_teleop.wrist_yaw_command.stop_motion(robot)
             _control_eoa()
          
         return actuated_joints

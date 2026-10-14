@@ -11,6 +11,7 @@ from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
 from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness
 from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
@@ -1414,6 +1415,24 @@ class EndOfArmClient(SubsystemClient):
             return False
         self._queue_command(f'{joint}.end_of_arm', "pose", joint, p,v_r, a_r)
         return True
+
+    def change_handedness(self):
+        """
+        Queue a wrist motion to the opposite handedness of status['wrist_flip'].
+        Call push_command() to execute.
+
+        Returns
+        -------
+        GripperHandedness or None
+            The target handedness, or None if the current handedness is unknown.
+        """
+        current = GripperHandedness.from_status(self.status)
+        if current is None:
+            self.logger.error("Cannot change handedness. Handedness unknown (wrist_pitch absent or not homed).")
+            return None
+        target = current.opposite()
+        target.move_to(self)
+        return target
 
     def quick_stop(self,joint):
         """

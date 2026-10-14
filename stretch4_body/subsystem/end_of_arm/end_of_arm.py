@@ -1,6 +1,100 @@
 import threading
+from enum import Enum
+
+import numpy as np
+
 from stretch4_body.core.feetech.feetech_SM_chain import FeetechSMChain
+from stretch4_body.core.hello_utils import get_sounds_dir, play_sound
 from stretch4_body.core.robot_params import RobotParams
+
+
+# Half-width of the band around the robot's x-z plane where the tool is reported as facing 'center'
+TOOL_FACING_CENTER_BAND_DEG = 20.0
+
+
+def is_wrist_flipped(pitch_rad):
+    """
+    The yaw-pitch-roll wrist reaches every tool orientation with two joint solutions:
+    (yaw, pitch, roll) and (yaw + pi, pi - pitch, roll + pi). The two solutions are separated
+    by the wrist singularity at pitch = +/-pi/2, so the branch is set by the pitch joint alone:
+        not flipped: cos(pitch) >= 0  (pitch in [-pi/2, pi/2])
+        flipped:     cos(pitch) <  0  (pitch beyond pi/2, i.e. the wrist is folded over)
+    """
+    return bool(np.cos(pitch_rad) < 0)
+
+
+def get_tool_facing(yaw_rad, pitch_rad):
+    """
+    Returns which side of the robot the tool points toward: 'left' | 'right' | 'center'.
+
+    The lift and arm are prismatic and all fixed mounts down to the wrist are unrotated, so the tool
+    approach axis (wrist_roll_link +x) in the robot base frame depends only on wrist yaw and pitch:
+        approach = Rz(yaw) * Ry(pitch) * x = (cos(yaw)cos(pitch), sin(yaw)cos(pitch), -sin(pitch))
+    Base frame +y is the robot's left. Roll spins about the approach axis, so it does not change facing.
+    'center' covers pointing forward, backward, up or down, within TOOL_FACING_CENTER_BAND_DEG.
+    """
+    lateral = np.sin(yaw_rad) * np.cos(pitch_rad)
+    band = np.sin(np.deg2rad(TOOL_FACING_CENTER_BAND_DEG))
+    if lateral > band:
+        return 'left'
+    if lateral < -band:
+        return 'right'
+    return 'center'
+
+
+class GripperHandedness(Enum):
+    """
+    Teleop handedness of the gripper, which is the wrist's joint-space branch (see is_wrist_flipped):
+        RIGHT: wrist not flipped
+        LEFT:  wrist flipped
+    """
+    LEFT = 0
+    RIGHT = 1
+
+    @classmethod
+    def from_wrist_flip(cls, wrist_flip):
+        return cls.LEFT if wrist_flip else cls.RIGHT
+
+    @classmethod
+    def from_status(cls, status):
+        """Returns the handedness implied by an end_of_arm status dict's 'wrist_flip', or None if unknown"""
+        wrist_flip = status.get('wrist_flip')
+        return None if wrist_flip is None else cls.from_wrist_flip(wrist_flip)
+
+    def get_name(self):
+        return self.name.lower()
+
+    def opposite(self):
+        return GripperHandedness.LEFT if self is GripperHandedness.RIGHT else GripperHandedness.RIGHT
+
+    def play_sound_file(self):
+        file_name:str
+        if self is GripperHandedness.LEFT:
+            file_name = "left_handed_mode.wav"
+        elif self is GripperHandedness.RIGHT:
+            file_name = "right_handed_mode.wav"
+        else:
+            raise NotImplementedError(f"No sound file for {self}")
+
+        play_sound(get_sounds_dir()+f'/{file_name}')
+
+    def move_to(self, end_of_arm):
+        """
+        Queues the wrist motion to this handedness's home configuration.
+        end_of_arm: EndOfArm or EndOfArmClient. Caller is responsible for pushing the command.
+        """
+        print(f"Moving wrist to {self}")
+        if self is GripperHandedness.RIGHT:
+            targets = {'wrist_yaw': 0.0, 'wrist_pitch': 0.0, 'wrist_roll': 0.0}
+        elif self is GripperHandedness.LEFT:
+            targets = {'wrist_yaw': np.pi, 'wrist_pitch': np.pi, 'wrist_roll': np.pi}
+        else:
+            raise NotImplementedError(f"No move_to defined for {self}")
+
+        params = RobotParams().get_params()[1]
+        for joint, x_r in targets.items():
+            slow = params[joint]['motion']['slow']
+            end_of_arm.move_to(joint, x_r, slow['vel'], slow['accel'])
 
 
 class EndOfArm(FeetechSMChain):
@@ -17,6 +111,8 @@ class EndOfArm(FeetechSMChain):
         FeetechSMChain.__init__(self, usb=usb, name=name)
         self.status['is_homing']=False
         self.status['is_homed']=False
+        self.status['wrist_flip']=None #True | False | None if no calibrated wrist_pitch. See is_wrist_flipped()
+        self.status['tool_facing']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch. See get_tool_facing()
         #NOTE: This may be a general bug. Fix. We make motors before port handler is set.
         #self.joints = self.params.get('devices', {}).keys()
         # for j in self.joints:
@@ -41,6 +137,31 @@ class EndOfArm(FeetechSMChain):
     def pull_status(self,blocking=True):
         FeetechSMChain.pull_status(self)
         self.status['is_homed']=self.is_homed()
+        self._update_wrist_orientation_status()
+
+    def _update_wrist_orientation_status(self):
+        def calibrated_pos(joint):
+            m = self.motors.get(joint)
+            if m is None or not m.status.get('pos_calibrated', False):
+                return None
+            return m.status['pos']
+        yaw = calibrated_pos('wrist_yaw')
+        pitch = calibrated_pos('wrist_pitch')
+        self.status['wrist_flip'] = None if pitch is None else is_wrist_flipped(pitch)
+        self.status['tool_facing'] = None if yaw is None or pitch is None else get_tool_facing(yaw, pitch)
+
+    def change_handedness(self):
+        """
+        Moves the wrist to the opposite handedness of status['wrist_flip'].
+        Returns the target GripperHandedness, or None if the current handedness is unknown.
+        """
+        current = GripperHandedness.from_status(self.status)
+        if current is None:
+            print("EndOfArm: Ignoring change_handedness, handedness unknown (wrist_pitch absent or not homed)")
+            return None
+        target = current.opposite()
+        target.move_to(self)
+        return target
 
     def get_joint(self, joint_name):
         """Retrieves joint by name.
