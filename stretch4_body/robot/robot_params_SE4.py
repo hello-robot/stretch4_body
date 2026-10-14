@@ -1195,7 +1195,8 @@ nominal_params={
         },
     # ########### ROUTINES ################################
     'routine_manager':{'controllers': ['routine_nop', 'routine_blind_dock', 'routine_lift_home','routine_arm_home',
-                         'routine_wrist_joint_home','routine_end_of_arm_home','routine_robot_home','routine_robot_stow'],},
+                         'routine_wrist_joint_home','routine_end_of_arm_home','routine_robot_home','routine_robot_stow',
+                         'routine_wrist_handedness'],},
     'routine_nop':{
         'py_module_name': 'stretch4_body.behavior.routines.routine',
         'py_class_name': 'RoutineNOP',
@@ -1204,6 +1205,14 @@ nominal_params={
     'routine_robot_stow':{
         'py_module_name': 'stretch4_body.behavior.routines.routine_stow',
         'py_class_name': 'RoutineRobotStow',
+        'enabled': 1
+    },
+    'routine_wrist_handedness':{
+        'py_module_name': 'stretch4_body.behavior.routines.routine_wrist_handedness',
+        'py_class_name': 'RoutineWristHandedness',
+        'lift_min': 0.35, # Refuse to run below this lift height (m), so the wrist clears the base
+        'pos_tolerance_rad': 0.05,
+        'timeout': 15.0,
         'enabled': 1
     },
     'routine_lift_home': {

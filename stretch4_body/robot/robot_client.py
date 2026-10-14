@@ -384,6 +384,24 @@ class RoutinesClient(SubsystemClient):
         """
         return self.run('routine_robot_stow', do_push, wait_on_completion, timeout, do_pull)
 
+    def routine_wrist_handedness(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
+        """
+        Run the wrist handedness routine, which moves the wrist to the opposite handedness (Left/Right)
+        of end_of_arm status['invert_pitch_to_keep_camera_upright'].
+
+        Parameters
+        ----------
+        do_push : bool, optional
+            Whether to call push_command() within this method.
+        wait_on_completion : bool, optional
+            If True, block until completion, by default True.
+        timeout : float, optional
+            Timeout in seconds, by default 20.
+        do_pull : bool, optional
+            If wait_on_completion, whether to call pull_status() within this method.
+        """
+        return self.run('routine_wrist_handedness', do_push, wait_on_completion, timeout, do_pull)
+
     def routine_robot_home(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
         """
         Run the robot home routine.

@@ -12,7 +12,7 @@ from stretch4_body.core.robot_params import RobotParams
 TOOL_FACING_CENTER_BAND_DEG = 10.0
 
 
-def should_invert_pitch(roll_rad):
+def should_invert_pitch_to_keep_camera_upright(roll_rad):
     """
     Returns True when wrist pitch must be inverted so that pitching up still moves the gripper camera image up.
 
@@ -61,9 +61,9 @@ def get_tool_facing(yaw_rad, pitch_rad):
 
 class GripperHandedness(Enum):
     """
-    Teleop handedness of the gripper, set by which way pitch moves the camera image (see should_invert_pitch):
-        RIGHT: wrist not flipped
-        LEFT:  wrist flipped
+    Teleop handedness of the gripper, set by which way pitch moves the camera image (see should_invert_pitch_to_keep_camera_upright):
+        RIGHT: roll, pitch and yaw == 0,0,0. Tool on the right side of the robot.
+        LEFT:  roll, pitch and yaw == pi,pi,pi. Tool is on the left side of the robot, camera upright.
     """
     LEFT = 0
     RIGHT = 1
@@ -95,21 +95,22 @@ class GripperHandedness(Enum):
 
         play_sound(get_sounds_dir()+f'/{file_name}')
 
+    def get_joint_targets(self):
+        """Wrist joint positions (rad) of this handedness's home configuration"""
+        if self is GripperHandedness.RIGHT:
+            return {'wrist_yaw': 0.0, 'wrist_pitch': 0.0, 'wrist_roll': 0.0}
+        if self is GripperHandedness.LEFT:
+            return {'wrist_yaw': np.pi, 'wrist_pitch': np.pi, 'wrist_roll': np.pi}
+        raise NotImplementedError(f"No joint targets defined for {self}")
+
     def move_to(self, end_of_arm):
         """
         Queues the wrist motion to this handedness's home configuration.
         end_of_arm: EndOfArm or EndOfArmClient. Caller is responsible for pushing the command.
         """
         print(f"Moving wrist to {self}")
-        if self is GripperHandedness.RIGHT:
-            targets = {'wrist_yaw': 0.0, 'wrist_pitch': 0.0, 'wrist_roll': 0.0}
-        elif self is GripperHandedness.LEFT:
-            targets = {'wrist_yaw': np.pi, 'wrist_pitch': np.pi, 'wrist_roll': np.pi}
-        else:
-            raise NotImplementedError(f"No move_to defined for {self}")
-
         params = RobotParams().get_params()[1]
-        for joint, x_r in targets.items():
+        for joint, x_r in self.get_joint_targets().items():
             slow = params[joint]['motion']['slow']
             end_of_arm.move_to(joint, x_r, slow['vel'], slow['accel'])
 
@@ -128,7 +129,7 @@ class EndOfArm(FeetechSMChain):
         FeetechSMChain.__init__(self, usb=usb, name=name)
         self.status['is_homing']=False
         self.status['is_homed']=False
-        self.status['invert_pitch_to_keep_camera_upright']=None #True | False | None if no calibrated wrist_roll. See should_invert_pitch()
+        self.status['invert_pitch_to_keep_camera_upright']=None #True | False | None if no calibrated wrist_roll. See should_invert_pitch_to_keep_camera_upright()
         self.status['camera_upright']=None #True | False | None if no calibrated wrist_pitch/roll. See is_camera_upright()
         self.status['tool_facing']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch. See get_tool_facing()
         #NOTE: This may be a general bug. Fix. We make motors before port handler is set.
@@ -166,7 +167,7 @@ class EndOfArm(FeetechSMChain):
         yaw = calibrated_pos('wrist_yaw')
         pitch = calibrated_pos('wrist_pitch')
         roll = calibrated_pos('wrist_roll')
-        self.status['invert_pitch_to_keep_camera_upright'] = None if roll is None else should_invert_pitch(roll)
+        self.status['invert_pitch_to_keep_camera_upright'] = None if roll is None else should_invert_pitch_to_keep_camera_upright(roll)
         self.status['camera_upright'] = None if pitch is None or roll is None else is_camera_upright(pitch, roll)
         self.status['tool_facing'] = None if yaw is None or pitch is None else get_tool_facing(yaw, pitch)
 
