@@ -140,6 +140,7 @@ class GamePadTeleop(Device):
         self.currently_stowing = False
         self._last_handedness = None # Last known GripperHandedness from wrist status, for crossing detection
         self._handedness_change_target = None # Set while change_gripper_handedness() is moving the wrist
+        self._input_handedness = None # Handedness used for input inversion, held fixed while the user is rolling the wrist
 
         self.flying_gripper_controller = KinematicController(get_base_planar_ik_urdf_file())
 
@@ -150,12 +151,31 @@ class GamePadTeleop(Device):
     @property
     def gripper_handedness(self):
         """
+        Handedness used for input inversion. Follows the wrist joint configuration, except while the user
+        is holding a roll command, where it stays fixed so that crossing the handedness boundary does not
+        flip the roll direction mid-motion. The new handedness takes effect once the roll input is released.
+        """
+        return self._input_handedness or self._wrist_handedness()
+
+    def _wrist_handedness(self):
+        """
         Handedness derived from the wrist joint configuration (end_of_arm status['invert_pitch_to_keep_camera_upright']).
         Falls back to RIGHT when there is no wrist or it is not homed.
         """
         if not self.use_devices['eoa']:
             return GripperHandedness.RIGHT
         return GripperHandedness.from_status(self.robot.end_of_arm.status) or GripperHandedness.RIGHT
+
+    def _is_roll_input_held(self):
+        """Roll is commanded with Right Trigger held plus a shoulder button, in every control mapping"""
+        state = self.controller_state
+        return state.get('right_trigger_pulled', 0.0) > TRIGGER_THRESHOLD and \
+            (state.get('left_shoulder_button_pressed') or state.get('right_shoulder_button_pressed'))
+
+    def _update_input_handedness(self):
+        """Track the wrist handedness, unless the user is mid-roll, in which case keep the handedness from when the roll began"""
+        if self._input_handedness is None or not self._is_roll_input_held():
+            self._input_handedness = self._wrist_handedness()
 
     def _check_handedness_crossing(self):
         """
@@ -310,6 +330,7 @@ class GamePadTeleop(Device):
 
             self.manage_start_button(robot)
             self._check_handedness_crossing()
+            self._update_input_handedness()
 
             if robot.is_homed():
                 if self.robot.is_runstopped():
