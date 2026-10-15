@@ -10,7 +10,7 @@ class RoutineWristHandedness(routine.Routine):
     """
     Move the wrist to the opposite handedness (Left/Right) of its current configuration.
 
-    The current handedness is read from the end_of_arm status 'invert_pitch_to_keep_camera_upright',
+    The current handedness is read from the end_of_arm status 'tool_right_handed',
     and the wrist is moved to the other handedness's home configuration (see GripperHandedness.move_to).
     """
     def __init__(self,robot):
@@ -37,7 +37,7 @@ class RoutineWristHandedness(routine.Routine):
 
         current = GripperHandedness.from_status(self.robot.eoa_loop.status)
         if current is None:
-            self.logger.warning('Not able to change wrist handedness. Handedness unknown (wrist_roll absent or not homed)')
+            self.logger.warning('Not able to change wrist handedness. Handedness unknown (wrist_pitch absent or not homed)')
             return False
         target = current.opposite()
         self.logger.info(f'Changing wrist handedness from {current.get_name()} to {target.get_name()}')

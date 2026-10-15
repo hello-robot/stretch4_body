@@ -387,7 +387,7 @@ class RoutinesClient(SubsystemClient):
     def routine_wrist_handedness(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
         """
         Run the wrist handedness routine, which moves the wrist to the opposite handedness (Left/Right)
-        of end_of_arm status['invert_pitch_to_keep_camera_upright'].
+        of end_of_arm status['tool_right_handed'].
 
         Parameters
         ----------
@@ -1436,7 +1436,7 @@ class EndOfArmClient(SubsystemClient):
 
     def change_handedness(self):
         """
-        Queue a wrist motion to the opposite handedness of status['invert_pitch_to_keep_camera_upright'].
+        Queue a wrist motion to the opposite handedness of status['tool_right_handed'].
         Call push_command() to execute.
 
         Refused if the lift is at or below get_handedness_lift_min(), so the wrist does not swing into
@@ -1454,7 +1454,7 @@ class EndOfArmClient(SubsystemClient):
             return None
         current = GripperHandedness.from_status(self.status)
         if current is None:
-            self.logger.error("Cannot change handedness. Handedness unknown (wrist_roll absent or not homed).")
+            self.logger.error("Cannot change handedness. Handedness unknown (wrist_pitch absent or not homed).")
             return None
         target = current.opposite()
         target.move_to(self)

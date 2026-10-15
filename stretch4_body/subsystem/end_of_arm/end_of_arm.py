@@ -14,9 +14,9 @@ TOOL_FACING_CENTER_BAND_DEG = 10.0
 TOOL_SIDE_CENTER_BAND_M = 0.01
 
 
-def should_invert_pitch_to_keep_camera_upright(roll_rad):
+def should_invert_pitch(roll_rad):
     """
-    Returns True when wrist pitch must be inverted so that pitching up still moves the gripper camera image up.
+    Returns True when teleop must invert wrist pitch so that pitching up still moves the gripper camera image up.
 
     A +pitch motion moves the tool along -(0, sin(roll), cos(roll)) in wrist_roll_link, whose +z is the
     camera's image-up axis. So seen through the camera, +pitch moves the image down when cos(roll) > 0 and
@@ -59,6 +59,21 @@ def get_tool_facing(yaw_rad, pitch_rad):
     if lateral < -band:
         return 'right'
     return 'center'
+
+
+def is_tool_right_handed(pitch_rad):
+    """
+    Returns True when the tool is right handed: the wrist is not folded over, so the tool can reach
+    under the arm on the robot's left side. False (left handed) is the folded wrist, which mirrors this.
+
+    The yaw-pitch-roll wrist reaches every tool orientation with two joint solutions:
+    (yaw, pitch, roll) and (yaw + pi, pi - pitch, roll + pi), separated by the wrist singularity at
+    pitch = +/-pi/2, so handedness is set by the pitch joint alone (the middle of its [-65, 245] deg range):
+        right handed: cos(pitch) >= 0  (pitch in [-pi/2, pi/2]), e.g. home yaw, pitch, roll == 0,0,0
+        left handed:  cos(pitch) <  0  (pitch beyond pi/2),      e.g. home yaw, pitch, roll == pi,pi,pi
+    Pitch inversion for teleop depends on roll instead, see should_invert_pitch().
+    """
+    return bool(np.cos(pitch_rad) >= 0)
 
 
 def get_tool_side(yaw_rad, pitch_rad, tool_reach_m, wrist_offset_m):
@@ -106,22 +121,23 @@ def get_handedness_lift_min():
 
 class GripperHandedness(Enum):
     """
-    Teleop handedness of the gripper, set by which way pitch moves the camera image (see should_invert_pitch_to_keep_camera_upright):
-        RIGHT: roll, pitch and yaw == 0,0,0. Tool on the right side of the robot.
-        LEFT:  roll, pitch and yaw == pi,pi,pi. Tool is on the left side of the robot, camera upright.
+    Teleop handedness of the gripper, set by whether the wrist is folded over (see is_tool_right_handed):
+        RIGHT: yaw, pitch, roll == 0,0,0. Wrist not folded, tool can reach under the arm on the robot's left.
+        LEFT:  yaw, pitch, roll == pi,pi,pi. Wrist folded, mirrors RIGHT.
+    Both home configurations keep the camera upright.
     """
     LEFT = 0
     RIGHT = 1
 
     @classmethod
-    def from_invert_pitch(cls, invert_pitch):
-        return cls.LEFT if invert_pitch else cls.RIGHT
+    def from_right_handed(cls, right_handed):
+        return cls.RIGHT if right_handed else cls.LEFT
 
     @classmethod
     def from_status(cls, status):
-        """Returns the handedness implied by an end_of_arm status dict's 'invert_pitch_to_keep_camera_upright', or None if unknown"""
-        invert_pitch = status.get('invert_pitch_to_keep_camera_upright')
-        return None if invert_pitch is None else cls.from_invert_pitch(invert_pitch)
+        """Returns the handedness implied by an end_of_arm status dict's 'tool_right_handed', or None if unknown"""
+        right_handed = status.get('tool_right_handed')
+        return None if right_handed is None else cls.from_right_handed(right_handed)
 
     def get_name(self):
         return self.name.lower()
@@ -174,7 +190,7 @@ class EndOfArm(FeetechSMChain):
         FeetechSMChain.__init__(self, usb=usb, name=name)
         self.status['is_homing']=False
         self.status['is_homed']=False
-        self.status['invert_pitch_to_keep_camera_upright']=None #True | False | None if no calibrated wrist_roll. See should_invert_pitch_to_keep_camera_upright()
+        self.status['tool_right_handed']=None #True | False | None if no calibrated wrist_pitch. See is_tool_right_handed()
         self.status['camera_upright']=None #True | False | None if no calibrated wrist_pitch/roll. See is_camera_upright()
         self.status['tool_facing']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch. See get_tool_facing()
         self.status['tool_side']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch or no URDF. See get_tool_side()
@@ -215,10 +231,10 @@ class EndOfArm(FeetechSMChain):
         yaw = calibrated_pos('wrist_yaw')
         pitch = calibrated_pos('wrist_pitch')
         roll = calibrated_pos('wrist_roll')
-        self.status['invert_pitch_to_keep_camera_upright'] = None if roll is None else should_invert_pitch_to_keep_camera_upright(roll)
+        geometry = None if yaw is None or pitch is None else self._get_wrist_tool_geometry()
+        self.status['tool_right_handed'] = None if pitch is None else is_tool_right_handed(pitch)
         self.status['camera_upright'] = None if pitch is None or roll is None else is_camera_upright(pitch, roll)
         self.status['tool_facing'] = None if yaw is None or pitch is None else get_tool_facing(yaw, pitch)
-        geometry = None if yaw is None or pitch is None else self._get_wrist_tool_geometry()
         self.status['tool_side'] = None if geometry is None else get_tool_side(yaw, pitch, *geometry)
 
     def _get_wrist_tool_geometry(self):
@@ -232,7 +248,7 @@ class EndOfArm(FeetechSMChain):
 
     def change_handedness(self):
         """
-        Moves the wrist to the opposite handedness of status['invert_pitch_to_keep_camera_upright'].
+        Moves the wrist to the opposite handedness of status['tool_right_handed'].
         Returns the target GripperHandedness, or None if the current handedness is unknown.
 
         The end of arm cannot see the lift, so callers must first check that the lift is above
@@ -241,7 +257,7 @@ class EndOfArm(FeetechSMChain):
         """
         current = GripperHandedness.from_status(self.status)
         if current is None:
-            print("EndOfArm: Ignoring change_handedness, handedness unknown (wrist_roll absent or not homed)")
+            print("EndOfArm: Ignoring change_handedness, handedness unknown (wrist_pitch absent or not homed)")
             return None
         target = current.opposite()
         target.move_to(self)

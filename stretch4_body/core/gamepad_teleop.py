@@ -18,7 +18,7 @@ from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot import Robot
 from stretch4_body.robot.robot_client import RobotClient
-from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness, get_handedness_lift_min
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness, get_handedness_lift_min, should_invert_pitch
 from stretch4_body.utils.file_access_utils import (
     acquire_lock_if_available,
     setup_shared_directory,
@@ -140,7 +140,7 @@ class GamePadTeleop(Device):
         self.currently_stowing = False
         self._last_handedness = None # Last known GripperHandedness from wrist status, for crossing detection
         self._handedness_change_target = None # Set while change_gripper_handedness() is moving the wrist
-        self._input_handedness = None # Handedness used for input inversion, held fixed while the user is rolling the wrist
+        self._input_pitch_inverted = None # Pitch inversion used for input, held fixed while the user is rolling the wrist
 
         self.flying_gripper_controller = KinematicController(get_base_planar_ik_urdf_file())
 
@@ -151,20 +151,30 @@ class GamePadTeleop(Device):
     @property
     def gripper_handedness(self):
         """
-        Handedness used for input inversion. Follows the wrist joint configuration, except while the user
-        is holding a roll command, where it stays fixed so that crossing the handedness boundary does not
-        flip the roll direction mid-motion. The new handedness takes effect once the roll input is released.
-        """
-        return self._input_handedness or self._wrist_handedness()
-
-    def _wrist_handedness(self):
-        """
-        Handedness derived from the wrist joint configuration (end_of_arm status['invert_pitch_to_keep_camera_upright']).
+        Handedness derived from the wrist joint configuration (end_of_arm status['tool_right_handed']).
         Falls back to RIGHT when there is no wrist or it is not homed.
         """
         if not self.use_devices['eoa']:
             return GripperHandedness.RIGHT
         return GripperHandedness.from_status(self.robot.end_of_arm.status) or GripperHandedness.RIGHT
+
+    @property
+    def invert_pitch(self):
+        """
+        Whether pitch input is inverted. Follows the wrist roll (see should_invert_pitch), except while the user
+        is holding a roll command, where it stays fixed so that crossing the inversion boundary does not
+        flip the roll direction mid-motion. The new inversion takes effect once the roll input is released.
+        """
+        return self._input_pitch_inverted if self._input_pitch_inverted is not None else self._wrist_pitch_inverted()
+
+    def _wrist_pitch_inverted(self):
+        """Pitch inversion derived from the wrist roll. False when there is no wrist or roll is not calibrated."""
+        if not self.use_devices['eoa']:
+            return False
+        roll = self.robot.end_of_arm.status.get('wrist_roll')
+        if not roll or not roll.get('pos_calibrated', False):
+            return False
+        return should_invert_pitch(roll['pos'])
 
     def _is_roll_input_held(self):
         """Roll is commanded with Right Trigger held plus a shoulder button, in every control mapping"""
@@ -172,10 +182,10 @@ class GamePadTeleop(Device):
         return state.get('right_trigger_pulled', 0.0) > TRIGGER_THRESHOLD and \
             (state.get('left_shoulder_button_pressed') or state.get('right_shoulder_button_pressed'))
 
-    def _update_input_handedness(self):
-        """Track the wrist handedness, unless the user is mid-roll, in which case keep the handedness from when the roll began"""
-        if self._input_handedness is None or not self._is_roll_input_held():
-            self._input_handedness = self._wrist_handedness()
+    def _update_input_pitch_inversion(self):
+        """Track the wrist's pitch inversion, unless the user is mid-roll, in which case keep the inversion from when the roll began"""
+        if self._input_pitch_inverted is None or not self._is_roll_input_held():
+            self._input_pitch_inverted = self._wrist_pitch_inverted()
 
     def _check_handedness_crossing(self):
         """
@@ -330,7 +340,7 @@ class GamePadTeleop(Device):
 
             self.manage_start_button(robot)
             self._check_handedness_crossing()
-            self._update_input_handedness()
+            self._update_input_pitch_inversion()
 
             if robot.is_homed():
                 if self.robot.is_runstopped():
@@ -480,7 +490,7 @@ class GamePadTeleop(Device):
     def change_gripper_handedness(self, robot):
         """
         Move the wrist to the opposite handedness (Left/Right) of its current configuration.
-        Input inversion follows automatically, as gripper_handedness is read from the wrist status.
+        Input inversion follows automatically, as invert_pitch is read from the wrist roll.
 
         Args:
             robot (robot.Robot): Valid robot instance.
