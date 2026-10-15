@@ -67,6 +67,24 @@ class EndOfArm(FeetechSMChain):
         with  self.pt_lock:
             self.motors[joint].quick_stop()
 
+    def hold_position(self, joint: str) -> bool:
+        """
+        Stop and hold the current position of the specified joint with torque maintained.
+
+        Args:
+            joint: Name of the joint.
+
+        Returns:
+            True if hold command was executed, False otherwise.
+        """
+        if joint not in self.motors:
+            self.logger.warning(
+                f"EndOfArm: Ignoring hold_position command for inactive or non-existent joint '{joint}'"
+            )
+            return False
+        with self.pt_lock:
+            return self.motors[joint].hold_position()
+
     def disable_torque(self, joint):
         """
         joint: name of joint (string)
