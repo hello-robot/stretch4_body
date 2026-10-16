@@ -260,12 +260,14 @@ class PowerPeriphDefn():
     RPC_SET_EASTER_EGG_MODE = 39
     RPC_REPLY_SET_EASTER_EGG_MODE = 40
     EASTER_EGG_REPLY_STATUS_NAMES = {0: 'ok', 1: 'bad length', 2: 'bad value'}
-    POWER_DIAGNOSTICS_SCHEMA_VERSION = 1
-    POWER_DIAGNOSTICS_WIRE_SIZE = 190
-    # Firmware v0.1.38p14 appends easter_egg_mode (u8) after the schema 2 eye readback
-    # at 190 to 203. Read only when a snapshot carries it; the schema bump is separate.
-    POWER_DIAGNOSTICS_EASTER_EGG_OFFSET = 204
-    POWER_EVENT_LOG_SCHEMA_VERSION = 1
+    # Diagnostics schema asked for first. Schema 2 (firmware v0.1.47p14) is the 255-byte
+    # snapshot; schema 1 is its first 190 bytes, the only schema of v0.1.18p14 to
+    # v0.1.23p14 and what v0.1.47p14 sends a body that asks for 1. The reply header,
+    # the snapshot's schema_version and struct_size must all agree with these sizes.
+    POWER_DIAGNOSTICS_SCHEMA_VERSION = 2
+    POWER_DIAGNOSTICS_SCHEMA1_WIRE_SIZE = 190
+    POWER_DIAGNOSTICS_WIRE_SIZE = 255
+    POWER_DIAGNOSTICS_WIRE_SIZES = {1: POWER_DIAGNOSTICS_SCHEMA1_WIRE_SIZE, 2: POWER_DIAGNOSTICS_WIRE_SIZE}
     POWER_EVENT_LOG_HEADER_SIZE = 24
     POWER_EVENT_LOG_ENTRY_SIZE = 16
     POWER_EVENT_LOG_MAX_RPC_ENTRIES = 16
@@ -304,6 +306,25 @@ class PowerPeriphDefn():
         23: 'esp_rx_overflow',
         24: 'esp_tx_queue_drop',
         25: 'bms_protocol_error',
+        26: 'bms_boot_wait',
+        27: 'bms_decision_blocked',
+        28: 'boot_watchdog_arm',
+        29: 'shutdown_requested',
+        30: 'shutdown_nuc_notified',
+        31: 'shutdown_nuc_wait_ended',
+        32: 'shutdown_rails_down',
+        33: 'shutdown_retargeted',
+        34: 'shutdown_ended',
+        35: 'charge_stop',
+        36: 'charge_restart',
+        40: 'adc_bank_reinit',
+        41: 'adc_stale_changed',
+        42: 'adapter_source_changed',
+        43: 'low_battery_qualified',
+        44: 'esp_request_rejected',
+        45: 'esp_rx_length_error',
+        46: 'adapter_disagreement',
+        47: 'esp_shutdown_cmd_delivered',
         50: 'easter_egg_entered',
         51: 'easter_egg_left',
     }
@@ -336,6 +357,34 @@ class PowerPeriphDefn():
         23: 'The ESP UART receive frame exceeded its fixed buffer.',
         24: 'The PIMU-to-ESP transmit queue was full and dropped a packet.',
         25: 'A CRC-valid BMS reply had the wrong address, function, byte count, or length; data1 is the exception code or received length.',
+        26: 'The BMS boot wait finished; data0 is 1 present or 2 absent, data1 the wait in ms.',
+        27: ('A low-battery shutdown (data0 1) or charger decision (data0 2) was held because the '
+             'BMS sample was absent or stale; data1 is the sample age in ms, 32767 with no sample.'),
+        28: ('Wake sent to the ESP with its boot-watchdog arm byte; data0 is the arm value, data1 the '
+             'reason (0 RDK build, 1 no host config yet, 2 host nuc_safe_shutdown).'),
+        29: 'Shutdown transaction requested; data0 is the transition reason, data1 is 1 when the rails wait for the NUC.',
+        30: ('Shutdown transaction told the ESP the target state; data0 is the UART message id, '
+             'data1 the ticks waited so far.'),
+        31: ('Shutdown transaction NUC wait ended; data0 is the cause (0 no wait, 1 NUC off, 2 cap, '
+             '4 cap with only stale "off" status), data1 the ticks waited.'),
+        32: 'Shutdown transaction dropped the rails; data0 is the rail mask (1 20V0, 2 5V0), data1 the starting reason.',
+        33: 'Shutdown transaction retargeted while running; data0 is the transition reason, data1 the rail mask down.',
+        34: 'Shutdown transaction ended by a wake; data0 is the wake reason, data1 the furthest step reached.',
+        35: ('Firmware stopped charging on a sustained BMS high-voltage alarm; data0 is reason << 8 | SoC, '
+             'data1 the cell max mV.'),
+        36: 'Charging restarted after a charge stop; data0 is reason << 8 | SoC, data1 the pack mV.',
+        40: 'An ADC bank was rebuilt by the stall watchdog; data0 is the bank, data1 its rebuild count.',
+        41: 'The ADC stale mask changed; data0/data1 are the old/new masks (bit 0 ADC0, bit 1 ADC1).',
+        42: 'The adapter presence source changed; data0/data1 are old/new (0 ADC, 1 ESP, 2 held).',
+        43: ('Low-battery shutdown qualified in ACTIVE; data0 is the cause bits (1 SoC 0, 2 undervoltage), '
+             'data1 the consecutive low BMS frames.'),
+        44: ('An ESP sleep or wake request was rejected in a state that does not consume it; data0 is the '
+             'request bits (1 sleep, 2 wake), data1 the rejections since boot.'),
+        45: ('A CRC-valid ESP frame failed the per-id length check; data0 is the error count (negative: '
+             'unknown id count), data1 is id << 8 | payload length.'),
+        46: ('The ESP adapter_connected bit disagreed with the SAMD 36 V input for 1 s; data0/data1 are '
+             'the old/new masks (1 ESP only, 2 voltage only).'),
+        47: 'The ESP proved it consumed UART_PWR_SHUTDOWN; data0 is the sends, data1 the ms since the first.',
         50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host RPC 39.',
         51: 'Easter egg mode left; data0 is 2 for a host RPC 39, 3 for a runstop entry.',
     }
@@ -855,6 +904,9 @@ class PowerPeriphAux(PowerPeriphDefn):
             '_decode_error': None,
             'schema_version': None,
         }
+        # Lowered to 1 for good when the firmware answers unsupported-schema to 2.
+        self.power_diagnostics_request_schema = self.POWER_DIAGNOSTICS_SCHEMA_VERSION
+        self._power_diagnostics_retry = False
         self.power_event_log_page = {
             '_valid': False,
             '_packet_length': None,
@@ -877,14 +929,27 @@ class PowerPeriphAux(PowerPeriphDefn):
                             timeout_s=self.POWER_DIAGNOSTICS_RPC_TIMEOUT_S) is not None
 
     def pull_power_diagnostics(self, blocking=True, after_sequence=0, max_entries=16):
-        """Pull the protocol-14 snapshot and a cursor-paged event-log page."""
+        """Pull the protocol-14 snapshot and a cursor-paged event-log page.
+
+        Asks for schema 2. Firmware that answers unsupported-schema (v0.1.18p14 to
+        v0.1.23p14 speak only schema 1) is asked once more with schema 1, and schema 1
+        is kept from then on: within this call when blocking, on the next pull otherwise.
+        """
         if not self.hw_valid or not self.supports_power_diagnostics():
             return False
+        queued = self._request_power_diagnostics(blocking, after_sequence, max_entries)
+        if blocking and self._power_diagnostics_retry:
+            queued = self._request_power_diagnostics(blocking, after_sequence, max_entries)
+        return queued
+
+    def _request_power_diagnostics(self, blocking, after_sequence, max_entries):
+        self._power_diagnostics_retry = False
+        schema = self.power_diagnostics_request_schema
         max_entries = max(0, min(self.POWER_EVENT_LOG_MAX_RPC_ENTRIES,
                                  int(max_entries)))
         payload = arr.array('B', [0] * 9)
         payload[0] = self.RPC_GET_POWER_DIAGNOSTICS
-        pack_uint8_t(payload, 1, self.POWER_DIAGNOSTICS_SCHEMA_VERSION)
+        pack_uint8_t(payload, 1, schema)
         pack_uint8_t(payload, 2, max_entries)
         pack_uint16_t(payload, 3, 0)
         pack_uint32_t(payload, 5, int(after_sequence) & 0xFFFFFFFF)
@@ -892,7 +957,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             blocking=blocking,
             is_push=False,
             payload=payload,
-            rpc_callback=self._rpc_power_diagnostics_reply,
+            rpc_callback=lambda reply: self._rpc_power_diagnostics_reply(reply, requested_schema=schema),
             wait_on_collect=False,
             timeout_s=self.POWER_DIAGNOSTICS_RPC_TIMEOUT_S,
         ) is not None
@@ -924,14 +989,14 @@ class PowerPeriphAux(PowerPeriphDefn):
             self.status_aux['_decode_error'] = 'unexpected or empty aux reply'
             self.logger.warning('Error RPC_REPLY_POWER_PERIPH_AUX_STATUS')
 
-    def _rpc_power_diagnostics_reply(self, reply):
+    def _rpc_power_diagnostics_reply(self, reply, requested_schema=None):
         now = time.monotonic()
         self.power_diagnostics_reply_sequence += 1
         self.power_diagnostics_reply_monotonic_s = now
         self.power_event_log_reply_sequence += 1
         self.power_event_log_reply_monotonic_s = now
         if len(reply) > 0 and reply[0] == self.RPC_REPLY_POWER_DIAGNOSTICS:
-            consumed = self._unpack_power_event_log(reply[1:])
+            consumed = self._unpack_power_event_log(reply[1:], requested_schema)
             if consumed > 0:
                 self._mirror_power_diagnostics_to_status_aux()
                 return
@@ -979,7 +1044,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             # No 9-byte auxiliary packet was received. Preserve its source
             # honestly while exposing which diagnostics packet populated it.
             '_packet_length': None,
-            '_diagnostics_packet_length': self.POWER_DIAGNOSTICS_WIRE_SIZE,
+            '_diagnostics_packet_length': diagnostics['_packet_length'],
             '_decode_error': None,
             '_diagnostics_present': True,
         })
@@ -1046,22 +1111,28 @@ class PowerPeriphAux(PowerPeriphDefn):
         )
         return [name for bit, name in names if mask & bit]
 
-    @classmethod
-    def _decode_easter_egg_mode(cls, s):
-        """The v0.1.38p14 byte past the schema 1 snapshot, None when the snapshot stops before it."""
-        if len(s) > cls.POWER_DIAGNOSTICS_EASTER_EGG_OFFSET:
-            return int(s[cls.POWER_DIAGNOSTICS_EASTER_EGG_OFFSET])
-        return None
+    # Fields that exist only in schema 2, None in a decoded schema 1 snapshot.
+    POWER_DIAGNOSTICS_SCHEMA2_KEYS = (
+        'charge_stop_state', 'eye_left', 'eye_right', 'eye_overlay', 'eye_reserved',
+        'easter_egg_mode', 'shutdown_wait_active', 'shutdown_wait_last_end',
+        'shutdown_wait_count', 'shutdown_wait_elapsed_ms', 'shutdown_wait_last_duration_ms',
+        'shutdown_wait_cap_ms', 'adc_reinit_cnt', 'adc_stale', 'adapter_presence_source',
+        'esp_rx_length_errors', 'esp_rx_unknown_ids', 'esp_tx_mark_resets',
+        'esp_shutdown_cmd_sends', 'esp_adapter_disagree', 'wait_sd_ack', 'reserved2',
+        'reserved3', 'ina_vbat_mv', 'ina_current_ma', 'ina_flags', 'ina_reserved',
+    )
 
     def _unpack_power_diagnostics(self, s):
         packet_length = len(s)
-        if packet_length != self.POWER_DIAGNOSTICS_WIRE_SIZE:
+        schema = {size: v for v, size in self.POWER_DIAGNOSTICS_WIRE_SIZES.items()}.get(packet_length)
+        if schema is None:
             self.power_diagnostics.clear()
             self.power_diagnostics.update({
                 '_valid': False,
                 '_packet_length': packet_length,
-                '_decode_error': 'invalid diagnostics packet: %d bytes (expected %d)' % (
-                    packet_length, self.POWER_DIAGNOSTICS_WIRE_SIZE),
+                '_decode_error': 'invalid diagnostics packet: %d bytes (expected %s)' % (
+                    packet_length,
+                    ' or '.join(str(n) for n in sorted(self.POWER_DIAGNOSTICS_WIRE_SIZES.values()))),
             })
             return 0
 
@@ -1110,8 +1181,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         decoded['schema_version'] = u8()
         decoded['reset_cause_raw'] = u8()
         decoded['struct_size'] = u16()
-        if (decoded['schema_version'] != self.POWER_DIAGNOSTICS_SCHEMA_VERSION or
-                decoded['struct_size'] != self.POWER_DIAGNOSTICS_WIRE_SIZE):
+        if decoded['schema_version'] != schema or decoded['struct_size'] != packet_length:
             self.power_diagnostics.clear()
             self.power_diagnostics.update({
                 '_valid': False,
@@ -1168,7 +1238,11 @@ class PowerPeriphAux(PowerPeriphDefn):
         decoded['battery_mosfet_temp_c'] = i8()
         decoded['bms_alarm_mask_raw'] = u8()
         decoded['bms_mos_mask_raw'] = u8()
-        decoded['reserved0'] = u8()
+        # Schema 1 reserved0; schema 2 charge_stop_state (low nibble state, bit 4 enabled).
+        if schema >= 2:
+            decoded['charge_stop_state'] = u8()
+        else:
+            decoded['reserved0'] = u8()
         decoded['bms_last_failure_rx_len'] = u16()
         decoded['bms_last_failure_event'] = u16()
         decoded['bms_last_failure_function'] = u8()
@@ -1199,16 +1273,48 @@ class PowerPeriphAux(PowerPeriphDefn):
         decoded['diagnostics_lock_time_us'] = u16()
         decoded['diagnostics_lock_time_max_us'] = u16()
 
-        if sidx != self.POWER_DIAGNOSTICS_WIRE_SIZE:
+        if schema >= 2:
+            def eye_ring():
+                return {key: u8() for key in ('animation', 'intensity', 'r', 'g', 'b', 'source')}
+
+            decoded['eye_left'] = eye_ring()
+            decoded['eye_right'] = eye_ring()
+            decoded['eye_overlay'] = u8()
+            decoded['eye_reserved'] = u8()
+            decoded['easter_egg_mode'] = u8()
+            decoded['shutdown_wait_active'] = bool(u8())
+            decoded['shutdown_wait_last_end'] = u8()
+            decoded['shutdown_wait_count'] = u16()
+            decoded['shutdown_wait_elapsed_ms'] = u32()
+            decoded['shutdown_wait_last_duration_ms'] = u32()
+            decoded['shutdown_wait_cap_ms'] = u32()
+            decoded['adc_reinit_cnt'] = [u8(), u8()]
+            decoded['adc_stale'] = u8()
+            decoded['adapter_presence_source'] = u8()
+            decoded['esp_rx_length_errors'] = u32()
+            decoded['esp_rx_unknown_ids'] = u32()
+            decoded['esp_tx_mark_resets'] = u32()
+            decoded['esp_shutdown_cmd_sends'] = u32()
+            decoded['esp_adapter_disagree'] = u8()
+            decoded['wait_sd_ack'] = bool(u8())
+            decoded['reserved2'] = u8()
+            decoded['reserved3'] = u8()
+            decoded['ina_vbat_mv'] = i32()
+            decoded['ina_current_ma'] = i32()
+            decoded['ina_flags'] = u8()
+            decoded['ina_reserved'] = u8()
+        else:
+            for key in self.POWER_DIAGNOSTICS_SCHEMA2_KEYS:
+                decoded[key] = None
+
+        if sidx != packet_length:
             self.power_diagnostics.update({
                 '_valid': False,
                 '_packet_length': packet_length,
                 '_decode_error': 'diagnostics decoder consumed %d bytes (expected %d)' % (
-                    sidx, self.POWER_DIAGNOSTICS_WIRE_SIZE),
+                    sidx, packet_length),
             })
             return 0
-
-        decoded['easter_egg_mode'] = self._decode_easter_egg_mode(s)
 
         caps = decoded['capability_flags_raw']
         validity = decoded['validity_flags_raw']
@@ -1222,12 +1328,17 @@ class PowerPeriphAux(PowerPeriphDefn):
             'bms_cell_voltages': bool(caps & (1 << 6)),
             'bms_capacity': bool(caps & (1 << 7)),
             'bms_balancing': bool(caps & (1 << 8)),
+            'bench_rig_build': bool(caps & (1 << 9)),
+            'eye_readback': bool(caps & (1 << 10)),
+            'ina_vbat': bool(caps & (1 << 11)),
+            'simulated_battery': bool(caps & (1 << 12)),
         }
         decoded['validity'] = {
             'bms_sample': bool(validity & (1 << 0)),
             'esp_status': bool(validity & (1 << 1)),
             'analog_rails': bool(validity & (1 << 2)),
             'bms_extended_sample': bool(validity & (1 << 3)),
+            'ina_sample': bool(validity & (1 << 4)),
         }
         decoded['reset_causes'] = self._decode_reset_causes(decoded['reset_cause_raw'])
         decoded['power_state_name'] = self.get_power_state_name(decoded['power_state'])
@@ -1293,7 +1404,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         self.power_diagnostics.update(decoded)
         return sidx
 
-    def _unpack_power_event_log(self, s):
+    def _unpack_power_event_log(self, s, requested_schema=None):
         packet_length = len(s)
         if packet_length < self.POWER_EVENT_LOG_HEADER_SIZE:
             error = 'short event-log header: %d bytes' % packet_length
@@ -1329,8 +1440,10 @@ class PowerPeriphAux(PowerPeriphDefn):
         if reply_status != self.POWER_DIAGNOSTICS_REPLY_OK:
             status_name = self.POWER_DIAGNOSTICS_REPLY_STATUS_NAMES.get(
                 reply_status, 'unknown_%d' % reply_status)
+            # The header of an error reply carries the newest schema the firmware
+            # speaks (1 on v0.1.18p14, 2 from v0.1.24p14), not the one asked for.
             error_shape_valid = (
-                schema_version == self.POWER_EVENT_LOG_SCHEMA_VERSION and
+                schema_version >= 1 and
                 header_size == self.POWER_EVENT_LOG_HEADER_SIZE and
                 diagnostics_size == 0 and
                 entry_size == self.POWER_EVENT_LOG_ENTRY_SIZE and
@@ -1338,10 +1451,23 @@ class PowerPeriphAux(PowerPeriphDefn):
                 packet_length == self.POWER_EVENT_LOG_HEADER_SIZE
             )
             error = (
-                'firmware rejected power diagnostics request: %s' % status_name
+                'firmware rejected power diagnostics request: %s (firmware schema %d)' % (
+                    status_name, schema_version)
                 if error_shape_valid else
                 'malformed power diagnostics error reply'
             )
+            if (error_shape_valid and
+                    reply_status == self.POWER_DIAGNOSTICS_REPLY_UNSUPPORTED_SCHEMA and
+                    requested_schema is not None and requested_schema > 1 and
+                    self.power_diagnostics_request_schema == requested_schema):
+                self.power_diagnostics_request_schema = 1
+                self._power_diagnostics_retry = True
+                error += '; schema %d not supported, asking for schema 1' % requested_schema
+                logger = getattr(self, 'logger', None)
+                if logger is not None:
+                    logger.warning('PIMU does not support power diagnostics schema %d '
+                                   '(firmware schema %d); using schema 1' % (
+                                       requested_schema, schema_version))
             self.power_diagnostics.clear()
             self.power_diagnostics.update({
                 '_valid': False,
@@ -1358,9 +1484,9 @@ class PowerPeriphAux(PowerPeriphDefn):
                 'events': [],
             })
             return 0
-        if (schema_version != self.POWER_EVENT_LOG_SCHEMA_VERSION or
+        if (schema_version not in self.POWER_DIAGNOSTICS_WIRE_SIZES or
                 header_size != self.POWER_EVENT_LOG_HEADER_SIZE or
-                diagnostics_size != self.POWER_DIAGNOSTICS_WIRE_SIZE or
+                diagnostics_size != self.POWER_DIAGNOSTICS_WIRE_SIZES[schema_version] or
                 entry_size != self.POWER_EVENT_LOG_ENTRY_SIZE or
                 entry_count > self.POWER_EVENT_LOG_MAX_RPC_ENTRIES or
                 packet_length != expected_length):
@@ -1381,6 +1507,8 @@ class PowerPeriphAux(PowerPeriphDefn):
             })
             return 0
 
+        # diagnostics_size matched the header's schema, so the snapshot decoder's own
+        # schema_version and struct_size check holds the two to the same schema.
         if self._unpack_power_diagnostics(s[header_size:header_size + diagnostics_size]) == 0:
             self.power_event_log_page.clear()
             self.power_event_log_page.update({
