@@ -5,6 +5,7 @@ from typing import Any, TypedDict
 from stretch4_body.core.transport.transport import *
 from stretch4_body.core.device import Device
 from stretch4_body.core.hello_utils import *
+import struct
 import textwrap
 import psutil
 import time
@@ -195,7 +196,7 @@ class IMUBase(Device):
 
         # Compute IMU fields
         unpack_to['gravity_tilt']=(
-            self.calculate_tilt_angle([self.status['qw'],self.status['qx'],self.status['qy'],self.status['qz']]))
+            self.calculate_tilt_angle([unpack_to['qw'],unpack_to['qx'],unpack_to['qy'],unpack_to['qz']]))
 
         return sidx
 
@@ -605,12 +606,12 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
                                          rpc_callback=self._rpc_actuator_disable_reply) is not None
 
     def _rpc_actuator_enable_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_ACTUATOR_ENABLE:
-            print('Error RPC_REPLY_ACTUATOR_CONTROL', reply[0])
+        if len(reply) == 0 or reply[0] != self.RPC_REPLY_ACTUATOR_ENABLE:
+            print('Error RPC_REPLY_ACTUATOR_CONTROL', reply[:1])
 
     def _rpc_actuator_disable_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_ACTUATOR_DISABLE:
-            print('Error RPC_REPLY_ACTUATOR_CONTROL', reply[0])
+        if len(reply) == 0 or reply[0] != self.RPC_REPLY_ACTUATOR_DISABLE:
+            print('Error RPC_REPLY_ACTUATOR_CONTROL', reply[:1])
 
 
 
@@ -693,12 +694,12 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         return self.transport.do_rpc(blocking=True,is_push=True,payload=payload[:sidx],rpc_callback=self.rpc_network_info_reply) is not None
 
     def rpc_network_info_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_NETWORK_INFO:
-            print('Error RPC_REPLY_NETWORK_INFO', reply[0])
+        if len(reply) == 0 or reply[0] != self.RPC_REPLY_NETWORK_INFO:
+            print('Error RPC_REPLY_NETWORK_INFO', reply[:1])
 
     def rpc_firebase_info_reply(self, reply):
-        if reply[0] != self.RPC_FIREBASE_DB_INFO_REPLY:
-            print('Error RPC_FIREBASE_DB_INFO_REPLY', reply[0])
+        if len(reply) == 0 or reply[0] != self.RPC_FIREBASE_DB_INFO_REPLY:
+            print('Error RPC_FIREBASE_DB_INFO_REPLY', reply[:1])
 
 class PowerPeriphTrace(PowerPeriphDefn):
     def __init__(self):
@@ -1394,11 +1395,11 @@ class PowerPeriphAux(PowerPeriphDefn):
         return 'UNKNOWN_%d' % raw
     
     def _rpc_load_test_push_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_LOAD_TEST_PUSH:
-            print('Error RPC_REPLY_LOAD_TEST_PUSH', reply[0])
+        if len(reply) == 0 or reply[0] != self.RPC_REPLY_LOAD_TEST_PUSH:
+            print('Error RPC_REPLY_LOAD_TEST_PUSH', reply[:1])
 
     def _rpc_load_test_pull_reply(self, reply):
-        if reply[0] == self.RPC_REPLY_LOAD_TEST_PULL:
+        if len(reply) > 0 and reply[0] == self.RPC_REPLY_LOAD_TEST_PULL:
             d = reply[1:]
             for i in range(1024):
                 if d[i] != self._load_test_payload[(i + 1) % 1024]:
@@ -1407,7 +1408,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             if not self.pull_load_test_quiet:
                 print('Successful load test pull')
         else:
-            print('Error RPC_REPLY_LOAD_TEST_PULL', reply[0])
+            print('Error RPC_REPLY_LOAD_TEST_PULL', reply[:1])
 
 
 class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphTrace,PowerPeriphAux,Device):
@@ -1457,6 +1458,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
                        'us_loop_time':0,
+                       'rpc_reply_errors': 0, 'rpc_reply_last_error': None,
                        'status_aux': self.status_aux,
                        'power_diagnostics': self.power_diagnostics}
 
@@ -1756,8 +1758,11 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         if unpack_to is None:
             unpack_to = self.status
         sidx = 0
-        sidx += self.imu._unpack_status((s[sidx:]))
-
+        if unpack_to is self.status:
+            imu_to = self.imu.status
+        else:
+            imu_to = unpack_to.setdefault('imu', dict(self.imu.status))
+        sidx += self.imu._unpack_status(s[sidx:], unpack_to=imu_to)
 
         unpack_to['voltage'] = self.get_voltage(unpack_float_t(s[sidx:]))
         sidx += 4
@@ -1785,12 +1790,12 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
 
         unpack_to['timestamp'] = self.timestamp.set(unpack_uint64_t(s[sidx:]))
         sidx += 8
-        self.imu.status['timestamp'] = unpack_to['timestamp']
+        imu_to['timestamp'] = unpack_to['timestamp']
         unpack_to['bump_event_cnt'] = unpack_uint16_t(s[sidx:])
         sidx += 2
         unpack_to['debug'] = unpack_float_t(s[sidx:])
         sidx += 4
-        self.status['current_charge'] = self.get_current_charge(unpack_float_t(s[sidx:]))
+        unpack_to['current_charge'] = self.get_current_charge(unpack_float_t(s[sidx:]))
         sidx += 4
         unpack_to['charger_is_charging'] = (unpack_to['state'] & self.STATE_IS_CHARGER_CHARGING) != 0
         unpack_to['over_tilt_type'] = self._get_tilt_type(unpack_uint8_t(s[sidx:]))
@@ -1823,44 +1828,75 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         return sidx
 
         # ################Transport Callbacks #####################
+    # Payload bytes after the reply id. None means the length is not pinned for
+    # this protocol and only decode errors are rejected.
+    STATUS_PAYLOAD_BYTES = None
+    MOTOR_SYNC_PAYLOAD_BYTES = 2   # Pimu_Motor_Sync_Reply: uint16 motor_sync_cnt
+    TRIGGER_PAYLOAD_BYTES = 4      # Pimu_Trigger echo: uint32 data
+
+    def _reply_is_valid(self, name, reply, expected_id, payload_bytes=None):
+        """
+        Check a reply's id and, when payload_bytes is given, its exact length
+        before anything is decoded. A rejected reply bumps rpc_reply_errors and
+        leaves every status field as it was.
+        """
+        if len(reply) == 0:
+            return self._reject_reply(name, 'empty reply')
+        if reply[0] != expected_id:
+            return self._reject_reply(name, 'reply id %d, expected %d' % (reply[0], expected_id))
+        if payload_bytes is not None and len(reply) - 1 != payload_bytes:
+            return self._reject_reply(
+                name, 'payload %d bytes, expected %d' % (len(reply) - 1, payload_bytes))
+        return True
+
+    def _reject_reply(self, name, why):
+        self.status['rpc_reply_errors'] = self.status.get('rpc_reply_errors', 0) + 1
+        self.status['rpc_reply_last_error'] = '%s: %s' % (name, why)
+        self.logger.warning('Error %s: %s', name, why)
+        return False
+
     def _rpc_eye_animation_reply(self, reply):
-        if len(reply) == 0 or reply[0] != self.RPC_REPLY_SET_EYE_ANIMATION:
-            self.logger.warning(f'Error RPC_REPLY_SET_EYE_ANIMATION. Reply contents: {reply}')
+        self._reply_is_valid('RPC_REPLY_SET_EYE_ANIMATION', reply, self.RPC_REPLY_SET_EYE_ANIMATION)
 
     def _rpc_imu_config_reply(self, reply):
-        if reply[0] != self.RPC_SET_IMU_CONFIG_REPLY:
-            self.logger.warning('Error RPC_SET_IMU_CONFIG_REPLY', reply[0])
+        self._reply_is_valid('RPC_SET_IMU_CONFIG_REPLY', reply, self.RPC_SET_IMU_CONFIG_REPLY)
 
     def _rpc_config_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_POWER_PERIPH_CONFIG:
-            self.logger.warning('Error RPC_REPLY_POWER_PERIPH_CONFIG', reply[0])
-
-    def _rpc_imu_config_reply(self, reply):
-        if reply[0] != self.RPC_SET_IMU_CONFIG_REPLY:
-            self.logger.warning('Error RPC_SET_IMU_CONFIG_REPLY', reply[0])
+        self._reply_is_valid('RPC_REPLY_POWER_PERIPH_CONFIG', reply, self.RPC_REPLY_POWER_PERIPH_CONFIG)
 
     def _rpc_board_info_reply(self, reply):
-        if reply[0] == self.RPC_REPLY_POWER_PERIPH_BOARD_INFO:
+        if not self._reply_is_valid('RPC_REPLY_POWER_PERIPH_BOARD_INFO', reply,
+                                    self.RPC_REPLY_POWER_PERIPH_BOARD_INFO):
+            return
+        try:
             self._unpack_board_info(reply[1:])
-        else:
-            self.logger.warning('Error RPC_REPLY_POWER_PERIPH_BOARD_INFO', reply[0])
+        except (struct.error, IndexError, UnicodeDecodeError) as exc:
+            self._reject_reply('RPC_REPLY_POWER_PERIPH_BOARD_INFO', 'decode failed: %s' % exc)
 
     def _rpc_trigger_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_POWER_PERIPH_TRIGGER:
-            self.logger.warning('Error RPC_REPLY_POWER_PERIPH_TRIGGER', reply[0])
-        else:
-            tt = unpack_uint32_t(reply[1:])
+        if self._reply_is_valid('RPC_REPLY_POWER_PERIPH_TRIGGER', reply,
+                                self.RPC_REPLY_POWER_PERIPH_TRIGGER, self.TRIGGER_PAYLOAD_BYTES):
+            unpack_uint32_t(reply[1:])  # firmware echoes the trigger mask; value unused
 
     def _rpc_status_reply(self, reply):
-        if reply[0] == self.RPC_REPLY_POWER_PERIPH_STATUS:
-            self._unpack_status(reply[1:])
-        else:
-            self.logger.warning('Error RPC_REPLY_POWER_PERIPH_STATUS', reply[0])
+        if not self._reply_is_valid('RPC_REPLY_POWER_PERIPH_STATUS', reply,
+                                    self.RPC_REPLY_POWER_PERIPH_STATUS, self.STATUS_PAYLOAD_BYTES):
+            return
+        # Decode into temporaries and commit only a complete sample, so a short
+        # or garbled payload cannot leave a mix of old and new fields behind.
+        decoded = dict(self.status)
+        decoded['imu'] = dict(self.imu.status)
+        try:
+            self._unpack_status(reply[1:], unpack_to=decoded)
+        except (struct.error, IndexError, ValueError) as exc:
+            self._reject_reply('RPC_REPLY_POWER_PERIPH_STATUS', 'decode failed: %s' % exc)
+            return
+        self.imu.status.update(decoded.pop('imu'))
+        self.status.update(decoded)
 
     def _rpc_motor_sync_reply(self, reply):
-        if reply[0] != self.RPC_REPLY_MOTOR_SYNC:
-            self.logger.warning('Error RPC_REPLY_MOTOR_SYNC', reply[0])
-        else:
+        if self._reply_is_valid('RPC_REPLY_MOTOR_SYNC', reply,
+                                self.RPC_REPLY_MOTOR_SYNC, self.MOTOR_SYNC_PAYLOAD_BYTES):
             self._unpack_motor_sync_reply(reply[1:])
 
     def _unpack_motor_sync_reply(self, s):
@@ -1969,7 +2005,10 @@ class PowerPeriph_Protocol_P12(PowerPeriph_Protocol_P11):
 class PowerPeriph_Protocol_P14(PowerPeriph_Protocol_P12):
     """Advertise p14; its additive decoder lives in the shared aux mixin."""
 
-    pass
+    # sizeof(Pimu_Status) in hello_pimu2 Common.h for protocol p14: 68 byte IMU
+    # block plus 76 bytes of power fields, packed. Replies of any other length
+    # are rejected before decoding.
+    STATUS_PAYLOAD_BYTES = 144
 
 # ######################## POWER_PERIPH #################################
 
@@ -2108,3 +2147,5 @@ class PowerPeriphStatus(TypedDict):
     adapter_fault: bool
     adapter_connected: bool
     us_loop_time: float
+    rpc_reply_errors: int
+    rpc_reply_last_error: Any
