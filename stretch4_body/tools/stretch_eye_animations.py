@@ -3,6 +3,7 @@ from __future__ import print_function
 import sys
 import argparse
 import time
+import select
 import stretch4_body.core.hello_utils as hu
 from stretch4_body.subsystem.power_periph import PowerPeriphDefn
 
@@ -47,9 +48,15 @@ def main():
 
     print('Sending Left: {}, Right: {}, Intensity: {}, RGB: ({}, {}, {})'.format(left_idx, right_idx, intensity, r, g, b))
 
-    p.set_eye_animation(left_idx=left_idx, right_idx=right_idx, intensity=intensity, r=r, g=g, b=b)
-    p.push_command()
-    time.sleep(0.5)
+    print("\nPress 'q' followed by Enter to stop animation.")
+    while True:
+        p.set_eye_animation(left_idx=left_idx, right_idx=right_idx, intensity=intensity, r=r, g=g, b=b)
+        p.push_command()
+        rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+        if rlist:
+            line = sys.stdin.readline().strip()
+            if 'q' in line.lower():
+                break
 
 if __name__ == '__main__':
     try:
