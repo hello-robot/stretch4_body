@@ -12,6 +12,7 @@ A field this firmware does not report gives 'unknown', never 'warn'.
 Rules, thresholds and what to do when a check fires: docs/primer_power_diagnostics.md.
 """
 from collections import deque
+import re
 import time
 
 from stretch4_body.subsystem.power_periph import PowerPeriphDefn as _Defn
@@ -103,11 +104,18 @@ CHECK_TITLES = {
     'pimu_reboots': 'PIMU reboots',
     'pimu_timing': 'PIMU loop timing',
     'event_log': 'Event log',
+    'eoa_output': 'EOA output',
 }
 CHECK_IDS = tuple(CHECK_TITLES)
 
 _NOT_REPORTED = 'Not reported by this firmware (schema 1, older than v0.1.47p14).'
 _NO_SNAPSHOT = 'No diagnostics snapshot to judge yet.'
+
+
+def _firmware_build_number(version):
+    """50 for 'hello-pimu2.v0.1.50p14', None when it cannot be read."""
+    match = re.search(r'v0\.1\.(\d+)p', version or '')
+    return int(match.group(1)) if match else None
 
 
 def worst_level(levels):
@@ -231,7 +239,8 @@ class PowerHealthEvaluator:
             checks += [self._check_reboots(meta, diag), self._check_timing(diag),
                        self._check_event_log(st.get('power_event_log') or {})]
         else:
-            checks += [_check(i, LEVEL_UNKNOWN, _NO_SNAPSHOT) for i in CHECK_IDS[15:]]
+            checks += [_check(i, LEVEL_UNKNOWN, _NO_SNAPSHOT) for i in CHECK_IDS[15:18]]
+        checks.append(self._check_eoa_output(st, meta))
 
         counts = {LEVEL_OK: 0, LEVEL_WARN: 0, LEVEL_FAULT: 0, LEVEL_UNKNOWN: 0}
         for c in checks:
@@ -809,6 +818,47 @@ class PowerHealthEvaluator:
                           'all read before they went.' % dropped, values)
         return _check('event_log', LEVEL_OK, 'No event missed and no firmware drop.', values)
 
+    # Event 49 data0 when a runstop clear was refused by the 3 trips in 60 s lockout.
+    _EOA_REFUSED = 128
+
+    def _check_eoa_output(self, st, meta):
+        """
+        The end-of-arm output, from the 100 Hz status bit (firmware v0.1.50p14). A
+        tripped output is warn: the PIMU protection worked, the robot runs, only the
+        EOA tools are unpowered until the user clears the runstop or calls
+        restore_eoa_power(). It is fault when the last EOA event says the firmware
+        refused the runstop clear (3 trips in 60 s): likely a real short, and the
+        port stays off until someone acts.
+        """
+        cid = 'eoa_output'
+        version = _firmware_build_number(meta.get('firmware_version'))
+        if 'eoa_output_tripped' not in st or (version is not None and version < 50):
+            return _check(cid, LEVEL_UNKNOWN,
+                          'Not reported by this firmware (older than v0.1.50p14).')
+        periph = st.get('periph_power_state') or {}
+        tripped = bool(st.get('eoa_output_tripped'))
+        values = {'eoa_output_tripped': tripped, 'power_to_eoa': periph.get('power_to_eoa'),
+                  'current_eoa_a': st.get('current_eoa'),
+                  'runstop_event': st.get('runstop_event')}
+        if not tripped:
+            if periph.get('power_to_eoa') is False:
+                return _check(cid, LEVEL_OK,
+                              'EOA output off by request (not an overcurrent cut).', values)
+            return _check(cid, LEVEL_OK, 'EOA output on, no overcurrent cut.', values)
+        last = None
+        for event in (st.get('power_event_log') or {}).get('events') or []:
+            if event.get('event_id') == 49:
+                last = event
+        if last is not None and last.get('data0') == self._EOA_REFUSED:
+            values['trips_last_60s'] = last.get('data1')
+            return _check(cid, LEVEL_FAULT,
+                          'EOA output cut on overcurrent 3 times within 60 s, so clearing the '
+                          'runstop no longer restores it: look for a short on the EOA port, then '
+                          'call restore_eoa_power().', values)
+        return _check(cid, LEVEL_WARN,
+                      'EOA output cut on overcurrent (event 49): clear the runstop to restore '
+                      'it, or call restore_eoa_power().', values)
+
     @staticmethod
     def _summary(level, checks, counts, link):
         if level in (LEVEL_WARN, LEVEL_FAULT):
@@ -947,6 +997,14 @@ def describe_power_event(event):
         return 'dropped %s, %s' % (
             _bits(d0, ((1, 'host lidar-on'), (2, 'host AUX-on'), (4, 'wake AUX-on'))),
             {1: 'at the ACTIVE exit', 2: 'requested outside ACTIVE'}.get(d1, 'where %d' % d1))
+    if eid == 49:
+        if d0 & 0x0F:
+            return 'cut by %s at %.2f A' % (
+                _bits(d0, ((1, 'ADC filter'), (2, 'U44 comparator'))), d1 / 100.0)
+        what = {16: 'restored by runstop clear', 32: 'restored by host enable',
+                64: 'restored by ACTIVE entry',
+                128: 'runstop clear refused (3 trips in 60 s)'}.get(d0, 'code %d' % d0)
+        return '%s, %d trip%s in the last 60 s' % (what, d1, '' if d1 == 1 else 's')
     if eid == 50:
         return 'entered by %s' % {1: 'runstop hold', 2: 'host RPC 39'}.get(d0, d0)
     if eid == 51:

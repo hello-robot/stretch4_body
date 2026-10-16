@@ -574,6 +574,16 @@ class PowerPeriphClient(SubsystemClient):
         """
         self._queue_command(subsystem="power_periph", command="release_lidar_hold")
 
+    def restore_eoa_power(self):
+        """
+        Power the end-of-arm port again after the PIMU cut it on an overcurrent
+        (status['eoa_output_tripped'], firmware v0.1.50p14). Clearing the runstop
+        also restores it, unless the port tripped 3 times within 60 s. Only the EOA
+        output, and only this enable; other actuator power still goes through
+        REx_actuator_control.
+        """
+        self._queue_command(subsystem="power_periph", command="restore_eoa_power")
+
     def trigger_motor_sync(self):
         """ Legacy function. No longer needed."""
         pass

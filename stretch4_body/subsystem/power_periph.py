@@ -326,6 +326,7 @@ class PowerPeriphDefn():
         46: 'adapter_disagreement',
         47: 'esp_shutdown_cmd_delivered',
         48: 'esp_trigger_dropped',
+        49: 'eoa_trip',
         50: 'easter_egg_entered',
         51: 'easter_egg_left',
     }
@@ -388,6 +389,10 @@ class PowerPeriphDefn():
         47: 'The ESP proved it consumed UART_PWR_SHUTDOWN; data0 is the sends, data1 the ms since the first.',
         48: ('An ESP rail-on request was dropped outside ACTIVE; data0 is what (1 host lidar-on, 2 host AUX-on, '
              '4 wake AUX-on), data1 is where (1 at the ACTIVE exit, 2 requested outside ACTIVE).'),
+        49: ('The end-of-arm output was cut on an overcurrent, came back, or a runstop clear was refused '
+             '(firmware v0.1.50p14). A cut: data0 is the source (1 ADC filter, 2 U44 comparator), data1 the '
+             'EOA current in 10 mA. Back on: data0 is 16 runstop cleared, 32 host enable, 64 ACTIVE entry; '
+             '128 a runstop clear refused after 3 trips in 60 s; data1 is the trips in the last 60 s.'),
         50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host RPC 39.',
         51: 'Easter egg mode left; data0 is 2 for a host RPC 39, 3 for a runstop entry.',
     }
@@ -473,6 +478,7 @@ class PowerPeriphDefn():
     STATE_ADAPTER_CONNECTED = (1<<18)
     STATE_ADAPTER_FAULT = (1<<19)
     STATE_EASTER_EGG_MODE = (1 << 20)
+    STATE_EOA_OUTPUT_TRIPPED = (1 << 21)  # firmware v0.1.50p14; always 0 on older builds
 
     TRIGGER_BOARD_RESET = 1
     TRIGGER_RUNSTOP_RESET = 2
@@ -636,6 +642,17 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         """
         self._trigger = self._trigger | self.TRIGGER_RUNSTOP_ON
         self._dirty_trigger = True
+
+    def restore_eoa_power(self):
+        """
+        Power the end-of-arm port again after the PIMU cut it on an overcurrent
+        (status['eoa_output_tripped'], firmware v0.1.50p14). Goes out on the next
+        push_command as actuator_control('eoa', True), the existing RPC_ACTUATOR_ENABLE.
+        Clearing the runstop does the same in the firmware, unless the port tripped 3
+        times within 60 s; this works in that case too. Remove the cause first: a real
+        short trips it again.
+        """
+        self._dirty_eoa_restore = True
 
     def set_easter_egg_mode(self, on=True):
         """
@@ -1679,6 +1696,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._dirty_eye_animation = False
         self._dirty_easter_egg_mode = False
         self._easter_egg_mode_cmd = 0
+        self._dirty_eoa_restore = False
         self._eye_animation_left = 0
         self._eye_animation_right = 0
         self._eye_animation_intensity = 255
@@ -1699,6 +1717,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'bump_event_cnt': 0,
                        'fan_on': False, 'buzzer_on': False, 'low_soc_alert': False,
                        'high_current_alert': False, 'high_current_eoa_alert': False,
+                       'eoa_output_tripped': False,
                        'adapter_voltage_present': False, 'boot_detected': False, 'imu': self.imu.status, 'debug': 0,
                        'state': 0, 'trace_on': 0,
                        'motor_sync_rate': 0, 'motor_sync_cnt': 0, 'motor_sync_queues': 0, 'motor_sync_drop': 0,
@@ -1833,6 +1852,10 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
             self._eye_animation_g = 255
             self._eye_animation_b = 255
             self._dirty_eye_animation = False
+
+        if self._dirty_eoa_restore:
+            self._dirty_eoa_restore = False
+            success = success and bool(self.actuator_control('eoa', True, blocking=blocking))
 
         if self._dirty_easter_egg_mode:
             payload[0] = self.RPC_SET_EASTER_EGG_MODE
@@ -2041,6 +2064,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         unpack_to['low_soc_alert'] = (unpack_to['state'] & self.STATE_LOW_SOC_ALERT) != 0
         unpack_to['high_current_alert'] = (unpack_to['state'] & self.STATE_HIGH_CURRENT_ALERT) != 0
         unpack_to['high_current_eoa_alert'] = (unpack_to['state'] & self.STATE_HIGH_CURRENT_EOA_ALERT) != 0
+        unpack_to['eoa_output_tripped'] = (unpack_to['state'] & self.STATE_EOA_OUTPUT_TRIPPED) != 0
         if self.board_info['hardware_id'] > 0:
             unpack_to['adapter_voltage_present'] = (unpack_to['state'] & self.STATE_ADAPTER_VOLTAGE_PRESENT) != 0
             unpack_to['boot_detected'] = (unpack_to['state'] & self.STATE_BOOT_DETECTED) != 0
@@ -2390,6 +2414,7 @@ class PowerPeriphStatus(TypedDict):
     low_soc_alert: bool
     high_current_alert: bool
     high_current_eoa_alert: bool
+    eoa_output_tripped: bool
     adapter_voltage_present: bool
     boot_detected: bool
     imu: IMUBaseStatus

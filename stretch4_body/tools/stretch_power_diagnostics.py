@@ -242,6 +242,7 @@ def key_values(pp):
         _fmt(d.get('voltage_5v0_mv'), ' V', 0.001), _fmt(d.get('voltage_36v0_mv'), ' V', 0.001, 1),
         _fmt(d.get('voltage_12v0_mv'), ' V', 0.001, 1),
         _fmt(d.get('voltage_20v0_aux_mv'), ' V', 0.001, 1))))
+    lines.append(('EOA output', eoa_output_text(pp)))
     if d.get('shutdown_wait_last_end') is not None:
         lines.append(('NUC shutdown wait', '%s, last end %s (%s), %s waits since boot, cap %s' % (
             'active %s' % _fmt(d.get('shutdown_wait_elapsed_ms'), ' s', 0.001, 1)
@@ -259,6 +260,19 @@ def key_values(pp):
         ', '.join(d.get('reset_causes') or []) or 'n/a', d.get('loop_time_max_us'),
         d.get('loop_overrun_count'), _fmt(d.get('pimu_temp_c'), ' C', digits=1))))
     return lines
+
+
+def eoa_output_text(pp):
+    """The EOA port from the 100 Hz status: on, off by request, or cut on overcurrent."""
+    periph = pp.get('periph_power_state') or {}
+    on = periph.get('power_to_eoa')
+    if pp.get('eoa_output_tripped'):
+        state = 'tripped (overcurrent cut; clear the runstop or restore_eoa_power())'
+    elif 'eoa_output_tripped' not in pp:
+        state = 'on' if on else ('off' if on is False else 'n/a')
+    else:
+        state = 'on' if on else ('off by request' if on is False else 'n/a')
+    return '%s, %s' % (state, _fmt(pp.get('current_eoa'), ' A'))
 
 
 def recent_events(pp, count):

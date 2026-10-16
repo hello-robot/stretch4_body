@@ -58,14 +58,14 @@ def snapshot(schema=2, adc_reinit=(0, 0), **fields):
 
 
 def status(schema=2, meta=None, log=None, rpc_rejected=0, rpc_reply_errors=0,
-           adc_reinit=(0, 0), **fields):
+           adc_reinit=(0, 0), eoa_tripped=False, power_to_eoa=True, **fields):
     diag_meta = {
         'available': True, 'sample_seq': 1, 'sample_age_s': 0.1,
         'request_errors': 0, 'request_timeouts': 0, 'schema_error': None,
         'transport_error': None, 'bms_freshness': 'fresh', 'esp_freshness': 'fresh',
         'bms_age_s': 0.5, 'esp_age_s': 0.1, 'bms_freshness_at_sample': 'fresh',
         'esp_freshness_at_sample': 'fresh', 'pimu_boot_count_observed': 0,
-        'firmware_version': 'hello-pimu2.v0.1.48p14', 'protocol_version': 'p14',
+        'firmware_version': 'hello-pimu2.v0.1.50p14', 'protocol_version': 'p14',
     }
     diag_meta.update(meta or {})
     event_log = {
@@ -81,6 +81,10 @@ def status(schema=2, meta=None, log=None, rpc_rejected=0, rpc_reply_errors=0,
         'rpc_rejected': {'count': rpc_rejected, 'last_request_id': 33 if rpc_rejected else None,
                          'last_reason': 1 if rpc_rejected else None, 'last_length': None},
         'rpc_reply_errors': rpc_reply_errors,
+        'eoa_output_tripped': eoa_tripped,
+        'periph_power_state': {'power_to_eoa': power_to_eoa},
+        'current_eoa': 0.0 if eoa_tripped else 0.35,
+        'runstop_event': eoa_tripped,
     }
 
 
@@ -142,8 +146,9 @@ def test_no_sample_yet_is_unknown_everywhere():
     st['power_diagnostics'] = {'_valid': False, '_decode_error': None, 'schema_version': None}
     health = evaluate(st)
     assert health['level'] == 'unknown'
+    # rpc_rejections and eoa_output come from the 100 Hz status, not the snapshot.
     assert all(c['level'] == 'unknown' for c in health['checks']
-               if c['id'] not in ('rpc_rejections',))
+               if c['id'] not in ('rpc_rejections', 'eoa_output'))
 
 
 def test_p13_firmware_says_so():
@@ -190,7 +195,7 @@ def test_unsupported_schema_warns():
 def test_link_values_carry_schema_and_version():
     values = checks(evaluate(status()))['diagnostics_link']['values']
     assert values['schema_version'] == 2
-    assert values['firmware_version'] == 'hello-pimu2.v0.1.48p14'
+    assert values['firmware_version'] == 'hello-pimu2.v0.1.50p14'
     assert values['sample_age_s'] == 0.1
 
 
@@ -209,7 +214,9 @@ def test_schema1_reports_unknown_not_warn():
     assert health['level'] == 'ok'
     assert c['diagnostics_link']['level'] == 'ok'
     assert 'schema 1' in c['diagnostics_link']['message']
-    assert health['counts']['unknown'] == len(SCHEMA2_CHECKS)
+    # The EOA output bit is also newer than this firmware (v0.1.50p14).
+    assert c['eoa_output']['level'] == 'unknown'
+    assert health['counts']['unknown'] == len(SCHEMA2_CHECKS) + 1
 
 
 # --- BMS ---------------------------------------------------------------------------------
@@ -599,7 +606,7 @@ def test_health_line_for_system_check():
     assert health_line(None) is None
     assert health_line({'level': 'unknown'}) is None
     level, text = health_line(evaluate(status()))
-    assert level == 'ok' and text.startswith('P14 power health: All 18 judged checks ok')
+    assert level == 'ok' and text.startswith('P14 power health: All 19 judged checks ok')
     assert 'stretch_power_diagnostics' not in text
     level, text = health_line(evaluate(status(adapter_presence_source=2)))
     assert level == 'warn'
@@ -609,3 +616,72 @@ def test_health_line_for_system_check():
 def test_event_48_esp_trigger_dropped_is_named_and_explained():
     assert PowerPeriphAux.POWER_EVENT_NAMES[48] == 'esp_trigger_dropped'
     assert 'host lidar-on' in PowerPeriphAux.POWER_EVENT_EXPLANATIONS[48]
+
+
+# --- EOA output (firmware v0.1.50p14) -------------------------------------------------------
+
+def test_eoa_output_on_is_ok():
+    c = checks(evaluate(status()))['eoa_output']
+    assert c['level'] == 'ok'
+    assert c['values']['eoa_output_tripped'] is False
+
+
+def test_eoa_output_off_by_request_is_ok():
+    c = checks(evaluate(status(power_to_eoa=False)))['eoa_output']
+    assert c['level'] == 'ok'
+    assert 'by request' in c['message']
+
+
+def test_eoa_output_tripped_is_warn_and_says_how_to_recover():
+    health = evaluate(status(eoa_tripped=True, power_to_eoa=False))
+    c = checks(health)['eoa_output']
+    assert c['level'] == 'warn'
+    assert 'clear the runstop' in c['message'] and 'restore_eoa_power()' in c['message']
+    assert health['summary'] == 'warn: eoa_output.'
+
+
+def test_eoa_output_refused_clear_is_fault():
+    events = [event(49, 1, 845), event(49, 16, 1), event(49, 2, 1167), event(49, 16, 2),
+              event(49, 1, 900), event(49, 128, 3)]
+    st = status(eoa_tripped=True, power_to_eoa=False, log={'events': events})
+    c = checks(evaluate(st))['eoa_output']
+    assert c['level'] == 'fault'
+    assert c['values']['trips_last_60s'] == 3
+    assert 'short' in c['message']
+
+
+def test_eoa_output_tripped_after_a_later_trip_is_warn_again():
+    # A host enable after the refusal, then a new cut: the last event decides.
+    events = [event(49, 128, 3), event(49, 32, 3), event(49, 1, 850)]
+    st = status(eoa_tripped=True, power_to_eoa=False, log={'events': events})
+    assert checks(evaluate(st))['eoa_output']['level'] == 'warn'
+
+
+@pytest.mark.parametrize('version', ['hello-pimu2.v0.1.49p14', 'hello-pimu2.v0.1.23p14'])
+def test_eoa_output_unknown_before_v0_1_50(version):
+    c = checks(evaluate(status(meta={'firmware_version': version})))['eoa_output']
+    assert c['level'] == 'unknown'
+    assert 'v0.1.50p14' in c['message']
+
+
+def test_eoa_output_unknown_without_the_status_key():
+    st = status()
+    del st['eoa_output_tripped']
+    assert checks(evaluate(st))['eoa_output']['level'] == 'unknown'
+
+
+@pytest.mark.parametrize('ev,text', [
+    (event(49, 1, 845), 'cut by ADC filter at 8.45 A'),
+    (event(49, 3, 1167), 'cut by ADC filter + U44 comparator at 11.67 A'),
+    (event(49, 16, 1), 'restored by runstop clear, 1 trip in the last 60 s'),
+    (event(49, 32, 3), 'restored by host enable, 3 trips in the last 60 s'),
+    (event(49, 64, 0), 'restored by ACTIVE entry, 0 trips in the last 60 s'),
+    (event(49, 128, 3), 'runstop clear refused (3 trips in 60 s), 3 trips in the last 60 s'),
+])
+def test_describe_event_49(ev, text):
+    assert describe_power_event(ev) == text
+
+
+def test_event_49_eoa_trip_is_named_and_explained():
+    assert PowerPeriphAux.POWER_EVENT_NAMES[49] == 'eoa_trip'
+    assert '10 mA' in PowerPeriphAux.POWER_EVENT_EXPLANATIONS[49]

@@ -70,7 +70,8 @@ def test_report_has_lamp_every_check_values_and_events():
     st = status(**REALISTIC, log={'events': [BOOT, LENGTH_ERROR]})
     text = cli.render_report(st, evaluate(st), 'live', events=10, now_wall=T0, robot='4056')
     assert text.startswith('Stretch power diagnostics, 4056, live,')
-    assert 'PIMU firmware hello-pimu2.v0.1.48p14 (p14), diagnostics schema 2' in text
+    assert 'PIMU firmware hello-pimu2.v0.1.50p14 (p14), diagnostics schema 2' in text
+    assert 'EOA output         on, 0.35 A' in text
     assert 'Overall [ OK  ]' in text
     for check_id in CHECK_IDS:
         assert CHECK_TITLES[check_id] in text
@@ -351,3 +352,19 @@ def test_cli_wrapper_and_entry_point():
     pyproject = (Path(__file__).parent.parent / 'pyproject.toml').read_text()
     assert ('stretch_power_diagnostics = "stretch4_body._cli_wrapper:stretch_power_diagnostics"'
             in pyproject)
+
+
+def test_report_shows_a_tripped_eoa_output():
+    st = status(**REALISTIC, eoa_tripped=True, power_to_eoa=False)
+    text = cli.render_report(st, evaluate(st), 'live', events=0, now_wall=T0)
+    assert 'Overall [WARN ] warn: eoa_output.' in text
+    assert ('EOA output         tripped (overcurrent cut; clear the runstop or '
+            'restore_eoa_power()), 0.00 A') in text
+    assert cli.report_dict(st, evaluate(st), 'live')['key_values']['EOA output'].startswith('tripped')
+
+
+def test_eoa_output_text_off_by_request_and_older_status():
+    assert cli.eoa_output_text({'eoa_output_tripped': False,
+                                'periph_power_state': {'power_to_eoa': False},
+                                'current_eoa': 0.0}) == 'off by request, 0.00 A'
+    assert cli.eoa_output_text({'periph_power_state': {'power_to_eoa': True}}) == 'on, n/a'

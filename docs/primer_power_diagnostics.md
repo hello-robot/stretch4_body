@@ -117,6 +117,7 @@ Everything is under `status['power_periph']`. `RobotClient` also exposes the sam
 | `rpc_rejected` | dict | `count`, `last_request_id`, `last_reason`, `last_length` of RPC 38 replies: requests the firmware did not know |
 | `rpc_reply_errors` | int | PIMU replies the body refused to decode (wrong length or id) since the server started |
 | `rpc_reply_last_error` | str or None | What was wrong with the last refused reply |
+| `eoa_output_tripped` | bool | Status bit 21 (firmware `v0.1.50p14`): the PIMU cut the end-of-arm output on an overcurrent and it is still off. Clears when EOA_EN goes high again (runstop clear, `restore_eoa_power()`, ACTIVE entry). Always False on older firmware |
 
 ### 4.2 `power_diagnostics`
 
@@ -243,7 +244,7 @@ Raw firmware units are kept (`_mv`, `_ma`, `_ms`); convenience floats in V, A an
     'summary': 'warn: adc_banks.',
     'evaluated_wall_time_s': 1792178405.2,
     'sample_seq': 3612,                # power_diagnostics_meta['sample_seq'] judged
-    'counts': {'ok': 17, 'warn': 1, 'fault': 0, 'unknown': 0},
+    'counts': {'ok': 18, 'warn': 1, 'fault': 0, 'unknown': 0},
     'checks': [
         {'id': 'adc_banks', 'level': 'warn',
          'message': "1 ADC bank rebuild in the last minute: this board's ADC sequencer is stalling.",
@@ -313,6 +314,9 @@ Thresholds live in one place, `PowerHealthThresholds` in `stretch4_body/subsyste
 | `event_log` | The host missed events (coverage gap) | warn | Events between the two sequences are lost to the host |
 | | Firmware ring overwrote entries the host had already read | ok | Normal on a busy robot |
 | | Not read yet | unknown | |
+| `eoa_output` (.50) | `eoa_output_tripped` set | warn | The PIMU cut the EOA port on an overcurrent. Clear the runstop to restore it, or call `restore_eoa_power()` |
+| | Tripped, and the last event 49 is a refused runstop clear (3 trips in 60 s) | fault | Likely a real short. Find it, then `restore_eoa_power()` |
+| | Firmware older than `v0.1.50p14`, or no status bit | unknown | |
 
 Why these numbers:
 
@@ -322,6 +326,7 @@ Why these numbers:
 * **ESP frame rejects 60 a minute.** The PIMU polls at 50 Hz, so one reject a second means most frames of some kind are refused.
 * **ADC 5 s.** A bank is marked stale after 100 ms without a sweep and rebuilt after 1 s, so 5 s stale means several rebuilds failed.
 * **VBAT 500 mV and 2 V.** The INA228 sits after the BMS FETs, fuse, harness and R13, the BMS before them, and the two readings are up to 1 s apart. At 10 A through about 30 mOhm of path plus the BMS's own error, 500 mV is the most an honest pair should differ. 2 V is beyond any drop the robot's current can make. A mismatch must hold for 3 samples (1.5 s) to count, which rejects load steps. These values need confirming on a bench robot with a DMM.
+* **EOA output warn, lockout fault.** A cut is the protection working: the robot keeps running and only the end-of-arm tools are unpowered until someone clears the runstop, so it grades like the other recoverable outcomes (`shutdown_wait` at the cap). Three cuts in 60 s means the firmware has stopped restoring it on a clear and something on the port is likely shorted, which needs a person before the port can work again. This check reads the 100 Hz status, so it is judged without a snapshot too.
 * **Shutdown wait 80 percent.** Gives about 18 s of warning before the 90 s cap cuts the NUC.
 
 ## 6. The Event Log
@@ -390,6 +395,7 @@ Each event has `sequence`, `timestamp_ms`, `timestamp_s`, `event_id`, `event_nam
 | 46 | `adapter_disagreement` | Old, new mask (1 ESP only, 2 voltage only) |
 | 47 | `esp_shutdown_cmd_delivered` | Sends, ms since the first. Information only |
 | 48 | `esp_trigger_dropped` | Dropped mask (1 host lidar-on, 2 host AUX-on, 4 wake AUX-on), where (1 at the ACTIVE exit, 2 requested outside ACTIVE). Source esp, firmware v0.1.49p14 and later. Information only |
+| 49 | `eoa_trip` | Cut: source bits (1 ADC filter, 2 U44 comparator), EOA current in 10 mA. Back on: 16 runstop cleared, 32 host enable, 64 ACTIVE entry; 128 runstop clear refused (3 trips in 60 s); data1 the trips in the last 60 s. Source peripheral, firmware v0.1.50p14 and later |
 | 50 | `easter_egg_entered` | 1 runstop hold, 2 host RPC 39 |
 | 51 | `easter_egg_left` | 2 host RPC 39, 3 runstop |
 
@@ -425,9 +431,9 @@ A healthy robot:
 
 ```text
 Stretch power diagnostics, stretch-se4-4056, live from stretch_body_server, 2026-10-16 14:20:05
-PIMU firmware hello-pimu2.v0.1.48p14 (p14), diagnostics schema 2, sample 0.1 s old
+PIMU firmware hello-pimu2.v0.1.50p14 (p14), diagnostics schema 2, sample 0.1 s old
 
-Overall [ OK  ] All 18 judged checks ok.
+Overall [ OK  ] All 19 judged checks ok.
 
   [ OK  ] Diagnostics link   Diagnostics arriving at 2 Hz on schema 2, last sample 0.1 s old.
   [ OK  ] Firmware build     Release firmware build.
@@ -447,6 +453,7 @@ Overall [ OK  ] All 18 judged checks ok.
   [ OK  ] PIMU reboots       No PIMU reboot since the server started; up 1.5 h, reset cause power_on.
   [ OK  ] PIMU loop timing   No PIMU control-loop overrun in the last minute; max handler time 410 us.
   [ OK  ] Event log          No event missed and no firmware drop.
+  [ OK  ] EOA output         EOA output on, no overcurrent cut.
 
 Key values
   Power state        STATE_ACTIVE (0), last transition boot_button (1)
@@ -455,6 +462,7 @@ Key values
   Adapter            present no, ESP connected no, source adc (0), agreement agree (0)
   Charger            command off, expected active no, charger current 0.00 A, charge stop idle (0x10, policy on)
   Rails              NUC 19.7 V 2.10 A, 5V0 5.04 V, 36VDD 35.4 V, 12V0 12.0 V, 20V0 aux 19.8 V
+  EOA output         on, 0.35 A
   NUC shutdown wait  idle, last end none_since_boot (255), 0 waits since boot, cap 90 s
   Shutdown command   wait_sd_ack no, 0 sends
   ADC                stale mask 0x0, rebuilds since boot ADC0 0, ADC1 0
@@ -469,7 +477,7 @@ A board whose ADC0 sequencer stalled ten seconds ago:
 
 ```text
 Stretch power diagnostics, stretch-se4-4056, live from stretch_body_server, 2026-10-16 14:20:05
-PIMU firmware hello-pimu2.v0.1.48p14 (p14), diagnostics schema 2, sample 0.1 s old
+PIMU firmware hello-pimu2.v0.1.50p14 (p14), diagnostics schema 2, sample 0.1 s old
 
 Overall [WARN ] warn: adc_banks.
 
@@ -491,6 +499,7 @@ Overall [WARN ] warn: adc_banks.
   [ OK  ] PIMU reboots       No PIMU reboot since the server started; up 1.5 h, reset cause power_on.
   [ OK  ] PIMU loop timing   No PIMU control-loop overrun in the last minute; max handler time 410 us.
   [ OK  ] Event log          No event missed and no firmware drop.
+  [ OK  ] EOA output         EOA output on, no overcurrent cut.
 
 Key values
   Power state        STATE_ACTIVE (0), last transition boot_button (1)
@@ -499,6 +508,7 @@ Key values
   Adapter            present no, ESP connected no, source adc (0), agreement agree (0)
   Charger            command off, expected active no, charger current 0.00 A, charge stop idle (0x10, policy on)
   Rails              NUC 19.7 V 2.10 A, 5V0 5.04 V, 36VDD 35.4 V, 12V0 12.0 V, 20V0 aux 19.8 V
+  EOA output         on, 0.35 A
   NUC shutdown wait  idle, last end none_since_boot (255), 0 waits since boot, cap 90 s
   Shutdown command   wait_sd_ack no, 0 sends
   ADC                stale mask 0x0, rebuilds since boot ADC0 1, ADC1 0
@@ -525,7 +535,7 @@ stretch_power_diagnostics --from-log status_20261016_142003.json --at -20 --json
 
 ### 7.2 In `stretch_system_check`
 
-The Power & Battery section of `stretch_system_check` prints one line from `power_health`, for example `[PASS] P14 power health: All 18 judged checks ok.` or `[WARN] P14 power health: warn: adc_banks. Details: stretch_power_diagnostics`. A fault fails the section. The line is absent when the server publishes no `power_health`.
+The Power & Battery section of `stretch_system_check` prints one line from `power_health`, for example `[PASS] P14 power health: All 19 judged checks ok.` or `[WARN] P14 power health: warn: adc_banks. Details: stretch_power_diagnostics`. A fault fails the section. The line is absent when the server publishes no `power_health`.
 
 ## 8. Status Log Retention
 
@@ -596,6 +606,20 @@ Copy the logs soon after the incident: with about an hour of history, a robot le
 | `v0.1.47p14` or later | older than `c11d9fe` | Schema 1 requested and served; no `power_health` (the CLI computes it locally) |
 
 `v0.1.48p14` changes only how long `wait_sd_ack` stays set; the snapshot layout is the same.
+
+`v0.1.50p14` adds status bit 21 (`eoa_output_tripped`) and event 49 (`eoa_trip`); the snapshot layout is the same. With older firmware the `eoa_output` check is `unknown`. `restore_eoa_power()` (on `PowerPeriph` and `RobotClient`) sends the existing RPC_ACTUATOR_ENABLE for the EOA (actuator 6) on the next push; it works with any firmware, no new RPC.
+
+### 9.1 EOA overcurrent cut (`v0.1.50p14`)
+
+The PIMU cuts the end-of-arm output (EOA_EN low) and raises a `RUNSTOP_HIGH_CURRENT_EOA` runstop when the EOA current is over `high_current_eoa_alert` (8 A by default) on two fresh ADC readings in a row, 4 ms apart (the cut lands 4 to 8 ms after the onset), or at once when the U44 comparator trips (about 11.37 A). Before `v0.1.50p14` one reading was enough, so plugging a tool with inrush into the EOA port could trip it.
+
+The port comes back when:
+
+* the runstop that the cut raised is cleared (button hold or `clear_runstop()`), in ACTIVE, unless the port tripped 3 times in the last 60 s;
+* the host calls `restore_eoa_power()` (works during the lockout too);
+* the robot enters ACTIVE again (wake or power-on).
+
+Each cut, restore and refused clear is event 49. A host or low-SoC runstop raised on top of the cut owns the clear: clearing it does not restore the port.
 
 ## 10. Where the Code Is
 
