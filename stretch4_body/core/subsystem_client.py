@@ -105,6 +105,8 @@ class SubsystemClient(Device):
             self.status['server']=status_server['server']
             self.status['routines']=status_server['routines']
             self.status['safety_layer']=status_server['safety_layer']
+            if 'firmware_versions' in status_server:
+                self.status['firmware_versions']=status_server['firmware_versions']
 
             if self.name in status_server:
                 self.status.update(status_server[self.name]) #eg, robot.status['power_periph']
