@@ -252,6 +252,20 @@ class PowerPeriphDefn():
 
     RPC_SET_EYE_ANIMATION = 29
     RPC_REPLY_SET_EYE_ANIMATION = 30
+    # RPC 33 frame mode (firmware v0.1.52p14): byte 0 = EYE_CMD_FRAME, then u16 sequence,
+    # u16 hold_ms, brightness left and right, 20 RGB pixels (left ring 0..9, right 0..9,
+    # index 0 just clockwise of 12 o'clock, clockwise). 68 bytes with the id, two push
+    # frames. Reply 34: status u8, last applied sequence u16.
+    RPC_SET_EYE_PER_EYE = 33
+    RPC_REPLY_SET_EYE_PER_EYE = 34
+    EYE_CMD_FRAME = 0x80
+    EYE_FRAME_PIXELS_PER_RING = 10
+    EYE_FRAME_HOLD_MS_MIN = 50
+    EYE_FRAME_HOLD_MS_MAX = 2000
+    EYE_FRAME_REQUEST_BYTES = 68
+    EYE_FRAME_REPLY_PAYLOAD_BYTES = 3
+    EYE_FRAME_STATUS_NAMES = {0: 'ok', 1: 'bad length', 3: 'hold out of range'}
+    EYE_FRAME_MIN_FIRMWARE = 'hello-pimu2.v0.1.52p14'
     RPC_GET_POWER_DIAGNOSTICS = 31
     RPC_REPLY_POWER_DIAGNOSTICS = 32
     RPC_REPLY_REJECTED = 38
@@ -750,6 +764,51 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._eye_animation_g = g
         self._eye_animation_b = b
         self._dirty_eye_animation = True
+
+    def eye_frame_supported(self):
+        """True when the board's firmware has RPC 33 frame mode (v0.1.52p14 and later)."""
+        from stretch4_body.core.factory.firmware_version import FirmwareVersion
+        fw = FirmwareVersion(self.board_info.get('firmware_version') or '')
+        return fw.valid and not fw < FirmwareVersion(self.EYE_FRAME_MIN_FIRMWARE)
+
+    def set_eye_frame(self, left, right, brightness=(255, 255), hold_ms=500, sequence=None):
+        """
+        Show one per-pixel frame on both eye rings (RPC 33 frame mode, firmware
+        v0.1.52p14 and later). left and right are 10 (r, g, b) tuples, 0..255, in ring
+        order: index 0 just clockwise of 12 o'clock seen from the front, then clockwise.
+        brightness scales each ring (255 passes the values through). hold_ms (50..2000)
+        is how long the board keeps the frame without a newer one before the rings go
+        back to their animation; stream faster than that to keep frame mode up.
+        set_eye_animation (RPC 29) ends frame mode on the board.
+
+        Goes out on the next push_command; a newer frame queued before then replaces
+        this one. Returns the frame's sequence number (counts from 1 unless given).
+        status['eye_frame'] has the board's answer: last_status, applied_sequence.
+        status['eye_frame']['supported'] is set from the firmware version at startup; on
+        older firmware nothing is sent.
+        """
+        rings = (left, right)
+        rgb = []
+        for ring in rings:
+            if len(ring) != self.EYE_FRAME_PIXELS_PER_RING:
+                raise ValueError('eye frame: %d pixels per ring, got %d' % (self.EYE_FRAME_PIXELS_PER_RING, len(ring)))
+            for px in ring:
+                if len(px) != 3 or any((not isinstance(v, (int, np.integer))) or v < 0 or v > 255 for v in px):
+                    raise ValueError('eye frame: pixel must be three ints 0..255, got %r' % (px,))
+                rgb.extend(int(v) for v in px)
+        if len(brightness) != 2 or any(not 0 <= int(b) <= 255 for b in brightness):
+            raise ValueError('eye frame: brightness is (left, right), 0..255, got %r' % (brightness,))
+        if not self.EYE_FRAME_HOLD_MS_MIN <= int(hold_ms) <= self.EYE_FRAME_HOLD_MS_MAX:
+            raise ValueError('eye frame: hold_ms %d outside %d..%d' % (
+                hold_ms, self.EYE_FRAME_HOLD_MS_MIN, self.EYE_FRAME_HOLD_MS_MAX))
+        if sequence is None:
+            self._eye_frame_sequence = self._eye_frame_sequence % 0xFFFF + 1
+            sequence = self._eye_frame_sequence
+        elif not 0 <= int(sequence) <= 0xFFFF:
+            raise ValueError('eye frame: sequence is u16, got %r' % (sequence,))
+        self._eye_frame = struct.pack('<BBHHBB60B', self.RPC_SET_EYE_PER_EYE, self.EYE_CMD_FRAME,
+                                      int(sequence), int(hold_ms), int(brightness[0]), int(brightness[1]), *rgb)
+        return int(sequence)
 
     def actuator_control(self, motor_type, enable, blocking=True):
         mt = [None, 'lift', 'omni-0', 'omni-1', 'omni-2', 'arm', 'eoa']
@@ -1700,6 +1759,8 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._dirty_trigger = False
         self._dirty_eye_animation = False
         self._dirty_eoa_restore = False
+        self._eye_frame = None
+        self._eye_frame_sequence = 0
         self._eye_animation_left = 0
         self._eye_animation_right = 0
         self._eye_animation_intensity = 255
@@ -1731,6 +1792,8 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
                        'us_loop_time':0, 'easter_egg_mode': 0,
+                       'eye_frame': {'supported': None, 'sent': 0, 'last_status': None,
+                                     'applied_sequence': None},
                        'rpc_reply_errors': 0, 'rpc_reply_last_error': None,
                        'status_aux': self.status_aux,
                        'power_diagnostics': self.power_diagnostics,
@@ -1855,6 +1918,16 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
             self._eye_animation_g = 255
             self._eye_animation_b = 255
             self._dirty_eye_animation = False
+
+        if self._eye_frame is not None:
+            frame, self._eye_frame = self._eye_frame, None
+            supported = self.eye_frame_supported()
+            self.status['eye_frame']['supported'] = supported
+            if supported:
+                payload[:len(frame)] = arr.array('B', frame)
+                self.status['eye_frame']['sent'] += 1
+                success = success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:len(frame)],
+                                                   rpc_callback=self._rpc_eye_frame_reply) is not None
 
         if self._dirty_eoa_restore:
             self._dirty_eoa_restore = False
@@ -1986,6 +2059,8 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
             self.board_info['firmware_version']=self.board_info['firmware_version']+str10
         self.board_info['protocol_version'] = self.board_info['firmware_version'][
                                                   self.board_info['firmware_version'].rfind('p'):]
+        # Known from the version at startup, so a client can read it before sending a frame.
+        self.status['eye_frame']['supported'] = self.eye_frame_supported()
         return sidx
 
 
@@ -2139,6 +2214,25 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
 
     def _rpc_eye_animation_reply(self, reply):
         self._reply_is_valid('RPC_REPLY_SET_EYE_ANIMATION', reply, self.RPC_REPLY_SET_EYE_ANIMATION)
+
+    def _rpc_eye_frame_reply(self, reply):
+        if not self._reply_is_valid('RPC_REPLY_SET_EYE_PER_EYE', reply, self.RPC_REPLY_SET_EYE_PER_EYE):
+            return
+        if len(reply) == 2:
+            # A per-eye reply: firmware without frame mode read the request as per-eye.
+            self.status['eye_frame']['supported'] = False
+            self.status['eye_frame']['last_status'] = reply[1]
+            return
+        if len(reply) - 1 != self.EYE_FRAME_REPLY_PAYLOAD_BYTES:
+            self._reject_reply('RPC_REPLY_SET_EYE_PER_EYE', 'payload %d bytes, expected %d' % (
+                len(reply) - 1, self.EYE_FRAME_REPLY_PAYLOAD_BYTES))
+            return
+        status, applied = struct.unpack('<BH', bytes(reply[1:4]))
+        self.status['eye_frame']['last_status'] = status
+        self.status['eye_frame']['applied_sequence'] = applied
+        if status != 0:
+            self.logger.warning('PIMU refused an eye frame: %s (status %d)' % (
+                self.EYE_FRAME_STATUS_NAMES.get(status, 'unknown'), status))
 
     def _rpc_imu_config_reply(self, reply):
         self._reply_is_valid('RPC_SET_IMU_CONFIG_REPLY', reply, self.RPC_SET_IMU_CONFIG_REPLY)
@@ -2440,3 +2534,4 @@ class PowerPeriphStatus(TypedDict):
     rpc_reply_last_error: Any
     rpc_rejected: PowerPeriphRpcRejectedStatus
     easter_egg_mode: int
+    eye_frame: dict

@@ -212,7 +212,7 @@ Raw firmware units are kept (`_mv`, `_ma`, `_ms`); convenience floats in V, A an
 | `pimu_temp_centi_c` / `pimu_temp_c` | int / float | Board temperature |
 | `loop_time_us`, `loop_time_max_us`, `loop_overrun_count` | int | The 250 Hz handler's time, its maximum and overruns past 4 ms |
 | `motor_sync_cnt` | int | Motor sync pulses |
-| `eye_left`, `eye_right`, `eye_overlay` (S2) | dict, int | Eye LED readback |
+| `eye_left`, `eye_right`, `eye_overlay` (S2) | dict, int | Eye LED readback. Source 4 with animation 128: a host frame from `set_eye_frame` (v0.1.52p14) is on the ring; the frame's sequence is in `status['eye_frame']['applied_sequence']` |
 | `easter_egg_mode` (S2) | int | Easter egg state |
 | `_valid`, `_packet_length`, `_decode_error` | bool, int, str | Decoder bookkeeping |
 
