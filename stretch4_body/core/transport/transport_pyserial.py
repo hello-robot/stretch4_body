@@ -892,12 +892,12 @@ class TransportPySerial():
         -------
         None
         """
-        # Acquire the lock in a worker thread, suspending us while waiting.
-        # See https://stackoverflow.com/questions/63420413/how-to-use-threading-lock-in-async-function-while-object-can-be-accessed-from-mu
-        await asyncio.get_event_loop().run_in_executor(None, self.lock.acquire)
-        success = await self.async_handler.do_rpc(push=False, payload=payload, reply_callback=reply_callback,
-                                                  exiting=exiting)
-        self.lock.release()
+        await self._acquire_lock_async()
+        try:
+            return await self.async_handler.do_rpc(push=False, payload=payload,
+                                                   reply_callback=reply_callback, exiting=exiting)
+        finally:
+            self.lock.release()
 
     async def do_push_rpc_async(self, payload, reply_callback, exiting=False):
         """
@@ -911,10 +911,45 @@ class TransportPySerial():
         -------
         None
         """
-        await asyncio.get_event_loop().run_in_executor(None, self.lock.acquire)
-        success = await self.async_handler.do_rpc(push=False, payload=payload, reply_callback=reply_callback,
-                                                  exiting=exiting)
-        self.lock.release()
+        await self._acquire_lock_async()
+        try:
+            return await self.async_handler.do_rpc(push=True, payload=payload,
+                                                   reply_callback=reply_callback, exiting=exiting)
+        finally:
+            self.lock.release()
+
+    async def _acquire_lock_async(self):
+        """
+        Acquire self.lock from a worker thread so the event loop keeps running while
+        we wait (see https://stackoverflow.com/questions/63420413).
+
+        Cancellation safe: if the awaiting task is cancelled while the worker is
+        still blocked in acquire(), the worker releases the lock as soon as it gets
+        it instead of leaving it held with no owner. The hand-off is decided under
+        a small guard so exactly one side ends up responsible for the release.
+        """
+        guard = threading.Lock()
+        state = {'acquired': False, 'abandoned': False}
+
+        def acquire():
+            self.lock.acquire()
+            with guard:
+                if state['abandoned']:
+                    self.lock.release()
+                    return False
+                state['acquired'] = True
+                return True
+
+        future = asyncio.get_event_loop().run_in_executor(None, acquire)
+        try:
+            await future
+        except asyncio.CancelledError:
+            with guard:
+                if state['acquired']:
+                    self.lock.release()
+                else:
+                    state['abandoned'] = True
+            raise
 
     def do_pull_rpc_sync(self, payload, reply_callback, exiting=False):
         """
