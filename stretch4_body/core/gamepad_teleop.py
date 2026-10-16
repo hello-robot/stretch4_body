@@ -138,7 +138,6 @@ class GamePadTeleop(Device):
         self.left_stick_button_fn = None
         self.right_stick_button_fn = None
         self.currently_stowing = False
-        self._last_handedness = None # Last known GripperHandedness from wrist status, for crossing detection
         self._handedness_change_target = None # Set while change_gripper_handedness() is moving the wrist
         self._input_pitch_inverted = None # Pitch inversion used for input, held fixed while the user is rolling the wrist
 
@@ -186,24 +185,6 @@ class GamePadTeleop(Device):
         """Track the wrist's pitch inversion, unless the user is mid-roll, in which case keep the inversion from when the roll began"""
         if self._input_pitch_inverted is None or not self._is_roll_input_held():
             self._input_pitch_inverted = self._wrist_pitch_inverted()
-
-    def _check_handedness_crossing(self):
-        """
-        Vibrate two quick weak pulses when the wrist is manually moved across the left/right handedness boundary.
-        Crossings caused by change_gripper_handedness() are not signalled, as that routine has its own feedback.
-        """
-        if not self.use_devices['eoa']:
-            return
-        handedness = GripperHandedness.from_status(self.robot.end_of_arm.status)
-        if handedness is None:
-            return
-        if self._last_handedness is not None and handedness is not self._last_handedness:
-            if handedness is self._handedness_change_target:
-                self._handedness_change_target = None
-            else:
-                print(f"Wrist crossed into {handedness.get_name()} handed mode")
-                self.gamepad_controller.vibrate_sequence(sequence_ms=[60, 80, 60], strong_magnitude=0.0, weak_magnitude=0.6, tag="handedness_crossing", cooldown=0.5)
-        self._last_handedness = handedness
 
     def set_joint_command(self):
         self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
@@ -339,7 +320,6 @@ class GamePadTeleop(Device):
                 return False
 
             self.manage_start_button(robot)
-            self._check_handedness_crossing()
             self._update_input_pitch_inversion()
 
             if robot.is_homed():
