@@ -134,10 +134,20 @@ class RobotServer(RobotCore):
             'request_latency_max_s': 0.0,
             'transport_error': None,
             'schema_error': None,
+            # Live classification: firmware age at the sample plus host time
+            # since then. 'stale' once the diagnostics request times out or
+            # fails to decode after a sample was seen, 'unknown' before any.
             'bms_freshness': 'unknown',
             'esp_freshness': 'unknown',
+            'bms_age_s': None,
+            'esp_age_s': None,
+            # What the firmware reported when the sample arrived, kept so a
+            # consumer can tell host staleness from a BMS or ESP outage.
+            'bms_freshness_at_sample': 'unknown',
+            'esp_freshness_at_sample': 'unknown',
             'pimu_boot_count_observed': 0,
         }
+        self._power_diag_fw_ages = (None, None)
         self._power_event_after_sequence = 0
         self._power_event_last_dropped_count = 0
         # This history is included in the existing 100 Hz ZMQ status object, so
@@ -327,6 +337,7 @@ class RobotServer(RobotCore):
             self._power_diag_meta['sample_age_s'] = round(
                 max(0.0, time.monotonic() - self._power_diag_last_sample_mono), 3
             )
+        self._refresh_power_freshness()
         self.status['server']['state']=self.state
         self.status['server']['status_id'] = self.status['server']['status_id'] + 1
         self.status['server']['lease_holder'] = str(self.server.lease_holder_id)
@@ -409,10 +420,12 @@ class RobotServer(RobotCore):
                 self._power_aux_meta['transport_error'] = (
                     '%s RPC callback timeout' % request_kind)
                 if request_kind == 'diagnostics':
+                    self._power_diag_meta['available'] = False
                     self._power_diag_meta['request_errors'] += 1
                     self._power_diag_meta['request_timeouts'] += 1
                     self._power_diag_meta['transport_error'] = (
                         'diagnostics RPC callback timeout')
+                    self._refresh_power_freshness()
                     self._power_event_meta['request_errors'] += 1
                     self._power_event_meta['request_timeouts'] += 1
                     self._power_event_meta['transport_error'] = (
@@ -507,6 +520,7 @@ class RobotServer(RobotCore):
             self._power_diag_meta['available'] = False
             self._power_diag_meta['request_errors'] += 1
             self._power_diag_meta['schema_error'] = diagnostics.get('_decode_error')
+            self._refresh_power_freshness()
             return
 
         now_mono = time.monotonic()
@@ -523,6 +537,8 @@ class RobotServer(RobotCore):
             self._power_events.clear()
         self._power_diag_last_uptime_ms = uptime_ms
         self._power_diag_last_sample_mono = now_mono
+        self._power_diag_fw_ages = (
+            diagnostics.get('bms_sample_age_s'), diagnostics.get('esp_status_age_s'))
         self._power_diag_meta.update({
             'available': True,
             'sample_seq': self._power_diag_meta['sample_seq'] + 1,
@@ -530,11 +546,39 @@ class RobotServer(RobotCore):
             'sample_monotonic_s': now_mono,
             'sample_age_s': 0.0,
             'schema_error': None,
-            'bms_freshness': self._firmware_freshness(
-                diagnostics.get('bms_sample_age_s'), 3.0, 10.0),
-            'esp_freshness': self._firmware_freshness(
-                diagnostics.get('esp_status_age_s'), 2.0, 5.0),
+            'bms_freshness_at_sample': self._firmware_freshness(
+                self._power_diag_fw_ages[0], *self.BMS_FRESHNESS_S),
+            'esp_freshness_at_sample': self._firmware_freshness(
+                self._power_diag_fw_ages[1], *self.ESP_FRESHNESS_S),
         })
+        self._refresh_power_freshness()
+
+    # (warning, fault) thresholds on the age of the last good BMS sample and
+    # the last ESP status, in seconds. Same numbers the firmware uses.
+    BMS_FRESHNESS_S = (3.0, 10.0)
+    ESP_FRESHNESS_S = (2.0, 5.0)
+
+    def _refresh_power_freshness(self):
+        """
+        Recompute bms_freshness and esp_freshness from the firmware age at the
+        last sample plus host monotonic time since then. The firmware measures
+        its ages at snapshot time, so a value copied once and left alone reads
+        'fresh' forever after the diagnostics stop arriving.
+        """
+        meta = self._power_diag_meta
+        if self._power_diag_last_sample_mono is None:
+            return
+        elapsed = max(0.0, time.monotonic() - self._power_diag_last_sample_mono)
+        for key, fw_age, thresholds in (
+            ('bms', self._power_diag_fw_ages[0], self.BMS_FRESHNESS_S),
+            ('esp', self._power_diag_fw_ages[1], self.ESP_FRESHNESS_S),
+        ):
+            age = None if fw_age is None else fw_age + elapsed
+            meta[key + '_age_s'] = None if age is None else round(age, 3)
+            if not meta['available']:
+                meta[key + '_freshness'] = 'stale'
+            else:
+                meta[key + '_freshness'] = self._firmware_freshness(age, *thresholds)
 
     def _ingest_power_periph_event_log(self):
         page = self.power_periph.power_event_log_page
