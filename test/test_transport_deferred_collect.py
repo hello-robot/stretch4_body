@@ -19,8 +19,11 @@ class ScriptedCTransport:
         self.script = {k: list(v) for k, v in script.items()}
         self.discarded = []
         self.submitted = []
+        self.loaded = []
 
     def load_rpc_result(self, rpc_id):
+        # On the real C transport a load of a ready result runs its callback.
+        self.loaded.append(rpc_id)
         values = self.script.get(rpc_id, [0])
         return values.pop(0) if len(values) > 1 else values[0]
 
@@ -95,6 +98,24 @@ def test_deferred_rpc_expires_on_monotonic_deadline():
     assert transport.rpc_ids == []
     assert transport.transport_c.discarded == [31]
     assert transport.status["rpc_expired"] == 1
+
+
+def test_deferred_rpc_ready_after_deadline_is_expired_not_loaded():
+    """Review of 2026-10-16, finding B: a reply that lands after the deadline
+    must not run its callback or count as a success."""
+    transport = make_transport({31: [1]})
+    queue(transport, 31, wait_on_collect=False, timeout_s=0.02)
+
+    time.sleep(0.03)
+    res = transport.load_rpc_results(wait_on_result=True)
+
+    assert res == [-1]
+    assert transport.transport_c.loaded == [], "expired result was loaded, its callback ran"
+    assert transport.transport_c.discarded == [31]
+    assert transport.status["rpc_expired"] == 1
+    assert transport.status["rpc_duration_us"] == 0
+    assert transport.rpc_ids == []
+    assert 31 not in transport._rpc_pending
 
 
 def test_foreground_rpc_still_waits_for_its_result():

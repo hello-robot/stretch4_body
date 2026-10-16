@@ -153,15 +153,19 @@ Try running stretch_body_server --kill""")
                 continue
             deadline, wait_on_collect = self._rpc_pending.get(r, (float('-inf'), True))
             wait_here = bool(wait_on_result and wait_on_collect)
-            x = self._load_rpc_result(r, wait_on_result=wait_here)
-            if x == -1 and not wait_here:
-                if time.monotonic() < deadline:
-                    remaining.append(r)
-                    continue
-                # Past its deadline: no future callback is wanted for this id.
+            if not wait_here and time.monotonic() >= deadline:
+                # Past its deadline. Check before loading: a load of a ready
+                # result runs its callback, and a late reply must not be used
+                # or reported as a success.
                 if self.transport_c is not None:
                     self.transport_c.discard_rpc_callback(r)
                 self.status['rpc_expired'] = self.status.get('rpc_expired', 0) + 1
+                x = -1
+            else:
+                x = self._load_rpc_result(r, wait_on_result=wait_here)
+                if x == -1 and not wait_here:
+                    remaining.append(r)
+                    continue
             self._rpc_pending.pop(r, None)
             res.append(x)
         self.rpc_ids = remaining
