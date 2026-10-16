@@ -41,6 +41,7 @@ def _cb_line_sensor_loop_step(pjr, q_cmd_in, status_out):
     if pjr.step():
         status_out.update(pjr.status)
     status_out['health'] = pjr.health()
+    status_out['firmware'] = pjr.firmware_status()
     return True
 
 # ###########################################################################################
@@ -97,7 +98,8 @@ class LineSensorLoop(Device):
                        'frame_not_full_err': 0, 'not_six_sensors_err': 0,
                        'reader_restarts': 0},
             'calibration': {'loaded': [], 'rejected': {}, 'id': '',
-                            'n_bins': self.n_bins}}
+                            'n_bins': self.n_bins},
+            'firmware': PixartJ3Reader._firmware_unknown('not_open')}
         self.status_aux = {}
  
         self._tares = {}

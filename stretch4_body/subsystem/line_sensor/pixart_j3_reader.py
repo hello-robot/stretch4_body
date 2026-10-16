@@ -42,6 +42,15 @@ class PixartJ3Reader():
     REOPEN_BACKOFF_MAX_S = 5.0
     WRITE_TIMEOUT_S = 0.25
 
+    # Firmware version query. hello-pixart-j3 v0.1.1p0 and later answer '?'
+    # with one {"status": {"fw": ...}} line between reports; earlier builds
+    # never read the port. Asked after every open, at most this many times
+    # this far apart, then reported as no reply. Never send 'R': two of them
+    # reset the board.
+    FIRMWARE_QUERY = b'?'
+    FIRMWARE_QUERY_TRIES = 3
+    FIRMWARE_QUERY_INTERVAL_S = 2.0
+
     LOGGER_NAME = 'line_sensor_loop'
 
     def __init__(self, port_name='/dev/hello-pixart-j3', verbose=False,
@@ -107,6 +116,9 @@ class PixartJ3Reader():
 
         self._sensors_dead = ['sensor_%d' % i for i in range(6)]
 
+        self._firmware_query_at = 0.0
+        self.firmware = self._firmware_unknown('not_open')
+
         self.status = {'frame_advance_err': 0, 'not_six_sensors_err': 0,
                        'frame_not_full_err': 0, 'decode_errors': 0,
                        'reader_restarts': 0,
@@ -134,6 +146,9 @@ class PixartJ3Reader():
             self.ser.reset_input_buffer()
             self._flush_before_first_read = True
             self._reset_framing()
+            # A reopen may be a reflashed board: ask again.
+            self.firmware = self._firmware_unknown('waiting')
+            self._firmware_query_at = 0.0
             self.is_valid = True
             return True
         except serial.SerialException as e:
@@ -291,6 +306,8 @@ class PixartJ3Reader():
                 pass
             self._reset_framing()
 
+        self._query_firmware(time.time())
+
         try:
             if not self.streaming:
                 # Paused: drain and discard, so the kernel buffer cannot fill
@@ -389,6 +406,7 @@ class PixartJ3Reader():
         frame_id = data.get("frameId")
         if frame_id is None:
             if isinstance(data.get('status'), dict):
+                self._record_firmware(data['status'])
                 return False
             self.status['decode_errors'] += 1
             self.debug_print("JSON line without frameId ignored:", json_line[:120])
@@ -415,6 +433,52 @@ class PixartJ3Reader():
         self.debug_print("JSON line with no known distances key:", json_line[:120])
         self.status['decode_errors'] += 1
         return False
+
+    # -- firmware version --------------------------------------------------
+
+    @staticmethod
+    def _firmware_unknown(state):
+        """state: not_open, waiting (asking), reported, or no_reply (firmware
+        older than hello-pixart-j3 v0.1.1p0 does not answer)."""
+        return {'state': state, 'version': None, 'uptime_ms': None,
+                'reset_cause_raw': None, 'received_time': None, 'queries': 0}
+
+    def _query_firmware(self, now):
+        """Send '?' while waiting for an answer, on the bounded schedule.
+        Never fails the reader: a write that times out is just a lost try."""
+        fw = self.firmware
+        if fw['state'] != 'waiting' or not self.streaming or now < self._firmware_query_at:
+            return
+        if fw['queries'] >= self.FIRMWARE_QUERY_TRIES:
+            fw['state'] = 'no_reply'
+            self.logger.info('no firmware status reply to %d queries; firmware older '
+                             'than hello-pixart-j3 v0.1.1p0 does not report its version',
+                             fw['queries'])
+            return
+        fw['queries'] += 1
+        self._firmware_query_at = now + self.FIRMWARE_QUERY_INTERVAL_S
+        try:
+            self.ser.write(self.FIRMWARE_QUERY)
+        except Exception as e:
+            self.debug_print('firmware query not sent:', e)
+
+    def _record_firmware(self, st):
+        """Keep the version, uptime and reset cause of a status line."""
+        version = st.get('fw')
+        if not isinstance(version, str):
+            return
+        up = st.get('up')
+        rcause = st.get('rcause')
+        self.firmware.update({
+            'state': 'reported',
+            'version': version,
+            'uptime_ms': up if isinstance(up, int) else None,
+            'reset_cause_raw': rcause if isinstance(rcause, int) else None,
+            'received_time': time.time(),
+        })
+
+    def firmware_status(self):
+        return dict(self.firmware)
 
     def process_one_sensor(self, frame_id, sensor_index, ranges, codes):
         now = time.time()

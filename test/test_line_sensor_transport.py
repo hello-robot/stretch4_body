@@ -128,6 +128,9 @@ class _FakeReader:
         h['streaming'] = self.is_valid
         return h
 
+    def firmware_status(self):
+        return {'state': 'reported', 'version': 'hello-pixart-j3.v0.1.2p1'}
+
 
 class _NoCmds:
     """Empty command queue: the step callback drains q_cmd before stepping."""
@@ -178,6 +181,8 @@ def test_no_sensor_arrays_are_published_when_nothing_moved():
     cb(r, _NoCmds(), out)
     assert [k for k in out if k.startswith('sensor_')] == []
     assert 'health' in out
+    # The firmware version goes out with health, also when no frame moved.
+    assert out['firmware']['version'] == 'hello-pixart-j3.v0.1.2p1'
 
 
 def test_a_dropped_message_costs_nothing():
