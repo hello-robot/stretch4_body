@@ -761,7 +761,12 @@ let dragging = false;
 
 const REASONS = {
   per_eye_color: 'RPC 29 carries one r, g, b for both eyes. No PIMU protocol, P13 or the P14 work in progress, has a per-eye color byte.',
-  per_pixel: 'Needs a pixel frame RPC, which no PIMU protocol has yet. P13 plays its 14 presets.',
+  per_pixel: 'Needs hello-pimu2 v0.1.52p14 (RPC 33 frame mode) behind a stretch_body_server that takes set_eye_frame. Until then the rings play their presets.',
+};
+
+// The robot offers it, the page does not paint yet.
+const BUILT_LATER = {
+  per_pixel: 'This robot takes per-pixel frames (POST /api/frame, Eyes.show_frame). Painting them here is not built yet.',
 };
 
 const PRESETS = [
@@ -1297,7 +1302,7 @@ function applyCapabilities() {
     // Neither control has a handler yet, so both stay off whatever the backend offers.
     el.classList.add('unsupported');
     control.disabled = true;
-    reason.textContent = caps[cap] ? 'Not built in Eyes Studio yet.' : REASONS[cap] || 'Not supported by this backend.';
+    reason.textContent = caps[cap] ? (BUILT_LATER[cap] || 'Not built in Eyes Studio yet.') : REASONS[cap] || 'Not supported by this backend.';
     if (reason.id) control.setAttribute('aria-describedby', reason.id);
   });
   // The eye RPC with its colour and intensity bytes exists from requires_protocol on;

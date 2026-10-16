@@ -11,8 +11,12 @@ http.server, so it runs on a robot with no extra packages:
     POST /api/idle           eyes.idle()
     POST /api/control        {take: bool}
     POST /api/sentry         {active: true}, resume the sentry after a failed release
+    POST /api/frame          {left: [10 colors], right: [10 colors], brightness, hold_ms}:
+                             one per-pixel frame (Eyes.show_frame); 409 when
+                             capabilities 'per_pixel' is false. A frame still queued is
+                             replaced by a newer one
     POST /api/fake           --fake only: {runstop, battery_soc, sentry_active, drop,
-                             lease_holder, sentry_refuse, protocol}
+                             lease_holder, sentry_refuse, protocol, frames_supported}
 
 Looks library and sequence playback (stretch4_body.eyes Library, Sequence, Eyes.play):
 
@@ -101,6 +105,7 @@ FAKE_FIELDS = {
     'drop': (bool,),
     'lease_holder': (str, type(None)),
     'sentry_refuse': (bool,),
+    'frames_supported': (bool,),
     'protocol': (str, type(None)),
 }
 
@@ -127,6 +132,10 @@ class BadRequest(ValueError):
 
 
 class LibraryUnavailable(RuntimeError):
+    pass
+
+
+class FrameUnsupported(RuntimeError):
     pass
 
 
@@ -210,6 +219,18 @@ class EyeWriter:
             self._cv.notify()
         return op
 
+    def submit_frame(self, fields):
+        """A frame still waiting in the queue is replaced: only the newest is worth sending."""
+        with self._cv:
+            if self._queue and self._queue[-1].kind == 'frame':
+                op = self._queue[-1]
+                op.kwargs = dict(fields)
+            else:
+                op = _Op('frame', dict(fields))
+                self._queue.append(op)
+            self._cv.notify()
+        return op
+
     def submit(self, kind, kwargs=None):
         op = _Op(kind, kwargs)
         with self._cv:
@@ -243,6 +264,8 @@ class EyeWriter:
         if op.kind == 'set':
             eyes.set(**op.kwargs)
             self.writes += 1
+        elif op.kind == 'frame':
+            eyes.show_frame(**op.kwargs)
         elif op.kind == 'off':
             eyes.off()
         elif op.kind == 'idle':
@@ -374,6 +397,32 @@ class Studio:
             fields['intensity'] = x
         if not fields:
             raise BadRequest('nothing to set')
+        return fields
+
+    def parse_frame(self, body):
+        if not isinstance(body, dict):
+            raise BadRequest('body must be a JSON object')
+        unknown = set(body) - {'left', 'right', 'brightness', 'hold_ms'}
+        if unknown:
+            raise BadRequest(f'unknown fields: {", ".join(sorted(unknown))}')
+        fields = {}
+        for eye in ('left', 'right'):
+            ring = body.get(eye)
+            if not isinstance(ring, list) or len(ring) != 10:
+                raise BadRequest(f'{eye} must be a list of 10 colors')
+            fields[eye] = [_parse_color(c) for c in ring]
+        b = body.get('brightness', 255)
+        pair = b if isinstance(b, list) else [b, b]
+        if len(pair) != 2 or any(isinstance(x, bool) or not isinstance(x, int) or not 0 <= x <= 255 for x in pair):
+            raise BadRequest('brightness must be an integer 0..255 or [left, right]')
+        fields['brightness'] = tuple(pair)
+        hold = body.get('hold_ms', 500)
+        if isinstance(hold, bool) or not isinstance(hold, int) or not 50 <= hold <= 2000:
+            raise BadRequest('hold_ms must be an integer 50..2000')
+        fields['hold_ms'] = hold
+        if not self.writer.read(self.writer.eyes.backend.frame_supported):
+            raise FrameUnsupported('no frame mode on this robot: it needs hello-pimu2 v0.1.52p14 '
+                                   'and a stretch_body_server that takes set_eye_frame')
         return fields
 
     # --- Looks library and playback ---
@@ -527,6 +576,8 @@ def make_handler(studio, verbose=False):
                 return self._error(HTTPStatus.NOT_FOUND, str(exc.args[0]) if exc.args else 'not found')
             if isinstance(exc, FileExistsError):
                 return self._error(HTTPStatus.CONFLICT, str(exc))
+            if isinstance(exc, FrameUnsupported):
+                return self._error(HTTPStatus.CONFLICT, str(exc))
             if isinstance(exc, PermissionError):
                 return self._error(HTTPStatus.FORBIDDEN, str(exc))
             if isinstance(exc, LibraryUnavailable):
@@ -574,6 +625,8 @@ def make_handler(studio, verbose=False):
 
                 if path == '/api/eyes':
                     op = studio.writer.submit_set(studio.parse_set(body))
+                elif path == '/api/frame':
+                    op = studio.writer.submit_frame(studio.parse_frame(body))
                 elif path == '/api/off':
                     op = studio.writer.submit('off')
                 elif path == '/api/idle':

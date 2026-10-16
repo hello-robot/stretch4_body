@@ -4,6 +4,10 @@ Backends for stretch4_body.eyes.Eyes. Each one offers the same small surface:
     connect()                       raise RuntimeError when the robot cannot be reached
     send(payload) -> bool           payload is (left_id, right_id, intensity, r, g, b);
                                     False when the server is known to have rejected it
+    frame_supported() -> bool       the PIMU and server take per-pixel frames (RPC 33 frame
+                                    mode, hello-pimu2 v0.1.52p14)
+    send_frame(left, right, brightness, hold_ms) -> bool
+                                    one frame, 10 (r, g, b) per ring; False as for send()
     is_sentry_active() -> bool/None None when sentry_eye_animations is not installed on this robot
     set_sentry(active, timeout) -> bool  True at once when the sentry is not installed
     robot_status() -> dict          {'runstop': bool or None, 'battery_soc': int or None}
@@ -41,12 +45,23 @@ class FakeBackend:
         self.sentry_installed = True
         self.sentry_restore_fails = False
         self.connected = False
+        self.frames_supported = False   # True: act as a v0.1.52p14 PIMU behind a server that takes frames
+        self.frames = []                # (left, right, brightness, hold_ms) per send_frame
 
     def connect(self):
         self.connected = True
 
     def send(self, payload):
         self.sent.append(tuple(payload))
+        return True
+
+    def frame_supported(self):
+        return self.frames_supported
+
+    def send_frame(self, left, right, brightness, hold_ms):
+        if not self.frames_supported:
+            raise RuntimeError('this backend has no frame mode')
+        self.frames.append((tuple(map(tuple, left)), tuple(map(tuple, right)), tuple(brightness), hold_ms))
         return True
 
     def is_sentry_active(self):
@@ -162,6 +177,20 @@ class ServerBackend:
         """Queue RPC 29 and push it. False when the latest server status says the lease rejects it."""
         left, right, intensity, r, g, b = payload
         self._pp.set_eye_animation(left_idx=left, right_idx=right, intensity=intensity, r=r, g=g, b=b)
+        self._push()
+        return not self._lease_rejects_us()
+
+    def frame_supported(self):
+        """
+        True once the server publishes power_periph status['eye_frame'] with supported
+        True: a server with set_eye_frame and a PIMU on hello-pimu2 v0.1.52p14 or newer.
+        """
+        frame = self._status().get('eye_frame')
+        return isinstance(frame, dict) and frame.get('supported') is True
+
+    def send_frame(self, left, right, brightness, hold_ms):
+        """Queue one RPC 33 frame and push it. False when the latest server status says the lease rejects it."""
+        self._pp.set_eye_frame(left, right, brightness=brightness, hold_ms=hold_ms)
         self._push()
         return not self._lease_rejects_us()
 

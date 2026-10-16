@@ -599,6 +599,36 @@ class PowerPeriphClient(SubsystemClient):
                             right_idx=None if right_idx is None else int(right_idx),
                             intensity=int(intensity), r=int(r), g=int(g), b=int(b))
 
+    def set_eye_frame(self, left, right, brightness=(255, 255), hold_ms=500):
+        """
+        Show one per-pixel frame on both eye rings: RPC 33 frame mode, hello-pimu2
+        v0.1.52p14 and a stretch_body_server whose power_periph has set_eye_frame (it
+        then publishes status['eye_frame'] with 'supported'; check that first, an older
+        server logs the command as invalid and drops it).
+
+        left and right are 10 (r, g, b) each, ring order: index 0 just clockwise of
+        12 o'clock seen from the front, then clockwise. brightness is (left, right)
+        0-255. The board keeps the frame for hold_ms (50-2000) after it arrives, then
+        the rings go back to their animation; send faster than that to keep it up.
+        set_eye_animation ends frame mode on the board.
+        """
+        rings = []
+        for name, ring in (('left', left), ('right', right)):
+            ring = [list(px) for px in ring]
+            if len(ring) != 10 or any(len(px) != 3 or any(
+                    isinstance(v, bool) or not isinstance(v, numbers.Integral) or not 0 <= v <= 255 for v in px)
+                    for px in ring):
+                raise ValueError('set_eye_frame: {} must be 10 (r, g, b) ints 0-255'.format(name))
+            rings.append([[int(v) for v in px] for px in ring])
+        brightness = list(brightness)
+        if len(brightness) != 2 or any(isinstance(v, bool) or not isinstance(v, numbers.Integral) or not 0 <= v <= 255
+                                       for v in brightness):
+            raise ValueError('set_eye_frame: brightness must be (left, right) ints 0-255')
+        if isinstance(hold_ms, bool) or not isinstance(hold_ms, numbers.Integral) or not 50 <= hold_ms <= 2000:
+            raise ValueError('set_eye_frame: hold_ms must be an int 50-2000, not {!r}'.format(hold_ms))
+        self._queue_command(subsystem="power_periph", command="set_eye_frame", left=rings[0], right=rings[1],
+                            brightness=[int(v) for v in brightness], hold_ms=int(hold_ms))
+
     def actuator_control(self, motor_type, enable):
         """
         Actuator power cannot be changed through the client.

@@ -551,3 +551,99 @@ def test_server_side_set_eye_animation_never_raises():
         assert pp.set_eye_animation(**kwargs) is False
         assert pp._dirty_eye_animation is False
     assert pp.logger.warning.call_count == 5
+
+
+# ---------------- Per-pixel frames (RPC 33 frame mode, hello-pimu2 v0.1.52p14) ----------------
+
+RING_L = ['red'] + [(i, 2 * i, 3 * i) for i in range(1, 10)]
+RING_R = ['#00ff00'] * 10
+
+
+def test_frames_off_by_default_and_show_frame_refuses():
+    eyes = Eyes(backend='fake')
+    assert eyes.capabilities()['per_pixel'] is False
+    with pytest.raises(RuntimeError, match='v0.1.52p14'):
+        eyes.show_frame(RING_L, RING_R)
+    assert eyes.backend.frames == [] and eyes.state().source == 'assumed'
+
+
+def test_show_frame_parses_colors_and_brightness():
+    eyes = Eyes(backend='fake')
+    eyes.backend.frames_supported = True
+    assert eyes.capabilities()['per_pixel'] is True
+    s = eyes.show_frame(RING_L, RING_R, brightness=0.5, hold_ms=200)
+    assert s.source == 'frame'
+    left, right, brightness, hold = eyes.backend.frames[-1]
+    assert left[0] == (255, 0, 0) and left[9] == (9, 18, 27) and right == ((0, 255, 0),) * 10
+    assert (brightness, hold) == ((128, 128), 200)
+    eyes.show_frame(RING_L, RING_R, brightness=(255, 0))
+    assert eyes.backend.frames[-1][2:] == ((255, 0), 500)
+    # set() goes back to animations; the firmware ends frame mode on it.
+    assert eyes.set(left='blink').source == 'commanded'
+
+
+@pytest.mark.parametrize('kwargs, match', [
+    (dict(left=RING_L[:9], right=RING_R), 'left'),
+    (dict(left=RING_L, right=RING_R + ['red']), 'right'),
+    (dict(left=RING_L, right=['nope'] * 10), 'Unknown color'),
+    (dict(left=RING_L, right=RING_R, brightness=(1, 2, 3)), 'brightness'),
+    (dict(left=RING_L, right=RING_R, brightness=300), 'ntensity'),
+    (dict(left=RING_L, right=RING_R, hold_ms=49), 'hold_ms'),
+    (dict(left=RING_L, right=RING_R, hold_ms=2001), 'hold_ms'),
+    (dict(left=RING_L, right=RING_R, hold_ms=500.0), 'hold_ms'),
+])
+def test_show_frame_rejects_before_sending(kwargs, match):
+    eyes = Eyes(backend='fake')
+    eyes.backend.frames_supported = True
+    with pytest.raises(ValueError, match=match):
+        eyes.show_frame(**kwargs)
+    assert eyes.backend.frames == []
+
+
+class FramePowerPeriph:
+    """The server side of a v0.1.52p14 body: records set_eye_frame, nothing else."""
+    def __init__(self):
+        self.frames = []
+
+    def set_eye_frame(self, left, right, brightness=(255, 255), hold_ms=500, sequence=None):
+        self.frames.append((left, right, brightness, hold_ms))
+
+    def push_command(self):
+        return True
+
+
+def test_server_frame_goes_out_only_when_the_server_says_supported():
+    pp = FramePowerPeriph()
+    server = FakeServer(pp)
+    eyes, client = connect_eyes(server)
+    # A server without set_eye_frame publishes no 'eye_frame'.
+    assert eyes.capabilities()['per_pixel'] is False
+    with pytest.raises(RuntimeError):
+        eyes.show_frame(RING_L, RING_R)
+    server.status['power_periph']['eye_frame'] = {'supported': False, 'sent': 0}
+    assert eyes.capabilities()['per_pixel'] is False
+    server.status['power_periph']['eye_frame'] = {'supported': True, 'sent': 0}
+    assert eyes.capabilities()['per_pixel'] is True
+    assert eyes.show_frame(RING_L, RING_R, brightness=(10, 20), hold_ms=300).source == 'frame'
+    eyes.state()   # the next status pull dispatches the push
+    sent = [c for c in server.sent if c['power_periph'][1] == 'set_eye_frame']
+    assert len(sent) == 1
+    kwargs = sent[0]['power_periph'][4]
+    assert kwargs['left'][0] == [255, 0, 0] and kwargs['right'][9] == [0, 255, 0]
+    assert (kwargs['brightness'], kwargs['hold_ms']) == ([10, 20], 300)
+    assert pp.frames and pp.frames[0][3] == 300
+    assert server.priorities[-1] == EYE_PUSH_PRIORITY
+    eyes.close()
+
+
+@pytest.mark.parametrize('bad', [dict(left=[[0, 0, 0]] * 9), dict(right=[[0, 0, 256]] * 10),
+                                 dict(brightness=(255,)), dict(brightness=(True, 1)), dict(hold_ms=10),
+                                 dict(hold_ms=600.0)])
+def test_client_rejects_bad_frames_before_they_reach_the_server(bad):
+    robot_client = import_robot_module('stretch4_body.robot.robot_client')
+    client = robot_client.PowerPeriphClient()
+    kwargs = dict(left=[[1, 2, 3]] * 10, right=[[4, 5, 6]] * 10)
+    kwargs.update(bad)
+    with pytest.raises(ValueError, match='set_eye_frame'):
+        client.set_eye_frame(**kwargs)
+    assert len(client.cmd_dict) == 0

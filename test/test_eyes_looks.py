@@ -795,3 +795,28 @@ def test_studio_state_leaves_out_the_sequence_and_playing_carries_it(dirs):
     assert studio.playing() == {'playing': None, 'sequence': None}
     assert eyes.backend.sent[-1] == (8, 8, 90, 0, 0, 255)  # Stop puts back the look from before Play
     eyes.close()
+
+
+def test_studio_frame_needs_frame_mode_and_keeps_only_the_newest(dirs):
+    from stretch4_body.eyes.studio.server import BadRequest, FrameUnsupported
+    studio = studio_on_fake()
+    backend = studio.writer.eyes.backend
+    body = {'left': ['#ff0000'] * 10, 'right': [[0, 0, 255]] * 10, 'brightness': [255, 64], 'hold_ms': 300}
+    with pytest.raises(FrameUnsupported):
+        studio.parse_frame(body)
+    backend.frames_supported = True
+    assert studio.capabilities()['per_pixel'] is True
+    one, two = studio.parse_frame(body), studio.parse_frame(dict(body, hold_ms=400))
+    with studio.writer._cv:   # the writer thread cannot take either until both are queued
+        first = studio.writer.submit_frame(one)
+        second = studio.writer.submit_frame(two)
+    assert first is second
+    studio.wait(second)
+    assert len(backend.frames) == 1
+    assert backend.frames[0][2:] == ((255, 64), 400) and backend.frames[0][0][0] == (255, 0, 0)
+    assert studio.state()['source'] == 'frame'
+    for bad in ({'left': ['#ff0000'] * 9, 'right': body['right']}, dict(body, hold_ms=20),
+                dict(body, brightness=[1, 2, 3]), dict(body, extra=1), dict(body, right=['#zzzzzz'] * 10)):
+        with pytest.raises(BadRequest):
+            studio.parse_frame(bad)
+    studio.writer.eyes.close()

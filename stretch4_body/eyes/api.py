@@ -14,6 +14,9 @@ from stretch4_body.eyes.colors import parse_color, to_hex
 logger = logging.getLogger(__name__)
 
 REQUIRES_PROTOCOL = 'p13'  # PIMU protocol that added intensity and color to RPC 29
+FRAME_FIRMWARE = 'hello-pimu2.v0.1.52p14'   # RPC 33 frame mode: per-pixel frames
+FRAME_HOLD_MS = (50, 2000)  # the hold the firmware accepts; the default below covers a 20 Hz stream
+FRAME_HOLD_DEFAULT_MS = 500
 PIXELS_PER_EYE = 10        # EYE_NUM_LEDS in EyeAnimationManager.h, LED1-LED10 on S4-RING-LED
 
 # What the firmware shows after a PIMU reset (EyeAnimationManager::setup)
@@ -48,7 +51,9 @@ class EyeState:
     firmware's 'no change' code and keeps whatever it was showing. color and intensity
     are the last values sent; before the first command they hold the firmware boot
     defaults. source is 'assumed' until this object has sent a command, 'commanded'
-    after a send the server took, and 'dropped' when the latest published status says
+    after a send the server took, 'frame' after a show_frame() the server took (the
+    rings show that frame until its hold runs out, then left and right again), and
+    'dropped' when the latest published status says
     the server rejected it: a routine was running, or another client held a live command
     lease (lease_holder names that other client, and is None when the lease is free,
     expired or this object's own; see ServerBackend). The values are cached either way,
@@ -252,6 +257,42 @@ class Eyes:
                 self._source = 'dropped'
             return self._state_locked()
 
+    def show_frame(self, left, right, brightness=255, hold_ms=FRAME_HOLD_DEFAULT_MS):
+        """
+        Show one per-pixel frame (capabilities()['per_pixel'], hello-pimu2 v0.1.52p14
+        behind a server that takes frames; RuntimeError otherwise). left and right are
+        PIXELS_PER_EYE colors each, anything set_color takes, in ring order: index 0 just
+        clockwise of 12 o'clock seen from the front, then clockwise. brightness is an
+        int 0-255 or a float 0.0-1.0 as for set_intensity, or a (left, right) pair.
+
+        The firmware keeps the frame for hold_ms (50-2000) after it arrives and then
+        goes back to the animations last set, so stream frames faster than hold_ms to
+        keep them up; a crashed client leaves its frame up for hold_ms at most. set(),
+        off(), idle() and play() end frame mode at once. Runstop, the low SOC half rings
+        and the Easter egg still show over a frame. A sequence playing is stopped first.
+        """
+        rings = []
+        for name, ring in (('left', left), ('right', right)):
+            ring = list(ring)
+            if len(ring) != PIXELS_PER_EYE:
+                raise ValueError('{}: {} colors, not {}'.format(name, PIXELS_PER_EYE, len(ring)))
+            rings.append([parse_color(c) for c in ring])
+        pair = brightness if isinstance(brightness, (list, tuple)) else (brightness, brightness)
+        if len(pair) != 2:
+            raise ValueError('brightness: one value or (left, right)')
+        pair = tuple(parse_intensity(b) for b in pair)
+        if isinstance(hold_ms, bool) or not isinstance(hold_ms, numbers.Integral) or \
+                not FRAME_HOLD_MS[0] <= hold_ms <= FRAME_HOLD_MS[1]:
+            raise ValueError('hold_ms: an int {}-{}, not {!r}'.format(FRAME_HOLD_MS[0], FRAME_HOLD_MS[1], hold_ms))
+        self.stop(restore=False)
+        with self._lock:
+            if not self._backend.frame_supported():
+                raise RuntimeError('No frame mode on this robot: it needs {} and a stretch_body_server '
+                                   'that takes set_eye_frame'.format(FRAME_FIRMWARE))
+            accepted = self._backend.send_frame(rings[0], rings[1], pair, int(hold_ms))
+            self._source = 'frame' if accepted is None or accepted else 'dropped'
+            return self._state_locked()
+
     def set_color(self, color):
         """(r, g, b), '#rrggbb' or a name from NAMED_COLORS. Both eyes keep their animations."""
         return self.set(color=color)
@@ -302,7 +343,7 @@ class Eyes:
                 'pixels_per_eye': PIXELS_PER_EYE,
                 'per_eye_animation': True,
                 'per_eye_color': False,   # RPC 29 carries one r, g, b for both eyes; no protocol has a per-eye byte
-                'per_pixel': False,
+                'per_pixel': bool(self._backend.frame_supported()),
                 'readback': False,
                 'requires_protocol': REQUIRES_PROTOCOL,
                 'protocol_version': self._backend.protocol_version(),

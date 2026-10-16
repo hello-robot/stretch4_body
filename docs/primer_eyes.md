@@ -52,6 +52,15 @@ A server that has died looks the same as a lease problem from the outside: it st
 
 Eye animations, color and intensity all need PIMU protocol p13 (hello-pimu2 v0.1.9p13 or newer; `circle_cw` and `circle_ccw` need v0.1.10p13, v0.1.9p13 ignores them). A released p12 PIMU (up to v0.1.7p12) has no eye RPC at all: the board ignores every push, `stretch_body_server` logs `Error RPC_REPLY_SET_EYE_ANIMATION` for each one, nothing changes on the rings, and `sentry_eye_animations` disables itself below p13. The server does not publish the PIMU protocol, so `Eyes` cannot tell: `capabilities()['protocol_version']` is `None` through the server and `capabilities()['requires_protocol']` is `'p13'`. `stretch_system_check` reports the board's version.
 
+## Per-pixel frames
+
+`eyes.show_frame(left, right, brightness=255, hold_ms=500)` paints all 20 pixels: `left` and `right` are 10 colors each (anything `set_color` takes), index 0 just clockwise of 12 o'clock seen from the front, then clockwise. `brightness` is one value or `(left, right)`. It needs hello-pimu2 v0.1.52p14 (RPC 33 frame mode) and a `stretch_body_server` whose `power_periph` has `set_eye_frame`; `capabilities()['per_pixel']` says whether both are there, and `show_frame` raises `RuntimeError` otherwise.
+
+* The firmware keeps a frame for `hold_ms` (50 to 2000) after it arrives, then goes back to the animations last set. Stream faster than that (Eyes Studio's 20 Hz is fine with the default 500 ms); a client that dies leaves its frame up for `hold_ms` at most.
+* `set()`, `off()`, `idle()` and `play()` end frame mode at once. `state().source` is `'frame'` after an accepted frame.
+* Runstop, the low battery half rings and the Easter egg still show over a frame, and the frame comes back if its hold has not run out when they clear.
+* Eyes Studio takes frames on `POST /api/frame`; the page has no paint tool yet.
+
 ## Sequences and the looks library
 
 A look is a named sequence of steps, each one an eye command and how long to hold it. A single look is a one-step sequence. Looks are JSON files, one per look, named after the look:
