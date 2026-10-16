@@ -273,14 +273,19 @@ class PowerPeriphDefn():
     RPC_REJECT_REASON_NAMES = {1: 'unknown id', 2: 'short request', 3: 'empty request'}
     # RPC ids 39 and 40 (Easter egg set and clear, v0.1.38p14 to v0.1.50p14) are retired,
     # never reuse them. The Easter egg now goes as TRIGGER_EASTER_EGG_ON/OFF (v0.1.51p14).
-    # Diagnostics schema asked for first. Schema 2 (firmware v0.1.47p14) is the 255-byte
-    # snapshot; schema 1 is its first 190 bytes, the only schema of v0.1.18p14 to
-    # v0.1.23p14 and what v0.1.47p14 sends a body that asks for 1. The reply header,
-    # the snapshot's schema_version and struct_size must all agree with these sizes.
-    POWER_DIAGNOSTICS_SCHEMA_VERSION = 2
+    # Diagnostics schema asked for first. Schema 3 (firmware v0.1.53p14) is the 289-byte
+    # snapshot: schema 2 plus the ESP firmware version. Schema 2 (v0.1.47p14 to
+    # v0.1.52p14) is its first 255 bytes; schema 1 its first 190, the only schema of
+    # v0.1.18p14 to v0.1.23p14. Newer firmware answers an older schema with that prefix.
+    # The reply header, the snapshot's schema_version and struct_size must all agree
+    # with these sizes.
+    POWER_DIAGNOSTICS_SCHEMA_VERSION = 3
     POWER_DIAGNOSTICS_SCHEMA1_WIRE_SIZE = 190
-    POWER_DIAGNOSTICS_WIRE_SIZE = 255
-    POWER_DIAGNOSTICS_WIRE_SIZES = {1: POWER_DIAGNOSTICS_SCHEMA1_WIRE_SIZE, 2: POWER_DIAGNOSTICS_WIRE_SIZE}
+    POWER_DIAGNOSTICS_SCHEMA2_WIRE_SIZE = 255
+    POWER_DIAGNOSTICS_WIRE_SIZE = 289
+    POWER_DIAGNOSTICS_WIRE_SIZES = {1: POWER_DIAGNOSTICS_SCHEMA1_WIRE_SIZE,
+                                    2: POWER_DIAGNOSTICS_SCHEMA2_WIRE_SIZE,
+                                    3: POWER_DIAGNOSTICS_WIRE_SIZE}
     POWER_EVENT_LOG_HEADER_SIZE = 24
     POWER_EVENT_LOG_ENTRY_SIZE = 16
     POWER_EVENT_LOG_MAX_RPC_ENTRIES = 16
@@ -436,6 +441,9 @@ class PowerPeriphDefn():
     }
     CHARGE_STOP_STATE_NAMES = {0: 'idle', 1: 'arming', 2: 'hold'}
     ESP_ADAPTER_DISAGREE_NAMES = {0: 'agree', 1: 'esp_only', 2: 'voltage_only', 3: 'both'}
+    # Schema 3 esp_version_state (firmware EspVersionQuery.h). no_reply: five requests
+    # went unanswered, an ESP older than hello-esp.v0.1.11p0.
+    ESP_VERSION_STATE_NAMES = {0: 'waiting', 1: 'reported', 2: 'no_reply'}
     POWER_EVENT_SOURCE_NAMES = {
         1: 'pimu', 2: 'power_state', 3: 'bms', 4: 'esp', 5: 'peripheral', 6: 'runstop',
     }
@@ -1021,7 +1029,8 @@ class PowerPeriphAux(PowerPeriphDefn):
             '_decode_error': None,
             'schema_version': None,
         }
-        # Lowered to 1 for good when the firmware answers unsupported-schema to 2.
+        # Lowered for good when the firmware answers unsupported-schema (see
+        # _unpack_power_event_log).
         self.power_diagnostics_request_schema = self.POWER_DIAGNOSTICS_SCHEMA_VERSION
         self._power_diagnostics_retry = False
         self.power_event_log_page = {
@@ -1048,9 +1057,10 @@ class PowerPeriphAux(PowerPeriphDefn):
     def pull_power_diagnostics(self, blocking=True, after_sequence=0, max_entries=16):
         """Pull the protocol-14 snapshot and a cursor-paged event-log page.
 
-        Asks for schema 2. Firmware that answers unsupported-schema (v0.1.18p14 to
-        v0.1.23p14 speak only schema 1) is asked once more with schema 1, and schema 1
-        is kept from then on: within this call when blocking, on the next pull otherwise.
+        Asks for schema 3. Firmware that answers unsupported-schema is asked once more
+        with the schema its error header names when that is lower (2 from v0.1.47p14 to
+        v0.1.52p14), else with schema 1 (v0.1.18p14 to v0.1.23p14), and that schema is
+        kept from then on: within this call when blocking, on the next pull otherwise.
         """
         if not self.hw_valid or not self.supports_power_diagnostics():
             return False
@@ -1228,7 +1238,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         )
         return [name for bit, name in names if mask & bit]
 
-    # Fields that exist only in schema 2, None in a decoded schema 1 snapshot.
+    # Fields that exist from schema 2, None in a decoded schema 1 snapshot.
     POWER_DIAGNOSTICS_SCHEMA2_KEYS = (
         'charge_stop_state', 'eye_left', 'eye_right', 'eye_overlay', 'eye_reserved',
         'easter_egg_mode', 'shutdown_wait_active', 'shutdown_wait_last_end',
@@ -1238,6 +1248,8 @@ class PowerPeriphAux(PowerPeriphDefn):
         'esp_shutdown_cmd_sends', 'esp_adapter_disagree', 'wait_sd_ack', 'reserved2',
         'reserved3', 'ina_vbat_mv', 'ina_current_ma', 'ina_flags', 'ina_reserved',
     )
+    # Fields that exist only in schema 3, None in a decoded schema 1 or 2 snapshot.
+    POWER_DIAGNOSTICS_SCHEMA3_KEYS = ('esp_version_state', 'esp_version_requests', 'esp_version')
 
     def _unpack_power_diagnostics(self, s):
         packet_length = len(s)
@@ -1424,6 +1436,17 @@ class PowerPeriphAux(PowerPeriphDefn):
             for key in self.POWER_DIAGNOSTICS_SCHEMA2_KEYS:
                 decoded[key] = None
 
+        if schema >= 3:
+            decoded['esp_version_state'] = u8()
+            decoded['esp_version_requests'] = u8()
+            raw = bytes(s[sidx:sidx + 32])
+            sidx += 32
+            # NUL padded; the firmware keeps it printable ASCII. Empty unless reported.
+            decoded['esp_version'] = raw.split(b'\0', 1)[0].decode('ascii', 'replace')
+        else:
+            for key in self.POWER_DIAGNOSTICS_SCHEMA3_KEYS:
+                decoded[key] = None
+
         if sidx != packet_length:
             self.power_diagnostics.update({
                 '_valid': False,
@@ -1540,6 +1563,8 @@ class PowerPeriphAux(PowerPeriphDefn):
             'charge_stop_state_name': name(
                 cls.CHARGE_STOP_STATE_NAMES, None if charge_stop is None else charge_stop & 0x0F),
             'charge_stop_enabled': None if charge_stop is None else bool(charge_stop & 0x10),
+            'esp_version_state_name': name(
+                cls.ESP_VERSION_STATE_NAMES, decoded.get('esp_version_state')),
         }
 
     def _unpack_power_event_log(self, s, requested_schema=None):
@@ -1579,7 +1604,8 @@ class PowerPeriphAux(PowerPeriphDefn):
             status_name = self.POWER_DIAGNOSTICS_REPLY_STATUS_NAMES.get(
                 reply_status, 'unknown_%d' % reply_status)
             # The header of an error reply carries the newest schema the firmware
-            # speaks (1 on v0.1.18p14, 2 from v0.1.24p14), not the one asked for.
+            # speaks (1 on v0.1.18p14, 2 from v0.1.24p14, 3 from v0.1.53p14), not the
+            # one asked for.
             error_shape_valid = (
                 schema_version >= 1 and
                 header_size == self.POWER_EVENT_LOG_HEADER_SIZE and
@@ -1598,14 +1624,20 @@ class PowerPeriphAux(PowerPeriphDefn):
                     reply_status == self.POWER_DIAGNOSTICS_REPLY_UNSUPPORTED_SCHEMA and
                     requested_schema is not None and requested_schema > 1 and
                     self.power_diagnostics_request_schema == requested_schema):
-                self.power_diagnostics_request_schema = 1
+                # Step down to the firmware's newest schema when it is one we decode,
+                # else to schema 1. Always lower than asked, so this cannot loop.
+                fallback = (schema_version
+                            if schema_version < requested_schema and
+                            schema_version in self.POWER_DIAGNOSTICS_WIRE_SIZES else 1)
+                self.power_diagnostics_request_schema = fallback
                 self._power_diagnostics_retry = True
-                error += '; schema %d not supported, asking for schema 1' % requested_schema
+                error += '; schema %d not supported, asking for schema %d' % (
+                    requested_schema, fallback)
                 logger = getattr(self, 'logger', None)
                 if logger is not None:
                     logger.warning('PIMU does not support power diagnostics schema %d '
-                                   '(firmware schema %d); using schema 1' % (
-                                       requested_schema, schema_version))
+                                   '(firmware schema %d); using schema %d' % (
+                                       requested_schema, schema_version, fallback))
             self.power_diagnostics.clear()
             self.power_diagnostics.update({
                 '_valid': False,

@@ -134,7 +134,7 @@ def test_snapshot_field_comes_from_the_schema_2_decoder(pimu):
     assert pimu.power_diagnostics['easter_egg_mode'] is None
 
     for value in (0, 1):
-        schema2 = bytearray(PowerPeriph.POWER_DIAGNOSTICS_WIRE_SIZE)
+        schema2 = bytearray(PowerPeriph.POWER_DIAGNOSTICS_SCHEMA2_WIRE_SIZE)
         struct.pack_into('<BBH', schema2, 0, 2, 0, len(schema2))
         schema2[204] = value
         assert pimu._unpack_power_diagnostics(arr.array('B', schema2)) == len(schema2)
