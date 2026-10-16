@@ -1,0 +1,23 @@
+# Copied from stretch_firmware_ii tests/fixtures/power_diag_schema1_reply.hex at commit ae22c4dde59002bb837990c3bbb336410a080bbd
+# (branch p14/schema-bump, hello-pimu2 v0.1.47p14). Regenerate there, then copy; do not edit by hand.
+# RPC 32 reply (id byte first), hello-pimu2 v0.1.47p14, built by
+# tests/native/test_power_diag_reply.cpp ("fixture" case): a patterned snapshot
+# with a different value at every byte position and two patterned events.
+# Hex bytes, 16 per line; lines starting with # are comments.
+# schema 1: 1 id + 24 header + 190 snapshot + 2 x 16 events = 247 bytes
+20 01 18 be 00 10 02 d2 00 d8 db de e1 e4 e7 ea
+ed f0 f3 f6 f9 fc ff 02 05 01 01 be 00 f6 9d 44
+eb 92 39 e0 87 2e d5 7c 23 ca 71 18 bf 66 0d b4
+5b 02 a9 50 f7 9e 45 ec 93 3a e1 88 2f d6 7d 24
+cb 72 19 c0 67 0e b5 5c 03 aa 51 f8 9f 46 ed 94
+3b e2 89 30 d7 7e 25 cc 73 1a c1 68 0f b6 5d 04
+ab 52 f9 a0 47 ee 95 3c e3 8a 31 d8 7f 26 cd 74
+1b c2 69 10 b7 5e 05 ac 53 fa a1 48 ef 96 3d e4
+8b 32 d9 80 27 ce 75 1c c3 6a 11 b8 5f 06 ad 54
+fb a2 49 f0 97 3e e5 8c 33 da 81 28 cf 76 1d c4
+6b 12 b9 60 07 ae 55 fc a3 4a f1 98 3f e6 8d 34
+db 82 29 d0 77 1e c5 6c 13 ba 61 08 af 56 fd a4
+4b f2 99 40 e7 8e 35 dc 83 2a d1 78 1f c6 6d 14
+bb 62 09 b0 57 fe a5 11 16 1b 20 25 2a 2f 34 39
+3e 43 48 4d 52 57 5c 61 66 6b 70 75 7a 7f 84 89
+8e 93 98 9d a2 a7 ac

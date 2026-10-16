@@ -111,16 +111,22 @@ def test_status_bit_20_reads_back_as_0_or_1(pimu):
     assert pimu.status['runstop_event'] is True
 
 
-def test_snapshot_field_is_none_until_the_snapshot_carries_it(pimu):
-    assert PowerPeriph.POWER_DIAGNOSTICS_EASTER_EGG_OFFSET == 204
-    schema1 = bytearray(PowerPeriph.POWER_DIAGNOSTICS_WIRE_SIZE)
-    struct.pack_into('<BBH', schema1, 0, PowerPeriph.POWER_DIAGNOSTICS_SCHEMA_VERSION, 0, len(schema1))
+def test_snapshot_field_comes_from_the_schema_2_decoder(pimu):
+    schema1 = bytearray(PowerPeriph.POWER_DIAGNOSTICS_SCHEMA1_WIRE_SIZE)
+    struct.pack_into('<BBH', schema1, 0, 1, 0, len(schema1))
     assert pimu._unpack_power_diagnostics(arr.array('B', schema1)) == len(schema1)
     assert pimu.power_diagnostics['_valid'] is True
     assert pimu.power_diagnostics['easter_egg_mode'] is None
 
     for value in (0, 1):
-        snapshot = bytearray(205)
-        snapshot[204] = value
-        assert PowerPeriph._decode_easter_egg_mode(arr.array('B', snapshot)) == value
-    assert PowerPeriph._decode_easter_egg_mode(arr.array('B', bytearray(204))) is None
+        schema2 = bytearray(PowerPeriph.POWER_DIAGNOSTICS_WIRE_SIZE)
+        struct.pack_into('<BBH', schema2, 0, 2, 0, len(schema2))
+        schema2[204] = value
+        assert pimu._unpack_power_diagnostics(arr.array('B', schema2)) == len(schema2)
+        assert pimu.power_diagnostics['easter_egg_mode'] == value
+
+    # A snapshot cut off after byte 204 is no snapshot at all.
+    cut = bytearray(205)
+    struct.pack_into('<BBH', cut, 0, 2, 0, len(cut))
+    assert pimu._unpack_power_diagnostics(arr.array('B', cut)) == 0
+    assert 'easter_egg_mode' not in pimu.power_diagnostics
