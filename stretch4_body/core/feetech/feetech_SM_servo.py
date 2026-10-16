@@ -8,6 +8,23 @@ from stretch4_body.core.feetech.sms_sts import *
 from stretch4_body.core.feetech.port_handler import *
 
 
+# Firmware main and sub version at 0 and 1, servo model word at 3 and 4: one
+# 5 byte read (read_version_info).
+SMS_VERSION_BLOCK_SIZE = 5
+
+
+def decode_version_regs(data, makeword):
+    """Decode the 5 bytes read from address 0. makeword(lo_addr_byte,
+    hi_addr_byte) is the packet handler's scs_makeword (it knows the bus end).
+    Returns firmware_main, firmware_sub, version 'main.sub' and model."""
+    if data is None or len(data) < SMS_VERSION_BLOCK_SIZE:
+        raise ValueError('version block needs %d bytes' % SMS_VERSION_BLOCK_SIZE)
+    main, sub = int(data[0]), int(data[1])
+    return {'firmware_main': main, 'firmware_sub': sub,
+            'version': '%d.%d' % (main, sub),
+            'model': makeword(int(data[3]), int(data[4]))}
+
+
 #-------EPROM--------
 SMS_FIRMWARE_VERSION = 0
 SMS_MODEL = 3
@@ -449,6 +466,17 @@ class FeetechSMServo():
     # ###############################################
     def get_model(self):
         return self.read_reg(SMS_MODEL)
+    # ###############################################
+    def read_version_info(self):
+        """Firmware version and model in one read; nothing is written.
+        Raises FeetechCommError like read_reg."""
+        if not self.hw_valid:
+            return None
+        with self.pt_lock:
+            data, comm_result, error = self.packet_handler.readTxRx(
+                self.id, SMS_FIRMWARE_VERSION, SMS_VERSION_BLOCK_SIZE)
+        self.handle_comm_result('SMS_VERSION_BLOCK', comm_result, error)
+        return decode_version_regs(data, self.packet_handler.scs_makeword)
     # ###############################################
     #The unique ID number on the bus. No duplicate ID number can appear on the same bus.
     # No. 254 (OxFE) is the broadcast ID, and the broadcast does not return the reply package.
