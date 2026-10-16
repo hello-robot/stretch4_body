@@ -385,7 +385,10 @@ def test_p14_request_uses_dedicated_rpc_and_cursor_layout():
         0, 0,
         0x12, 0x34, 0x56, 0x78,
     ])
-    assert power.transport.kwargs["rpc_callback"] == power._rpc_power_diagnostics_reply
+    # The transport gets the rejected-reply guard; a normal reply still reaches the decoder.
+    before = power.power_diagnostics_reply_sequence
+    power.transport.kwargs["rpc_callback"](array("B", [power.RPC_REPLY_POWER_DIAGNOSTICS]))
+    assert power.power_diagnostics_reply_sequence == before + 1
 
 
 def test_p14_firmware_error_reply_is_not_treated_as_a_sample():

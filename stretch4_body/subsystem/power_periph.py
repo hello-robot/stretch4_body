@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import Any, TypedDict
+from typing import Any, Optional, TypedDict
 
 from stretch4_body.core.transport.transport import *
 from stretch4_body.core.device import Device
@@ -254,6 +254,9 @@ class PowerPeriphDefn():
     RPC_REPLY_SET_EYE_ANIMATION = 30
     RPC_GET_POWER_DIAGNOSTICS = 31
     RPC_REPLY_POWER_DIAGNOSTICS = 32
+    RPC_REPLY_REJECTED = 38
+    RPC_REJECTED_REPLY_BYTES = 5
+    RPC_REJECT_REASON_NAMES = {1: 'unknown id', 2: 'short request', 3: 'empty request'}
     POWER_DIAGNOSTICS_SCHEMA_VERSION = 1
     POWER_DIAGNOSTICS_WIRE_SIZE = 190
     POWER_EVENT_LOG_SCHEMA_VERSION = 1
@@ -419,6 +422,36 @@ class PowerPeriphDefn():
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
     TRACE_TYPE_PRINT = 2
+
+    def _do_rpc(self, blocking, is_push, payload, rpc_callback, **kwargs):
+        """
+        Every PIMU RPC leaves through here. The transport is shared by every board and
+        has no device-aware reply hook, so this is the one place a rejected reply
+        (id 38, five bytes, firmware v0.1.26p14 and later) is caught before it reaches
+        the decoder the request expected.
+        """
+        def on_reply(reply):
+            if len(reply) == self.RPC_REJECTED_REPLY_BYTES and reply[0] == self.RPC_REPLY_REJECTED:
+                self._record_rpc_rejected(reply)
+            else:
+                rpc_callback(reply)
+        return self.transport.do_rpc(blocking=blocking, is_push=is_push, payload=payload,
+                                     rpc_callback=on_reply, **kwargs)
+
+    def _record_rpc_rejected(self, reply):
+        request_id = reply[1]
+        reason = reply[2]
+        length = unpack_uint16_t(reply[3:])
+        rejected = self.status['rpc_rejected']
+        rejected['count'] += 1
+        rejected['last_request_id'] = request_id
+        rejected['last_reason'] = reason
+        rejected['last_length'] = length
+        key = (request_id, reason)
+        if key not in self._warned_rpc_rejections:
+            self._warned_rpc_rejections.add(key)
+            self.logger.warning('PIMU rejected RPC %d: %s (reason %d), request length %d bytes' % (
+                request_id, self.RPC_REJECT_REASON_NAMES.get(reason, 'unknown reason'), reason, length))
 
 # ##################################################################################
 
@@ -598,12 +631,12 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
             return
         if enable:
             payload = arr.array('B', [self.RPC_ACTUATOR_ENABLE, motor_type])
-            return self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload,
-                                         rpc_callback=self._rpc_actuator_enable_reply) is not None
+            return self._do_rpc(blocking=blocking, is_push=True, payload=payload,
+                                rpc_callback=self._rpc_actuator_enable_reply) is not None
         else:
             payload = arr.array('B', [self.RPC_ACTUATOR_DISABLE, motor_type])
-            return self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload,
-                                         rpc_callback=self._rpc_actuator_disable_reply) is not None
+            return self._do_rpc(blocking=blocking, is_push=True, payload=payload,
+                                rpc_callback=self._rpc_actuator_disable_reply) is not None
 
     def _rpc_actuator_enable_reply(self, reply):
         if len(reply) == 0 or reply[0] != self.RPC_REPLY_ACTUATOR_ENABLE:
@@ -691,7 +724,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         sidx += len(ssid)
         pack_string_t(s=payload, sidx=sidx, x=password);
         sidx += len(password)
-        return self.transport.do_rpc(blocking=True,is_push=True,payload=payload[:sidx],rpc_callback=self.rpc_network_info_reply) is not None
+        return self._do_rpc(blocking=True,is_push=True,payload=payload[:sidx],rpc_callback=self.rpc_network_info_reply) is not None
 
     def rpc_network_info_reply(self, reply):
         if len(reply) == 0 or reply[0] != self.RPC_REPLY_NETWORK_INFO:
@@ -721,7 +754,7 @@ class PowerPeriphTrace(PowerPeriphDefn):
         payload = arr.array('B', [self.RPC_READ_TRACE])
         while (self.n_trace_read) and time.time() - ts < 60.0:
             #Only support blocking
-            self.transport.do_rpc(blocking=True, is_push=False, payload=payload,rpc_callback=self._rpc_read_firmware_trace_reply)
+            self._do_rpc(blocking=True, is_push=False, payload=payload,rpc_callback=self._rpc_read_firmware_trace_reply)
             time.sleep(.001)
         return self.trace_buf
 
@@ -814,10 +847,10 @@ class PowerPeriphAux(PowerPeriphDefn):
         if not self.hw_valid:
             return False
         payload = arr.array('B', [self.RPC_GET_POWER_PERIPH_STATUS_AUX])
-        return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
-                                     rpc_callback=self._rpc_status_aux_reply,
-                                     wait_on_collect=False,
-                                     timeout_s=self.POWER_DIAGNOSTICS_RPC_TIMEOUT_S) is not None
+        return self._do_rpc(blocking=blocking, is_push=False, payload=payload,
+                            rpc_callback=self._rpc_status_aux_reply,
+                            wait_on_collect=False,
+                            timeout_s=self.POWER_DIAGNOSTICS_RPC_TIMEOUT_S) is not None
 
     def pull_power_diagnostics(self, blocking=True, after_sequence=0, max_entries=16):
         """Pull the protocol-14 snapshot and a cursor-paged event-log page."""
@@ -831,7 +864,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         pack_uint8_t(payload, 2, max_entries)
         pack_uint16_t(payload, 3, 0)
         pack_uint32_t(payload, 5, int(after_sequence) & 0xFFFFFFFF)
-        return self.transport.do_rpc(
+        return self._do_rpc(
             blocking=blocking,
             is_push=False,
             payload=payload,
@@ -846,16 +879,16 @@ class PowerPeriphAux(PowerPeriphDefn):
         payload = self.transport.get_empty_payload()
         payload[0] = self.RPC_LOAD_TEST_PUSH
         payload[1:] = self._load_test_payload
-        return self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload,
-                                     rpc_callback=self._rpc_load_test_push_reply)  is not None
+        return self._do_rpc(blocking=blocking, is_push=True, payload=payload,
+                            rpc_callback=self._rpc_load_test_push_reply)  is not None
 
     def pull_load_test(self, blocking=True, quiet=False):
         if not self.hw_valid:
             return False
         self.pull_load_test_quiet=quiet
         payload = arr.array('B', [self.RPC_LOAD_TEST_PULL])
-        return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
-                                     rpc_callback=self._rpc_load_test_pull_reply)  is not None
+        return self._do_rpc(blocking=blocking, is_push=False, payload=payload,
+                            rpc_callback=self._rpc_load_test_pull_reply)  is not None
 
     def _rpc_status_aux_reply(self, reply):
         self.status_aux_reply_sequence += 1
@@ -1460,8 +1493,10 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'us_loop_time':0,
                        'rpc_reply_errors': 0, 'rpc_reply_last_error': None,
                        'status_aux': self.status_aux,
-                       'power_diagnostics': self.power_diagnostics}
+                       'power_diagnostics': self.power_diagnostics,
+                       'rpc_rejected': {'count': 0, 'last_request_id': None, 'last_reason': None, 'last_length': None}}
 
+        self._warned_rpc_rejections = set()
         self.status_zero = self.status.copy()
         self._trigger = 0
         self.board_info = {'board_variant': None, 'firmware_version': None, 'protocol_version': None, 'hardware_id': 0}
@@ -1479,7 +1514,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
             self.hw_valid = self.transport.startup()
             if self.hw_valid:
                 payload = arr.array('B', [self.RPC_GET_POWER_PERIPH_BOARD_INFO])
-                self.transport.do_rpc(blocking=True,is_push=False,payload=payload, rpc_callback=self._rpc_board_info_reply,backend=self.transport.BACKEND_PY_SERIAL) #Use py as C may not be supported yet
+                self._do_rpc(blocking=True,is_push=False,payload=payload, rpc_callback=self._rpc_board_info_reply,backend=self.transport.BACKEND_PY_SERIAL) #Use py as C may not be supported yet
                 self.transport.configure_version(self.board_info['firmware_version'])
                 return True
             self.logger.error('Failed to start PowerPeriph')
@@ -1522,7 +1557,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         if not self.hw_valid:
             return False
         payload = arr.array('B', [self.RPC_GET_POWER_PERIPH_STATUS])
-        return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload, rpc_callback=self._rpc_status_reply) is not None
+        return self._do_rpc(blocking=blocking, is_push=False, payload=payload, rpc_callback=self._rpc_status_reply) is not None
 
 
     def push_command(self, exiting=False, blocking=True):
@@ -1539,19 +1574,19 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         if self.imu._dirty_config:
             payload[0] = self.RPC_SET_IMU_CONFIG
             sidx = self.imu._pack_config(payload, 1)
-            success = success and self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx],rpc_callback=self._rpc_imu_config_reply) is not None
+            success = success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx],rpc_callback=self._rpc_imu_config_reply) is not None
             self.imu._dirty_config = False
 
         if self._dirty_config:
             payload[0] = self.RPC_SET_POWER_PERIPH_CONFIG
             sidx = self._pack_config(payload, 1)
-            success=success and self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx], rpc_callback=self._rpc_config_reply) is not None
+            success=success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx], rpc_callback=self._rpc_config_reply) is not None
             self._dirty_config = False
 
         if self._dirty_trigger:
             payload[0] = self.RPC_SET_POWER_PERIPH_TRIGGER
             sidx = self._pack_trigger(payload, 1)
-            success=success and self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx],rpc_callback=self._rpc_trigger_reply) is not None
+            success=success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx],rpc_callback=self._rpc_trigger_reply) is not None
             self._trigger = 0
             self._dirty_trigger = False
 
@@ -1571,7 +1606,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                 sidx += 1
                 pack_uint8_t(payload, sidx, self._eye_animation_b)
                 sidx += 1
-            success = success and self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx], rpc_callback=self._rpc_eye_animation_reply) is not None
+            success = success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:sidx], rpc_callback=self._rpc_eye_animation_reply) is not None
             self._eye_animation_left = 0
             self._eye_animation_right = 0
             self._eye_animation_intensity = 255
@@ -1666,8 +1701,8 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
             return False
         payload = arr.array('B', [self.RPC_SET_MOTOR_SYNC])
         old_sync_cnt = self.status['motor_sync_cnt']
-        rpc_id = self.transport.do_rpc(blocking=blocking, is_push=True, payload=payload,
-                                       rpc_callback=self._rpc_motor_sync_reply)
+        rpc_id = self._do_rpc(blocking=blocking, is_push=True, payload=payload,
+                              rpc_callback=self._rpc_motor_sync_reply)
 
         t = time.time()
         # Should motor_sync_cnt should increment with each call to trigger_motor_sync, if not it is an overrun
@@ -2100,6 +2135,12 @@ class IMUBaseStatus(TypedDict):
     bump: int
     gravity_tilt: float
 
+class PowerPeriphRpcRejectedStatus(TypedDict):
+    count: int
+    last_request_id: Optional[int]
+    last_reason: Optional[int]
+    last_length: Optional[int]
+
 class PowerPeriphStatus(TypedDict):
     voltage: float
     current: float
@@ -2149,3 +2190,4 @@ class PowerPeriphStatus(TypedDict):
     us_loop_time: float
     rpc_reply_errors: int
     rpc_reply_last_error: Any
+    rpc_rejected: PowerPeriphRpcRejectedStatus
