@@ -617,7 +617,6 @@ class AsyncTransactionHandler(SyncTransactionHandler):
 
         n_frames = math.ceil(len(rpc_data) / RPC_V1_FRAME_DATA_MAX_BYTES)
         widx = 0
-        frame_buf_in = self.get_empty_frame()
         frame_buf_out = self.get_empty_frame()
 
         try:
@@ -636,13 +635,10 @@ class AsyncTransactionHandler(SyncTransactionHandler):
                 widx = widx + nb_frame
                 await self.sendFramedData(frame_buf_out, nb_frame + 1)
                 # Get Ack back
-                frame_buf_in[0] = 0  # Remove stale data
-                crc, nr = await self.receiveFramedData()
-                self.handle_push_ack_v1(crc, nr, frame_buf_in[0])
-                if frame_buf_in[0] != RPC_V1_PUSH_ACK:
-                    raise TransportError("Byte 0 not RPC_V1_PUSH_ACK")
+                crc_ok, nr, decoded_data = await self.receiveFramedData()
+                self.handle_push_ack_v1(crc_ok, nr, decoded_data[0])
                 if fid == n_frames - 1:
-                    rpc_callback(frame_buf_in[1:nr])
+                    rpc_callback(decoded_data[1:nr])
             return True
         except TransportError as e:
             if self.dbg_on:
