@@ -15,6 +15,8 @@ These are standard system process and execution logs. They contain debug, info, 
 These are high-frequency status logs captured by the `SentryStatusLogger` background process. They contain full status telemetry snapshots (JSON objects) representing motor speeds, efforts, battery state, voltages, and safety checks for all joints.
 * **Active Telemetry Log**: Periodic status snapshots are batched every 60 seconds into timestamped JSON files under `log/stretch_status/`.
 * **Size Management**: The logger automatically deletes the oldest status batches to maintain a maximum target directory size (configurable in MB).
+* **Retention**: At about 97 samples a second the default 5000 MB cap holds minutes, not hours: about 24 minutes before the P14 power diagnostics, about 7 to 15 minutes with them. Copy logs off soon after an incident. Measurements and how to pull the files: [Power Diagnostics Primer, Status Log Retention](primer_power_diagnostics.md#8-status-log-retention).
+* **Power diagnostics from a log**: `stretch_power_diagnostics --from-log status_<timestamp>.json --at HH:MM:SS` prints the PIMU power health at any logged moment. See [Power Diagnostics Primer](primer_power_diagnostics.md).
 
 ---
 

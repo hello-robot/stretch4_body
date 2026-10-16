@@ -36,6 +36,7 @@ from importlib.metadata import version as pkg_version
 import click
 from stretch4_body.core import robot_params as rp
 from stretch4_body.subsystem.line_sensor import calibration_store
+from stretch4_body.subsystem.power_health import health_line
 
 
 # ==============================================================================
@@ -878,6 +879,19 @@ def check_power_periph():
     print_result(p, msg)
     if not p:
         all_pass = False
+
+    p14 = health_line(ps.get('power_health'))
+    if p14 is not None:
+        level, msg = p14
+        if level == 'fault':
+            print_result(False, msg)
+            all_pass = False
+        elif level == 'warn':
+            print_warn(msg)
+        elif level == 'unknown':
+            print_info(msg, indent=2)
+        else:
+            print_result(True, msg)
 
     if args.verbose:
         print_info(f'Battery Current  : {ps.get("battery_current", 0):.2f} A')

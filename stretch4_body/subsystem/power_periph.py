@@ -402,6 +402,22 @@ class PowerPeriphDefn():
         10: 'user_wake',
         11: 'esp_wake_request',
     }
+    # Schema 2 enum fields (Common.h, PROTOCOL_P14_POWER_DIAGNOSTICS.md). The decoder
+    # publishes '<field>_name' beside each raw value; None on a schema 1 snapshot.
+    ADAPTER_PRESENCE_SOURCE_NAMES = {0: 'adc', 1: 'esp_fallback', 2: 'held'}
+    SHUTDOWN_WAIT_END_NAMES = {
+        0: 'no_wait_configured',
+        1: 'nuc_off',
+        2: 'cap',
+        3: 'cancelled_by_wake',
+        4: 'cap_stale_off',
+        255: 'none_since_boot',
+    }
+    CHARGE_STOP_STATE_NAMES = {0: 'idle', 1: 'arming', 2: 'hold'}
+    ESP_ADAPTER_DISAGREE_NAMES = {0: 'agree', 1: 'esp_only', 2: 'voltage_only', 3: 'both'}
+    POWER_EVENT_SOURCE_NAMES = {
+        1: 'pimu', 2: 'power_state', 3: 'bms', 4: 'esp', 5: 'peripheral', 6: 'runstop',
+    }
 
     EYE_ANIM_NOP = 0
     EYE_ANIM_OFF = 1
@@ -1377,6 +1393,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             'discharging': bool(decoded['bms_mos_mask_raw'] & (1 << 2)),
             'charging': bool(decoded['bms_mos_mask_raw'] & (1 << 3)),
         }
+        decoded.update(self._decode_schema2_enums(decoded))
         decoded['battery_voltage_v'] = decoded['battery_voltage_mv'] / 1000.0
         decoded['battery_current_a'] = decoded['battery_current_ma'] / 1000.0
         decoded['charger_current_a'] = decoded['charger_current_ma'] / 1000.0
@@ -1403,6 +1420,26 @@ class PowerPeriphAux(PowerPeriphDefn):
         self.power_diagnostics.clear()
         self.power_diagnostics.update(decoded)
         return sidx
+
+    @classmethod
+    def _decode_schema2_enums(cls, decoded):
+        """Names beside the raw schema 2 enum values, None where the field is None."""
+        def name(table, raw):
+            return None if raw is None else table.get(raw, 'unknown_%d' % raw)
+
+        charge_stop = decoded.get('charge_stop_state')
+        return {
+            'adapter_presence_source_name': name(
+                cls.ADAPTER_PRESENCE_SOURCE_NAMES, decoded.get('adapter_presence_source')),
+            'shutdown_wait_last_end_name': name(
+                cls.SHUTDOWN_WAIT_END_NAMES, decoded.get('shutdown_wait_last_end')),
+            'esp_adapter_disagree_name': name(
+                cls.ESP_ADAPTER_DISAGREE_NAMES, decoded.get('esp_adapter_disagree')),
+            # Low nibble is the policy state, bit 4 says the policy is compiled in.
+            'charge_stop_state_name': name(
+                cls.CHARGE_STOP_STATE_NAMES, None if charge_stop is None else charge_stop & 0x0F),
+            'charge_stop_enabled': None if charge_stop is None else bool(charge_stop & 0x10),
+        }
 
     def _unpack_power_event_log(self, s, requested_schema=None):
         packet_length = len(s)
@@ -1520,10 +1557,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             return 0
         sidx = header_size + diagnostics_size
 
-        source_names = {
-            1: 'pimu', 2: 'power_state', 3: 'bms', 4: 'esp',
-            5: 'peripheral', 6: 'runstop',
-        }
+        source_names = self.POWER_EVENT_SOURCE_NAMES
         events = []
         for _ in range(entry_count):
             sequence = unpack_uint32_t(s[sidx:]); sidx += 4

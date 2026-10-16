@@ -73,6 +73,10 @@ def stretch_battery_check():
     sys.argv[0] = "stretch_battery_check"
     runpy.run_module("stretch4_body.tools.stretch_battery_check", run_name="__main__")
 
+def stretch_power_diagnostics():
+    sys.argv[0] = "stretch_power_diagnostics"
+    runpy.run_module("stretch4_body.tools.stretch_power_diagnostics", run_name="__main__")
+
 def stretch_system_check():
     sys.argv[0] = "stretch_system_check"
     runpy.run_module("stretch4_body.tools.stretch_system_check", run_name="__main__")

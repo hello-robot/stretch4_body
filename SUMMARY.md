@@ -16,6 +16,7 @@
 * [End-Of-Arm (EOA)](docs/primer_end_of_arm.md)
 * [Cameras](docs/primer_cameras.md)
 * [Line Sensors](docs/primer_line_sensor.md)
+* [Power Diagnostics](docs/primer_power_diagnostics.md)
 
 ## Teleoperation
 * [Gamepad Teleop](docs/primer_gamepad_teleop.md)

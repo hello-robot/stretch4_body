@@ -10,6 +10,7 @@ from stretch4_body.behavior.sentries.sentry_manager import SentryManager
 from stretch4_body.behavior.routines.routine_manager import RoutineManager
 from stretch4_body.subsystem.line_sensor.line_sensor_loop import LineSensorLoop
 from stretch4_body.subsystem.power_periph import PowerPeriphDefn
+from stretch4_body.subsystem.power_health import PowerHealthEvaluator, PowerHealthThresholds
 from stretch4_body.utils.freeable_file_lock import FreeableFileLock
 
 import logging
@@ -146,6 +147,10 @@ class RobotServer(RobotCore):
             'bms_freshness_at_sample': 'unknown',
             'esp_freshness_at_sample': 'unknown',
             'pimu_boot_count_observed': 0,
+            # From the PIMU board info at startup, so a status reader (or a status
+            # log read months later) knows which firmware produced the numbers.
+            'firmware_version': None,
+            'protocol_version': None,
         }
         self._power_diag_fw_ages = (None, None)
         self._power_event_after_sequence = 0
@@ -178,6 +183,11 @@ class RobotServer(RobotCore):
             self.status['power_periph']['power_diagnostics'] = self.power_periph.power_diagnostics
             self.status['power_periph']['power_diagnostics_meta'] = self._power_diag_meta
             self.status['power_periph']['power_event_log'] = self._power_event_meta
+        # Derived plain-language health of the same data (power_health.py). Evaluated
+        # when a diagnostics sample lands and on a 2 Hz tick, never per 100 Hz cycle.
+        self._power_health_evaluator = PowerHealthEvaluator()
+        self._power_health_last_eval_mono = float('-inf')
+        self._update_power_health(force=True)
 
 
     def startup(self):
@@ -189,6 +199,7 @@ class RobotServer(RobotCore):
             self.logger.info("RobotServer started successfully.")
             self.state = LOOP_STATE_RUNNING
             self._turn_off_eyes_if_animations_disabled()
+            self._record_power_firmware_version()
             return True
         else:
             self.logger.error("Failed to start RobotServer.")
@@ -199,6 +210,15 @@ class RobotServer(RobotCore):
         if self.get_subsystem('end_of_arm') is not None:
             eoa=self.subsystems['end_of_arm'].is_homed()
         return eoa and RobotCore.is_homed(self)
+
+    def _record_power_firmware_version(self):
+        pp = self.get_subsystem('power_periph')
+        if pp is None:
+            return
+        board_info = getattr(pp, 'board_info', {}) or {}
+        self._power_diag_meta['firmware_version'] = board_info.get('firmware_version')
+        self._power_diag_meta['protocol_version'] = board_info.get('protocol_version')
+        self._update_power_health(force=True)
 
     def _turn_off_eyes_if_animations_disabled(self):
         """
@@ -338,6 +358,7 @@ class RobotServer(RobotCore):
                 max(0.0, time.monotonic() - self._power_diag_last_sample_mono), 3
             )
         self._refresh_power_freshness()
+        self._update_power_health()
         self.status['server']['state']=self.state
         self.status['server']['status_id'] = self.status['server']['status_id'] + 1
         self.status['server']['lease_holder'] = str(self.server.lease_holder_id)
@@ -430,6 +451,7 @@ class RobotServer(RobotCore):
                     self._power_event_meta['request_timeouts'] += 1
                     self._power_event_meta['transport_error'] = (
                         'diagnostics RPC callback timeout')
+                    self._update_power_health(force=True)
             return
         self._power_aux_pending = False
         self._power_aux_request_kind = None
@@ -460,6 +482,7 @@ class RobotServer(RobotCore):
         if request_kind == 'diagnostics':
             self._ingest_power_periph_diagnostics()
             self._ingest_power_periph_event_log()
+            self._update_power_health(force=True)
         required_fields = {
             'current_pwr_state',
             'current_pwr_state_name',
@@ -554,9 +577,39 @@ class RobotServer(RobotCore):
         self._refresh_power_freshness()
 
     # (warning, fault) thresholds on the age of the last good BMS sample and
-    # the last ESP status, in seconds. Same numbers the firmware uses.
-    BMS_FRESHNESS_S = (3.0, 10.0)
-    ESP_FRESHNESS_S = (2.0, 5.0)
+    # the last ESP status, in seconds; defined with the other health thresholds.
+    BMS_FRESHNESS_S = PowerHealthThresholds.BMS_FRESHNESS_S
+    ESP_FRESHNESS_S = PowerHealthThresholds.ESP_FRESHNESS_S
+
+    # power_health is re-evaluated at most this often between diagnostics samples,
+    # so the link and freshness checks age without a new sample.
+    POWER_HEALTH_TICK_S = 0.5
+
+    def _update_power_health(self, force=False):
+        """
+        Publish status['power_periph']['power_health']. Forced when a diagnostics
+        sample or timeout lands; otherwise at most every POWER_HEALTH_TICK_S, so the
+        100 Hz loop pays one monotonic read per cycle and the evaluation runs at 2 Hz.
+        """
+        evaluator = getattr(self, '_power_health_evaluator', None)
+        status = getattr(self, 'status', None)
+        if evaluator is None or not status or 'power_periph' not in status:
+            return
+        now = time.monotonic()
+        if not force and now - self._power_health_last_eval_mono < self.POWER_HEALTH_TICK_S:
+            return
+        self._power_health_last_eval_mono = now
+        pp_status = status['power_periph']
+        try:
+            pp_status['power_health'] = evaluator.evaluate(pp_status, now)
+        except Exception as exc:  # a health bug must never stop the control loop
+            pp_status['power_health'] = {
+                'level': 'unknown', 'summary': 'Power health evaluation failed: %s.' % exc,
+                'checks': [], 'counts': {}, 'sample_seq': None,
+            }
+            if not getattr(self, '_power_health_error_logged', False):
+                self._power_health_error_logged = True
+                self.logger.warning('Power health evaluation failed: %s', exc)
 
     def _refresh_power_freshness(self):
         """

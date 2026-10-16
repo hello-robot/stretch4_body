@@ -44,6 +44,7 @@ Controls the differential/omnidirectional base using three stepper motor wheels.
 
 ### 4. PowerPeriph (`stretch4_body.subsystem.power_periph.PowerPeriphBase`)
 Serves as the central hub for the robot's power state, IMU data, battery monitoring, and peripheral GPIO (LEDs, buzzers, fans, and runstop management).
+On P14 firmware it also reports a power diagnostics snapshot and event log, which the server turns into `status['power_periph']['power_health']`; see [Power Diagnostics](primer_power_diagnostics.md).
 
 ### 5. EndOfArm (`stretch4_body.subsystem.end_of_arm.EndOfArm`)
 A modular tool system dynamically instantiated based on the active `robot.tool` configuration (e.g., dexterous wrists, parallel grippers). It typically runs its hardware communication inside a separate high-frequency background worker process to decouple from the main server loop.
