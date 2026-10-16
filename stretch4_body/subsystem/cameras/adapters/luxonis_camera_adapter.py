@@ -19,6 +19,7 @@ import tempfile
 import json
 import os
 import glob
+import fcntl
 
 CACHE_FILE_PATH = os.path.join(tempfile.gettempdir(), f"luxonis_device_cache_{os.getuid()}.json")
 CACHE_EXPIRY_SECONDS = 24 * 60 * 60  # Invalidate after 24 hours
@@ -46,6 +47,59 @@ def clear_device_cache():
             logger.info(f"Cleared cache at {CACHE_FILE_PATH}")
     except Exception as e:
         logger.warning(f"Failed to clear device cache: {e}")
+
+# What each camera reported the last time this user's code opened it, keyed by
+# device id. stretch_firmware_versions reads it; nothing else opens a camera
+# to learn a version.
+VERSIONS_FILE_PATH = os.path.join(tempfile.gettempdir(), f"luxonis_device_versions_{os.getuid()}.json")
+
+
+def _version_text(version):
+    return None if version is None else str(version)
+
+
+def device_version_record(device, device_port, now):
+    """Versions of an open dai.Device. The device firmware is the one the
+    depthai library uploads when it opens the device, so its version is
+    the library's. The bootloader is in the camera's flash (None when the
+    device does not report one)."""
+    record = {'device_port': device_port, 'time': now, 'depthai_version': dai.__version__}
+    for key, getter in (('device_id', lambda: device.getDeviceInfo().getDeviceId()),
+                        ('product_name', device.getProductName),
+                        ('device_name', device.getDeviceName),
+                        ('bootloader_version', lambda: _version_text(device.getBootloaderVersion())),
+                        ('usb_speed', lambda: device.getUsbSpeed().name)):
+        try:
+            record[key] = getter()
+        except Exception as e:
+            record[key] = None
+            record.setdefault('errors', {})[key] = str(e)
+    return record
+
+
+def record_device_versions(device, device_port):
+    """Merge this device's versions into VERSIONS_FILE_PATH. Never raises:
+    a camera must open whether or not its versions can be written down."""
+    try:
+        record = device_version_record(device, device_port, time.time())
+        # Cameras open from separate processes: merge under a lock.
+        with open(VERSIONS_FILE_PATH + '.lock', 'w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            versions = {}
+            if os.path.exists(VERSIONS_FILE_PATH):
+                try:
+                    with open(VERSIONS_FILE_PATH, 'r') as f:
+                        versions = json.load(f)
+                except ValueError:
+                    versions = {}   # a torn or foreign file: start over
+            versions[record.get('device_id') or device_port] = record
+            tmp = VERSIONS_FILE_PATH + '.%d' % os.getpid()
+            with open(tmp, 'w') as f:
+                json.dump(versions, f)
+            os.replace(tmp, VERSIONS_FILE_PATH)
+    except Exception as e:
+        logger.warning(f"Failed to record device versions: {e}")
+
 
 def get_device_port_by_product_name(product_name:str):
     """When multiple Luxonis cameras are connected, we should query their serial number to use them."""
@@ -176,6 +230,7 @@ class LuxonisCameraAdapter(CameraAdapter):
         logger.info(f"USB Port: {device_port}")
         logger.info(f"USB speed: {device.getUsbSpeed()}")
         logger.info(f"Connected cameras: {device.getConnectedCameras()}")
+        record_device_versions(device, device_port)
 
         pipeline.setXLinkChunkSize(0)
 
