@@ -99,7 +99,8 @@ Try running stretch_body_server --kill""")
     def do_rpc(self, blocking, is_push, payload, rpc_callback, backend=None, exiting=False,
                wait_on_collect=True, timeout_s=None):
         """
-        Return rpc_id if successful, None if fails
+        Return rpc_id if successful (True on the Python backend, which has no
+        ids), None if fails
 
         wait_on_collect: when False, load_rpc_results(wait_on_result=True) polls this
         RPC once instead of waiting up to RPC_RESULT_TIMEOUT_S for it. The id is kept
@@ -116,8 +117,13 @@ Try running stretch_body_server --kill""")
             self.logger.error('Transport: do_rpc. nonblocking mode requires C backend: {0}'.format(self.port_name))
             return None
         if backend == self.BACKEND_PY_SERIAL:
-            TransportPySerial.do_pull_rpc_sync(self, payload, rpc_callback, exiting=exiting)
-            return None
+            # No rpc_id on this backend: return True for a completed transaction
+            # so callers' `is not None` success checks hold, None on failure.
+            if is_push:
+                ok = TransportPySerial.do_push_rpc_sync(self, payload, rpc_callback, exiting=exiting)
+            else:
+                ok = TransportPySerial.do_pull_rpc_sync(self, payload, rpc_callback, exiting=exiting)
+            return True if ok else None
         if backend == self.BACKEND_C_SERIAL:
             #Always use the non-blocking function, just wait for it to finish if blocking
             rpc_id = self.transport_c.do_rpc(False, is_push, payload, nb_payload=len(payload), rpc_callback=rpc_callback)

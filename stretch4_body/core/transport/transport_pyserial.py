@@ -151,32 +151,38 @@ class SyncTransactionHandler():
         return crc_ok, nr, decoded_data
 
     def do_rpc(self, push, payload, reply_callback, exiting=False):
+        """
+        Run one transaction. Returns True when the reply was received and the
+        callback ran, False otherwise (no port, transport error, serial error).
+        """
         if not self.ser:
-            return
+            return False
         self.status['transactions'] += 1
         if exiting:
             time.sleep(0.1)  # May have been a hard exit, give time for bad data to land, remove, do final RPC
             self.ser.reset_output_buffer()
             self.ser.reset_input_buffer()
         # This will block until all RPCs have been completed
+        ok = False
         try:
             # Now run RPC calls
             if push:
                 if self.version == RPC_TRANSPORT_VERSION_0:
-                    self.do_transaction_v0(payload, reply_callback)
+                    ok = self.do_transaction_v0(payload, reply_callback)
                 elif self.version == RPC_TRANSPORT_VERSION_1:
-                    self.do_push_transaction_v1(payload, reply_callback)
+                    ok = self.do_push_transaction_v1(payload, reply_callback)
             else:
                 if self.version == RPC_TRANSPORT_VERSION_0:
-                    self.do_transaction_v0(payload, reply_callback)
+                    ok = self.do_transaction_v0(payload, reply_callback)
                 elif self.version == RPC_TRANSPORT_VERSION_1:
-                    self.do_pull_transaction_v1(payload, reply_callback)
+                    ok = self.do_pull_transaction_v1(payload, reply_callback)
         except IOError as e:
             self.logger.error("IOError({0}): {1}".format(e.errno, e.strerror))
             self.status['read_error'] += 1
         except serial.SerialTimeoutException as e:
             self.status['write_error'] += 1
             self.logger.error("SerialException({0}): {1}".format(e.errno, e.strerror))
+        return bool(ok)
 
     def do_push_transaction_v1(self, rpc_data, rpc_callback):
         """
@@ -427,6 +433,7 @@ class SyncTransactionHandler():
             #    print('Got reply',len(reply))
             # print('---------------------- RPC complete, elapsed time------------------:',time.time()-ts)
             rpc_callback(reply)
+            return True
         except TransportError as e:
             if self.dbg_on:
                 print('---- Debug Exception')
@@ -442,6 +449,7 @@ class SyncTransactionHandler():
         except serial.SerialException as e:
             self.logger.error("SerialException: %s : %s" % (self.port_name, str(e)))
             self.ser = None
+        return False
         # except TypeError as e:
         #     self.logger.error("TypeError: %s : %s" % (self.port_name, str(e)))
         #     self.ser=None
@@ -479,9 +487,11 @@ class AsyncTransactionHandler(SyncTransactionHandler):
         return 0, 0, arr.array('B', [])
 
     async def do_rpc(self, push, payload, reply_callback, exiting=False):
+        """Async twin of SyncTransactionHandler.do_rpc, same True/False result."""
         if not self.ser:
-            return
+            return False
         self.status['transactions'] += 1
+        ok = False
         # if exiting:
         #     time.sleep(0.1) #May have been a hard exit, give time for bad data to land, remove, do final RPC
         #     self.ser.reset_output_buffer()
@@ -491,20 +501,21 @@ class AsyncTransactionHandler(SyncTransactionHandler):
             # Now run RPC calls
             if push:
                 if self.version == RPC_TRANSPORT_VERSION_0:
-                    await self.do_transaction_v0(payload, reply_callback)
+                    ok = await self.do_transaction_v0(payload, reply_callback)
                 elif self.version == RPC_TRANSPORT_VERSION_1:
-                    await self.do_push_transaction_v1(payload, reply_callback)
+                    ok = await self.do_push_transaction_v1(payload, reply_callback)
             else:
                 if self.version == RPC_TRANSPORT_VERSION_0:
-                    await self.do_transaction_v0(payload, reply_callback)
+                    ok = await self.do_transaction_v0(payload, reply_callback)
                 elif self.version == RPC_TRANSPORT_VERSION_1:
-                    await self.do_pull_transaction_v1(payload, reply_callback)
+                    ok = await self.do_pull_transaction_v1(payload, reply_callback)
         except IOError as e:
             print("IOError({0}): {1}".format(e.errno, e.strerror))
             self.status['read_error'] += 1
         except serial.SerialTimeoutException as e:
             self.status['write_error'] += 1
             print("SerialException({0}): {1}".format(e.errno, e.strerror))
+        return bool(ok)
 
     async def do_pull_transaction_v1(self, rpc_data, rpc_callback):
         """
@@ -761,6 +772,7 @@ class AsyncTransactionHandler(SyncTransactionHandler):
             #    print('Got reply',len(reply))
             # print('---------------------- RPC complete, elapsed time------------------:',time.time()-ts)
             rpc_callback(reply)
+            return True
         except TransportError as e:
             if self.dbg_on:
                 print('---- Debug Exception')
@@ -779,6 +791,7 @@ class AsyncTransactionHandler(SyncTransactionHandler):
         except TypeError as e:
             self.logger.error("TypeError: %s : %s" % (self.port_name, str(e)))
             self.ser = None
+        return False
 
 
 class TransportPySerial():
@@ -962,10 +975,10 @@ class TransportPySerial():
 
         Returns
         -------
-        None
+        True when the reply was received and the callback ran, else False
         """
         with self.lock:
-            self.sync_handler.do_rpc(push=False, payload=payload, reply_callback=reply_callback, exiting=exiting)
+            return self.sync_handler.do_rpc(push=False, payload=payload, reply_callback=reply_callback, exiting=exiting)
 
     def do_push_rpc_sync(self, payload, reply_callback, exiting=False):
         """
@@ -978,10 +991,10 @@ class TransportPySerial():
 
         Returns
         -------
-        None
+        True when the reply was received and the callback ran, else False
         """
         with self.lock:
-            self.sync_handler.do_rpc(push=True, payload=payload, reply_callback=reply_callback, exiting=exiting)
+            return self.sync_handler.do_rpc(push=True, payload=payload, reply_callback=reply_callback, exiting=exiting)
 
 
 
