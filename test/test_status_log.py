@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -21,11 +22,29 @@ from test_power_health import evaluate, status
 
 
 HEALTH = {}
+JUNE = Path(__file__).parent / 'fixtures' / 'status_sample_4032_20260602.json'
 
 
-def robot_status(i, cursor=9, seq=1, errors=0):
-    """A RobotClient-shaped status: power keys plus the legacy aliases, sharing objects.
-    power_health is evaluated once per diagnostics sample, as the server does at 2 Hz."""
+def transition(seq, to_state):
+    return {'seq': seq, 'observed_wall_time_s': T0 + seq, 'observed_monotonic_s': 100.0 + seq,
+            'from_state': None if seq == 1 else 0, 'to_state': to_state,
+            'to_state_name': 'STATE_ACTIVE', 'runstop_cause_raw': 0}
+
+
+def share_server_dicts(st):
+    """Give every subsystem the top-level server, routines and safety_layer objects,
+    as RobotClient.pull_status does."""
+    for sub, value in st.items():
+        if isinstance(value, dict) and sub not in status_log.SHARED and sub not in status_log.ALIASES:
+            for key in status_log.SHARED:
+                value[key] = st[key]
+    return st
+
+
+def robot_status(i, cursor=9, seq=1, errors=0, transitions=1):
+    """A RobotClient-shaped status: power keys, the legacy aliases and the per-subsystem
+    server dicts, sharing objects as RobotClient does. power_health is evaluated once per
+    diagnostics sample, as the server does at 2 Hz."""
     pp = status(meta={'sample_seq': seq, 'request_errors': errors},
                 log={'events': [BOOT, LENGTH_ERROR] if cursor >= 10 else [BOOT],
                      'cursor_sequence': cursor}, **REALISTIC)
@@ -33,9 +52,18 @@ def robot_status(i, cursor=9, seq=1, errors=0):
         HEALTH[(seq, errors)] = evaluate(pp)
     pp['power_health'] = json.loads(json.dumps(HEALTH[(seq, errors)]))
     pp['voltage'] = 27.0 + 0.01 * i
+    pp['status_aux_meta'] = {'available': True, 'sample_seq': seq, 'sample_age_s': 0.01 * i,
+                             'transitions': [transition(n + 1, n % 2) for n in range(transitions)]}
     omnibase = {'x': 0.001 * i, 'y': 0.0}
-    return {'timestamp': T0 + 0.01 * i, 'power_periph': pp, 'pimu': pp,
-            'omnibase': omnibase, 'base': omnibase, 'lift': {'pos': 0.5 + 0.001 * i}}
+    st = {'timestamp': T0 + 0.01 * i,
+          'server': {'control_loop': {'num_loops': 1000 + i}, 'status_id': i},
+          'routines': {'last_routine_id': 3},
+          'safety_layer': {'in_safety_event': False, 'n': i},
+          'power_periph': pp, 'omnibase': omnibase, 'lift': {'pos': 0.5 + 0.001 * i}}
+    share_server_dicts(st)
+    st['pimu'] = pp
+    st['base'] = omnibase
+    return st
 
 
 def sequence():
@@ -44,7 +72,7 @@ def sequence():
     out = []
     for i in range(12):
         out.append(robot_status(i, cursor=10 if i >= 7 else 9, seq=2 if i >= 4 else 1,
-                                errors=1 if i >= 9 else 0))
+                                errors=1 if i >= 9 else 0, transitions=2 if i >= 5 else 1))
     return out
 
 
@@ -55,12 +83,17 @@ def as_logged(sample):
 
 # --- the logger side ----------------------------------------------------------------------------
 
-def test_first_sample_is_complete_without_aliases():
+def test_first_sample_has_every_value_once():
     s = robot_status(0)
     out = StatusLogTrimmer().trim(s)
     assert 'pimu' not in out and 'base' not in out
     assert status_log.FORMAT_KEY not in out
-    assert out['power_periph'] == s['power_periph']
+    for key in status_log.SHARED:
+        assert out[key] == s[key]
+        assert key not in out['lift'] and key not in out['power_periph']
+    assert sorted(out[status_log.SHARED_KEY]) == ['lift', 'omnibase', 'power_periph']
+    pp = {k: v for k, v in s['power_periph'].items() if k not in status_log.SHARED}
+    assert out['power_periph'] == pp
 
 
 def test_unchanged_power_keys_are_left_out_and_listed():
@@ -70,8 +103,11 @@ def test_unchanged_power_keys_are_left_out_and_listed():
     pp = out['power_periph']
     for key in ('power_event_log', 'power_diagnostics', 'power_diagnostics_meta', 'power_health'):
         assert key not in pp
+    assert 'transitions' not in pp['status_aux_meta']
+    assert pp['status_aux_meta']['sample_age_s'] == pytest.approx(0.01)
     assert sorted(out[status_log.FORMAT_KEY]['power_periph']) == sorted(
-        ['power_event_log', 'power_diagnostics', 'power_diagnostics_meta', 'power_health'])
+        ['power_event_log', 'power_diagnostics', 'power_diagnostics_meta', 'power_health',
+         'status_aux_meta.transitions'])
     assert pp['voltage'] == pytest.approx(27.01)       # fast keys always written
     assert out['lift'] == {'pos': pytest.approx(0.501)}
 
@@ -84,6 +120,17 @@ def test_changed_keys_are_written_again():
     assert 'power_event_log' not in out[status_log.FORMAT_KEY]['power_periph']
     out = t.trim(robot_status(2, cursor=10, seq=1, errors=3))
     assert out['power_periph']['power_diagnostics_meta']['request_errors'] == 3
+    out = t.trim(robot_status(3, cursor=10, seq=1, errors=3, transitions=2))
+    assert len(out['power_periph']['status_aux_meta']['transitions']) == 2
+
+
+def test_a_subsystem_server_copy_that_differs_is_kept():
+    s = robot_status(0)
+    s['lift']['server'] = {'control_loop': {'num_loops': 1}, 'status_id': 0}
+    out = StatusLogTrimmer().trim(s)
+    assert out['lift']['server'] == {'control_loop': {'num_loops': 1}, 'status_id': 0}
+    assert 'lift' not in out[status_log.SHARED_KEY]
+    assert StatusLogExpander().expand(json.loads(json.dumps(out))) == as_logged(s)
 
 
 def test_trim_never_touches_the_published_status():
@@ -140,6 +187,52 @@ def test_expander_counts_keys_it_cannot_fill():
     assert ex.unresolved > 0
     assert 'power_event_log' not in rebuilt[0]['power_periph']
     assert rebuilt[-1]['power_periph']['power_event_log']['cursor_sequence'] == 10
+
+
+def june_sample():
+    return json.loads(JUNE.read_text())
+
+
+def june_like_live(i, n_events=64):
+    """The June 4032 sample as RobotClient holds it now: subsystem server dicts are the
+    top-level ones (the June logger wrote them stale), aliases are the same objects, and
+    the P14 power keys are present with a full event log. i ticks the fast values."""
+    st = june_sample()
+    st['timestamp'] += 0.01 * i
+    st['server']['status_id'] += i
+    st['lift']['pos'] += 0.0001 * i
+    p14 = robot_status(i, cursor=9 + n_events, seq=1 + i // 50,
+                       transitions=1 + i // 200)['power_periph']
+    p14['power_event_log']['events'] = [dict(BOOT, sequence=10 + n) for n in range(n_events)]
+    for key in status_log.SHARED:
+        p14.pop(key)
+    st['power_periph'].update(p14)
+    share_server_dicts(st)
+    st['pimu'] = st['power_periph']
+    st['base'] = st['omnibase']
+    return st
+
+
+def test_june_sample_round_trips_exactly_as_logged():
+    """The real June sample as written then: stale subsystem server copies stay written."""
+    st = june_sample()
+    st['pimu'] = st['power_periph']
+    st['base'] = st['omnibase']
+    out = json.loads(json.dumps(StatusLogTrimmer().trim(st), default=str))
+    assert StatusLogExpander().expand(out) == june_sample()
+
+
+def test_june_sample_as_live_round_trips_exactly_and_shrinks():
+    statuses = [june_like_live(i) for i in range(0, 600, 7)]
+    text = logged_file(statuses)
+    ex = StatusLogExpander()
+    rebuilt = [ex.expand(e) for e in json.loads(text)]
+    assert rebuilt == [as_logged(s) for s in statuses]
+    assert ex.unresolved == 0
+    elements = json.loads(text)
+    later = len(json.dumps(elements[-1]))
+    assert later < len(json.dumps(as_logged(statuses[-1]))) / 5
+    assert 'server' not in elements[-1]['lift']
 
 
 def test_trimmed_sample_is_much_smaller():
@@ -199,8 +292,8 @@ class FakeClient:
     def __init__(self, stop_after, do_exit):
         self.stop_after, self.do_exit, self.pulls = stop_after, do_exit, 0
         first = robot_status(0)
-        self.status = {'timestamp': first['timestamp'], 'power_periph': first['power_periph'],
-                       'omnibase': first['omnibase'], 'lift': first['lift']}
+        self.status = {k: first[k] for k in ('timestamp', 'server', 'routines', 'safety_layer',
+                                             'power_periph', 'omnibase', 'lift')}
         self.status['pimu'] = self.status['power_periph']
         self.status['base'] = self.status['omnibase']
 
@@ -210,7 +303,8 @@ class FakeClient:
     def pull_status(self):
         i = self.pulls
         new = robot_status(i, cursor=10 if i >= 7 else 9, seq=2 if i >= 4 else 1)
-        self.status['timestamp'] = new['timestamp']
+        for key in ('timestamp',) + status_log.SHARED:
+            self.status[key] = new[key]
         for sub in ('power_periph', 'omnibase', 'lift'):
             self.status[sub].update(new[sub])
         self.pulls += 1

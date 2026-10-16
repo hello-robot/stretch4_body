@@ -555,19 +555,23 @@ Measured bytes per logged sample (`json.dumps`, as the logger writes), before th
 The logger now writes a trimmed copy (the published status is unchanged; format in [Robot Status Data and Server Logs](primer_status_log.md)):
 
 - `pimu` and `base` aliases are not written;
-- `power_event_log` is written when it changes (its cursor moves), `power_diagnostics`, `power_diagnostics_meta` and `power_health` when they change. `power_diagnostics_meta` carries ages that tick every cycle, so it is written every sample (about 600 B); the others about twice a second;
-- the first sample of every file is complete, and the readers carry the last written value forward.
+- the per-subsystem copies of `server`, `routines` and `safety_layer` are not written when they equal the top-level ones (about 13 KB a sample: five subsystems times about 2.6 KB);
+- `power_event_log` is written when it changes (its cursor moves), `status_aux_meta.transitions` on a power-state transition, `power_diagnostics`, `power_diagnostics_meta` and `power_health` when they change. `power_diagnostics_meta` carries ages that tick every cycle, so it is written every sample (about 600 B); the others about twice a second;
+- the first sample of every file has every carried value, and the readers rebuild each sample exactly.
 
-Measured on a June 2026 stretch-se4-4032 sample with P14 keys added, over a simulated 60 s file (6000 samples, a new diagnostics sample every 0.5 s):
+Measured on the June 2026 stretch-se4-4032 sample (`test/fixtures/status_sample_4032_20260602.json`) with P14 keys added and the subsystem dicts shared as `RobotClient` holds them, over a simulated 60 s file (6000 samples, a new diagnostics sample every 0.5 s):
 
 | Body | Bytes per sample | Per minute | 5000 MB holds |
 |---|---|---|---|
 | Pre-P14 (measured log) | 37,285 | 217 MB | about 24 minutes |
-| P14, untrimmed, empty event log | about 58,100 to 59,800 | 348 MB | about 15 minutes |
-| P14, untrimmed, full event log | about 118,800 | 692 MB | about 7.6 minutes |
-| P14, trimmed, empty or full event log | about 28,700 | 167 MB | about 31 minutes |
+| P14, untrimmed, empty event log | about 58,100 | 338 MB | about 15 minutes |
+| P14, untrimmed, full event log | about 118,700 | 691 MB | about 7.6 minutes |
+| P14, untrimmed, full event log and 64 transitions | about 137,900 | 803 MB | about 6.5 minutes |
+| P14, trimmed, any of the above | about 14,900 | 87 MB | about 60 minutes |
 
-So the status log is a flight recorder for about the last half hour. The event log no longer matters: it is written once per file and again only when a new event arrives. The PIMU itself keeps the last 64 events across a host restart, so after an incident read them live first.
+What is left in a trimmed sample: the five subsystems' own values (about 11.4 KB, of which `end_of_arm` 3.9 KB and `omnibase` 2.9 KB), the top-level `safety_layer` (1.9 KB), `server` (0.5 KB) and the markers (under 0.2 KB).
+
+So the status log is a flight recorder for about the last hour. The event log and the transition list no longer matter: each is written once per file and again only when it changes. The PIMU itself keeps the last 64 events across a host restart, so after an incident read them live first.
 
 Until October 2026 the logger also kept references to RobotClient's live subsystem dicts and serialized a whole minute at once, so every sample in a file carried the subsystem values of the last one (only `timestamp` and the top-level `server`, `routines` and `safety_layer` differed). Subsystem and power values in older logs are one snapshot per file, not per sample.
 
@@ -580,7 +584,7 @@ rsync -av hello-robot@stretch-se4-4056.local:stretch_user/log/stretch_status/ ./
 stretch_status --export ~/
 ```
 
-Copy the logs soon after the incident: with about 31 minutes of history, a robot left running overwrites the moment you care about.
+Copy the logs soon after the incident: with about an hour of history, a robot left running overwrites the moment you care about.
 
 ## 9. Version Pairing
 

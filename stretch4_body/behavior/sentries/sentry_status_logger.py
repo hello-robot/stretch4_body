@@ -66,8 +66,9 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
                   logger: logging.Logger, batch_period_s: float = 60.0, client_factory=RobotClient):
     """
     Background daemon that polls RobotClient status and writes it to disk in batches,
-    managing the directory size. The file format (aliases dropped, slow power keys
-    written only when they change) is in stretch4_body/core/status_log.py.
+    managing the directory size. The file format (aliases and per-subsystem server
+    copies dropped, slow power keys written only when they change) is in
+    stretch4_body/core/status_log.py.
     """
     def manage_directory_size(max_size_bytes=maximum_log_size_mb * 1024 * 1024):
         try:
