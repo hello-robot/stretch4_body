@@ -18,6 +18,8 @@ using namespace moodycamel;
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <sched.h>
 
 
 extern "C" {
@@ -253,9 +255,27 @@ public:
             exitSignal=false;
             queue_thread = std::thread(queue_thread_loop,this);
             thread_active=true;
+            apply_thread_priority();
             return true;
         }
         return false;
+    }
+
+    // SCHED_FIFO for the queue thread when the body asks for it (HELLO_TRANSPORT_RT_PRIORITY,
+    // set by stretch4_body/core/scheduling.py only when the user's rtprio limit allows it).
+    // The thread blocks on a timed dequeue, so it never holds a core. Failure is reported once
+    // and the thread stays SCHED_OTHER.
+    void apply_thread_priority()
+    {
+        const char * env = std::getenv("HELLO_TRANSPORT_RT_PRIORITY");
+        if (env == nullptr) return;
+        int prio = std::atoi(env);
+        if (prio < 1 || prio > 99) return;
+        struct sched_param sp;
+        sp.sched_priority = prio;
+        int rc = pthread_setschedparam(queue_thread.native_handle(), SCHED_FIFO, &sp);
+        if (rc != 0)
+            std::cout << "Transport_cpp: SCHED_FIFO " << prio << " refused for " << port_name << " (errno " << rc << "), staying SCHED_OTHER" << std::endl;
     }
 
     bool shutdown_thread()

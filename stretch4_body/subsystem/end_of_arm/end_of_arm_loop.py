@@ -4,6 +4,7 @@ import stretch4_body.core.hello_utils as hello_utils
 import os
 from stretch4_body.subsystem.end_of_arm.end_of_arm import EndOfArm
 from stretch4_body.core.device import Device
+from stretch4_body.core import scheduling
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.core.subsystem_client import SubsystemClient
 import queue
@@ -109,7 +110,8 @@ class EndOfArmLoop(Device):
             )
             self.eoa_process.start()
             self.logger.info('Started EndofArmLoop process %d'%self.eoa_process.pid)
-            #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.eoa_process.pid)) #Assign process to core
+            self.status['scheduling'] = scheduling.apply(self.params.get('scheduling'), pid=self.eoa_process.pid,
+                                                         logger=self.logger, label='end_of_arm_loop')
             # Wait for system to start posting status
             try:
                 self.status.update(self.q_status.get(block=True, timeout=5.0))

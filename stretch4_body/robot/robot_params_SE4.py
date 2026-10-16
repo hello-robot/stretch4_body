@@ -675,7 +675,7 @@ nominal_params={
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
     'line_sensor_loop':{
         'loop_rate_Hz': 250, #Run fast as polling serial, 6 ch, 30hz
-        'cpu_affinity': 16,
+        'scheduling': {'cpus': 'p', 'rt_priority': 5}, #see stretch4_body/core/scheduling.py
         'flip_range_ordering':True,
         'sensor_names': ['sensor_0', 'sensor_1', 'sensor_2', 'sensor_3', 'sensor_4', 'sensor_5'], #CW from robot forward
         'bus_sensor_map': [ [ 1, 0 ],[ 3, 2 ],[ 5, 4 ] ], #Remap if cables plugged in differently
@@ -709,7 +709,7 @@ nominal_params={
     },
     'end_of_arm_loop': {
         'loop_rate_Hz': 50,
-        'cpu_affinity': 16
+        'scheduling': {'cpus': 'p', 'rt_priority': 5} #see stretch4_body/core/scheduling.py
     },
     'omnibase': {
         'forward_dir': 'calder',
@@ -1191,7 +1191,6 @@ nominal_params={
     'robot_server':{
         # 'control_loop_rate_Hz': 100,
         # 'network_loop_rate_Hz':50,
-        # 'cpu_affinity': 17
         },
     # ########### ROUTINES ################################
     'routine_manager':{'controllers': ['routine_nop', 'routine_blind_dock', 'routine_lift_home','routine_arm_home',
@@ -1401,6 +1400,9 @@ nominal_params={
             'control_loop_rate_Hz': 100,
             'max_push_command_rate_Hz':     100,
             'subsystems': [],#'line_sensor_loop'],
+            #Control thread and device transport threads: keep off the low-power E-cores, SCHED_FIFO
+            #when the user has an rtprio limit (see stretch4_body/core/scheduling.py)
+            'scheduling': {'cpus': 'p+e', 'rt_priority': 10},
         },
     },
     'robot_monitor':{
