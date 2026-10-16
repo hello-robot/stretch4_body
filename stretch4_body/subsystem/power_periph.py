@@ -209,7 +209,9 @@ class IMU(IMUBase):
         IMUBase.__init__(self)
         # Order in descending order so more recent protocols/methods override less recent
         self._supported_protocols = {'p9': (IMU_Protocol_P8,),'p8': (IMU_Protocol_P8,),
-                                     'p10': (IMU_Protocol_P8,),'p11':(IMU_Protocol_P8,),'p12':(IMU_Protocol_P8,),'p13':(IMU_Protocol_P8,)}
+                                     'p10': (IMU_Protocol_P8,),'p11':(IMU_Protocol_P8,),
+                                     'p12':(IMU_Protocol_P8,),'p13':(IMU_Protocol_P8,),
+                                     'p14':(IMU_Protocol_P8,)}
 
 # ##################################################################################
 class PowerPeriphDefn():
@@ -249,6 +251,94 @@ class PowerPeriphDefn():
 
     RPC_SET_EYE_ANIMATION = 29
     RPC_REPLY_SET_EYE_ANIMATION = 30
+    RPC_GET_POWER_DIAGNOSTICS = 31
+    RPC_REPLY_POWER_DIAGNOSTICS = 32
+    POWER_DIAGNOSTICS_SCHEMA_VERSION = 1
+    POWER_DIAGNOSTICS_WIRE_SIZE = 190
+    POWER_EVENT_LOG_SCHEMA_VERSION = 1
+    POWER_EVENT_LOG_HEADER_SIZE = 24
+    POWER_EVENT_LOG_ENTRY_SIZE = 16
+    POWER_EVENT_LOG_MAX_RPC_ENTRIES = 16
+    POWER_DIAGNOSTICS_REPLY_OK = 0
+    POWER_DIAGNOSTICS_REPLY_BAD_REQUEST_SIZE = 1
+    POWER_DIAGNOSTICS_REPLY_UNSUPPORTED_SCHEMA = 2
+    POWER_DIAGNOSTICS_REPLY_STATUS_NAMES = {
+        POWER_DIAGNOSTICS_REPLY_OK: 'ok',
+        POWER_DIAGNOSTICS_REPLY_BAD_REQUEST_SIZE: 'bad_request_size',
+        POWER_DIAGNOSTICS_REPLY_UNSUPPORTED_SCHEMA: 'unsupported_schema',
+    }
+
+    POWER_EVENT_NAMES = {
+        1: 'boot',
+        2: 'power_state_transition',
+        3: 'button_raw_changed',
+        4: 'button_debounced',
+        5: 'button_request',
+        6: 'adapter_changed',
+        7: 'charger_enable_command_changed',
+        8: 'charger_expected_active_changed',
+        9: 'bms_sample_valid',
+        10: 'bms_timeout',
+        11: 'bms_crc_error',
+        12: 'bms_rx_overflow',
+        13: 'bms_recovered',
+        14: 'bms_alarm_changed',
+        15: 'bms_mos_changed',
+        16: 'cpu_status_changed',
+        17: 'esp_status_recovered',
+        18: 'esp_status_stale',
+        19: 'runstop_changed',
+        20: 'peripheral_state_changed',
+        21: 'cpu_power_cycle_request',
+        22: 'esp_crc_error',
+        23: 'esp_rx_overflow',
+        24: 'esp_tx_queue_drop',
+        25: 'bms_protocol_error',
+    }
+    POWER_EVENT_EXPLANATIONS = {
+        1: 'PIMU restarted; data0 is the reset-cause bitmask and data1 is the board variant.',
+        2: 'PIMU power state changed; data0 is the previous state and data1 is the transition reason.',
+        3: 'Raw PWR_EN input changed before debounce.',
+        4: 'PWR_EN crossed the 500 ms debounce threshold.',
+        5: 'A physical-button request was accepted by the power-state machine.',
+        6: 'The PIMU 36 V adapter-presence measurement changed.',
+        7: ('The firmware charger-enable command changed. This is the MCU GPIO/flag, '
+            'not proof that the charger IC physically enabled.'),
+        8: ('The firmware-derived charging expectation changed (adapter present and '
+            'enable commanded); confirm physical charging with measured current and BMS MOS state.'),
+        9: 'The first CRC-valid BMS response was received after boot.',
+        10: 'The BMS did not complete a Modbus response before the framing timeout.',
+        11: 'A complete BMS Modbus frame failed CRC validation.',
+        12: 'The BMS receive frame exceeded the fixed receive buffer.',
+        13: 'BMS communication recovered; data0 is the consecutive failure count.',
+        14: 'One or more BMS alarm bits changed; data0/data1 are the old/new masks.',
+        15: 'One or more BMS MOS state bits changed; data0/data1 are the old/new masks.',
+        16: ('The ESP-observed NUC USB port-A VBUS-presence input changed. This '
+             'does not prove that the NUC OS is running or that the NUC rail is healthy.'),
+        17: 'ESP status was received for the first time or after becoming stale.',
+        18: 'No ESP status packet was received for more than two seconds.',
+        19: 'Runstop state or cause changed.',
+        20: 'The PIMU actuator/peripheral power mask changed.',
+        21: 'The host requested a NUC power cycle.',
+        22: 'An ESP UART frame failed CRC validation.',
+        23: 'The ESP UART receive frame exceeded its fixed buffer.',
+        24: 'The PIMU-to-ESP transmit queue was full and dropped a packet.',
+        25: 'A CRC-valid BMS reply had the wrong address, function, byte count, or length; data1 is the exception code or received length.',
+    }
+    POWER_TRANSITION_REASON_NAMES = {
+        0: 'unknown',
+        1: 'boot_button',
+        2: 'boot_no_button',
+        3: 'user_button',
+        4: 'esp_sleep_request',
+        5: 'host_sleep_trigger',
+        6: 'low_battery',
+        7: 'charging_expectation_set',
+        8: 'charging_expectation_cleared',
+        9: 'power_button_high',
+        10: 'user_wake',
+        11: 'esp_wake_request',
+    }
 
     EYE_ANIM_NOP = 0
     EYE_ANIM_OFF = 1
@@ -693,6 +783,25 @@ class PowerPeriphAux(PowerPeriphDefn):
             '_valid': False,
             '_packet_length': None,
             '_decode_error': None,
+            '_diagnostics_present': False,
+        }
+        self.status_aux_reply_sequence = 0
+        self.status_aux_reply_monotonic_s = None
+        self.power_diagnostics_reply_sequence = 0
+        self.power_diagnostics_reply_monotonic_s = None
+        self.power_event_log_reply_sequence = 0
+        self.power_event_log_reply_monotonic_s = None
+        self.power_diagnostics = {
+            '_valid': False,
+            '_packet_length': None,
+            '_decode_error': None,
+            'schema_version': None,
+        }
+        self.power_event_log_page = {
+            '_valid': False,
+            '_packet_length': None,
+            '_decode_error': None,
+            'events': [],
         }
         self._load_test_payload = arr.array('B', range(256)) * 4
 
@@ -702,6 +811,25 @@ class PowerPeriphAux(PowerPeriphDefn):
         payload = arr.array('B', [self.RPC_GET_POWER_PERIPH_STATUS_AUX])
         return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
                                      rpc_callback=self._rpc_status_aux_reply) is not None
+
+    def pull_power_diagnostics(self, blocking=True, after_sequence=0, max_entries=16):
+        """Pull the protocol-14 snapshot and a cursor-paged event-log page."""
+        if not self.hw_valid or not self.supports_power_diagnostics():
+            return False
+        max_entries = max(0, min(self.POWER_EVENT_LOG_MAX_RPC_ENTRIES,
+                                 int(max_entries)))
+        payload = arr.array('B', [0] * 9)
+        payload[0] = self.RPC_GET_POWER_DIAGNOSTICS
+        pack_uint8_t(payload, 1, self.POWER_DIAGNOSTICS_SCHEMA_VERSION)
+        pack_uint8_t(payload, 2, max_entries)
+        pack_uint16_t(payload, 3, 0)
+        pack_uint32_t(payload, 5, int(after_sequence) & 0xFFFFFFFF)
+        return self.transport.do_rpc(
+            blocking=blocking,
+            is_push=False,
+            payload=payload,
+            rpc_callback=self._rpc_power_diagnostics_reply,
+        ) is not None
 
     def push_load_test(self, blocking=True):
         if not self.hw_valid:
@@ -721,10 +849,74 @@ class PowerPeriphAux(PowerPeriphDefn):
                                      rpc_callback=self._rpc_load_test_pull_reply)  is not None
 
     def _rpc_status_aux_reply(self, reply):
-        if reply[0] == self.RPC_REPLY_POWER_PERIPH_STATUS_AUX:
+        self.status_aux_reply_sequence += 1
+        self.status_aux_reply_monotonic_s = time.monotonic()
+        if len(reply) > 0 and reply[0] == self.RPC_REPLY_POWER_PERIPH_STATUS_AUX:
             self._unpack_status_aux(reply[1:])
         else:
-            self.logger.warning('Error RPC_REPLY_POWER_PERIPH_AUX_STATUS', reply[0])
+            self.status_aux['_valid'] = False
+            self.status_aux['_decode_error'] = 'unexpected or empty aux reply'
+            self.logger.warning('Error RPC_REPLY_POWER_PERIPH_AUX_STATUS')
+
+    def _rpc_power_diagnostics_reply(self, reply):
+        now = time.monotonic()
+        self.power_diagnostics_reply_sequence += 1
+        self.power_diagnostics_reply_monotonic_s = now
+        self.power_event_log_reply_sequence += 1
+        self.power_event_log_reply_monotonic_s = now
+        if len(reply) > 0 and reply[0] == self.RPC_REPLY_POWER_DIAGNOSTICS:
+            consumed = self._unpack_power_event_log(reply[1:])
+            if consumed > 0:
+                self._mirror_power_diagnostics_to_status_aux()
+                return
+        else:
+            self.power_diagnostics.clear()
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': max(0, len(reply) - 1),
+                '_decode_error': 'unexpected or empty power diagnostics reply',
+            })
+            self.power_event_log_page.clear()
+            self.power_event_log_page.update({
+                '_valid': False,
+                '_packet_length': max(0, len(reply) - 1),
+                '_decode_error': 'unexpected or empty power diagnostics reply',
+                'events': [],
+            })
+            self.logger.warning('Error RPC_REPLY_POWER_DIAGNOSTICS')
+        self.status_aux.update({
+            '_valid': False,
+            '_diagnostics_present': False,
+            '_decode_error': self.power_diagnostics.get('_decode_error'),
+        })
+
+    def _mirror_power_diagnostics_to_status_aux(self):
+        diagnostics = self.power_diagnostics
+        if not diagnostics.get('_valid'):
+            self.status_aux.update({
+                '_valid': False,
+                '_diagnostics_present': False,
+                '_decode_error': diagnostics.get('_decode_error'),
+            })
+            return
+        self.status_aux.update({
+            'current_pwr_state': diagnostics['power_state'],
+            'current_pwr_state_name': diagnostics['power_state_name'],
+            'runstop_cause_raw': diagnostics['runstop_cause_raw'],
+            'motor_sync_cnt': diagnostics['motor_sync_cnt'],
+            'battery_cell_temp_1': diagnostics['battery_cell_temp_1_c'],
+            'battery_cell_temp_2': diagnostics['battery_cell_temp_2_c'],
+            'battery_cell_temp_3': diagnostics['battery_cell_temp_3_c'],
+            'battery_ambient_temp': diagnostics['battery_ambient_temp_c'],
+            'battery_mosfet_temp': diagnostics['battery_mosfet_temp_c'],
+            '_valid': True,
+            # No 9-byte auxiliary packet was received. Preserve its source
+            # honestly while exposing which diagnostics packet populated it.
+            '_packet_length': None,
+            '_diagnostics_packet_length': self.POWER_DIAGNOSTICS_WIRE_SIZE,
+            '_decode_error': None,
+            '_diagnostics_present': True,
+        })
 
     def _unpack_status_aux(self, s):
         # take in an array of bytes
@@ -744,7 +936,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         sidx += 1
         self.status_aux['runstop_cause_raw'] = unpack_uint8_t(s[sidx:])
         sidx += 1
-        self.status_aux['motor_sync_cnt'] = unpack_int16_t(s[sidx:])
+        self.status_aux['motor_sync_cnt'] = unpack_uint16_t(s[sidx:])
         sidx += 2
         for key in (
             'battery_cell_temp_1',
@@ -758,6 +950,426 @@ class PowerPeriphAux(PowerPeriphDefn):
             sidx += 1
         self.status_aux['_valid'] = True
         self.status_aux['_decode_error'] = None
+        self.status_aux['_diagnostics_present'] = False
+        return sidx
+
+    def supports_power_diagnostics(self):
+        protocol = getattr(self, 'board_info', {}).get('protocol_version')
+        try:
+            return protocol.startswith('p') and int(protocol[1:]) >= 14
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _signed_u8(value):
+        return value - 256 if value > 127 else value
+
+    @staticmethod
+    def _decode_reset_causes(mask):
+        # SAMD51 RSTC.RCAUSE bit assignments. Unknown bits remain visible in
+        # reset_cause_raw so decoding never destroys evidence.
+        names = (
+            (1 << 0, 'power_on'),
+            (1 << 1, 'brownout_core'),
+            (1 << 2, 'brownout_vdd'),
+            (1 << 3, 'nvm'),
+            (1 << 4, 'external'),
+            (1 << 5, 'watchdog'),
+            (1 << 6, 'system_request'),
+            (1 << 7, 'backup'),
+        )
+        return [name for bit, name in names if mask & bit]
+
+    def _unpack_power_diagnostics(self, s):
+        packet_length = len(s)
+        if packet_length != self.POWER_DIAGNOSTICS_WIRE_SIZE:
+            self.power_diagnostics.clear()
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': 'invalid diagnostics packet: %d bytes (expected %d)' % (
+                    packet_length, self.POWER_DIAGNOSTICS_WIRE_SIZE),
+            })
+            return 0
+
+        sidx = 0
+
+        def u8():
+            nonlocal sidx
+            value = unpack_uint8_t(s[sidx:])
+            sidx += 1
+            return value
+
+        def i8():
+            return self._signed_u8(u8())
+
+        def u16():
+            nonlocal sidx
+            value = unpack_uint16_t(s[sidx:])
+            sidx += 2
+            return value
+
+        def i16():
+            nonlocal sidx
+            value = unpack_int16_t(s[sidx:])
+            sidx += 2
+            return value
+
+        def u32():
+            nonlocal sidx
+            value = unpack_uint32_t(s[sidx:])
+            sidx += 4
+            return value
+
+        def u64():
+            nonlocal sidx
+            value = unpack_uint64_t(s[sidx:])
+            sidx += 8
+            return value
+
+        def i32():
+            nonlocal sidx
+            value = unpack_int32_t(s[sidx:])
+            sidx += 4
+            return value
+
+        decoded = {}
+        decoded['schema_version'] = u8()
+        decoded['reset_cause_raw'] = u8()
+        decoded['struct_size'] = u16()
+        if (decoded['schema_version'] != self.POWER_DIAGNOSTICS_SCHEMA_VERSION or
+                decoded['struct_size'] != self.POWER_DIAGNOSTICS_WIRE_SIZE):
+            self.power_diagnostics.clear()
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': 'unsupported diagnostics schema %d/size %d' % (
+                    decoded['schema_version'], decoded['struct_size']),
+            })
+            return 0
+
+        decoded['uptime_ms'] = u64()
+        decoded['sample_sequence'] = u32()
+        decoded['capability_flags_raw'] = u32()
+        decoded['validity_flags_raw'] = u32()
+        decoded['power_transition_sequence'] = u32()
+        decoded['power_transition_timestamp_ms'] = u32()
+        decoded['power_state'] = u8()
+        decoded['runstop_cause_raw'] = u8()
+        decoded['periph_power_state_raw'] = u8()
+        decoded['cpu_on_status'] = bool(u8())
+        decoded['power_transition_reason_raw'] = u16()
+        decoded['power_button_high_count'] = u16()
+        decoded['power_button_raw'] = bool(u8())
+        decoded['power_button_debounced'] = bool(u8())
+        decoded['adapter_voltage_present'] = bool(u8())
+        decoded['charger_enable_command'] = bool(u8())
+        decoded['charger_expected_active'] = bool(u8())
+        decoded['user_charger_control'] = bool(u8())
+        decoded['wait_wake_ack'] = bool(u8())
+        decoded['wait_sleep_ack'] = bool(u8())
+        decoded['esp_adapter_connected'] = bool(u8())
+        decoded['esp_adapter_fault'] = bool(u8())
+        decoded['esp_network_connected'] = bool(u8())
+        decoded['esp_firebase_configured'] = bool(u8())
+
+        decoded['bms_sample_sequence'] = u32()
+        decoded['bms_last_valid_ms'] = u32()
+        decoded['bms_sample_age_ms'] = u32()
+        decoded['bms_valid_replies'] = u32()
+        decoded['bms_crc_errors'] = u32()
+        decoded['bms_timeouts'] = u32()
+        decoded['bms_rx_overflows'] = u32()
+        decoded['bms_protocol_errors'] = u32()
+        decoded['bms_consecutive_failures'] = u32()
+        decoded['battery_voltage_mv'] = i32()
+        decoded['battery_current_ma'] = i32()
+        decoded['charger_current_ma'] = i32()
+        decoded['battery_soc'] = u8()
+        decoded['battery_soh'] = u8()
+        decoded['battery_cycles'] = u16()
+        decoded['battery_cell_temp_1_c'] = i8()
+        decoded['battery_cell_temp_2_c'] = i8()
+        decoded['battery_cell_temp_3_c'] = i8()
+        decoded['battery_ambient_temp_c'] = i8()
+        decoded['battery_mosfet_temp_c'] = i8()
+        decoded['bms_alarm_mask_raw'] = u8()
+        decoded['bms_mos_mask_raw'] = u8()
+        decoded['reserved0'] = u8()
+        decoded['bms_last_failure_rx_len'] = u16()
+        decoded['bms_last_failure_event'] = u16()
+        decoded['bms_last_failure_function'] = u8()
+        decoded['bms_last_failure_exception_code'] = u8()
+        decoded['bms_last_failure_address'] = u8()
+        decoded['reserved1'] = u8()
+
+        decoded['esp_status_age_ms'] = u32()
+        decoded['esp_rx_packets'] = u32()
+        decoded['esp_crc_errors'] = u32()
+        decoded['esp_rx_overflows'] = u32()
+        decoded['esp_requests_sent'] = u32()
+        decoded['esp_tx_queue_drops'] = u32()
+
+        decoded['voltage_cpu_mv'] = i32()
+        decoded['voltage_5v0_mv'] = i32()
+        decoded['voltage_36v0_mv'] = i32()
+        decoded['voltage_12v0_mv'] = i32()
+        decoded['voltage_20v0_aux_mv'] = i32()
+        decoded['current_cpu_ma'] = i32()
+        decoded['pimu_temp_centi_c'] = i16()
+        decoded['motor_sync_cnt'] = u16()
+        decoded['loop_time_us'] = u16()
+        decoded['loop_time_max_us'] = u16()
+        decoded['loop_overrun_count'] = u32()
+        decoded['diagnostics_rpc_count'] = u32()
+        decoded['diagnostics_reply_bytes'] = u16()
+        decoded['diagnostics_lock_time_us'] = u16()
+        decoded['diagnostics_lock_time_max_us'] = u16()
+
+        if sidx != self.POWER_DIAGNOSTICS_WIRE_SIZE:
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': 'diagnostics decoder consumed %d bytes (expected %d)' % (
+                    sidx, self.POWER_DIAGNOSTICS_WIRE_SIZE),
+            })
+            return 0
+
+        caps = decoded['capability_flags_raw']
+        validity = decoded['validity_flags_raw']
+        decoded['capabilities'] = {
+            'bms_pack': bool(caps & (1 << 0)),
+            'bms_temperatures': bool(caps & (1 << 1)),
+            'bms_alarms': bool(caps & (1 << 2)),
+            'bms_mos_states': bool(caps & (1 << 3)),
+            'event_log': bool(caps & (1 << 4)),
+            'esp_status': bool(caps & (1 << 5)),
+            'bms_cell_voltages': bool(caps & (1 << 6)),
+            'bms_capacity': bool(caps & (1 << 7)),
+            'bms_balancing': bool(caps & (1 << 8)),
+        }
+        decoded['validity'] = {
+            'bms_sample': bool(validity & (1 << 0)),
+            'esp_status': bool(validity & (1 << 1)),
+            'analog_rails': bool(validity & (1 << 2)),
+            'bms_extended_sample': bool(validity & (1 << 3)),
+        }
+        decoded['reset_causes'] = self._decode_reset_causes(decoded['reset_cause_raw'])
+        decoded['power_state_name'] = self.get_power_state_name(decoded['power_state'])
+        decoded['power_transition_reason'] = self.POWER_TRANSITION_REASON_NAMES.get(
+            decoded['power_transition_reason_raw'],
+            'unknown_%d' % decoded['power_transition_reason_raw'],
+        )
+        transition_uptime_ms = (
+            (decoded['uptime_ms'] & ~0xFFFFFFFF) |
+            decoded['power_transition_timestamp_ms']
+        )
+        if (transition_uptime_ms > decoded['uptime_ms'] and
+                transition_uptime_ms >= (1 << 32)):
+            transition_uptime_ms -= (1 << 32)
+        decoded['power_transition_uptime_ms'] = transition_uptime_ms
+        periph_raw = decoded['periph_power_state_raw']
+        periph_decoder = getattr(self, 'get_periph_power_state', None)
+        decoded['periph_power_state'] = (
+            periph_decoder(periph_raw) if periph_decoder is not None else {
+                'power_to_lift': bool(periph_raw & (1 << 1)),
+                'power_to_omni_0_motor': bool(periph_raw & (1 << 2)),
+                'power_to_omni_1_motor': bool(periph_raw & (1 << 3)),
+                'power_to_omni_2_motor': bool(periph_raw & (1 << 4)),
+                'power_to_arm': bool(periph_raw & (1 << 5)),
+                'power_to_eoa': bool(periph_raw & (1 << 6)),
+            }
+        )
+        decoded['bms_alarms'] = {
+            'total_voltage_high': bool(decoded['bms_alarm_mask_raw'] & (1 << 0)),
+            'cell_voltage_high': bool(decoded['bms_alarm_mask_raw'] & (1 << 1)),
+            'cell_voltage_difference_high': bool(decoded['bms_alarm_mask_raw'] & (1 << 2)),
+        }
+        decoded['bms_mos_states'] = {
+            'charge_current_limit': bool(decoded['bms_mos_mask_raw'] & (1 << 0)),
+            'pre_discharge': bool(decoded['bms_mos_mask_raw'] & (1 << 1)),
+            'discharging': bool(decoded['bms_mos_mask_raw'] & (1 << 2)),
+            'charging': bool(decoded['bms_mos_mask_raw'] & (1 << 3)),
+        }
+        decoded['battery_voltage_v'] = decoded['battery_voltage_mv'] / 1000.0
+        decoded['battery_current_a'] = decoded['battery_current_ma'] / 1000.0
+        decoded['charger_current_a'] = decoded['charger_current_ma'] / 1000.0
+        decoded['voltage_cpu_v'] = decoded['voltage_cpu_mv'] / 1000.0
+        decoded['voltage_5v0_v'] = decoded['voltage_5v0_mv'] / 1000.0
+        decoded['voltage_36v0_v'] = decoded['voltage_36v0_mv'] / 1000.0
+        decoded['voltage_12v0_v'] = decoded['voltage_12v0_mv'] / 1000.0
+        decoded['voltage_20v0_aux_v'] = decoded['voltage_20v0_aux_mv'] / 1000.0
+        decoded['current_cpu_a'] = decoded['current_cpu_ma'] / 1000.0
+        decoded['pimu_temp_c'] = decoded['pimu_temp_centi_c'] / 100.0
+        decoded['bms_sample_age_s'] = (
+            None if decoded['bms_sample_age_ms'] == 0xFFFFFFFF
+            else decoded['bms_sample_age_ms'] / 1000.0
+        )
+        decoded['esp_status_age_s'] = (
+            None if decoded['esp_status_age_ms'] == 0xFFFFFFFF
+            else decoded['esp_status_age_ms'] / 1000.0
+        )
+        decoded.update({
+            '_valid': True,
+            '_packet_length': packet_length,
+            '_decode_error': None,
+        })
+        self.power_diagnostics.clear()
+        self.power_diagnostics.update(decoded)
+        return sidx
+
+    def _unpack_power_event_log(self, s):
+        packet_length = len(s)
+        if packet_length < self.POWER_EVENT_LOG_HEADER_SIZE:
+            error = 'short event-log header: %d bytes' % packet_length
+            self.power_diagnostics.clear()
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': error,
+            })
+            self.power_event_log_page.clear()
+            self.power_event_log_page.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': error,
+                'events': [],
+            })
+            return 0
+
+        sidx = 0
+        schema_version = unpack_uint8_t(s[sidx:]); sidx += 1
+        header_size = unpack_uint8_t(s[sidx:]); sidx += 1
+        diagnostics_size = unpack_uint16_t(s[sidx:]); sidx += 2
+        entry_size = unpack_uint8_t(s[sidx:]); sidx += 1
+        entry_count = unpack_uint8_t(s[sidx:]); sidx += 1
+        has_more = bool(unpack_uint8_t(s[sidx:])); sidx += 1
+        reply_status = unpack_uint8_t(s[sidx:]); sidx += 1
+        capacity = unpack_uint16_t(s[sidx:]); sidx += 2
+        retained_count = unpack_uint16_t(s[sidx:]); sidx += 2
+        oldest_sequence = unpack_uint32_t(s[sidx:]); sidx += 4
+        newest_sequence = unpack_uint32_t(s[sidx:]); sidx += 4
+        dropped_count = unpack_uint32_t(s[sidx:]); sidx += 4
+        expected_length = header_size + diagnostics_size + entry_count * entry_size
+        if reply_status != self.POWER_DIAGNOSTICS_REPLY_OK:
+            status_name = self.POWER_DIAGNOSTICS_REPLY_STATUS_NAMES.get(
+                reply_status, 'unknown_%d' % reply_status)
+            error_shape_valid = (
+                schema_version == self.POWER_EVENT_LOG_SCHEMA_VERSION and
+                header_size == self.POWER_EVENT_LOG_HEADER_SIZE and
+                diagnostics_size == 0 and
+                entry_size == self.POWER_EVENT_LOG_ENTRY_SIZE and
+                entry_count == 0 and
+                packet_length == self.POWER_EVENT_LOG_HEADER_SIZE
+            )
+            error = (
+                'firmware rejected power diagnostics request: %s' % status_name
+                if error_shape_valid else
+                'malformed power diagnostics error reply'
+            )
+            self.power_diagnostics.clear()
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': error,
+            })
+            self.power_event_log_page.clear()
+            self.power_event_log_page.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': error,
+                'reply_status': reply_status,
+                'reply_status_name': status_name,
+                'events': [],
+            })
+            return 0
+        if (schema_version != self.POWER_EVENT_LOG_SCHEMA_VERSION or
+                header_size != self.POWER_EVENT_LOG_HEADER_SIZE or
+                diagnostics_size != self.POWER_DIAGNOSTICS_WIRE_SIZE or
+                entry_size != self.POWER_EVENT_LOG_ENTRY_SIZE or
+                entry_count > self.POWER_EVENT_LOG_MAX_RPC_ENTRIES or
+                packet_length != expected_length):
+            error = 'unsupported/malformed event log schema=%d entry_size=%d count=%d' % (
+                schema_version, entry_size, entry_count)
+            self.power_diagnostics.clear()
+            self.power_diagnostics.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': error,
+            })
+            self.power_event_log_page.clear()
+            self.power_event_log_page.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': error,
+                'events': [],
+            })
+            return 0
+
+        if self._unpack_power_diagnostics(s[header_size:header_size + diagnostics_size]) == 0:
+            self.power_event_log_page.clear()
+            self.power_event_log_page.update({
+                '_valid': False,
+                '_packet_length': packet_length,
+                '_decode_error': self.power_diagnostics.get('_decode_error'),
+                'events': [],
+            })
+            return 0
+        sidx = header_size + diagnostics_size
+
+        source_names = {
+            1: 'pimu', 2: 'power_state', 3: 'bms', 4: 'esp',
+            5: 'peripheral', 6: 'runstop',
+        }
+        events = []
+        for _ in range(entry_count):
+            sequence = unpack_uint32_t(s[sidx:]); sidx += 4
+            timestamp_ms = unpack_uint32_t(s[sidx:]); sidx += 4
+            event_id = unpack_uint16_t(s[sidx:]); sidx += 2
+            source = unpack_uint8_t(s[sidx:]); sidx += 1
+            power_state = unpack_uint8_t(s[sidx:]); sidx += 1
+            data0 = unpack_int16_t(s[sidx:]); sidx += 2
+            data1 = unpack_int16_t(s[sidx:]); sidx += 2
+            event = {
+                'sequence': sequence,
+                'timestamp_ms': timestamp_ms,
+                'timestamp_s': timestamp_ms / 1000.0,
+                'event_id': event_id,
+                'event_name': self.POWER_EVENT_NAMES.get(event_id, 'unknown_%d' % event_id),
+                'explanation': self.POWER_EVENT_EXPLANATIONS.get(event_id, 'Unknown firmware event.'),
+                'source_raw': source,
+                'source': source_names.get(source, 'unknown_%d' % source),
+                'power_state': power_state,
+                'power_state_name': self.get_power_state_name(power_state),
+                'data0': data0,
+                'data1': data1,
+            }
+            if event_id == 2:
+                event['from_state_name'] = self.get_power_state_name(data0)
+                event['transition_reason'] = self.POWER_TRANSITION_REASON_NAMES.get(
+                    data1, 'unknown_%d' % data1)
+            events.append(event)
+
+        self.power_event_log_page.clear()
+        self.power_event_log_page.update({
+            '_valid': True,
+            '_packet_length': packet_length,
+            '_decode_error': None,
+            'schema_version': schema_version,
+            'header_size': header_size,
+            'diagnostics_size': diagnostics_size,
+            'entry_size': entry_size,
+            'entry_count': entry_count,
+            'has_more': has_more,
+            'reply_status': reply_status,
+            'reply_status_name': self.POWER_DIAGNOSTICS_REPLY_STATUS_NAMES[reply_status],
+            'capacity': capacity,
+            'retained_count': retained_count,
+            'oldest_sequence': oldest_sequence,
+            'newest_sequence': newest_sequence,
+            'dropped_count': dropped_count,
+            'events': events,
+        })
         return sidx
 
     @staticmethod
@@ -836,7 +1448,9 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'battery_chrg_dischrg_cycles': 0, 'voltage_cpu':0, 'voltage_5v0':0, 'voltage_36v0':0,
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
-                       'us_loop_time':0}
+                       'us_loop_time':0,
+                       'status_aux': self.status_aux,
+                       'power_diagnostics': self.power_diagnostics}
 
         self.status_zero = self.status.copy()
         self._trigger = 0
@@ -1245,7 +1859,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         # take in an array of bytes
         # this needs to exactly match the C struct format
         sidx = 0
-        self.status['motor_sync_cnt'] = unpack_int16_t(s[sidx:])
+        self.status['motor_sync_cnt'] = unpack_uint16_t(s[sidx:])
         sidx += 2
         return sidx
 
@@ -1342,6 +1956,13 @@ class PowerPeriph_Protocol_P12(PowerPeriph_Protocol_P11):
         pack_uint8_t(s, sidx, self.config['nuc_safe_shutdown'])
         sidx += 1
         return sidx
+
+
+class PowerPeriph_Protocol_P14(PowerPeriph_Protocol_P12):
+    """Advertise p14; its additive decoder lives in the shared aux mixin."""
+
+    pass
+
 # ######################## POWER_PERIPH #################################
 
 class PowerPeriph(PowerPeriphBase):
@@ -1355,7 +1976,9 @@ class PowerPeriph(PowerPeriphBase):
         self._supported_protocols = {'p9': (PowerPeriph_Protocol_P8,),'p8': (PowerPeriph_Protocol_P8,), 
                                      'p10': (PowerPeriph_Protocol_P10,),
                                      'p11': (PowerPeriph_Protocol_P11,),
-                                     'p12': (PowerPeriph_Protocol_P12,),'p13': (PowerPeriph_Protocol_P12,),}
+                                     'p12': (PowerPeriph_Protocol_P12,),
+                                     'p13': (PowerPeriph_Protocol_P12,),
+                                     'p14': (PowerPeriph_Protocol_P14,),}
 
 
     def startup(self):

@@ -104,6 +104,10 @@ class TransportCSerial:
     def load_rpc_result(self,rpc_id):
         return self.lib.load_rpc_result(ctypes.c_int(self.qid),ctypes.c_int(rpc_id))
 
+    def discard_rpc_callback(self, rpc_id):
+        """Release a Python callback after the C transport definitively abandons an RPC."""
+        return self.py_callbacks.pop(rpc_id, None) is not None
+
     def is_rpc_result_ready(self,rpc_id):
         return self.lib.is_rpc_result_ready(ctypes.c_int(self.qid), ctypes.c_int(rpc_id))
 
@@ -129,6 +133,5 @@ class TransportCSerial:
             self.py_callbacks[rpc_id]=rpc_callback
 
         return rpc_id
-
 
 

@@ -154,6 +154,11 @@ Try running stretch_body_server --kill""")
                     if time.time() - ts > timeout:
                         res=-1
                         break
+            # The C callback normally pops itself on completion. Definitive C
+            # failures and blocking wait timeouts have no future callback, so
+            # retaining their closures leaks one object per abandoned RPC.
+            if res == 0 or (wait_on_result and res == -1):
+                self.transport_c.discard_rpc_callback(rpc_id)
         #Handle rate logging
         if res==1:
             self.status['rpc_duration_us']=self.get_rpc_duration_us(rpc_id)
@@ -173,7 +178,6 @@ Try running stretch_body_server --kill""")
     def do_push_rpc_sync(self, payload, reply_callback, exiting=False):
         # Wrapper for backward compatibility
         return self.do_rpc(blocking=True, is_push=True, payload=payload, rpc_callback=reply_callback, exiting=exiting)
-
 
 
 
