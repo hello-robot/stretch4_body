@@ -257,8 +257,14 @@ class PowerPeriphDefn():
     RPC_REPLY_REJECTED = 38
     RPC_REJECTED_REPLY_BYTES = 5
     RPC_REJECT_REASON_NAMES = {1: 'unknown id', 2: 'short request', 3: 'empty request'}
+    RPC_SET_EASTER_EGG_MODE = 39
+    RPC_REPLY_SET_EASTER_EGG_MODE = 40
+    EASTER_EGG_REPLY_STATUS_NAMES = {0: 'ok', 1: 'bad length', 2: 'bad value'}
     POWER_DIAGNOSTICS_SCHEMA_VERSION = 1
     POWER_DIAGNOSTICS_WIRE_SIZE = 190
+    # Firmware v0.1.38p14 appends easter_egg_mode (u8) after the schema 2 eye readback
+    # at 190 to 203. Read only when a snapshot carries it; the schema bump is separate.
+    POWER_DIAGNOSTICS_EASTER_EGG_OFFSET = 204
     POWER_EVENT_LOG_SCHEMA_VERSION = 1
     POWER_EVENT_LOG_HEADER_SIZE = 24
     POWER_EVENT_LOG_ENTRY_SIZE = 16
@@ -298,6 +304,8 @@ class PowerPeriphDefn():
         23: 'esp_rx_overflow',
         24: 'esp_tx_queue_drop',
         25: 'bms_protocol_error',
+        50: 'easter_egg_entered',
+        51: 'easter_egg_left',
     }
     POWER_EVENT_EXPLANATIONS = {
         1: 'PIMU restarted; data0 is the reset-cause bitmask and data1 is the board variant.',
@@ -328,6 +336,8 @@ class PowerPeriphDefn():
         23: 'The ESP UART receive frame exceeded its fixed buffer.',
         24: 'The PIMU-to-ESP transmit queue was full and dropped a packet.',
         25: 'A CRC-valid BMS reply had the wrong address, function, byte count, or length; data1 is the exception code or received length.',
+        50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host RPC 39.',
+        51: 'Easter egg mode left; data0 is 2 for a host RPC 39, 3 for a runstop entry.',
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',
@@ -394,6 +404,7 @@ class PowerPeriphDefn():
     STATE_HIGH_CURRENT_EOA_ALERT = (1<<17)
     STATE_ADAPTER_CONNECTED = (1<<18)
     STATE_ADAPTER_FAULT = (1<<19)
+    STATE_EASTER_EGG_MODE = (1 << 20)
 
     TRIGGER_BOARD_RESET = 1
     TRIGGER_RUNSTOP_RESET = 2
@@ -557,6 +568,19 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         """
         self._trigger = self._trigger | self.TRIGGER_RUNSTOP_ON
         self._dirty_trigger = True
+
+    def set_easter_egg_mode(self, on=True):
+        """
+        Set (on=False: clear) the PIMU Easter egg mode, firmware v0.1.38p14 and later.
+        Goes out as RPC 39 on the next push_command, like the runstop triggers. The
+        board answers with reply 40; its status lands in status['easter_egg_mode_reply_status'].
+        Any runstop entry clears the mode on the board.
+        """
+        self._easter_egg_mode_cmd = 1 if on else 0
+        self._dirty_easter_egg_mode = True
+
+    def clear_easter_egg_mode(self):
+        self.set_easter_egg_mode(False)
 
     def set_fan_on(self):
         self._trigger = self._trigger | self.TRIGGER_FAN_ON
@@ -1022,6 +1046,13 @@ class PowerPeriphAux(PowerPeriphDefn):
         )
         return [name for bit, name in names if mask & bit]
 
+    @classmethod
+    def _decode_easter_egg_mode(cls, s):
+        """The v0.1.38p14 byte past the schema 1 snapshot, None when the snapshot stops before it."""
+        if len(s) > cls.POWER_DIAGNOSTICS_EASTER_EGG_OFFSET:
+            return int(s[cls.POWER_DIAGNOSTICS_EASTER_EGG_OFFSET])
+        return None
+
     def _unpack_power_diagnostics(self, s):
         packet_length = len(s)
         if packet_length != self.POWER_DIAGNOSTICS_WIRE_SIZE:
@@ -1176,6 +1207,8 @@ class PowerPeriphAux(PowerPeriphDefn):
                     sidx, self.POWER_DIAGNOSTICS_WIRE_SIZE),
             })
             return 0
+
+        decoded['easter_egg_mode'] = self._decode_easter_egg_mode(s)
 
         caps = decoded['capability_flags_raw']
         validity = decoded['validity_flags_raw']
@@ -1462,6 +1495,8 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._dirty_config = True
         self._dirty_trigger = False
         self._dirty_eye_animation = False
+        self._dirty_easter_egg_mode = False
+        self._easter_egg_mode_cmd = 0
         self._eye_animation_left = 0
         self._eye_animation_right = 0
         self._eye_animation_intensity = 255
@@ -1490,7 +1525,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'battery_chrg_dischrg_cycles': 0, 'voltage_cpu':0, 'voltage_5v0':0, 'voltage_36v0':0,
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
-                       'us_loop_time':0,
+                       'us_loop_time':0, 'easter_egg_mode': 0, 'easter_egg_mode_reply_status': None,
                        'rpc_reply_errors': 0, 'rpc_reply_last_error': None,
                        'status_aux': self.status_aux,
                        'power_diagnostics': self.power_diagnostics,
@@ -1614,6 +1649,12 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
             self._eye_animation_g = 255
             self._eye_animation_b = 255
             self._dirty_eye_animation = False
+
+        if self._dirty_easter_egg_mode:
+            payload[0] = self.RPC_SET_EASTER_EGG_MODE
+            payload[1] = self._easter_egg_mode_cmd
+            success = success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:2], rpc_callback=self._rpc_easter_egg_mode_reply) is not None
+            self._dirty_easter_egg_mode = False
 
         return success
 
@@ -1810,6 +1851,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
 
         #Map state to flags
         unpack_to['runstop_event'] = (unpack_to['state'] & self.STATE_RUNSTOP_EVENT) != 0
+        unpack_to['easter_egg_mode'] = 1 if (unpack_to['state'] & self.STATE_EASTER_EGG_MODE) else 0
         unpack_to['fan_on'] = (unpack_to['state'] & self.STATE_FAN_ON) != 0
         unpack_to['buzzer_on'] = (unpack_to['state'] & self.STATE_BUZZER_ON) != 0
         unpack_to['low_soc_alert'] = (unpack_to['state'] & self.STATE_LOW_SOC_ALERT) != 0
@@ -1892,6 +1934,15 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
 
     def _rpc_eye_animation_reply(self, reply):
         self._reply_is_valid('RPC_REPLY_SET_EYE_ANIMATION', reply, self.RPC_REPLY_SET_EYE_ANIMATION)
+
+    def _rpc_easter_egg_mode_reply(self, reply):
+        if not self._reply_is_valid('RPC_REPLY_SET_EASTER_EGG_MODE', reply,
+                                    self.RPC_REPLY_SET_EASTER_EGG_MODE, 1):
+            return
+        self.status['easter_egg_mode_reply_status'] = reply[1]
+        if reply[1] != 0:
+            self.logger.warning('PIMU refused the Easter egg mode request: %s (status %d)' % (
+                self.EASTER_EGG_REPLY_STATUS_NAMES.get(reply[1], 'unknown'), reply[1]))
 
     def _rpc_imu_config_reply(self, reply):
         self._reply_is_valid('RPC_SET_IMU_CONFIG_REPLY', reply, self.RPC_SET_IMU_CONFIG_REPLY)
@@ -2191,3 +2242,5 @@ class PowerPeriphStatus(TypedDict):
     rpc_reply_errors: int
     rpc_reply_last_error: Any
     rpc_rejected: PowerPeriphRpcRejectedStatus
+    easter_egg_mode: int
+    easter_egg_mode_reply_status: Optional[int]
