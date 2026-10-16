@@ -399,8 +399,9 @@ class RobotServer(RobotCore):
         )
         actual = getattr(self.power_periph, sequence_attr, None)
         if expected is not None and (actual is None or actual < expected):
+            timeout_s = getattr(self.power_periph, 'POWER_DIAGNOSTICS_RPC_TIMEOUT_S', 2.0)
             if (self._power_aux_request_started_mono is not None and
-                    time.monotonic() - self._power_aux_request_started_mono >= 2.0):
+                    time.monotonic() - self._power_aux_request_started_mono >= timeout_s):
                 self._power_aux_pending = False
                 self._power_aux_request_kind = None
                 self._power_aux_meta['request_errors'] += 1

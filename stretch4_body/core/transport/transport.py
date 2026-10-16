@@ -20,6 +20,9 @@ class Transport(TransportPySerial):
     """
     BACKEND_PY_SERIAL = 0
     BACKEND_C_SERIAL = 1
+    # How long a queued RPC may stay unfinished before its id and callback are
+    # dropped. Matches the historical blocking wait in _load_rpc_result.
+    RPC_RESULT_TIMEOUT_S = 1.0
 
     def __init__(self, port_name, logger=logging.getLogger(), default_backend=BACKEND_PY_SERIAL, qid=None):
         """
@@ -37,10 +40,14 @@ class Transport(TransportPySerial):
         self.use_c_backend = (default_backend==self.BACKEND_C_SERIAL)
         self.qid = qid
         self.rpc_ids=[]
+        # rpc_id -> (monotonic deadline, wait_on_collect). Unfinished ids stay
+        # in rpc_ids until they complete or pass their deadline.
+        self._rpc_pending = {}
         self.n_rate_log=0
         self.rate_log=[]
 
         TransportPySerial.__init__(self, port_name, logger=logger)
+        self.status['rpc_expired'] = 0
         if self.use_c_backend:
             self.transport_c = TransportCSerial(port_name, qid, logger=logger)
             self.status['rpc_duration_us']=0
@@ -89,9 +96,16 @@ Try running stretch_body_server --kill""")
 
     ################## PULL/PUSH #######################
 
-    def do_rpc(self, blocking, is_push, payload, rpc_callback, backend=None, exiting=False):
+    def do_rpc(self, blocking, is_push, payload, rpc_callback, backend=None, exiting=False,
+               wait_on_collect=True, timeout_s=None):
         """
         Return rpc_id if successful, None if fails
+
+        wait_on_collect: when False, load_rpc_results(wait_on_result=True) polls this
+        RPC once instead of waiting up to RPC_RESULT_TIMEOUT_S for it. The id is kept
+        for later collection until timeout_s (default RPC_RESULT_TIMEOUT_S) has passed
+        on the monotonic clock; then the callback is discarded and the result is -1.
+        Use it for background telemetry so it cannot stall the control loop.
         """
         if backend is None:
             backend = self.default_backend
@@ -112,16 +126,43 @@ Try running stretch_body_server --kill""")
                 res=self._load_rpc_result(rpc_id=rpc_id, wait_on_result=True)
                 if res==0:
                     return None
+            if timeout_s is None:
+                timeout_s = self.RPC_RESULT_TIMEOUT_S
+            self._rpc_pending[rpc_id] = (time.monotonic() + timeout_s, bool(wait_on_collect))
             self.rpc_ids.append(rpc_id)
             return rpc_id
 
     def load_rpc_results(self, wait_on_result=True):
+        """
+        Collect the results of the queued nonblocking RPCs.
+        Returns one entry per RPC that finished, failed or expired on this call
+        (1 loaded, 0 failed, -1 not ready in time). RPCs queued with
+        wait_on_collect=False that are not ready yet are kept for the next call
+        until their deadline passes.
+        """
         res = []
+        remaining = []
         for r in self.rpc_ids:
-            if r is not None:
-                res.append(self._load_rpc_result(r, wait_on_result))  
-        self.rpc_ids=[]
+            if r is None:
+                continue
+            deadline, wait_on_collect = self._rpc_pending.get(r, (float('-inf'), True))
+            wait_here = bool(wait_on_result and wait_on_collect)
+            x = self._load_rpc_result(r, wait_on_result=wait_here)
+            if x == -1 and not wait_here:
+                if time.monotonic() < deadline:
+                    remaining.append(r)
+                    continue
+                # Past its deadline: no future callback is wanted for this id.
+                if self.transport_c is not None:
+                    self.transport_c.discard_rpc_callback(r)
+                self.status['rpc_expired'] = self.status.get('rpc_expired', 0) + 1
+            self._rpc_pending.pop(r, None)
+            res.append(x)
+        self.rpc_ids = remaining
         return res
+
+    def pending_rpc_count(self):
+        return len(self.rpc_ids)
 
     def is_rpc_result_ready(self, rpc_id):
         if self.use_c_backend and rpc_id is not None:

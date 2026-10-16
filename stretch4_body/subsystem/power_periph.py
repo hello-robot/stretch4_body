@@ -805,12 +805,18 @@ class PowerPeriphAux(PowerPeriphDefn):
         }
         self._load_test_payload = arr.array('B', range(256)) * 4
 
+    # Background telemetry pulls are collected without waiting in the server's
+    # control loop; the server gives up on a reply after this long.
+    POWER_DIAGNOSTICS_RPC_TIMEOUT_S = 2.0
+
     def pull_status_aux(self, blocking=True):
         if not self.hw_valid:
             return False
         payload = arr.array('B', [self.RPC_GET_POWER_PERIPH_STATUS_AUX])
         return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
-                                     rpc_callback=self._rpc_status_aux_reply) is not None
+                                     rpc_callback=self._rpc_status_aux_reply,
+                                     wait_on_collect=False,
+                                     timeout_s=self.POWER_DIAGNOSTICS_RPC_TIMEOUT_S) is not None
 
     def pull_power_diagnostics(self, blocking=True, after_sequence=0, max_entries=16):
         """Pull the protocol-14 snapshot and a cursor-paged event-log page."""
@@ -829,6 +835,8 @@ class PowerPeriphAux(PowerPeriphDefn):
             is_push=False,
             payload=payload,
             rpc_callback=self._rpc_power_diagnostics_reply,
+            wait_on_collect=False,
+            timeout_s=self.POWER_DIAGNOSTICS_RPC_TIMEOUT_S,
         ) is not None
 
     def push_load_test(self, blocking=True):
