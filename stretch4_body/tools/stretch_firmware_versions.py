@@ -210,36 +210,45 @@ def build_parser():
     return parser
 
 
-def connect():
-    """A started RobotClient, or None. Never opens a device."""
-    from stretch4_body.robot.robot_client import RobotClient
-    robot = RobotClient()
-    if not robot.startup(verbose=False):
+def read_server_status(timeout=2.0):
+    """One status message from stretch_body_server, or None if none arrives in timeout.
+
+    Subscribes to the status socket the server publishes on and nothing else. A
+    RobotClient is not used: its stop() (also run from __del__) pushes enable_safety and
+    enable_freewheel_mode, which a read-only command must never send."""
+    import zmq
+    from stretch4_body.core.client_server import PORT_STATUS
+    if not os.path.exists(PORT_STATUS):
         return None
-    return robot
+    context = zmq.Context.instance()
+    sock = context.socket(zmq.SUB)
+    try:
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.CONFLATE, 1)
+        sock.setsockopt(zmq.SUBSCRIBE, b'')
+        sock.connect('ipc://%s' % PORT_STATUS)
+        if not sock.poll(int(timeout * 1000), zmq.POLLIN):
+            return None
+        return sock.recv_pyobj(flags=zmq.NOBLOCK)
+    finally:
+        sock.close(linger=0)
 
 
 def collect(args):
-    status = None
-    robot = connect()
-    if robot is None:
+    status = read_server_status()
+    if status is None:
         rows = [row('usb boards', None, None, 'stretch_body_server status',
                     reason=NO_SERVER + ' (start it with: stretch_body_server --launch)')]
     else:
-        try:
-            robot.pull_status()
-            status = robot.status
-            rows = server_rows(status)
-            if rows is None:
-                rows = [row('usb boards', None, None, 'stretch_body_server status',
-                            reason='this stretch_body_server does not publish firmware_versions '
-                                   '(older stretch4_body)')]
-        finally:
-            robot.stop()
+        rows = server_rows(status)
+        if rows is None:
+            rows = [row('usb boards', None, None, 'stretch_body_server status',
+                        reason='this stretch_body_server does not publish firmware_versions '
+                               '(older stretch4_body)')]
     if not args.no_lidar:
         rows += lidar_rows(status)
     rows += camera_rows()
-    return rows, robot is not None
+    return rows, status is not None
 
 
 def main(argv=None):

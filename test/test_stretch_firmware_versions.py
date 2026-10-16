@@ -145,19 +145,6 @@ def test_no_camera_opened():
 
 # ------------------------------------------------------------------------ command
 
-class FakeClient:
-    def __init__(self, status):
-        self.status = {}
-        self._status = status
-        self.stopped = False
-
-    def pull_status(self):
-        self.status.update(self._status)
-
-    def stop(self):
-        self.stopped = True
-
-
 def server_status():
     boards = [
         {'board': 'pimu', 'port': '/dev/hello-power-periph', 'version': 'hello-pimu2.v0.1.53p14',
@@ -169,10 +156,10 @@ def server_status():
     return dict(sentry_status('off'), firmware_versions={'boards': boards, 'time': T0})
 
 
-def run(argv, client, capsys, monkeypatch):
+def run(argv, status, capsys, monkeypatch):
     def query(ip):
         raise AssertionError('asked a lidar with the rail off')
-    monkeypatch.setattr(cmd, 'connect', lambda: client)
+    monkeypatch.setattr(cmd, 'read_server_status', lambda: status)
     monkeypatch.setattr(cmd, 'camera_rows', lambda: [])
     monkeypatch.setattr(cmd, 'query_inventory', query)
     monkeypatch.setattr(cmd.time, 'time', lambda: T0 + 90)
@@ -181,16 +168,14 @@ def run(argv, client, capsys, monkeypatch):
 
 
 def test_command_json(capsys, monkeypatch):
-    client = FakeClient(server_status())
-    rc, out = run(['--json'], client, capsys, monkeypatch)
+    rc, out = run(['--json'], server_status(), capsys, monkeypatch)
     data = json.loads(out.out)
     assert [r['board'] for r in data['boards']] == ['pimu', 'esp', 'lidar right', 'lidar left']
     assert rc == 1                       # the ESP and the lidars have no version
-    assert client.stopped
 
 
 def test_command_table(capsys, monkeypatch):
-    rc, out = run([], FakeClient(server_status()), capsys, monkeypatch)
+    rc, out = run([], server_status(), capsys, monkeypatch)
     lines = out.out.splitlines()
     assert lines[0].split()[:2] == ['board', 'port']
     pimu = next(l for l in lines if l.startswith('pimu'))
@@ -207,9 +192,76 @@ def test_command_without_server(capsys, monkeypatch):
 
 
 def test_command_with_an_older_server(capsys, monkeypatch):
-    rc, out = run(['--json', '--no-lidar'], FakeClient({}), capsys, monkeypatch)
+    rc, out = run(['--json', '--no-lidar'], {'server': {}}, capsys, monkeypatch)
     assert 'does not publish firmware_versions' in json.loads(out.out)['boards'][0]['reason']
     assert rc == 1
+
+
+# ------------------------------------------------------------------------ read only
+
+class RecordingSocket:
+    def __init__(self, kind, status):
+        self.kind, self.status, self.sent, self.connected = kind, status, [], []
+
+    def setsockopt(self, *a):
+        pass
+
+    def connect(self, addr):
+        self.connected.append(addr)
+
+    def poll(self, *a):
+        return 1
+
+    def recv_pyobj(self, flags=0):
+        return self.status
+
+    def close(self, linger=None):
+        pass
+
+    def __getattr__(self, name):
+        if name.startswith('send'):
+            def send(*a, **k):
+                self.sent.append((name, a))
+            return send
+        raise AttributeError(name)
+
+
+def test_command_only_subscribes_to_status_and_sends_nothing(capsys, monkeypatch):
+    import zmq
+    from stretch4_body.core import client_server
+    from stretch4_body.core.subsystem_client import SubsystemClient
+    sockets = []
+
+    class Context:
+        def socket(self, kind):
+            sockets.append(RecordingSocket(kind, server_status()))
+            return sockets[-1]
+
+    def no_command(*a, **k):
+        raise AssertionError('a command was sent')
+    monkeypatch.setattr(zmq.Context, 'instance', staticmethod(lambda: Context()))
+    monkeypatch.setattr(client_server.StretchBodyClient, '_do_send_cmd', no_command)
+    monkeypatch.setattr(client_server.StretchBodyClient, 'startup', no_command)
+    monkeypatch.setattr(SubsystemClient, 'push_command', no_command)
+    real_exists = cmd.os.path.exists
+    monkeypatch.setattr(cmd.os.path, 'exists',
+                        lambda p: True if p == client_server.PORT_STATUS else real_exists(p))
+    monkeypatch.setattr(cmd, 'camera_rows', lambda: [])
+    rc = cmd.main(['--json', '--no-lidar'])
+    boards = json.loads(capsys.readouterr().out)['boards']
+    assert [b['board'] for b in boards] == ['pimu', 'esp']
+    assert rc == 1
+    assert [s.kind for s in sockets] == [zmq.SUB]
+    assert sockets[0].connected == ['ipc://%s' % client_server.PORT_STATUS]
+    assert sockets[0].sent == []
+
+
+def test_no_status_socket_means_no_server(monkeypatch):
+    from stretch4_body.core import client_server
+    real_exists = cmd.os.path.exists
+    monkeypatch.setattr(cmd.os.path, 'exists',
+                        lambda p: False if p == client_server.PORT_STATUS else real_exists(p))
+    assert cmd.read_server_status() is None
 
 
 def test_age_text():
