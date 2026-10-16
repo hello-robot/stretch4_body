@@ -584,6 +584,8 @@ def event(event_id, data0=0, data1=0, power_state=0):
     (event(45, -3, (0x22 << 8) | 4), 'unknown id'),
     (event(1, 0x21, 0), 'power_on, watchdog'),
     (event(47, 2, 20), '2 sends'),
+    (event(48, 1, 2), 'dropped host lidar-on, requested outside ACTIVE'),
+    (event(48, 6, 1), 'dropped host AUX-on + wake AUX-on, at the ACTIVE exit'),
     (event(999, 1, 2), 'data0 1, data1 2'),
 ])
 def test_describe_power_event(ev, text):
@@ -602,3 +604,8 @@ def test_health_line_for_system_check():
     level, text = health_line(evaluate(status(adapter_presence_source=2)))
     assert level == 'warn'
     assert text == 'P14 power health: warn: adapter_source. Details: stretch_power_diagnostics'
+
+
+def test_event_48_esp_trigger_dropped_is_named_and_explained():
+    assert PowerPeriphAux.POWER_EVENT_NAMES[48] == 'esp_trigger_dropped'
+    assert 'host lidar-on' in PowerPeriphAux.POWER_EVENT_EXPLANATIONS[48]

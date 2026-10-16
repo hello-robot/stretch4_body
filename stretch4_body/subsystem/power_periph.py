@@ -325,6 +325,7 @@ class PowerPeriphDefn():
         45: 'esp_rx_length_error',
         46: 'adapter_disagreement',
         47: 'esp_shutdown_cmd_delivered',
+        48: 'esp_trigger_dropped',
         50: 'easter_egg_entered',
         51: 'easter_egg_left',
     }
@@ -385,6 +386,8 @@ class PowerPeriphDefn():
         46: ('The ESP adapter_connected bit disagreed with the SAMD 36 V input for 1 s; data0/data1 are '
              'the old/new masks (1 ESP only, 2 voltage only).'),
         47: 'The ESP proved it consumed UART_PWR_SHUTDOWN; data0 is the sends, data1 the ms since the first.',
+        48: ('An ESP rail-on request was dropped outside ACTIVE; data0 is what (1 host lidar-on, 2 host AUX-on, '
+             '4 wake AUX-on), data1 is where (1 at the ACTIVE exit, 2 requested outside ACTIVE).'),
         50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host RPC 39.',
         51: 'Easter egg mode left; data0 is 2 for a host RPC 39, 3 for a runstop entry.',
     }
@@ -674,20 +677,37 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._trigger = self._trigger | self.TRIGGER_LIGHTBAR_TEST
         self._dirty_trigger = True
 
-    def set_lidar_off(self):
-        self._trigger = self._trigger | self.TRIGGER_LIDAR_OFF
+    def set_lidar_off(self, source='client'):
+        # Never send both bits for one rail; the last request wins.
+        self._trigger = (self._trigger & ~self.TRIGGER_LIDAR_ON) | self.TRIGGER_LIDAR_OFF
         self._dirty_trigger = True
+        self._note_lidar_cmd('off', source)
 
-    def set_lidar_on(self):
-        self._trigger = self._trigger | self.TRIGGER_LIDAR_ON
+    def set_lidar_on(self, source='client'):
+        self._trigger = (self._trigger & ~self.TRIGGER_LIDAR_OFF) | self.TRIGGER_LIDAR_ON
         self._dirty_trigger = True
+        self._note_lidar_cmd('on', source)
+
+    def release_lidar_hold(self, source='client'):
+        """
+        End a manual lidar hold (see sentry_lidar_idle) without switching the rail.
+        Host side only, sends nothing to the PIMU.
+        """
+        self._note_lidar_cmd('release', source)
+
+    def _note_lidar_cmd(self, action, source):
+        # The board reports no lidar state; this is the last host request.
+        self.lidar_cmd['action'] = action
+        self.lidar_cmd['source'] = source
+        self.lidar_cmd['ts'] = time.time()
+        self.lidar_cmd['seq'] += 1
 
     def set_aux_cpu_off(self):
-        self._trigger = self._trigger | self.TRIGGER_20V0_AUX_OFF
+        self._trigger = (self._trigger & ~self.TRIGGER_20V0_AUX_ON) | self.TRIGGER_20V0_AUX_OFF
         self._dirty_trigger = True
 
     def set_aux_cpu_on(self):
-        self._trigger = self._trigger | self.TRIGGER_20V0_AUX_ON
+        self._trigger = (self._trigger & ~self.TRIGGER_20V0_AUX_OFF) | self.TRIGGER_20V0_AUX_ON
         self._dirty_trigger = True
 
     def power_cycle_cpu(self):
@@ -1673,6 +1693,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self.transport = Transport(port_name=usb, logger=self.logger,
                                    default_backend=backend,
                                    qid=self.params['transport']['qid'])
+        self.lidar_cmd = {'action': None, 'source': None, 'ts': None, 'seq': 0}
         self.status: "PowerPeriphStatus" = {'voltage': 0, 'current': 0, 'temp': 0, 'cpu_temp': 0, 'frame_id': 0,
                        'timestamp': 0,  'runstop_event': False,
                        'bump_event_cnt': 0,
@@ -1691,6 +1712,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'rpc_reply_errors': 0, 'rpc_reply_last_error': None,
                        'status_aux': self.status_aux,
                        'power_diagnostics': self.power_diagnostics,
+                       'lidar_cmd': self.lidar_cmd,
                        'rpc_rejected': {'count': 0, 'last_request_id': None, 'last_reason': None, 'last_length': None}}
 
         self._warned_rpc_rejections = set()

@@ -556,7 +556,8 @@ class PowerPeriphClient(SubsystemClient):
 
     def set_lidar_on(self):
         """
-        Turn on power to the head lidars.
+        Turn on power to the head lidars. Holds them on against the lidar idle
+        sentry until set_lidar_off() or release_lidar_hold().
         """
         self._queue_command(subsystem="power_periph", command="set_lidar_on")
 
@@ -565,6 +566,13 @@ class PowerPeriphClient(SubsystemClient):
         Turn off power to the head lidars.
         """
         self._queue_command(subsystem="power_periph", command="set_lidar_off")
+
+    def release_lidar_hold(self):
+        """
+        End the hold from set_lidar_on() without switching the lidars off. The
+        lidar idle sentry then powers them down once nothing consumes their data.
+        """
+        self._queue_command(subsystem="power_periph", command="release_lidar_hold")
 
     def trigger_motor_sync(self):
         """ Legacy function. No longer needed."""

@@ -17,10 +17,13 @@ if args.action is None and not args.status:
 
 LIDAR_LIFE_HOURS = 10000
 PTC_GET_LIDAR_STATUS = 0x09
-# JT128 PTC 0x09 (Get LiDAR Status) layout, big-endian
-STATUS_UPTIME_OFFSET = 0          # uint32, seconds since power-up
-STATUS_MOTOR_RPM_OFFSET = 4       # uint16
-STATUS_TOTAL_OP_HOURS_OFFSET = 44 # uint32, lifetime operating hours
+# JT128 PTC 0x09 (Get LiDAR Status) layout, big-endian. JT128 TCP API ARJ01-en-250920, 3.1.6:
+# uptime u32, motor_speed u16, 9 x i32 temperature margins (6..41), gnss_pps_lock u8,
+# gnss_gprmc_status u8, startup_times u32, total_operation_time u32 (seconds, refreshed every minute).
+STATUS_UPTIME_OFFSET = 0            # uint32, seconds since power-up
+STATUS_MOTOR_RPM_OFFSET = 4         # uint16
+STATUS_STARTUP_COUNT_OFFSET = 44    # uint32, power-on count
+STATUS_TOTAL_OP_SECONDS_OFFSET = 48 # uint32, lifetime operating time in seconds
 
 
 def print_status():
@@ -33,13 +36,15 @@ def print_status():
             continue
         uptime_s = struct.unpack_from('>I', raw, STATUS_UPTIME_OFFSET)[0]
         rpm = struct.unpack_from('>H', raw, STATUS_MOTOR_RPM_OFFSET)[0]
-        hours = struct.unpack_from('>I', raw, STATUS_TOTAL_OP_HOURS_OFFSET)[0]
+        starts = struct.unpack_from('>I', raw, STATUS_STARTUP_COUNT_OFFSET)[0]
+        hours = struct.unpack_from('>I', raw, STATUS_TOTAL_OP_SECONDS_OFFSET)[0] / 3600.0
         left = max(LIDAR_LIFE_HOURS - hours, 0)
         print('%s lidar (%s):' % (name, ip))
         print('    Motor speed:     %d RPM' % rpm)
         print('    Uptime:          %.1f min' % (uptime_s / 60.0))
-        print('    Total spin time: %d h' % hours)
-        print('    Life remaining:  %d h of %d h (%.1f%% used)' % (left, LIDAR_LIFE_HOURS, 100.0 * hours / LIDAR_LIFE_HOURS))
+        print('    Power-on count:  %d' % starts)
+        print('    Operating time:  %.1f h' % hours)
+        print('    Life remaining:  %.0f h of %d h (%.1f%% used)' % (left, LIDAR_LIFE_HOURS, 100.0 * hours / LIDAR_LIFE_HOURS))
 
 
 if args.action is None:

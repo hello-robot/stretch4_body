@@ -1708,9 +1708,36 @@ def check_cameras():
     return all_pass
 
 
+LIDAR_WAKE_TIMEOUT_S = 40.0  # rail on to first packets is about 8 s, both units steady about 30 s
+
+
+def _lidar_hold(on):
+    """
+    Hold the lidars on against the lidar idle sentry (on=True), or release that hold.
+    Needs the body server; returns False without it.
+    """
+    _o, _e = sys.stdout, sys.stderr
+    try:
+        sys.stdout = sys.stderr = io.StringIO()
+        from stretch4_body.robot.robot_client import PowerPeriphClient
+        p = PowerPeriphClient()
+        if not p.startup():
+            return False
+        if on:
+            p.set_lidar_on()
+        else:
+            p.release_lidar_hold()
+        p.push_command()
+        p.stop()
+        return True
+    except Exception:
+        return False
+    finally:
+        sys.stdout, sys.stderr = _o, _e
+
+
 def check_sensors():
     """Check Hesai lidars (PTC config + streaming) and the OAK cameras."""
-    import socket, time
     print_section('Sensors')
     all_pass = True
 
@@ -1734,6 +1761,31 @@ def check_sensors():
         pass
 
     print_section('Lidars (Hesai)')
+    held = _lidar_hold(True)
+    try:
+        lidar_pass = _check_lidars(LIDARS)
+    finally:
+        if held:
+            _lidar_hold(False)
+    if not lidar_pass:
+        all_pass = False
+
+    print_section('Cameras')
+    if not check_cameras():
+        all_pass = False
+
+    return all_pass
+
+
+def _check_lidars(LIDARS):
+    """Streaming, reachability and PTC config of both lidars. Returns True when all pass."""
+    import socket
+    all_pass = True
+    # Listen first: it waits out the spin-up when the idle sentry had the rail off,
+    # and returns as soon as both lidars have sent a packet.
+    click.secho(f'  Streaming check (listening up to {LIDAR_WAKE_TIMEOUT_S:.0f} s for UDP packets)...', fg='white')
+    stream_results = _check_lidar_streaming(LIDARS, timeout=LIDAR_WAKE_TIMEOUT_S)
+
     ptc_available = False
     try:
         from stretch4_pyhesai_wrapper.ptc_client import get_return_mode as _test_import  # noqa
@@ -1773,18 +1825,12 @@ def check_sensors():
         if ptc_available:
             _check_lidar_ptc(ip)
 
-    click.secho(f'\n  Streaming check (listening 5 s for UDP packets)...', fg='white')
-    stream_results = _check_lidar_streaming(LIDARS, timeout=5.0)
+    click.echo()
     for side, streaming in stream_results.items():
         ip = LIDARS[side]['ip']
         print_result(streaming, f'{side.capitalize()} lidar ({ip}): streaming UDP data')
         if not streaming:
             all_pass = False
-
-    print_section('Cameras')
-    if not check_cameras():
-        all_pass = False
-
     return all_pass
 
 # ==============================================================================

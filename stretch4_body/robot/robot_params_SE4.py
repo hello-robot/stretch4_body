@@ -1239,7 +1239,7 @@ nominal_params={
     'routine_robot_home': {
         'py_module_name': 'stretch4_body.behavior.routines.routine_homing',
         'py_class_name': 'RoutineRobotHome',
-        'exclude_sentry_pause': ['sentry_status_logger','sentry_ubuntu_power_management','sentry_cpu_temp'],
+        'exclude_sentry_pause': ['sentry_status_logger','sentry_ubuntu_power_management','sentry_cpu_temp','sentry_lidar_idle'],
         'exclude_safe_motion_pause': ['safe_motion_overtilt_avoid'],
         'enabled':1
     },
@@ -1254,6 +1254,7 @@ nominal_params={
         'sentry_limit_vel_on_pose',
         'sentry_omnibase_guarded_contact', 
         'sentry_cpu_temp',
+        'sentry_lidar_idle',
         'sentry_eye_animations']},
     'sentry_eye_animations': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_eye_animations',
@@ -1331,6 +1332,24 @@ nominal_params={
         'base_fan_on': 60.0,
         'base_fan_off': 50.0,
         'fan_control': 1
+    },
+    'sentry_lidar_idle': {
+        # Powers the head lidars down when nothing on the NUC consumes their data.
+        # See docs/primer_behaviors.md, "Lidar idle sentry".
+        'py_module_name': 'stretch4_body.behavior.sentries.sentry_lidar_idle',
+        'py_class_name': 'SentryLidarIdle',
+        'required_subsystems': ['power_periph'],
+        'enabled': 1,                # 0: never cut the rail (rail behaves as before)
+        'idle_timeout_s': 300,       # no consumer for this long, then rail off
+        'min_on_s': 60,              # never cut sooner than this after an ON
+        'poll_period_s': 1.0,        # /proc/net scan period, clamped to >= 1 s
+        'udp_ports': [2368, 2378],   # lidar data ports (right, left)
+        'lidar_ips': ['192.168.1.201', '192.168.1.202'],
+        'ptc_port': 9347,
+        'ptc_counts_as_consumer': 1, # TCP sessions to a lidar PTC port keep it on
+        'hold_timeout_s': 0,         # client set_lidar_on hold length, 0: until released
+        'pimu_state_max_age_s': 2.0, # ON only with a PIMU ACTIVE sample this fresh
+        'restore_on_stop': 1,        # server stop powers the rail back if the sentry cut it
     },
     ############## SAFE MOTIONS #############################
     'safe_motion_manager': {'controllers': ['safe_motion_overtilt_avoid']},

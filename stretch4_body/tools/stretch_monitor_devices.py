@@ -74,6 +74,9 @@ LIDAR_DEVICES = {
     'Right Lidar': '192.168.1.201'
 }
 LIDAR_PORTS = [2368, 2378]
+# Active mode stops the body server, whose lidar idle sentry powers the rail back on as
+# it exits. Rail on to first packets is about 8 s, so wait this long before NO DATA.
+LIDAR_SPINUP_GRACE_S = 40.0
 FEETECH_IDS = [20, 21, 22, 23]
 FEETECH_BAUD = 1000000
 
@@ -574,6 +577,8 @@ class DeviceMonitor:
                     self.lidar_sockets.append(s)
                 except Exception as e:
                     self.log("ERROR", f"Failed to bind Lidar port {port}: {e}")
+            if self.lidar_sockets and self._lidar_start_time is None:
+                self._lidar_start_time = time.time()
 
         # Start Line Sensor reader with background polling thread
         if PixartJ3Reader and any(d['type'] == 'LINE_SENSOR' for d in self.devices.values()):
@@ -825,9 +830,8 @@ class DeviceMonitor:
                         n_pts = pts if isinstance(pts, int) else (len(pts) if pts is not None else 0)
                         self.update_status(dev, f"STREAMING ({fps:.0f} FPS, {n_pts} pts)")
                     else:
-                        # Only report NO DATA after a 5s grace window — decoders
-                        # take a moment to start receiving packets after startup.
-                        grace = 5.0
+                        # Only report NO DATA after the spin-up grace window.
+                        grace = LIDAR_SPINUP_GRACE_S
                         elapsed = current_time - (self._lidar_start_time or current_time)
                         if elapsed >= grace:
                             self.update_status(dev, "NO DATA")
@@ -864,8 +868,11 @@ class DeviceMonitor:
                     dev['packet_count'] = 0
                     dev['last_packet_time'] = current_time
 
+                    elapsed = current_time - (self._lidar_start_time or current_time)
                     if pps > 0:
                         self.update_status(dev, f"STREAMING ({int(pps)} PPS)")
+                    elif elapsed < LIDAR_SPINUP_GRACE_S:
+                        self.update_status(dev, f"STARTING... ({LIDAR_SPINUP_GRACE_S - elapsed:.0f}s)")
                     else:
                         self.update_status(dev, "NO DATA")
 

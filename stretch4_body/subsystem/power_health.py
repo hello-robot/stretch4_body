@@ -943,6 +943,10 @@ def describe_power_event(event):
         return '%s -> %s' % (_name(names, d0), _name(names, d1))
     if eid == 47:
         return '%d sends, %d ms after the first' % (d0, d1)
+    if eid == 48:
+        return 'dropped %s, %s' % (
+            _bits(d0, ((1, 'host lidar-on'), (2, 'host AUX-on'), (4, 'wake AUX-on'))),
+            {1: 'at the ACTIVE exit', 2: 'requested outside ACTIVE'}.get(d1, 'where %d' % d1))
     if eid == 50:
         return 'entered by %s' % {1: 'runstop hold', 2: 'host RPC 39'}.get(d0, d0)
     if eid == 51:

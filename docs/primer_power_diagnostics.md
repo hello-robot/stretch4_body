@@ -389,6 +389,7 @@ Each event has `sequence`, `timestamp_ms`, `timestamp_s`, `event_id`, `event_nam
 | 45 | `esp_rx_length_error` | Error count (negative: unknown id count), id << 8 or payload length |
 | 46 | `adapter_disagreement` | Old, new mask (1 ESP only, 2 voltage only) |
 | 47 | `esp_shutdown_cmd_delivered` | Sends, ms since the first. Information only |
+| 48 | `esp_trigger_dropped` | Dropped mask (1 host lidar-on, 2 host AUX-on, 4 wake AUX-on), where (1 at the ACTIVE exit, 2 requested outside ACTIVE). Source esp, firmware v0.1.49p14 and later. Information only |
 | 50 | `easter_egg_entered` | 1 runstop hold, 2 host RPC 39 |
 | 51 | `easter_egg_left` | 2 host RPC 39, 3 runstop |
 
