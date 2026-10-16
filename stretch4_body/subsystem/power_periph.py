@@ -257,9 +257,8 @@ class PowerPeriphDefn():
     RPC_REPLY_REJECTED = 38
     RPC_REJECTED_REPLY_BYTES = 5
     RPC_REJECT_REASON_NAMES = {1: 'unknown id', 2: 'short request', 3: 'empty request'}
-    RPC_SET_EASTER_EGG_MODE = 39
-    RPC_REPLY_SET_EASTER_EGG_MODE = 40
-    EASTER_EGG_REPLY_STATUS_NAMES = {0: 'ok', 1: 'bad length', 2: 'bad value'}
+    # RPC ids 39 and 40 (Easter egg set and clear, v0.1.38p14 to v0.1.50p14) are retired,
+    # never reuse them. The Easter egg now goes as TRIGGER_EASTER_EGG_ON/OFF (v0.1.51p14).
     # Diagnostics schema asked for first. Schema 2 (firmware v0.1.47p14) is the 255-byte
     # snapshot; schema 1 is its first 190 bytes, the only schema of v0.1.18p14 to
     # v0.1.23p14 and what v0.1.47p14 sends a body that asks for 1. The reply header,
@@ -393,8 +392,8 @@ class PowerPeriphDefn():
              '(firmware v0.1.50p14). A cut: data0 is the source (1 ADC filter, 2 U44 comparator), data1 the '
              'EOA current in 10 mA. Back on: data0 is 16 runstop cleared, 32 host enable, 64 ACTIVE entry; '
              '128 a runstop clear refused after 3 trips in 60 s; data1 is the trips in the last 60 s.'),
-        50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host RPC 39.',
-        51: 'Easter egg mode left; data0 is 2 for a host RPC 39, 3 for a runstop entry.',
+        50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host request.',
+        51: 'Easter egg mode left; data0 is 2 for a host request, 3 for a runstop entry.',
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',
@@ -503,6 +502,8 @@ class PowerPeriphDefn():
     TRIGGER_CPU_PWR_CYCLE = (1 << 21)
     TRIGGER_ESP32_STATUS_PRINT = (1 << 22)
     TRIGGER_SLEEP = (1 << 23)
+    TRIGGER_EASTER_EGG_ON = (1 << 24)
+    TRIGGER_EASTER_EGG_OFF = (1 << 25)
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -656,13 +657,17 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
     def set_easter_egg_mode(self, on=True):
         """
-        Set (on=False: clear) the PIMU Easter egg mode, firmware v0.1.38p14 and later.
-        Goes out as RPC 39 on the next push_command, like the runstop triggers. The
-        board answers with reply 40; its status lands in status['easter_egg_mode_reply_status'].
-        Any runstop entry clears the mode on the board.
+        Set (on=False: clear) the PIMU Easter egg mode, firmware v0.1.51p14 and later.
+        Goes out as trigger bit TRIGGER_EASTER_EGG_ON or _OFF on the next push_command;
+        the last call before the push wins. Firmware before v0.1.51p14 ignores both bits.
+        Read the mode back in status['easter_egg_mode']. Any runstop entry clears it on
+        the board.
         """
-        self._easter_egg_mode_cmd = 1 if on else 0
-        self._dirty_easter_egg_mode = True
+        if on:
+            self._trigger = (self._trigger & ~self.TRIGGER_EASTER_EGG_OFF) | self.TRIGGER_EASTER_EGG_ON
+        else:
+            self._trigger = (self._trigger & ~self.TRIGGER_EASTER_EGG_ON) | self.TRIGGER_EASTER_EGG_OFF
+        self._dirty_trigger = True
 
     def clear_easter_egg_mode(self):
         self.set_easter_egg_mode(False)
@@ -1694,8 +1699,6 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._dirty_config = True
         self._dirty_trigger = False
         self._dirty_eye_animation = False
-        self._dirty_easter_egg_mode = False
-        self._easter_egg_mode_cmd = 0
         self._dirty_eoa_restore = False
         self._eye_animation_left = 0
         self._eye_animation_right = 0
@@ -1727,7 +1730,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'battery_chrg_dischrg_cycles': 0, 'voltage_cpu':0, 'voltage_5v0':0, 'voltage_36v0':0,
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
-                       'us_loop_time':0, 'easter_egg_mode': 0, 'easter_egg_mode_reply_status': None,
+                       'us_loop_time':0, 'easter_egg_mode': 0,
                        'rpc_reply_errors': 0, 'rpc_reply_last_error': None,
                        'status_aux': self.status_aux,
                        'power_diagnostics': self.power_diagnostics,
@@ -1856,12 +1859,6 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         if self._dirty_eoa_restore:
             self._dirty_eoa_restore = False
             success = success and bool(self.actuator_control('eoa', True, blocking=blocking))
-
-        if self._dirty_easter_egg_mode:
-            payload[0] = self.RPC_SET_EASTER_EGG_MODE
-            payload[1] = self._easter_egg_mode_cmd
-            success = success and self._do_rpc(blocking=blocking, is_push=True, payload=payload[:2], rpc_callback=self._rpc_easter_egg_mode_reply) is not None
-            self._dirty_easter_egg_mode = False
 
         return success
 
@@ -2142,15 +2139,6 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
 
     def _rpc_eye_animation_reply(self, reply):
         self._reply_is_valid('RPC_REPLY_SET_EYE_ANIMATION', reply, self.RPC_REPLY_SET_EYE_ANIMATION)
-
-    def _rpc_easter_egg_mode_reply(self, reply):
-        if not self._reply_is_valid('RPC_REPLY_SET_EASTER_EGG_MODE', reply,
-                                    self.RPC_REPLY_SET_EASTER_EGG_MODE, 1):
-            return
-        self.status['easter_egg_mode_reply_status'] = reply[1]
-        if reply[1] != 0:
-            self.logger.warning('PIMU refused the Easter egg mode request: %s (status %d)' % (
-                self.EASTER_EGG_REPLY_STATUS_NAMES.get(reply[1], 'unknown'), reply[1]))
 
     def _rpc_imu_config_reply(self, reply):
         self._reply_is_valid('RPC_SET_IMU_CONFIG_REPLY', reply, self.RPC_SET_IMU_CONFIG_REPLY)
@@ -2452,4 +2440,3 @@ class PowerPeriphStatus(TypedDict):
     rpc_reply_last_error: Any
     rpc_rejected: PowerPeriphRpcRejectedStatus
     easter_egg_mode: int
-    easter_egg_mode_reply_status: Optional[int]

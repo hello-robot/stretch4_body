@@ -396,8 +396,8 @@ Each event has `sequence`, `timestamp_ms`, `timestamp_s`, `event_id`, `event_nam
 | 47 | `esp_shutdown_cmd_delivered` | Sends, ms since the first. Information only |
 | 48 | `esp_trigger_dropped` | Dropped mask (1 host lidar-on, 2 host AUX-on, 4 wake AUX-on), where (1 at the ACTIVE exit, 2 requested outside ACTIVE). Source esp, firmware v0.1.49p14 and later. Information only |
 | 49 | `eoa_trip` | Cut: source bits (1 ADC filter, 2 U44 comparator), EOA current in 10 mA. Back on: 16 runstop cleared, 32 host enable, 64 ACTIVE entry; 128 runstop clear refused (3 trips in 60 s); data1 the trips in the last 60 s. Source peripheral, firmware v0.1.50p14 and later |
-| 50 | `easter_egg_entered` | 1 runstop hold, 2 host RPC 39 |
-| 51 | `easter_egg_left` | 2 host RPC 39, 3 runstop |
+| 50 | `easter_egg_entered` | 1 runstop hold, 2 host request |
+| 51 | `easter_egg_left` | 2 host request, 3 runstop |
 
 ## 7. `stretch_power_diagnostics`
 

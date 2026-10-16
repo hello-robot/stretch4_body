@@ -1,12 +1,12 @@
-"""PIMU Easter egg mode (firmware v0.1.38p14): RPC 39 out, reply 40 in, readback.
+"""PIMU Easter egg mode: trigger bits out (firmware v0.1.51p14), readback.
 
-Drives PowerPeriph through a fake transport, no hardware. Request 39 carries one
-byte (0 clear, 1 set); reply 40 carries one status byte (0 ok, 1 bad length,
-2 bad value). The mode reads back as bit 20 of the status state word and, once
+Drives PowerPeriph through a fake transport, no hardware. Set and clear go out as
+RPC 5 trigger bits 24 (on) and 25 (off); the firmware applies off when both are
+set, the host never sends both. RPC 39/40 (v0.1.38p14 to v0.1.50p14) are retired.
+The mode reads back as bit 20 of the status state word and, once
 the snapshot schema is bumped, as the u8 at snapshot offset 204.
 """
 import array as arr
-import logging
 import os
 import struct
 import tempfile
@@ -67,34 +67,49 @@ def status_reply(state):
     return [PowerPeriph.RPC_REPLY_POWER_PERIPH_STATUS] + list(s)
 
 
-def test_set_sends_rpc_39_with_one_and_records_the_reply_status(pimu):
-    assert pimu.status['easter_egg_mode_reply_status'] is None
+def pushed_word(p):
+    p.transport.replies.append([PowerPeriph.RPC_REPLY_POWER_PERIPH_TRIGGER])
+    assert p.push_command() is True
+    payload = p.transport.payloads[-1]
+    assert payload[0] == PowerPeriph.RPC_SET_POWER_PERIPH_TRIGGER
+    return struct.unpack('<I', bytes(payload[1:5]))[0]
+
+
+def test_bits_24_and_25_next_to_the_sleep_trigger():
+    assert PowerPeriph.TRIGGER_EASTER_EGG_ON == 1 << 24
+    assert PowerPeriph.TRIGGER_EASTER_EGG_OFF == 1 << 25
+    assert PowerPeriph.TRIGGER_SLEEP == 1 << 23
+    assert not hasattr(PowerPeriph, 'RPC_SET_EASTER_EGG_MODE')
+    assert not hasattr(PowerPeriph, 'RPC_REPLY_SET_EASTER_EGG_MODE')
+
+
+def test_set_sends_the_on_bit_once(pimu):
     pimu.set_easter_egg_mode(True)
-    pimu.transport.replies.append([PowerPeriph.RPC_REPLY_SET_EASTER_EGG_MODE, 0])
-    assert pimu.push_command() is True
-    assert pimu.transport.payloads == [[PowerPeriph.RPC_SET_EASTER_EGG_MODE, 1]]
-    assert pimu.status['easter_egg_mode_reply_status'] == 0
+    word = pushed_word(pimu)
+    assert word == PowerPeriph.TRIGGER_EASTER_EGG_ON
+    assert len(pimu.transport.payloads) == 1
 
     # Sent once, not on every push.
     assert pimu.push_command() is True
     assert len(pimu.transport.payloads) == 1
+    assert 'easter_egg_mode_reply_status' not in pimu.status
 
 
-def test_clear_sends_rpc_39_with_zero_and_a_refusal_is_recorded(pimu, caplog):
+def test_clear_sends_the_off_bit(pimu):
     pimu.clear_easter_egg_mode()
-    pimu.transport.replies.append([PowerPeriph.RPC_REPLY_SET_EASTER_EGG_MODE, 2])
-    with caplog.at_level(logging.WARNING, logger='power_periph'):
-        pimu.push_command()
-    assert pimu.transport.payloads == [[PowerPeriph.RPC_SET_EASTER_EGG_MODE, 0]]
-    assert pimu.status['easter_egg_mode_reply_status'] == 2
-    assert any('bad value (status 2)' in r.getMessage() for r in caplog.records)
-
-
-def test_wrong_reply_id_leaves_the_status_alone(pimu):
+    assert pushed_word(pimu) == PowerPeriph.TRIGGER_EASTER_EGG_OFF
     pimu.set_easter_egg_mode(False)
-    pimu.transport.replies.append([PowerPeriph.RPC_REPLY_POWER_PERIPH_TRIGGER])
-    pimu.push_command()
-    assert pimu.status['easter_egg_mode_reply_status'] is None
+    assert pushed_word(pimu) == PowerPeriph.TRIGGER_EASTER_EGG_OFF
+
+
+def test_last_call_before_a_push_wins_and_other_bits_ride_along(pimu):
+    pimu.set_easter_egg_mode(True)
+    pimu.clear_easter_egg_mode()
+    assert pushed_word(pimu) == PowerPeriph.TRIGGER_EASTER_EGG_OFF
+    pimu.clear_easter_egg_mode()
+    pimu.set_fan_on()
+    pimu.set_easter_egg_mode(True)
+    assert pushed_word(pimu) == PowerPeriph.TRIGGER_EASTER_EGG_ON | PowerPeriph.TRIGGER_FAN_ON
 
 
 def test_status_bit_20_reads_back_as_0_or_1(pimu):

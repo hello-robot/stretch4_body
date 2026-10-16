@@ -534,7 +534,7 @@ class PowerPeriphClient(SubsystemClient):
 
     def set_easter_egg_mode(self, on=True):
         """
-        Set (on=False: clear) the PIMU Easter egg mode (firmware v0.1.38p14, RPC 39).
+        Set (on=False: clear) the PIMU Easter egg mode (firmware v0.1.51p14, trigger bits 24/25).
         Read it back in status['easter_egg_mode'].
         """
         self._queue_command(subsystem="power_periph", command="set_easter_egg_mode", on=on)
