@@ -1,7 +1,7 @@
 """stretch_power_diagnostics: the report, --json, --from-log, --at and the no-server path.
 
 Statuses are real decoder output built by test_power_health. Live mode runs against a
-fake RobotClient; nothing here opens a device or needs a server.
+fake status reader; nothing here opens a device or needs a server.
 """
 import json
 import zipfile
@@ -254,40 +254,37 @@ def test_at_without_from_log_is_an_error():
         cli.main(['--at', '+1'])
 
 
-# --- live mode through a fake RobotClient -----------------------------------------------------
+# --- live mode through a fake status reader --------------------------------------------------
 
-class FakeClient:
-    instances = []
+class FakeReader:
     up = True
     payload = None
+    reads = 0
 
-    def __init__(self):
-        self.status = {}
-        self.stopped = False
-        FakeClient.instances.append(self)
+    def __enter__(self):
+        return self
 
-    def startup(self, verbose=True):
-        return FakeClient.up
+    def __exit__(self, *exc):
+        pass
 
-    def pull_status(self):
-        self.status = {'power_periph': FakeClient.payload, 'pimu': FakeClient.payload}
-
-    def stop(self):
-        self.stopped = True
+    def read(self, timeout=2.0):
+        FakeReader.reads += 1
+        if not FakeReader.up:
+            return None
+        return {'power_periph': FakeReader.payload, 'pimu': FakeReader.payload}
 
 
 @pytest.fixture
 def fake_client(monkeypatch):
-    import stretch4_body.robot.robot_client as rc
-    FakeClient.instances = []
-    FakeClient.up = True
-    FakeClient.payload = None
-    monkeypatch.setattr(rc, 'RobotClient', FakeClient)
+    FakeReader.up = True
+    FakeReader.payload = None
+    FakeReader.reads = 0
+    monkeypatch.setattr(cli, 'ServerStatusReader', FakeReader)
 
     def no_device(*a, **k):
         raise AssertionError('the CLI must not open a device')
     monkeypatch.setattr('serial.Serial', no_device, raising=False)
-    return FakeClient
+    return FakeReader
 
 
 def test_server_down_says_so_and_exits_2(fake_client, capsys):
@@ -308,7 +305,7 @@ def test_live_uses_the_server_health(fake_client, capsys):
     out = capsys.readouterr().out
     assert 'live from stretch_body_server,' in out
     assert 'server summary' in out
-    assert fake_client.instances[0].stopped
+    assert fake_client.reads == 1
 
 
 def test_live_computes_health_for_an_older_server(fake_client, capsys):
@@ -343,7 +340,7 @@ def test_watch_refreshes_until_interrupted(fake_client, monkeypatch, capsys):
     assert cli.main(['--watch', '--interval', '0.5', '--no-color']) == 0
     assert sleeps == [0.5, 0.5]
     assert capsys.readouterr().out.count('Overall [ OK  ]') == 2
-    assert fake_client.instances[0].stopped
+    assert fake_client.reads == 2
 
 
 def test_cli_wrapper_and_entry_point():
@@ -368,3 +365,56 @@ def test_eoa_output_text_off_by_request_and_older_status():
                                 'periph_power_state': {'power_to_eoa': False},
                                 'current_eoa': 0.0}) == 'off by request, 0.00 A'
     assert cli.eoa_output_text({'periph_power_state': {'power_to_eoa': True}}) == 'on, n/a'
+
+
+def test_live_only_subscribes_to_status_and_sends_nothing(capsys, monkeypatch):
+    """A read must not change robot state: one SUB socket on the status port, no sends,
+    no RobotClient (whose stop() pushes enable_safety and enable_freewheel_mode)."""
+    import zmq
+    from stretch4_body.core import client_server, server_status_reader
+    from stretch4_body.core.subsystem_client import SubsystemClient
+    st = status(**REALISTIC)
+    st['power_health'] = evaluate(st)
+    sockets = []
+
+    class Socket:
+        def __init__(self, kind):
+            self.kind, self.sent, self.connected = kind, [], []
+
+        def setsockopt(self, *a):
+            pass
+
+        def connect(self, addr):
+            self.connected.append(addr)
+
+        def poll(self, *a):
+            return 1
+
+        def recv_pyobj(self, flags=0):
+            return {'power_periph': st}
+
+        def close(self, linger=None):
+            pass
+
+        def __getattr__(self, name):
+            if name.startswith('send'):
+                return lambda *a, **k: self.sent.append(name)
+            raise AttributeError(name)
+
+    class Context:
+        def socket(self, kind):
+            sockets.append(Socket(kind))
+            return sockets[-1]
+
+    def no_command(*a, **k):
+        raise AssertionError('a command was sent')
+    monkeypatch.setattr(zmq.Context, 'instance', staticmethod(lambda: Context()))
+    monkeypatch.setattr(client_server.StretchBodyClient, 'startup', no_command)
+    monkeypatch.setattr(client_server.StretchBodyClient, '_do_send_cmd', no_command)
+    monkeypatch.setattr(SubsystemClient, 'push_command', no_command)
+    monkeypatch.setattr(server_status_reader.os.path, 'exists', lambda p: True)
+    assert cli.main(['--no-color']) == 0
+    assert 'live from stretch_body_server' in capsys.readouterr().out
+    assert [s.kind for s in sockets] == [zmq.SUB]
+    assert sockets[0].connected == ['ipc://%s' % client_server.PORT_STATUS]
+    assert sockets[0].sent == []

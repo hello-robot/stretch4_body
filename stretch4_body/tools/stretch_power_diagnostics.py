@@ -2,7 +2,7 @@
 """
 stretch_power_diagnostics: what the PIMU says about the power path, in plain language.
 
-Live, it reads the status stretch_body_server publishes (RobotClient over ZMQ); it never
+Live, it reads the status stretch_body_server publishes (its status socket only); it never
 opens a device, because the server is the only process allowed to talk to the PIMU.
 With --from-log it rebuilds the same report from a SentryStatusLogger file
 ($HELLO_FLEET_PATH/log/stretch_status/status_*.json, or a stretch_status --export zip),
@@ -19,6 +19,7 @@ import sys
 import time
 import zipfile
 
+from stretch4_body.core.server_status_reader import ServerStatusReader
 from stretch4_body.core.status_log import StatusLogExpander
 from stretch4_body.subsystem.power_health import (
     CHECK_TITLES, PowerHealthEvaluator, describe_power_event)
@@ -31,7 +32,7 @@ RESET = '\033[0m'
 # ------------------------------------------------------------------------ reading
 
 def power_periph_of(status):
-    """status['power_periph'] from a RobotClient status or a logged status sample."""
+    """status['power_periph'] from a server status or a logged status sample."""
     if not isinstance(status, dict):
         return None
     return status.get('power_periph') or status.get('pimu')
@@ -385,48 +386,41 @@ def run_from_log(args, color):
     return 0
 
 
-def connect():
-    """A started RobotClient, or None with the reason printed. Never opens a device."""
-    from stretch4_body.robot.robot_client import RobotClient
-    robot = RobotClient()
-    if not robot.startup(verbose=False):
-        print('stretch_body_server is not running (no answer on its admin socket), so '
-              'there is no power status to read.\nStart it with: stretch_body_server --launch\n'
-              'For a robot that is off, read a status log instead: '
-              'stretch_power_diagnostics --from-log <status_*.json>', file=sys.stderr)
-        return None
-    return robot
+NO_SERVER = ('stretch_body_server is not running (no status on its status socket), so '
+             'there is no power status to read.\nStart it with: stretch_body_server --launch\n'
+             'For a robot that is off, read a status log instead: '
+             'stretch_power_diagnostics --from-log <status_*.json>')
 
 
 def run_live(args, color):
-    robot = connect()
-    if robot is None:
-        return 2
+    """Reads the server's status socket only; sends nothing, so it cannot change robot state."""
     evaluator = PowerHealthEvaluator()   # only used if the server predates power_health
-    try:
-        while True:
-            robot.pull_status()
-            pp = power_periph_of(robot.status) or {}
-            if not pp:
-                print('The server publishes no power_periph status (no PIMU configured).',
-                      file=sys.stderr)
-                return 2
-            health = pp.get('power_health')
-            source = 'live from stretch_body_server'
-            if not health or not health.get('checks'):
-                health = evaluator.evaluate(pp, time.monotonic())
-                source += ' (health computed here: this server does not publish power_health)'
-            if args.watch:
-                sys.stdout.write('\033[2J\033[H')
-            emit(pp, health, source, args, color)
-            if not args.watch:
-                return 0 if health.get('level') != 'fault' else 1
-            sys.stdout.flush()
-            time.sleep(args.interval)
-    except KeyboardInterrupt:
-        return 0
-    finally:
-        robot.stop()
+    with ServerStatusReader() as reader:
+        try:
+            while True:
+                status = reader.read(timeout=2.0)
+                if status is None:
+                    print(NO_SERVER, file=sys.stderr)
+                    return 2
+                pp = power_periph_of(status) or {}
+                if not pp:
+                    print('The server publishes no power_periph status (no PIMU configured).',
+                          file=sys.stderr)
+                    return 2
+                health = pp.get('power_health')
+                source = 'live from stretch_body_server'
+                if not health or not health.get('checks'):
+                    health = evaluator.evaluate(pp, time.monotonic())
+                    source += ' (health computed here: this server does not publish power_health)'
+                if args.watch:
+                    sys.stdout.write('\033[2J\033[H')
+                emit(pp, health, source, args, color)
+                if not args.watch:
+                    return 0 if health.get('level') != 'fault' else 1
+                sys.stdout.flush()
+                time.sleep(args.interval)
+        except KeyboardInterrupt:
+            return 0
 
 
 def build_parser():

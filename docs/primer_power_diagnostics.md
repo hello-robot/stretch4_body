@@ -417,10 +417,10 @@ stretch_power_diagnostics --from-log FILE [--at TIME] [--json] [-n EVENTS]
 
 Exit status: 0 for ok, warn or unknown; 1 for fault (single report); 2 when the server is not running or has no PIMU.
 
-The tool never opens a device. Live, it uses `RobotClient`; if the server is down it says so and stops:
+The tool never opens a device and never sends a command. Live, it subscribes to the server's status socket (`stretch4_body.core.server_status_reader`), not a `RobotClient`, whose `stop()` pushes `enable_freewheel_mode` and `enable_safety`. If no status arrives in 2 s it says so and stops:
 
 ```text
-stretch_body_server is not running (no answer on its admin socket), so there is no power status to read.
+stretch_body_server is not running (no status on its status socket), so there is no power status to read.
 Start it with: stretch_body_server --launch
 For a robot that is off, read a status log instead: stretch_power_diagnostics --from-log <status_*.json>
 ```
