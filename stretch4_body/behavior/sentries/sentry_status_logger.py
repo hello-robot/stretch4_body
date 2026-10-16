@@ -8,11 +8,66 @@ import logging
 import signal
 from typing import Optional
 
+from stretch4_body.core.status_log import StatusLogTrimmer
 
-def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Event, maximum_log_size_mb: int, logger:logging.Logger):
+# A temp file this old at daemon start is left over from a writer that died mid-write.
+STALE_TEMP_S = 600.0
+
+
+def write_batch(log_dir: str, encoded_samples, stamp: Optional[str] = None) -> str:
     """
-    Background daemon that consumes batched statuses from IPC
-    and writes them to disk, managing the directory size.
+    Write JSON-encoded samples as one status_<stamp>.json array and return its path.
+    Written to a temp name, fsynced, then renamed, so a reader or a power cut never sees
+    a partial file. Never replaces an existing file: two batches in the same second (the
+    exit flush right after a timed write) get status_<stamp>_1.json.
+    """
+    stamp = stamp or time.strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(log_dir, f"status_{stamp}.json")
+    n = 1
+    while os.path.exists(path):
+        path = os.path.join(log_dir, f"status_{stamp}_{n}.json")
+        n += 1
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write("[")
+            for i, sample in enumerate(encoded_samples):
+                if i:
+                    f.write(", ")
+                f.write(sample)
+            f.write("]")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def remove_stale_temp_files(log_dir: str, logger: logging.Logger):
+    now = time.time()
+    for f in os.listdir(log_dir):
+        if not f.endswith(".tmp"):
+            continue
+        path = os.path.join(log_dir, f)
+        try:
+            if now - os.path.getmtime(path) > STALE_TEMP_S:
+                os.remove(path)
+                logger.warning(f"Removed partial status batch {f}")
+        except OSError:
+            pass
+
+
+def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Event, maximum_log_size_mb: int,
+                  logger: logging.Logger, batch_period_s: float = 60.0, client_factory=RobotClient):
+    """
+    Background daemon that polls RobotClient status and writes it to disk in batches,
+    managing the directory size. The file format (aliases dropped, slow power keys
+    written only when they change) is in stretch4_body/core/status_log.py.
     """
     def manage_directory_size(max_size_bytes=maximum_log_size_mb * 1024 * 1024):
         try:
@@ -37,12 +92,23 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
         except Exception as e:
             logger.error(f"Error managing status dir size: {e}")
 
+    def flush(what):
+        try:
+            write_batch(log_dir, batch)
+        except Exception as e:
+            logger.error(f"Error writing {what}: {e}")
+        trimmer.reset()   # every file starts with a complete sample
+        manage_directory_size()
+
+    remove_stale_temp_files(log_dir, logger)
+
     # Set up client to communicate with RobotServer asynchronously without blocking its loops
-    r = RobotClient()
+    r = client_factory()
     if not r.startup():
         logger.error("SentryStatusLogger daemon failed to start RobotClient")
         return
 
+    trimmer = StatusLogTrimmer()
     batch = []
     last_batch_time = time.time()
     sleep_time = 1.0 / float(check_rate)
@@ -50,6 +116,8 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
     try:
         while not do_exit.is_set():
             r.pull_status()
+            # Shallow: the subsystem dicts are RobotClient's own and pull_status updates
+            # them in place, so the sample is encoded now, not at write time.
             rs = r.status.copy()
             if "timestamp" not in rs:
                 rs["timestamp"] = time.time()
@@ -57,22 +125,12 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
             # Drop line sensor data entirely for now
             rs.pop('line_sensor_loop', None)
 
-            batch.append(rs)
+            batch.append(json.dumps(trimmer.trim(rs), default=str))
 
-            # Batch for 1 minute
-            if time.time() - last_batch_time >= 60.0:
+            if time.time() - last_batch_time >= batch_period_s:
                 if batch:
-                    timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-                    filename = os.path.join(log_dir, f"status_{timestamp_str}.json")
-                    try:
-                        with open(filename, "w") as f:
-                            json.dump(batch, f, default=str)
-                    except Exception as e:
-                        logger.error(f"Error writing status batch: {e}")
-
+                    flush("status batch")
                     batch = []
-                    manage_directory_size()
-
                 last_batch_time = time.time()
 
             # Slight yield to avoid spinning CPU but fast enough to poll
@@ -83,15 +141,7 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
     finally:
         # Final flush on exit
         if batch:
-            timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(log_dir, f"status_{timestamp_str}.json")
-            try:
-                with open(filename, "w") as f:
-                    json.dump(batch, f, default=str)
-            except Exception as e:
-                logger.error(f"Error writing final status batch: {e}")
-            manage_directory_size()
-            
+            flush("final status batch")
         r.stop()
 
 

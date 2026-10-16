@@ -19,6 +19,7 @@ import sys
 import time
 import zipfile
 
+from stretch4_body.core.status_log import StatusLogExpander
 from stretch4_body.subsystem.power_health import (
     CHECK_TITLES, PowerHealthEvaluator, describe_power_event)
 
@@ -57,8 +58,18 @@ def _iter_json_array(text):
     while True:
         while i < n and text[i] in ' \t\r\n,':
             i += 1
-        if i >= n or text[i] == ']':
+        if i >= n:
             break
+        if text[i] == ']':
+            if not text[i + 1:].strip():
+                break
+            # The end of a list nested in a sample: the last resync landed inside one.
+            # Same damaged spot, so not counted again.
+            nxt = text.find('}, {', i + 1)
+            if nxt < 0:
+                break
+            i = nxt + 3
+            continue
         try:
             element, i = decoder.raw_decode(text, i)
         except ValueError:
@@ -89,7 +100,9 @@ def load_log(path):
     Read the power part of every logged status sample. Keeps only the timestamp and
     the power_periph dict of each sample: a full minute file is about 200 MB of
     status, its power part a small fraction. Elements without power data (subsystem
-    dicts met while resynchronizing after damage) are dropped. Returns (samples, notes).
+    dicts met while resynchronizing after damage) are dropped. Power keys the logger left
+    out because they had not changed are carried forward from the last sample that has
+    them (stretch4_body/core/status_log.py). Returns (samples, notes).
     """
     samples, notes = [], []
     for name, text in _log_texts(path):
@@ -97,13 +110,18 @@ def load_log(path):
             notes.append('%s is empty' % name)
             continue
         gen = _iter_json_array(text)
+        expander = StatusLogExpander()
         count = 0
         while True:
             try:
-                element = next(gen)
+                element = expander.expand(next(gen))
             except StopIteration as stop:
                 if stop.value:
                     notes.append('%s is damaged: %s, kept %d samples' % (name, stop.value, count))
+                if expander.unresolved:
+                    notes.append('%s: %d carried power keys had no earlier value in the file '
+                                 '(its first sample is lost), left empty'
+                                 % (name, expander.unresolved))
                 break
             pp = power_periph_of(element)
             if pp is None or 'timestamp' not in element:

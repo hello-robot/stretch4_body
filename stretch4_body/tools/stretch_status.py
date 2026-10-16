@@ -36,6 +36,7 @@ def get_file_timestamp(filepath):
         return os.path.getmtime(filepath)
 
 from stretch4_body.robot.robot_client import RobotClient
+from stretch4_body.core.status_log import expand_samples
 
 def flatten_status(d, parent_key='robot', sep='.'):
     """
@@ -608,7 +609,9 @@ def main():
                 with zf.open(f_name) as file:
                     try:
                         batch = json.loads(file.read().decode('utf-8'))
-                        for rs in batch:
+                        # Puts back the aliases and the power keys the logger left out
+                        # because they had not changed (core/status_log.py).
+                        for rs in expand_samples(batch):
                             t = rs.get("timestamp", 0.0)
                             if start_time_ts is not None and t < start_time_ts:
                                 continue

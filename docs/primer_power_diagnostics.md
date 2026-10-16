@@ -538,7 +538,7 @@ The Power & Battery section of `stretch_system_check` prints one line from `powe
 | Where | `$HELLO_FLEET_PATH/log/stretch_status/` |
 | Cap | `maximum_log_size_mb`, 5000 MB (MiB). The oldest files are deleted after each write |
 
-Measured bytes per logged sample (`json.dumps`, as the logger writes):
+Measured bytes per logged sample (`json.dumps`, as the logger writes), before the logger was trimmed:
 
 | Content | Bytes per sample |
 |---|---|
@@ -550,15 +550,26 @@ Measured bytes per logged sample (`json.dumps`, as the logger writes):
 | of which `power_health` | 4,298 |
 | of which `status_aux_meta` (with transitions) | 1,293 |
 
-`status['pimu']` is an alias of `status['power_periph']` in `RobotClient`, and the logger writes both, so every power byte is written twice.
+`status['pimu']` is an alias of `status['power_periph']` in `RobotClient`, and the untrimmed logger wrote both, so every power byte was written twice.
+
+The logger now writes a trimmed copy (the published status is unchanged; format in [Robot Status Data and Server Logs](primer_status_log.md)):
+
+- `pimu` and `base` aliases are not written;
+- `power_event_log` is written when it changes (its cursor moves), `power_diagnostics`, `power_diagnostics_meta` and `power_health` when they change. `power_diagnostics_meta` carries ages that tick every cycle, so it is written every sample (about 600 B); the others about twice a second;
+- the first sample of every file is complete, and the readers carry the last written value forward.
+
+Measured on a June 2026 stretch-se4-4032 sample with P14 keys added, over a simulated 60 s file (6000 samples, a new diagnostics sample every 0.5 s):
 
 | Body | Bytes per sample | Per minute | 5000 MB holds |
 |---|---|---|---|
-| Pre-P14 (measured) | 37,285 | 217 MB | about 24 minutes |
-| P14, empty event log | about 59,800 | 348 MB | about 15 minutes |
-| P14, full event log | about 118,900 | 692 MB | about 7.6 minutes |
+| Pre-P14 (measured log) | 37,285 | 217 MB | about 24 minutes |
+| P14, untrimmed, empty event log | about 58,100 to 59,800 | 348 MB | about 15 minutes |
+| P14, untrimmed, full event log | about 118,800 | 692 MB | about 7.6 minutes |
+| P14, trimmed, empty or full event log | about 28,700 | 167 MB | about 31 minutes |
 
-So the status log is a flight recorder for the last few minutes, not hours. The event log is the part that grows: it fills over the first hours of a session and is then written in full, unchanged, 97 times a second. The PIMU itself keeps the last 64 events across a host restart, so after an incident read them live first.
+So the status log is a flight recorder for about the last half hour. The event log no longer matters: it is written once per file and again only when a new event arrives. The PIMU itself keeps the last 64 events across a host restart, so after an incident read them live first.
+
+Until October 2026 the logger also kept references to RobotClient's live subsystem dicts and serialized a whole minute at once, so every sample in a file carried the subsystem values of the last one (only `timestamp` and the top-level `server`, `routines` and `safety_layer` differed). Subsystem and power values in older logs are one snapshot per file, not per sample.
 
 To pull logs off a robot, from your workstation:
 
@@ -569,7 +580,7 @@ rsync -av hello-robot@stretch-se4-4056.local:stretch_user/log/stretch_status/ ./
 stretch_status --export ~/
 ```
 
-Copy the logs soon after the incident: at 7 to 15 minutes of history, a robot left running overwrites the moment you care about.
+Copy the logs soon after the incident: with about 31 minutes of history, a robot left running overwrites the moment you care about.
 
 ## 9. Version Pairing
 
@@ -590,4 +601,5 @@ Copy the logs soon after the incident: at 7 to 15 minutes of history, a robot le
 | `stretch4_body/robot/robot_server.py` | 2 Hz poll, freshness, event log, `power_health` publication |
 | `stretch4_body/subsystem/power_health.py` | `PowerHealthThresholds`, `PowerHealthEvaluator`, `describe_power_event`, `health_line` |
 | `stretch4_body/tools/stretch_power_diagnostics.py` | The CLI |
-| `test/test_power_health.py`, `test/test_robot_server_power_health.py`, `test/test_stretch_power_diagnostics.py` | Every rule, the server wiring and the CLI, with no hardware |
+| `stretch4_body/core/status_log.py` | What the status logger leaves out of a sample and how readers put it back |
+| `test/test_power_health.py`, `test/test_robot_server_power_health.py`, `test/test_stretch_power_diagnostics.py`, `test/test_status_log.py` | Every rule, the server wiring, the CLI and the status log format, with no hardware |
