@@ -16,7 +16,6 @@ configuration_params_header='#Parameters that are specific to this robot\n' \
                             '#Do not edit, instead edit stretch_user_params.yaml\n'
 
 configuration_params_template={
-    'hello-motor-lift':{'serial_no': 'NA'},
     'hello-motor-omni-0':{'serial_no': 'NA'},
     'hello-motor-omni-1':{'serial_no': 'NA'},
     'hello-motor-omni-2': {'serial_no': 'NA'},
@@ -39,19 +38,15 @@ configuration_params_template={
 # ###################################33
 # Baseline Nominal Params
 nominal_params={
-    'supported_eoa': ['eoa_wrist_nil_tool_unh'],
+    'supported_eoa': ['whole_arm_nil'],
     'supported_eoa_metadata': {
-        'eoa_wrist_nil_tool_unh': {
-            'name': 'No Tool',
-            'description': 'No tool attached to the robot.'
+        'whole_arm_nil': {
+            'name': 'No lift, arm, wrist, or gripper',
+            'description': 'No arm attached to the robot.'
         }
     },
-    'eoa_wrist_nil_tool_unh': {
+    'whole_arm_nil': {
         'devices': {}, # intentionally empty
-        'i_feedforward_payload': 0.0,
-        'stow': {
-            'lift': 0.33
-        },
     },
     'omnibase': {
         'forward_dir': 'calder',
@@ -78,12 +73,6 @@ nominal_params={
                 'vel_w_r': 1.0,
                 'accel_xy_m': 0.1,
                 'vel_xy_m': 0.1}},
-        'sentry_fast_motion_allowed_on_stow':{
-            'limit_accel_m': 0.15,
-            'limit_vel_m': 0.1,
-            'max_arm_extension_m': 0.03,
-            'max_lift_height_m': 0.3,
-            'min_wrist_yaw_rad': 2.54},
         'wheel_diameter_m': 0.200, #Per quentin/cad
         'base_radius_m': 0.174,  # Per quentin/cad, to centerline of wheel
         'enable_guarded_mode': 1},
@@ -289,95 +278,6 @@ nominal_params={
             'qid': 0,
             'default_backend': 1
         }},
-    'hello-motor-lift':{
-            'gains':{
-            'drv8262_min_vref':10, #76: 10, 56: 25
-            'effort_LPF': 2.0,
-            'enable_guarded_mode': 1,
-            'enable_runstop': 1,
-            'enable_sync_mode': 1,
-            'enable_vel_watchdog': 1,
-            'flip_effort_polarity': 0,
-            'flip_encoder_polarity': 0,
-            'k_calibration_step': 0.3,
-            'iMax_neg': -7.7,
-            'iMax_pos': 7.7,
-            'i_contact_neg': -2.0,
-            'i_contact_pos': 2.0,
-            'i_safety_feedforward': 0.8,
-            'toff_setting': 0 ,
-            'decay_setting': 1,
-            'pKd_d': 0.05,
-            'pKi_d': 50.0,
-            'pKi_limit': 200.0,
-            'pKp_d': 125.0,
-            'pLPF': 100,
-            'voltage_LPF':1.0,
-            'phase_advance_d': 1.8,
-            'pos_near_setpoint_d': 6.0,
-            'safety_hold': 1,
-            'safety_stiffness': 0.0,
-           'vKd_d': 0,
-            'vKi_d': 3.5,
-            'vKi_limit': 2000,
-            'vKp_d': 0.3,
-            'vLPF': 30,
-            'vTe_d': 50,
-            'vel_near_setpoint_d': 3.5,
-            'vel_status_LPF': 10.0,
-            'coeff_acc_pos': 3.69, 
-            'coeff_intercept_pos': 832.59,
-            'coeff_acc_neg': -0.54, 
-            'coeff_intercept_neg': 1.49,
-            },
-        'holding_torque': 1.9,
-        'motion':{
-            'accel': 15,
-            'vel': 12},
-        'rated_current': 2.95,
-        'transport':{
-            'qid': 4,
-            'default_backend': 1
-        },
-        'guarded_contact':{
-            'off': 0,
-          'sensitivity_default':{
-              'coeff_sensitivity_pos': 0.5,
-              'coeff_sensitivity_neg': 0.5
-          },
-            'sensitivity_high':{
-              'coeff_sensitivity_pos': 0.0,
-              'coeff_sensitivity_neg': 0.0
-          },
-            'sensitivity_low':{
-              'coeff_sensitivity_pos': 1.0,
-              'coeff_sensitivity_neg': 1.0
-          }
-        }},
-    'lift':{
-        'usb_name': '/dev/hello-motor-lift',
-        'use_vel_traj': 1,
-        'calibration_range_bounds': [1.094, 1.106],
-        'i_feedforward': 0.8,
-        'range_m' : [0.0, 1.1],
-        'homing': {'contact_sensitivity': 0.7, 'end_pos': 0.5, 'v_m': 0.25, 'a_m': 0.3, 'to_positive_stop': True,'safety_hold':1,'safety_stiffness':0.7},
-        'belt_pitch_m': 0.005,
-          'motion':{
-            'default':{
-              'accel_m': 0.3,
-              'vel_m': 0.3},
-            'fast':{
-              'accel_m': 0.5,
-              'vel_m': 0.4},
-            'max':{
-              'accel_m': 1.0,
-              'vel_m': 0.5},
-            'slow':{
-              'accel_m': 0.2,
-              'vel_m': 0.15},
-        'vel_brakezone_factor': 0.01},
-        'set_safe_velocity': 1,
-          'pinion_t': 22},
     'imu':{
         'config': {
             'gyro_zero_offsets': [0.0, 0.0, 0.0],
@@ -422,7 +322,7 @@ nominal_params={
         },
     # ########### ROUTINES ################################
 
-    'routine_manager': {'controllers': ['routine_nop', 'routine_blind_dock', 'routine_lift_home',
+    'routine_manager': {'controllers': ['routine_nop', 'routine_blind_dock',
                                         'routine_robot_stow','routine_robot_home'], },
 
 
@@ -434,12 +334,6 @@ nominal_params={
     'routine_robot_stow': {
         'py_module_name': 'stretch4_body.behavior.routines.routine_stow',
         'py_class_name': 'RoutineRobotStow',
-        'enabled': 1
-    },
-    'routine_lift_home': {
-        'py_module_name': 'stretch4_body.behavior.routines.routine_homing',
-        'py_class_name': 'RoutineLiftHome',
-        'required_subsystems': ['lift'],
         'enabled': 1
     },
     'routine_blind_dock': {
@@ -458,33 +352,15 @@ nominal_params={
     ############## SENTRIES #############################
     'sentry_manager': {'controllers': [
         'sentry_omnibase_guarded_contact',
-        'sentry_limit_vel_on_pose',
         'sentry_battery_mgmt',
         'sentry_ubuntu_power_management',
         'sentry_status_logger',
-        'sentry_cpu_temp',
-        'sentry_joint_runaway',]},
-    'sentry_limit_vel_on_pose': {
-        'py_module_name': 'stretch4_body.behavior.sentries.sentry_limit_vel_on_pose',
-        'py_class_name': 'SentryLimitVelOnPose',
-        'lift_lower_safe_height_m': 0.2,
-        'limit_omnibase_translation_by_lift': 1,
-        'limit_omnibase_rotation_by_arm': 0,
-        'limit_omnibase_rotation_by_lift': 1,
-        'required_subsystems': ['omnibase', 'lift'],
-    },
+        'sentry_cpu_temp',]},
     'sentry_omnibase_guarded_contact': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_omnibase_guarded_contact',
         'py_class_name': 'SentryOmniBaseGuardedContact',
         'required_subsystems': ['omnibase', 'power_periph'],
         'enabled': 1,
-    },
-    'sentry_joint_runaway': {
-        'py_module_name': 'stretch4_body.behavior.sentries.sentry_joint_runaway',
-        'py_class_name': 'SentryJointRunaway',
-        'required_subsystems': ['power_periph'],
-        'enabled': 1,
-        'lift_runaway_vel': 1.25
     },
     'sentry_battery_mgmt': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_battery_mgmt',
@@ -548,27 +424,23 @@ nominal_params={
     'robot': {
         'batch_name': 'NA',
         'serial_no': 'NA',
-        'model_name': 'SE4UNH',
-        'subsystems': ['lift', 'omnibase', 'power_periph'],
-        'tool': 'eoa_wrist_nil_tool_unh',
+        'model_name': 'SE4OMNI',
+        'subsystems': ['omnibase', 'power_periph'],
+        'tool': 'whole_arm_nil',
         'enable_rate_log':1,
         'max_rate_log_samples':10000,
         'guarded_contact':{
             'off':0,
             'default':{
-                    'lift':'sensitivity_default',
                     'omnibase':'sensitivity_default'
             },
             'high_sensitivity_nav':{
-                    'lift':'sensitivity_default',
                     'omnibase':'sensitivity_high'
             },
             'high_sensitivity_manipulation':{
-                    'lift':'sensitivity_high',
                     'omnibase':'sensitivity_default'
             },
             'strong_manipulation':{
-                    'lift':'sensitivity_low',
                     'omnibase':'sensitivity_default'
             },
         },
@@ -601,23 +473,6 @@ nominal_params={
         'n_samples_per_file':100,
         'duration_limit_minutes':10.0
     },
-    'self_collision_mujoco':{
-        'SE4UNH':{'k_brake_distance': {'lift': 1.1},
-               'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link'],
-               'exclusions':[
-                   ["head_link", "lift_link"],
-                   ["base_link", "mast_link"],
-                   ["lift_link", "mast_link"],
-                   ["lift_link", "head_link"],
-
-                    ]},
-        'eoa_wrist_nil_tool_unh':{'k_brake_distance': {},
-               'exclusions':[
-
-               ]},
-               },
-    'self_collision_loop': {
-        'loop_rate_Hz': 60.0},
     'stretch_gamepad':{
         'enable_fn_button': 0,
         'function_cmd':'',
@@ -625,10 +480,6 @@ nominal_params={
     'params':[],
     'ros': {
         'joints': [{
-            'py_module_name': 'stretch_core.command_groups',
-            'py_class_name': 'LiftCommandGroup',
-        },
-        {
             'py_module_name': 'stretch_core.command_groups',
             'py_class_name': 'MobileBaseCommandGroup',
         }],
