@@ -1186,6 +1186,7 @@ BUILTIN_TOOL_MODELS: dict[str, ToolMetadata] = {
     "parallel_gripper": _pg_meta,
     "stretch_gripper": _sg_meta,
     "eoa_wrist_dw4_tool_sg4": _sg_meta,
+    "eoa_wrist_dw4_tool_sg4_v2": _sg_meta,
     "eoa_wrist_dw4_tool_pg4": _pg_meta,
 }
 

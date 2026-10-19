@@ -563,7 +563,7 @@ SE4_eoa_wrist_dw4_tool_sg4={
             }
         }
 
-eoa_wrist_dw4_tool_sg4_v2 = {
+SE4_eoa_wrist_dw4_tool_sg4_v2={
         'py_class_name': 'EOA_Wrist_DW4_Tool_SG4',
         'py_module_name': 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools',
         'use_group_sync_read': 0, #1
@@ -746,6 +746,7 @@ nominal_params={
     'supported_eoa': [
         'eoa_wrist_dw4_tool_nil',
         'eoa_wrist_dw4_tool_sg4',
+        'eoa_wrist_dw4_tool_sg4_v2',
         'eoa_wrist_dw4_tool_pg4',
         'eoa_wrist_dw4_tool_tablet',
         'eoa_wrist_dw4_tool_calibration'
@@ -758,6 +759,10 @@ nominal_params={
         'eoa_wrist_dw4_tool_sg4': {
             'name': 'Stretch Gripper',
             'description': 'The standard Stretch 4 compliant gripper.'
+        },
+        'eoa_wrist_dw4_tool_sg4_v2': {
+            'name': 'Stretch Gripper v2',
+            'description': 'Version 2 of the Stretch 4 compliant gripper.'
         },
         'eoa_wrist_dw4_tool_pg4': {
             'name': 'Parallel Jaw Gripper',
@@ -774,6 +779,7 @@ nominal_params={
     },
     'eoa_wrist_dw4_tool_nil': SE4_eoa_wrist_dw4_tool_nil,
     'eoa_wrist_dw4_tool_sg4': SE4_eoa_wrist_dw4_tool_sg4,
+    'eoa_wrist_dw4_tool_sg4_v2': SE4_eoa_wrist_dw4_tool_sg4_v2,
     'eoa_wrist_dw4_tool_pg4': SE4_eoa_wrist_dw4_tool_pg4,
     'eoa_wrist_dw4_tool_tablet': SE4_eoa_wrist_dw4_tool_tablet,
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
@@ -1567,6 +1573,21 @@ nominal_params={
 
                     ]},
         'eoa_wrist_dw4_tool_sg4':{'k_brake_distance': {},
+               'exclusions':[
+                   ["gripper_finger_left_link", "wrist_pitch_link"],
+                   ["gripper_finger_left_link", "gripper_finger_right_link"],
+                   ["gripper_finger_left_link", "gripper_fingertip_right_link"],
+                   ["gripper_finger_right_link", "wrist_pitch_link"],
+                   ["gripper_finger_right_link","gripper_fingertip_left_link"],
+                   ["gripper_fingertip_left_link","gripper_fingertip_right_link"],
+                   ["aruco_fingertip_left_link","aruco_fingertip_right_link"],
+                   ["aruco_fingertip_left_link","gripper_finger_right_link"],
+                   ["aruco_fingertip_left_link","gripper_fingertip_right_link"],
+                   ["aruco_fingertip_right_link","gripper_finger_left_link"],
+                   ["aruco_fingertip_right_link","gripper_fingertip_left_link"],
+
+               ]},
+        'eoa_wrist_dw4_tool_sg4_v2':{'k_brake_distance': {},
                'exclusions':[
                    ["gripper_finger_left_link", "wrist_pitch_link"],
                    ["gripper_finger_left_link", "gripper_finger_right_link"],
