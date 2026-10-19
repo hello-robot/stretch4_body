@@ -73,6 +73,39 @@ class GripperSlider:
             self.connection.close()
             #print("Serial connection closed.")
 
+
+def stream_pistol_gripper(hz=100.0):
+    """Streams the raw GripperSlider values to a Rerun timeseries plot.
+
+    This is a standalone mode: no robot is connected and no teleop is run.
+    """
+    import rerun as rr
+
+    slider = GripperSlider()
+    slider.connect()
+    if not slider.hw_valid:
+        print("Pistol gripper not available. Exiting.")
+        sys.exit(1)
+
+    rr.init("stretch_pistol_gripper")
+    rr.spawn(memory_limit="1GB")
+    rr.log("pistol_gripper/raw", rr.SeriesLines(colors=[255, 0, 0], names=["raw"]), static=True)
+
+    print("Streaming raw pistol gripper values. Press Ctrl-C to exit.")
+    rate = 1.0 / hz
+    t_start = time.perf_counter()
+    try:
+        while True:
+            val = slider.get_value()
+            if val is not None:
+                rr.set_time("realtime", duration=time.perf_counter() - t_start)
+                rr.log("pistol_gripper/raw", rr.Scalars(float(val)))
+            time.sleep(rate)
+    except (KeyboardInterrupt, SystemExit):
+        print("\nExiting pistol gripper stream...")
+    finally:
+        slider.close()
+
 # def main():
 #     slider = GripperSlider()
 #     slider.connect()
@@ -97,12 +130,17 @@ def main():
     parser.add_argument("--joints", nargs='+', default=["omnibase", "lift", "arm", "wrist", "gripper"], help="List of joints to mimic. Example: --joints lift arm wrist_yaw. Default: omnibase lift arm gripper wrist_yaw pitch_roll")
     parser.add_argument("--no_puppet", action='store_true', help="Run without a puppet robot. Prints controller joint positions only.")
     parser.add_argument("--no_pistol", action='store_true',help="Run without the pistol installed.")
+    parser.add_argument("--stream_pistol_gripper", action='store_true', help="Only stream the raw pistol gripper values to a Rerun plot. No robot is connected and no teleop is run.")
     parser.add_argument("--pg4", action='store_true',help="Run a PG4 on the puppet side.")
     parser.add_argument("--pg4c", action='store_true',help="Run a PG4 on the controller side.")
     parser.add_argument("--print_only", action='store_true', help="Print controller and puppet joint positions without commanding motion.")
     parser.add_argument("--base_rotate_only", action='store_true', help="Controller base motion will only generate pure rotation commands on the puppet base.")
     parser.add_argument("--tool_nil_controller", action='store_true', help="Run when the controller has eoa_wrist_dw4_tool_nil (no gripper on controller side).")
     args = parser.parse_args()
+
+    if args.stream_pistol_gripper:
+        stream_pistol_gripper()
+        return
 
     if not args.no_puppet and args.puppet_ip is None:
         parser.error("--puppet_ip is required unless --no_puppet is set")
