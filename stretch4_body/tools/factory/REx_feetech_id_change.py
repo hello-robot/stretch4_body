@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from future.builtins import input
 from stretch4_body.core.feetech.feetech_SM_servo import FeetechSMServo
 import argparse
 import stretch4_body.core.device
