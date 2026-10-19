@@ -162,6 +162,66 @@ SE4_stretch_gripper_DW4={
         'enable_torque_after_runstop': 1,
         'enable_runstop':1}
 
+SE4_stretch_gripper_DW4_v2={
+    'gripper_conversion': {
+        'finger_length_m': 0.18205,# Straight length from `gripper_finger_right_link.STL`, ignoring the bend in the metal
+        'aperture_open_m': 0.150,  # Measured by hand, from fingertip to fingertip
+        'aperture_closed_m': 0.0
+    },
+    'eeprom_cfg': {
+        'temperature_limit': 72,
+        'max_voltage_limit': 29,
+        'min_voltage_limit': 11,
+        'pid': [32,32,0],
+        'return_delay_time': 0,
+        'angular_resolution': 1.0,
+        'phase': 61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
+        'min_pos_limit': 0,
+        'max_load_limit_pct': 48.0,
+        'overload_safe': 25.0,
+        'overload_time_ms': 1000,
+        'overload_thresh': 48.0,
+        'overcurrent': 150,
+        'overcurrent_time_ms': 200,
+        'protection_torque': 20,
+        'overload_protection_time': 200,
+        'enable_protection_overload':0,
+        'enable_protection_current':1,
+        'enable_protection_temp':1,
+        'enable_protection_sensor':0,
+        'enable_protection_voltage':0
+    },
+    'motion': {
+        # Predefined motion profiles (vel: rad/s, accel: rad/s^2)
+        'default': {'accel': 6.0, 'vel': 6.0},
+        'fast': {'accel': 6.0, 'vel': 6.0},
+        'max': {'accel': 6.0, 'vel': 6.0},
+        'slow': {'accel': 4.0, 'vel': 1.0},
+        'vel_brakezone_factor': 1,
+        'vel_is_moving_thresh': 0.01
+    },
+        'id': 26,
+        'set_safe_velocity': 1,
+        'req_calibration': 1,
+        'gr': 1.0,
+        'usb_name': '/dev/hello-feetech-wrist',
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'range_pad_deg': [ 0.0, 0.0 ],
+        'range_deg': [-32,338],
+        'homing_offset_bias_t': 0,  
+        'homing_to_neg_limit': 1,
+        'homing_pwm': 150,
+        'flip_encoder_polarity': 0,
+        'stall_backoff': 0.017,
+        'stall_max_effort': 20.0,
+        'stall_max_time': 1.0,
+        'stall_min_vel': 0.1,
+        'disable_torque_on_runstop': 0,
+        'enable_torque_after_runstop': 1,
+        'enable_runstop':1}
+
 SE4_parallel_gripper_DW4={
     'eeprom_cfg': {
         'temperature_limit': 72,
@@ -499,6 +559,50 @@ SE4_eoa_wrist_dw4_tool_sg4={
                 'py_class_name': 'StretchGripper4',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.stretch_gripper',
                 'device_params': 'SE4_stretch_gripper_DW4'
+            }
+            }
+        }
+
+eoa_wrist_dw4_tool_sg4_v2 = {
+        'py_class_name': 'EOA_Wrist_DW4_Tool_SG4',
+        'py_module_name': 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools',
+        'use_group_sync_read': 0, #1
+        'use_group_sync_write':0, #1
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'i_feedforward_payload':0.3,
+        #'dxl_latency_timer': 64,
+        'wrist': 'eoaw_dw4',
+        'tool': 'eoat_sg4',
+        'stow': {
+            'arm': 0.0,
+            'lift': 0.15,
+            'wrist_pitch': 0.0,
+            'wrist_roll': 0.0,
+            'wrist_yaw': 3.14,
+            'stretch_gripper': 0
+        },
+
+        'devices': {
+            'wrist_pitch': {
+                'py_class_name': 'WristPitch',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
+                'device_params': 'SE4_wrist_pitch_DW4'
+            },
+            'wrist_roll': {
+                'py_class_name': 'WristRoll',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
+                'device_params': 'SE4_wrist_roll_DW4'
+            },
+            'wrist_yaw': {
+                'py_class_name': 'WristYaw',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
+                'device_params': 'SE4_wrist_yaw_DW4'
+            },
+            'stretch_gripper': {
+                'py_class_name': 'StretchGripper4',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.stretch_gripper',
+                'device_params': 'SE4_stretch_gripper_DW4_v2'
             }
             }
         }
