@@ -374,7 +374,7 @@ def _parse_args():
     group.add_argument("--export", help=f"Export the last {NUM_EXPORTED_SESSION_LOGS} session logs to a zip file in the given directory (defaults to $HELLO_FLEET_PATH/log/exports)",
                        nargs='?', const='', metavar='DIR', default=None)
 
-    group.add_argument("--kill", help="Kill a running server",action="store_true")
+    group.add_argument("--kill", "--stop", help="Kill a running server",action="store_true")
     group.add_argument("--restart", help="Restart a running server",action="store_true")
     group.add_argument("--cleanup", help="Force kill zombie server processes",action="store_true")
     # group.add_argument("--pause", help="Pause control loop",action="store_true")
