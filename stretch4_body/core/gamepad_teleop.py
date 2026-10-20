@@ -375,7 +375,7 @@ class GamePadTeleop(Device):
             if isinstance(self.robot, RobotClient):
                 # The server may not be up yet, so wait for it instead of exiting
                 print("Connecting to Stretch Body Server...")
-                started = self.robot.startup(block=True)
+                started = self.robot.startup(block_timeout_s=0)
             else:
                 started = self.robot.startup()
             if started:

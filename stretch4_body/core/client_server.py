@@ -253,7 +253,7 @@ class StretchBodyClient:
         self.admin_poller = zmq.Poller()
         self.admin_poller.register(self.socket_admin, zmq.POLLIN)
 
-    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool = False, block:bool = False):
+    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool = False, block_timeout_s:float|None = None):
         """
         Connect this client to the Stretch Body Server.
 
@@ -267,11 +267,12 @@ class StretchBodyClient:
         allow_different_user_connection : bool, optional
             If True, connect even when the server was started by a different user on this
             machine. If False, the connection is refused in that case, by default False.
-        block : bool, optional
-            If True, keep retrying the connection to the server every 100ms until it
-            succeeds, instead of returning False right away. This call does not return
-            until a server responds, so it blocks forever if none ever comes up.
-            By default False.
+        block_timeout_s : float | None, optional
+            How long to wait for the server to become available, retrying the connection
+            every 100ms. If None, don't wait: try once and return False right away if no
+            server responds. If 0, wait forever, so this call never returns if no server
+            ever comes up. If greater than 0, wait up to that many seconds before giving
+            up and returning False. By default None.
 
         Returns
         -------
@@ -290,10 +291,11 @@ class StretchBodyClient:
 
         self.check_connection()
 
-        if not self.connected and block:
+        if not self.connected and block_timeout_s is not None:
             if verbose:
                 self.logger.info("StretchBodyClient: Waiting for the Stretch Body Server to become available...")
-            while not self.connected:
+            deadline = None if block_timeout_s == 0 else time.time() + block_timeout_s
+            while not self.connected and (deadline is None or time.time() < deadline):
                 time.sleep(0.1)
                 # A REQ socket with an unanswered request can't send again, so start fresh each retry
                 self._connect_admin_socket()

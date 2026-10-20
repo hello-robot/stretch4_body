@@ -43,15 +43,15 @@ class SubsystemClient(Device):
     def connected(self):
         return self.is_valid and self.client.connected
 
-    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False, block:bool=False):
+    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False, block_timeout_s:float|None=None):
         """
         `verbose`: Whether to print messages about the server starting up
         `allow_different_user_connection`: Whether to allow connecting to a server running as a different user on the same machine.
-        `block`: Whether to wait for the server, retrying every 100ms, instead of failing when it isn't running yet. Never returns if no server comes up.
+        `block_timeout_s`: How long to wait for the server, retrying every 100ms, if it isn't running yet. None doesn't wait, 0 waits forever, and a positive value waits up to that many seconds before failing.
         """
         Device.startup(self)
         if self.parent is None:
-            if not self.client.startup(verbose=verbose, allow_different_user_connection=allow_different_user_connection, block=block):
+            if not self.client.startup(verbose=verbose, allow_different_user_connection=allow_different_user_connection, block_timeout_s=block_timeout_s):
                 return False
         self.is_valid=True
         for k in self.subsystems:
