@@ -76,6 +76,7 @@ stretch_tool      = _robot_info.get('tool', 'N/A')
 TOOL_DISPLAY = {
     'eoa_wrist_dw4_tool_nil':         'DexWrist 4 — No Tool',
     'eoa_wrist_dw4_tool_sg4':         'DexWrist 4 — Stretch Gripper (SG4)',
+    'eoa_wrist_dw4_tool_sg4_v2':      'DexWrist 4 — Stretch Gripper v2 (SG4)',
     'eoa_wrist_dw4_tool_pg4':         'DexWrist 4 — Parallel Gripper (PG4)',
     'eoa_wrist_dw4_tool_tablet':      'DexWrist 4 — Tablet Holder',
     'eoa_wrist_dw4_tool_calibration': 'DexWrist 4 — Calibration Tool',
