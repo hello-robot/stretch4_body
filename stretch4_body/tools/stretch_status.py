@@ -126,7 +126,7 @@ def log_selected_fields(flat_status, selected_fields):
             if isinstance(value, bool):
                 val = 1 if value else 0
                 rr.log(rr_path, rr.Scalars(val))
-            else:
+            elif isinstance(value, (int, float)):
                 rr.log(rr_path, rr.Scalars(value))
 
 def extract_all_groups(d, current_path="robot"):
@@ -163,8 +163,10 @@ def get_default_fields(sample_status):
     flat = flatten_status(sample_status, parent_key='robot')
     paths = sorted(list(flat.keys()))
     
-    # Defaults: server, base x/y/theta, and non-motor joint positions
+    # Defaults: server, base x/y/theta, wrist orientation, and non-motor joint positions
     defaults = ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta']
+    if 'end_of_arm' in sample_status: # These are None until the wrist is homed, so not in flat
+        defaults += ['robot.end_of_arm.tool_right_handed', 'robot.end_of_arm.camera_upright', 'robot.end_of_arm.tool_facing', 'robot.end_of_arm.tool_side']
     joint_positions = [
         k for k in paths 
         if (k.endswith('.pos') or k.endswith('.pos_pct')) 
