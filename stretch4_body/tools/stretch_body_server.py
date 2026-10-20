@@ -541,7 +541,7 @@ def main():
             robot_client.stop()
 
         if args.restart:
-            print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has restarted successfully.{Style.RESET_ALL}\n")
+            print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has restarted successfully.{Style.RESET_ALL}\nUse --status to see status, or --print for logs.")
 
     else:
         print_last_log_from_archive()
