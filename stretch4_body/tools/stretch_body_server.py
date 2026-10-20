@@ -32,6 +32,7 @@ from stretch4_body.utils.file_access_utils import is_user_in_group
 LOG_DIR = hu.get_stretch_directory('log/stretch_body_logger')
 LOG_FILE = os.path.join(LOG_DIR,"stretch_body_server.log")
 NUM_EXPORTED_SESSION_LOGS = 5
+DAEMON_STARTUP_TIMEOUT_S = 15.0
 logger = logging.getLogger('stretch_body_server')
 
 def print_status(robot_client):
@@ -390,8 +391,8 @@ def _parse_args():
 
     return args
 
-def is_server_active(robot_client:RobotClient, verbose:bool=False) -> bool:
-    is_active = robot_client.startup(verbose=verbose, allow_different_user_connection=True) and robot_client.is_server_active()
+def is_server_active(robot_client:RobotClient, verbose:bool=False, block_timeout_s:float|None=None) -> bool:
+    is_active = robot_client.startup(verbose=verbose, allow_different_user_connection=True, block_timeout_s=block_timeout_s) and robot_client.is_server_active()
     robot_client.stop()
     return is_active
 
@@ -446,6 +447,7 @@ def main():
         sys.stderr = LoggerWriter(logging.ERROR, sys.__stderr__)
 
     robot_client = RobotClient()
+    server_wait_s = None # Set when this call (re)starts the daemon, so the server has time to come up before we check on it
 
     if args.cleanup:
         hu.force_kill_process('stretch_body_server')
@@ -454,7 +456,7 @@ def main():
     if args.daemon:
         if not install_and_start_daemon():
             raise RuntimeError("Could not start the Stretch Body Server system service.")
-        time.sleep(2.0)  # Wait for daemon to start
+        server_wait_s = DAEMON_STARTUP_TIMEOUT_S
     elif args.install_daemon:
         if not install_daemon():
             raise RuntimeError("Could not install the Stretch Body Server system service.")
@@ -479,7 +481,7 @@ def main():
         if not install_and_start_daemon():
             raise RuntimeError(f"Could not restart the Stretch Body Server system service.")
         
-        time.sleep(2.0)  # Wait for daemon to start
+        server_wait_s = DAEMON_STARTUP_TIMEOUT_S
 
     elif args.kill:
         if not is_server_active(robot_client):
@@ -509,7 +511,10 @@ def main():
         status_daemon()
         return
 
-    if is_server_active(robot_client):
+    if server_wait_s is not None:
+        print(f"Waiting up to {server_wait_s:.0f}s for the Stretch Body Server to start...")
+
+    if is_server_active(robot_client, block_timeout_s=server_wait_s):
         if args.print:
             tail_log_file(log_file)
 
