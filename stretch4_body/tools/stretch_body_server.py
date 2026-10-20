@@ -540,6 +540,9 @@ def main():
         finally:
             robot_client.stop()
 
+        if args.restart:
+            print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has restarted successfully.{Style.RESET_ALL}\n")
+
     else:
         print_last_log_from_archive()
 
