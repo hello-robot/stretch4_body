@@ -50,6 +50,7 @@ transport_lib = shared_library('transport',
     transport_src,
     include_directories: scservo_dir,
     link_with: scservo_lib,
+    install_rpath: '$ORIGIN',
     install: true,
     install_dir: py.get_install_dir() / src_dir / 'core' / 'transport'
 )

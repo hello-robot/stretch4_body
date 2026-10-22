@@ -18,6 +18,7 @@ from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.robot.robot import Robot
 from stretch4_body.robot.robot_client import RobotClient
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness, get_handedness_lift_min, should_invert_pitch
 from stretch4_body.utils.file_access_utils import (
     acquire_lock_if_available,
     setup_shared_directory,
@@ -71,7 +72,6 @@ class GamePadTeleop(Device):
         Device.__init__(self, 'stretch_gamepad')
 
         self.motion_profile = MotionProfile.MEDIUM
-        self.gripper_handedness = GripperHandedness.RIGHT
         self.control_mapping = ControlMapping.JOINT_SPACE
         self.contact_sensitivity_profile = GuardedContactSensitivity.MEDIUM
 
@@ -138,12 +138,53 @@ class GamePadTeleop(Device):
         self.left_stick_button_fn = None
         self.right_stick_button_fn = None
         self.currently_stowing = False
+        self._handedness_change_target = None # Set while change_gripper_handedness() is moving the wrist
+        self._input_pitch_inverted = None # Pitch inversion used for input, held fixed while the user is rolling the wrist
 
         self.flying_gripper_controller = KinematicController(get_base_planar_ik_urdf_file())
 
         self.contact_sensitivity_profile.apply(self.robot)
 
         self.set_joint_command()
+
+    @property
+    def gripper_handedness(self):
+        """
+        Handedness derived from the wrist joint configuration (end_of_arm status['tool_right_handed']).
+        Falls back to RIGHT when there is no wrist or it is not homed.
+        """
+        if not self.use_devices['eoa']:
+            return GripperHandedness.RIGHT
+        return GripperHandedness.from_status(self.robot.end_of_arm.status) or GripperHandedness.RIGHT
+
+    @property
+    def invert_pitch(self):
+        """
+        Whether pitch input is inverted. Follows the wrist roll (see should_invert_pitch), except while the user
+        is holding a roll command, where it stays fixed so that crossing the inversion boundary does not
+        flip the roll direction mid-motion. The new inversion takes effect once the roll input is released.
+        """
+        return self._input_pitch_inverted if self._input_pitch_inverted is not None else self._wrist_pitch_inverted()
+
+    def _wrist_pitch_inverted(self):
+        """Pitch inversion derived from the wrist roll. False when there is no wrist or roll is not calibrated."""
+        if not self.use_devices['eoa']:
+            return False
+        roll = self.robot.end_of_arm.status.get('wrist_roll')
+        if not roll or not roll.get('pos_calibrated', False):
+            return False
+        return should_invert_pitch(roll['pos'])
+
+    def _is_roll_input_held(self):
+        """Roll is commanded with Right Trigger held plus a shoulder button, in every control mapping"""
+        state = self.controller_state
+        return state.get('right_trigger_pulled', 0.0) > TRIGGER_THRESHOLD and \
+            (state.get('left_shoulder_button_pressed') or state.get('right_shoulder_button_pressed'))
+
+    def _update_input_pitch_inversion(self):
+        """Track the wrist's pitch inversion, unless the user is mid-roll, in which case keep the inversion from when the roll began"""
+        if self._input_pitch_inverted is None or not self._is_roll_input_held():
+            self._input_pitch_inverted = self._wrist_pitch_inverted()
 
     def set_joint_command(self):
         self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
@@ -279,6 +320,7 @@ class GamePadTeleop(Device):
                 return False
 
             self.manage_start_button(robot)
+            self._update_input_pitch_inversion()
 
             if robot.is_homed():
                 if self.robot.is_runstopped():
@@ -330,7 +372,15 @@ class GamePadTeleop(Device):
             robot = self.robot
         self.gamepad_controller.startup(ignore_singleton_check=ignore_singleton_check)
         if self.robot:
-            if self.robot.startup():
+            if isinstance(self.robot, RobotClient):
+                # The server may not be up yet, so wait for it instead of exiting
+                print("Connecting to Stretch Body Server...")
+                started = self.robot.startup(block_timeout_s=0)
+                if started:
+                    print("Connected to Stretch Body Server.")
+            else:
+                started = self.robot.startup()
+            if started:
                 pass #self.do_double_beep()
             else:
                 print('Exiting...')
@@ -425,13 +475,13 @@ class GamePadTeleop(Device):
         self.select_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, on_select_hold)
 
 
-    def change_gripper_handedness(self, robot, *, do_motion:bool):
+    def change_gripper_handedness(self, robot):
         """
-        Change the gripper handedness (Left/Right).
+        Move the wrist to the opposite handedness (Left/Right) of its current configuration.
+        Input inversion follows automatically, as invert_pitch is read from the wrist roll.
 
         Args:
             robot (robot.Robot): Valid robot instance.
-            do_motion (bool): If True, the robot will physically move the gripper to the new orientation.
         """
         if not robot.is_homed():
            return
@@ -439,24 +489,24 @@ class GamePadTeleop(Device):
             print("No eoa device")
             return
 
-        if self.use_devices['lift'] and robot.lift.status['pos'] <= 0.35:
+        if self.use_devices['lift'] and robot.lift.status['pos'] <= get_handedness_lift_min():
             print("Lift too low for handedness change")
             self.gamepad_controller.vibrate(duration_ms=400, strong_magnitude=1.0, weak_magnitude=1.0)
             return
 
         print('Switching gripper handedness')
 
-        if self.gripper_handedness == GripperHandedness.RIGHT:
-            self.gripper_handedness = GripperHandedness.LEFT
-        else:
-            self.gripper_handedness = GripperHandedness.RIGHT
+        target = robot.end_of_arm.change_handedness()
+        if target is None:
+            return
+        self._handedness_change_target = target
 
-        self.gripper_handedness.play_sound_file()
-        duration = 150 * (self.gripper_handedness.value + 1)
+        target.play_sound_file()
+        duration = 150 * (target.value + 1)
         self.gamepad_controller.vibrate(duration_ms=duration, strong_magnitude=1.0, weak_magnitude=1.0)
 
-        if do_motion:
-            self.gripper_handedness.move_to(robot)
+        robot.push_command()
+        time.sleep(1)
 
 
     def manage_left_stick_fn_button(self, button_state):
@@ -611,8 +661,7 @@ class GamePadTeleop(Device):
 
         if robot.is_homed() and not self.currently_stowing:
             """If the user holds the start button, it will do the automatic handedness change motion"""
-            self.start_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, lambda:self.change_gripper_handedness(robot, do_motion=True))
-            # self.start_button_counter.trigger_on_tap( lambda:self.change_gripper_handedness(robot, do_motion=False))
+            self.start_button_counter.trigger_on_hold(START_BUTTON_HOLD_TIME_S, lambda:self.change_gripper_handedness(robot))
 
     def manage_select_button(self, robot):
         pass

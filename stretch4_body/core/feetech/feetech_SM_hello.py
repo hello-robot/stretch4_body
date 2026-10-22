@@ -117,8 +117,6 @@ class FeetechSMHello(Device):
             self.was_runstopped = False
             self.comm_errors = FeetechCommErrorStats(name, logger=self.logger)
             self.status['comm_errors']=self.comm_errors.status
-            self.v_des = None  # Track the motion profile settings on servo
-            self.a_des = None  # Track the motion profile settings on servo
             self.warn_error = False
             self.bubble_up_comm_exception = False
 
@@ -393,17 +391,14 @@ class FeetechSMHello(Device):
         try:
             if not self.hw_valid:
                 return
+            # Always write: a cached/compare-before-write can go stale vs. the servo's SRAM
             v_des = abs(v_des) if v_des is not None else self.params['motion']['default']['vel']
             v_des = min(self.params['motion']['max']['vel'], v_des)
-            if v_des != self.v_des or force:
-                self.motor.set_profile_velocity(abs(self.world_rad_to_ticks_per_sec(v_des)))
-                self.v_des = v_des
+            self.motor.set_profile_velocity(abs(self.world_rad_to_ticks_per_sec(v_des)))
 
             a_des = abs(a_des) if a_des is not None else self.params['motion']['default']['accel']
             a_des = min(self.params['motion']['max']['accel'], a_des)
-            if a_des != self.a_des or force:
-                self.motor.set_profile_acceleration(abs(self.world_rad_to_ticks_per_sec_sec(a_des)))
-                self.a_des = a_des
+            self.motor.set_profile_acceleration(abs(self.world_rad_to_ticks_per_sec_sec(a_des)))
         except (termios.error, FeetechCommError):
             self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
