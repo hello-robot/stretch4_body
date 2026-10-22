@@ -1,0 +1,29 @@
+{
+  "format": "stretch-eyes/1",
+  "name": "glance",
+  "title": "Glance left and right",
+  "author": "",
+  "note": "Looks left, then right, then back to the idle glow.",
+  "loop": false,
+  "steps": [
+    {
+      "left": "look_left",
+      "right": "look_left",
+      "color": "#00a0ff",
+      "intensity": 128,
+      "hold": 1.0
+    },
+    {
+      "left": "look_right",
+      "right": "look_right",
+      "hold": 1.0
+    },
+    {
+      "left": "idle_glow",
+      "right": "idle_glow",
+      "color": "#28303c",
+      "intensity": 255,
+      "hold": 0.5
+    }
+  ]
+}

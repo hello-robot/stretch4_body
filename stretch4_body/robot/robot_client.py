@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import numbers
 import time
 from functools import partial
 from typing import TYPE_CHECKING
@@ -13,7 +14,7 @@ from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
 from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
-from stretch4_body.subsystem.power_periph import PowerPeriphStatus
+from stretch4_body.subsystem.power_periph import PowerPeriphDefn, PowerPeriphStatus
 
 if TYPE_CHECKING:
     from stretch4_body.utils.tool_metadata import ToolMetadata
@@ -588,18 +589,71 @@ class PowerPeriphClient(SubsystemClient):
         """ Legacy function. No longer needed."""
         pass
 
-    def set_eye_animation(self, left_idx=None, right_idx=None):
+    def set_eye_animation(self, left_idx=None, right_idx=None, intensity=255, r=255, g=255, b=255):
         """
         Set the eye animations for the left and right eyes.
-        
+        Color and intensity are shared by both eyes and are applied on every call, so a
+        call that names only one eye still repaints both in the color given (white at
+        full brightness by default). Pass the current color to keep it, or use
+        stretch4_body.eyes.Eyes, which caches and resends it and adds names, color
+        parsing and sentry handling.
+
+        Values are checked here and raise ValueError, because the server packs them
+        into single bytes inside its control loop.
+
         Parameters
         ----------
         left_idx : int, optional
-            Animation index for the left eye.
+            Animation index for the left eye, 0-14 (PowerPeriphDefn.EYE_ANIM_*). None
+            sends EYE_ANIM_NOP, which leaves that eye's animation as it is.
         right_idx : int, optional
-            Animation index for the right eye.
+            Animation index for the right eye. None leaves that eye's animation as it is.
+        intensity : int
+            Brightness 0-255.
+        r, g, b : int
+            Color 0-255.
         """
-        self._queue_command(subsystem="power_periph", command="set_eye_animation", left_idx=left_idx, right_idx=right_idx)
+        last_anim = PowerPeriphDefn.EYE_ANIM_COUNT - 1
+        for name, value, upper in (('left_idx', left_idx, last_anim), ('right_idx', right_idx, last_anim),
+                                   ('intensity', intensity, 255), ('r', r, 255), ('g', g, 255), ('b', b, 255)):
+            if value is None and name in ('left_idx', 'right_idx'):
+                continue
+            if isinstance(value, bool) or not isinstance(value, numbers.Integral) or not 0 <= value <= upper:
+                raise ValueError('set_eye_animation: {} must be an int 0-{}, not {!r}'.format(name, upper, value))
+        self._queue_command(subsystem="power_periph", command="set_eye_animation",
+                            left_idx=None if left_idx is None else int(left_idx),
+                            right_idx=None if right_idx is None else int(right_idx),
+                            intensity=int(intensity), r=int(r), g=int(g), b=int(b))
+
+    def set_eye_frame(self, left, right, brightness=(255, 255), hold_ms=500):
+        """
+        Show one per-pixel frame on both eye rings: RPC 33 frame mode, hello-pimu2
+        v0.1.52p14 and a stretch_body_server whose power_periph has set_eye_frame (it
+        then publishes status['eye_frame'] with 'supported'; check that first, an older
+        server logs the command as invalid and drops it).
+
+        left and right are 10 (r, g, b) each, ring order: index 0 just clockwise of
+        12 o'clock seen from the front, then clockwise. brightness is (left, right)
+        0-255. The board keeps the frame for hold_ms (50-2000) after it arrives, then
+        the rings go back to their animation; send faster than that to keep it up.
+        set_eye_animation ends frame mode on the board.
+        """
+        rings = []
+        for name, ring in (('left', left), ('right', right)):
+            ring = [list(px) for px in ring]
+            if len(ring) != 10 or any(len(px) != 3 or any(
+                    isinstance(v, bool) or not isinstance(v, numbers.Integral) or not 0 <= v <= 255 for v in px)
+                    for px in ring):
+                raise ValueError('set_eye_frame: {} must be 10 (r, g, b) ints 0-255'.format(name))
+            rings.append([[int(v) for v in px] for px in ring])
+        brightness = list(brightness)
+        if len(brightness) != 2 or any(isinstance(v, bool) or not isinstance(v, numbers.Integral) or not 0 <= v <= 255
+                                       for v in brightness):
+            raise ValueError('set_eye_frame: brightness must be (left, right) ints 0-255')
+        if isinstance(hold_ms, bool) or not isinstance(hold_ms, numbers.Integral) or not 50 <= hold_ms <= 2000:
+            raise ValueError('set_eye_frame: hold_ms must be an int 50-2000, not {!r}'.format(hold_ms))
+        self._queue_command(subsystem="power_periph", command="set_eye_frame", left=rings[0], right=rings[1],
+                            brightness=[int(v) for v in brightness], hold_ms=int(hold_ms))
 
     def actuator_control(self, motor_type, enable):
         """

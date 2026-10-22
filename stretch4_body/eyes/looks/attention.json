@@ -1,0 +1,24 @@
+{
+  "format": "stretch-eyes/1",
+  "name": "attention",
+  "title": "Attention",
+  "author": "",
+  "note": "Red pulse for 1.5 s, then the idle glow.",
+  "loop": false,
+  "steps": [
+    {
+      "left": "alert",
+      "right": "alert",
+      "color": "#ff2010",
+      "intensity": 255,
+      "hold": 1.5
+    },
+    {
+      "left": "idle_glow",
+      "right": "idle_glow",
+      "color": "#28303c",
+      "intensity": 255,
+      "hold": 0.5
+    }
+  ]
+}
