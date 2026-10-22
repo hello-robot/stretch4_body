@@ -23,6 +23,7 @@ class SubsystemClient(Device):
         self.subsystems = {}
         self.is_valid=False
         self.parent = parent
+        self._runstopped = False
         if self.parent == None: #No parent, so this instance owns the client connection
             self.client=StretchBodyClient(name=client_id, ip_address=ip_address)
             self.cmd_dict = ThreadSafeDict()
@@ -102,6 +103,7 @@ class SubsystemClient(Device):
                 time.sleep(0.005)
                 status_server = self.client._do_recv_status()
         if status_server is not None:
+            self._runstopped = status_server.get('power_periph', {}).get('runstop_event', False)
             #Reformat server dict to be more user friendly
             self.status['server']=status_server['server']
             self.status['routines']=status_server['routines']
@@ -202,6 +204,16 @@ class SubsystemClient(Device):
         self.client.free_up_control()
 
     # ########## Utility #############3
+
+    def _refuse_if_runstopped(self, what):
+        """Pull status and, if the robot is runstopped, log that `what` cannot run. Returns True if runstopped."""
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        root.pull_status()
+        if root._runstopped:
+            self.logger.error('Cannot %s: robot is runstopped. Clear the runstop and home again.' % what)
+        return root._runstopped
 
     def _wait_on_routine(self, routine_id, timeout=None, do_pull=True):
         try:
