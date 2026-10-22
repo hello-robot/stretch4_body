@@ -1,6 +1,4 @@
-# Copied from stretch_firmware_ii tests/fixtures/power_diag_schema2_reply.hex at commit ae22c4dde59002bb837990c3bbb336410a080bbd
-# (branch p14/schema-bump, hello-pimu2 v0.1.47p14). Regenerate there, then copy; do not edit by hand.
-# RPC 32 reply (id byte first), hello-pimu2 v0.1.47p14, built by
+# RPC 32 reply (id byte first), hello-pimu2 v0.1.53p14, built by
 # tests/native/test_power_diag_reply.cpp ("fixture" case): a patterned snapshot
 # with a different value at every byte position and two patterned events.
 # Hex bytes, 16 per line; lines starting with # are comments.

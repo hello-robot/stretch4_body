@@ -94,7 +94,7 @@ flowchart LR
 How the server reads it:
 
 * **One RPC, twice a second.** Every 0.5 s the server queues `RPC_GET_POWER_DIAGNOSTICS` (31) with the schema it wants, the sequence of the last event it holds, and room for 16 events. The reply (32) carries the snapshot and the next events. The request is collected without waiting in the 100 Hz control loop; a reply that has not come back after 2 s counts as a timeout.
-* **Schema 2 first, schema 1 fallback.** The body asks for schema 2 (255 bytes, firmware `v0.1.47p14` and later). Firmware from `v0.1.18p14` to `v0.1.23p14` only knows schema 1 and answers `unsupported_schema`; the body then asks for schema 1 (the first 190 bytes) for the rest of the session. Every field added after schema 1 is then published as `None`, and the checks that need it say "not reported by this firmware".
+* **Schema 3 first, then 2, then 1.** The body asks for schema 3 (289 bytes, firmware `v0.1.53p14` and later: schema 2 plus `esp_version_state`, `esp_version_state_name`, `esp_version_requests` and `esp_version`). Firmware from `v0.1.47p14` to `v0.1.52p14` answers `unsupported_schema` with header schema 2, and the body asks for schema 2 (255 bytes) for the rest of the session. Firmware from `v0.1.18p14` to `v0.1.23p14` only knows schema 1; the body then asks for schema 1 (the first 190 bytes). Every field added after schema 1 is then published as `None`, and the checks that need it say "not reported by this firmware".
 * **P13 firmware.** Firmware without RPC 31 is read with the older aux RPC (13). `power_diagnostics` stays invalid and `power_health` says to update the PIMU.
 * **Freshness.** When a sample lands, the server classifies the firmware's BMS and ESP ages, then keeps aging them on host time between samples, so a dead link turns stale without a new sample.
 * **Events.** The server keeps its own copy of the last 64 events, adds wall-clock estimates, detects gaps (events it never saw) and PIMU reboots (uptime going backwards), and re-reads the ring from the start after a reboot.
@@ -600,6 +600,7 @@ Copy the logs soon after the incident: with about an hour of history, a robot le
 
 | PIMU firmware | Body | What you get |
 |---|---|---|
+| `v0.1.53p14` or later (schema 3) | `feature/firmware-versions` or later | Everything in this primer, plus the ESP firmware version |
 | `v0.1.47p14` or later (schema 2) | `c11d9fe` or later on `feature/firmware-p14` | Everything in this primer |
 | `v0.1.18p14` to `v0.1.23p14` (schema 1) | same | Schema 1 snapshot; S2 fields `None`, their checks `unknown` |
 | p13 or older | same | Aux status only; `power_health` asks for a PIMU update |

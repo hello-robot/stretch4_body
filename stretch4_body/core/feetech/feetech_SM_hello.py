@@ -77,6 +77,7 @@ class FeetechSMHello(Device):
                            'braking_distance':0,'torque_enabled':False,
                            'in_collision_stop':{'pos': False, 'neg': False},
                             'at_limit':{'pos': False, 'neg': False},'soft_motion_limits': (None, None),
+                           'firmware': self._firmware_unread('not started'),
                            }
 
             self.thread_rate_hz = 15.0
@@ -162,6 +163,25 @@ class FeetechSMHello(Device):
             self.hw_valid = False
     # ###########  Device Methods #############
 
+    @staticmethod
+    def _firmware_unread(reason):
+        return {'version': None, 'firmware_main': None, 'firmware_sub': None,
+                'model': None, 'read_time': None, 'error': reason}
+
+    def _read_firmware_version(self):
+        """Read-only, once per startup. A failure is recorded, never raised:
+        the version is for reporting and must not stop the joint."""
+        try:
+            info = self.motor.read_version_info()
+        except Exception as e:
+            self.status['firmware'] = self._firmware_unread('read failed: %s' % e)
+            return
+        if info is None:
+            self.status['firmware'] = self._firmware_unread('servo not connected')
+            return
+        info.update({'read_time': time.time(), 'error': None})
+        self.status['firmware'] = info
+
     def startup(self):
         """
         :return: True if startup successful
@@ -176,6 +196,7 @@ class FeetechSMHello(Device):
             if self.motor.do_ping(verbose=True):
                 self.hw_valid = True
                 self.status['torque_enabled'] = True
+                self._read_firmware_version()
                 self.motor.unlock_eeprom()
 
                 self.motor.set_temp_limit(self.temp_to_ticks(self.params['eeprom_cfg']['temperature_limit']))
@@ -239,6 +260,7 @@ class FeetechSMHello(Device):
                 return True
             else:
                 self.logger.warning('FeetechSMHello Ping failed... %s' % self.name)
+                self.status['firmware'] = self._firmware_unread('servo did not answer ping')
                 return False
         except FeetechCommError:
             self.logger.warning('FeetechSMHello Ping failed... %s' % self.name)
@@ -1410,3 +1432,4 @@ class FeetechSMHelloStatus(TypedDict):
     torque_enabled: bool
     braking_distance: float
     in_collision_stop: FeetechSMHelloInCollisionStopStatus
+    firmware: dict

@@ -12,6 +12,7 @@ from stretch4_body.subsystem.line_sensor.line_sensor_loop import LineSensorLoop
 from stretch4_body.subsystem.power_periph import PowerPeriphDefn
 from stretch4_body.subsystem.power_health import PowerHealthEvaluator, PowerHealthThresholds
 from stretch4_body.utils.freeable_file_lock import FreeableFileLock
+from stretch4_body.robot import firmware_versions
 
 import logging
 import importlib
@@ -85,6 +86,13 @@ class RobotServer(RobotCore):
 
         self.cmd_results={}
         
+        # Firmware version of every board, from code that already owns its port
+        # (robot/firmware_versions.py). Read by stretch_firmware_versions.
+        self.status['firmware_versions'] = {'boards': [], 'time': None}
+        self._firmware_startup_time = None
+        self._firmware_versions_last = 0.0
+        self._firmware_versions_failed = False
+
         # CPU Monitoring
         self.status['server']['cpu'] = {}
         self.psutil_processes = {}
@@ -200,6 +208,8 @@ class RobotServer(RobotCore):
             self.state = LOOP_STATE_RUNNING
             self._turn_off_eyes_if_animations_disabled()
             self._record_power_firmware_version()
+            self._firmware_startup_time = time.time()
+            self.update_firmware_versions(force=True)
             return True
         else:
             self.logger.error("Failed to start RobotServer.")
@@ -347,8 +357,25 @@ class RobotServer(RobotCore):
             del self.cmd_results[oldest_key]
         return cmd_ids_dispatched
 
+    def update_firmware_versions(self, force=False):
+        """Refresh status['firmware_versions'] at 1 Hz. Startup versions do not change;
+        the ESP, end of arm and line sensor ones arrive later. Never raises."""
+        now = time.time()
+        if not force and now - self._firmware_versions_last < 1.0:
+            return
+        self._firmware_versions_last = now
+        try:
+            self.status['firmware_versions'] = {
+                'boards': firmware_versions.collect(self, self._firmware_startup_time, now),
+                'time': now}
+        except Exception as e:
+            if not self._firmware_versions_failed:
+                self.logger.warning('firmware versions not collected: %s', e)
+                self._firmware_versions_failed = True
+
     def publish_status_msg(self):
         self.update_cpu_status()
+        self.update_firmware_versions()
         if self._power_aux_last_sample_mono is not None:
             self._power_aux_meta['sample_age_s'] = round(
                 max(0.0, time.monotonic() - self._power_aux_last_sample_mono), 3

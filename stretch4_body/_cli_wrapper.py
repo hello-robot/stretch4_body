@@ -77,6 +77,10 @@ def stretch_power_diagnostics():
     sys.argv[0] = "stretch_power_diagnostics"
     runpy.run_module("stretch4_body.tools.stretch_power_diagnostics", run_name="__main__")
 
+def stretch_firmware_versions():
+    sys.argv[0] = "stretch_firmware_versions"
+    runpy.run_module("stretch4_body.tools.stretch_firmware_versions", run_name="__main__")
+
 def stretch_system_check():
     sys.argv[0] = "stretch_system_check"
     runpy.run_module("stretch4_body.tools.stretch_system_check", run_name="__main__")

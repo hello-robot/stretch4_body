@@ -1,4 +1,5 @@
-"""Power diagnostics schema 2 (firmware v0.1.47p14) and the schema 1 fallback.
+"""Power diagnostics schema 2 (firmware v0.1.47p14), the schema 1 fallback, and
+schema 3 (v0.1.53p14, the ESP firmware version appended).
 
 The two replies in test/fixtures are the bytes the firmware's native test packs
 (stretch_firmware_ii tests/native/test_power_diag_reply.cpp): a snapshot with a
@@ -108,10 +109,11 @@ def p14_power(replies=()):
 
 
 def test_fixture_sizes_match_the_firmware_framing():
+    assert len(load_fixture(3)) == 1 + 24 + 289 + 2 * 16
     assert len(load_fixture(2)) == 1 + 24 + 255 + 2 * 16
     assert len(load_fixture(1)) == 1 + 24 + 190 + 2 * 16
-    assert PowerPeriphAux.POWER_DIAGNOSTICS_SCHEMA_VERSION == 2
-    assert PowerPeriphAux.POWER_DIAGNOSTICS_WIRE_SIZES == {1: 190, 2: 255}
+    assert PowerPeriphAux.POWER_DIAGNOSTICS_SCHEMA_VERSION == 3
+    assert PowerPeriphAux.POWER_DIAGNOSTICS_WIRE_SIZES == {1: 190, 2: 255, 3: 289}
 
 
 def test_schema2_fixture_decodes_every_field_byte_for_byte():
@@ -139,6 +141,59 @@ def test_schema2_fixture_decodes_every_field_byte_for_byte():
                 event['power_state'], event['data0'], event['data1']) == raw
     assert power.status_aux['_diagnostics_present']
     assert power.status_aux['_diagnostics_packet_length'] == 255
+    for name in PowerPeriphAux.POWER_DIAGNOSTICS_SCHEMA3_KEYS:
+        assert d[name] is None, name
+    assert d['esp_version_state_name'] is None
+
+
+def test_schema3_fixture_decodes_the_esp_version_after_the_schema2_bytes():
+    reply = load_fixture(3)
+    snapshot = reply[25:25 + 289]
+    power = PowerPeriphAux()
+    power._rpc_power_diagnostics_reply(array('B', reply), requested_schema=3)
+    d = power.power_diagnostics
+    assert d['_valid'], d['_decode_error']
+    assert d['_packet_length'] == 289
+    assert d['schema_version'] == 3 and d['struct_size'] == 289
+    for name, offset, fmt in SCHEMA1_FIELDS + SCHEMA2_FIELDS:
+        assert d[name] == raw_field(snapshot, offset, fmt), name
+    assert d['esp_version_state'] == snapshot[255]
+    assert d['esp_version_requests'] == snapshot[256]
+    # The fixture pattern has no NUL in the 32 bytes; bytes over 0x7F decode as U+FFFD.
+    assert d['esp_version'] == bytes(snapshot[257:289]).decode('ascii', 'replace')
+    page = power.power_event_log_page
+    assert page['_valid'] and page['schema_version'] == 3 and page['diagnostics_size'] == 289
+    for i, event in enumerate(page['events']):
+        raw = struct.unpack_from('<IIHBBhh', reply, 25 + 289 + 16 * i)
+        assert (event['sequence'], event['timestamp_ms'], event['event_id'], event['source_raw'],
+                event['power_state'], event['data0'], event['data1']) == raw
+
+
+def test_schema3_esp_version_as_the_firmware_fills_it():
+    reply = bytearray(load_fixture(3))
+    base = 25 + 255
+    for state, requests, text, name in ((1, 1, b'hello-esp.v0.1.11p0', 'reported'),
+                                        (2, 5, b'', 'no_reply'), (0, 0, b'', 'waiting'),
+                                        (7, 0, b'', 'unknown_7')):
+        reply[base] = state
+        reply[base + 1] = requests
+        reply[base + 2:base + 34] = text.ljust(32, b'\0')
+        power = PowerPeriphAux()
+        power._rpc_power_diagnostics_reply(array('B', bytes(reply)), requested_schema=3)
+        d = power.power_diagnostics
+        assert d['_valid'], d['_decode_error']
+        assert d['esp_version_state'] == state and d['esp_version_state_name'] == name
+        assert d['esp_version_requests'] == requests
+        assert d['esp_version'] == text.decode()
+
+
+def test_schema2_and_schema3_agree_on_the_shared_bytes():
+    two, three = PowerPeriphAux(), PowerPeriphAux()
+    two._rpc_power_diagnostics_reply(array('B', load_fixture(2)))
+    three._rpc_power_diagnostics_reply(array('B', load_fixture(3)))
+    for name, _, _ in SCHEMA1_FIELDS[3:] + SCHEMA2_FIELDS:
+        assert two.power_diagnostics[name] == three.power_diagnostics[name], name
+    assert two.power_event_log_page['events'] == three.power_event_log_page['events']
 
 
 def test_schema1_fixture_decodes_with_the_schema2_fields_none():
@@ -153,7 +208,7 @@ def test_schema1_fixture_decodes_with_the_schema2_fields_none():
     for name, offset, fmt in SCHEMA1_FIELDS:
         assert d[name] == raw_field(snapshot, offset, fmt), name
     assert d['reserved0'] == snapshot[111]
-    for name in SCHEMA2_ONLY_KEYS:
+    for name in SCHEMA2_ONLY_KEYS + list(PowerPeriphAux.POWER_DIAGNOSTICS_SCHEMA3_KEYS):
         assert d[name] is None, name
     assert power.power_event_log_page['entry_count'] == 2
     assert power.status_aux['_diagnostics_packet_length'] == 190
@@ -168,33 +223,53 @@ def test_schema1_and_schema2_agree_on_the_shared_bytes():
     assert one.power_event_log_page['events'] == two.power_event_log_page['events']
 
 
-def test_request_asks_for_schema_2_first():
-    power = p14_power([load_fixture(2)])
+def test_request_asks_for_schema_3_first():
+    power = p14_power([load_fixture(3)])
     assert power.pull_power_diagnostics(blocking=True, after_sequence=5, max_entries=4)
-    assert power.transport.payloads == [bytes([31, 2, 4, 0, 0, 5, 0, 0, 0])]
+    assert power.transport.payloads == [bytes([31, 3, 4, 0, 0, 5, 0, 0, 0])]
+    assert power.power_diagnostics['schema_version'] == 3
+    assert power.power_diagnostics_request_schema == 3
+
+
+def test_firmware_v0_1_47_to_v0_1_52_steps_down_to_schema_2_and_remembers():
+    # Those builds answer a schema 3 request with status 2 and header schema 2.
+    power = p14_power([error_reply(2, header_schema=2), load_fixture(2)])
+    assert power.pull_power_diagnostics(blocking=True)
+    assert [p[1] for p in power.transport.payloads] == [3, 2]
+    assert power.power_diagnostics['_valid']
     assert power.power_diagnostics['schema_version'] == 2
+    assert power.power_diagnostics['esp_version'] is None
     assert power.power_diagnostics_request_schema == 2
+    power.transport.replies.append(load_fixture(2))
+    assert power.pull_power_diagnostics(blocking=True)
+    assert [p[1] for p in power.transport.payloads] == [3, 2, 2]
+
+
+def test_error_header_naming_an_unknown_newer_schema_falls_back_to_1():
+    power = p14_power([error_reply(2, header_schema=9), load_fixture(1)])
+    assert power.pull_power_diagnostics(blocking=True)
+    assert [p[1] for p in power.transport.payloads] == [3, 1]
 
 
 def test_unsupported_schema_falls_back_to_schema_1_once_and_remembers():
-    # v0.1.18p14 answers a schema 2 request with status 2 and header schema 1.
+    # v0.1.18p14 answers a newer schema request with status 2 and header schema 1.
     power = p14_power([error_reply(2, header_schema=1), load_fixture(1)])
     assert power.pull_power_diagnostics(blocking=True)
-    assert [p[1] for p in power.transport.payloads] == [2, 1]
+    assert [p[1] for p in power.transport.payloads] == [3, 1]
     assert power.power_diagnostics['_valid']
     assert power.power_diagnostics['schema_version'] == 1
     assert power.power_diagnostics_request_schema == 1
 
     power.transport.replies.append(load_fixture(1))
     assert power.pull_power_diagnostics(blocking=True)
-    assert [p[1] for p in power.transport.payloads] == [2, 1, 1]
+    assert [p[1] for p in power.transport.payloads] == [3, 1, 1]
 
 
 def test_unsupported_reply_is_reported_as_unsupported_not_malformed():
     power = p14_power([error_reply(2, header_schema=1)])
     power.pull_power_diagnostics(blocking=False)
     power.transport.payloads.clear()
-    power._rpc_power_diagnostics_reply(array('B', error_reply(2, header_schema=1)), requested_schema=2)
+    power._rpc_power_diagnostics_reply(array('B', error_reply(2, header_schema=1)), requested_schema=3)
     error = power.power_diagnostics['_decode_error']
     assert 'unsupported_schema' in error and 'malformed' not in error
     assert power.power_event_log_page['reply_status_name'] == 'unsupported_schema'
@@ -216,14 +291,14 @@ def test_firmware_v0_1_46_unsupported_reply_with_header_schema_2_is_not_malforme
 def test_schema_1_unsupported_does_not_loop():
     power = p14_power([error_reply(2, 1), error_reply(2, 1), error_reply(2, 1)])
     assert power.pull_power_diagnostics(blocking=True)
-    assert [p[1] for p in power.transport.payloads] == [2, 1]
+    assert [p[1] for p in power.transport.payloads] == [3, 1]
     assert not power.power_diagnostics['_valid']
     power.pull_power_diagnostics(blocking=True)
-    assert [p[1] for p in power.transport.payloads] == [2, 1, 1]
+    assert [p[1] for p in power.transport.payloads] == [3, 1, 1]
 
 
 def test_truncated_and_padded_replies_are_rejected():
-    for schema in (1, 2):
+    for schema in (1, 2, 3):
         reply = load_fixture(schema)
         for bad in (reply[:-1], reply[:-16], reply[:25 + 189], reply[:24], reply + b'\x00'):
             power = PowerPeriphAux()
@@ -232,9 +307,9 @@ def test_truncated_and_padded_replies_are_rejected():
             assert not power.power_event_log_page['_valid'], (schema, len(bad))
 
 
-def test_snapshot_sizes_other_than_190_and_255_are_rejected():
+def test_snapshot_sizes_other_than_190_255_and_289_are_rejected():
     power = PowerPeriphAux()
-    for size in (189, 191, 203, 205, 245, 254, 256):
+    for size in (189, 191, 203, 205, 245, 254, 256, 287, 288, 290):
         snapshot = bytearray(size)
         struct.pack_into('<BBH', snapshot, 0, 2, 0, size)
         assert power._unpack_power_diagnostics(array('B', snapshot)) == 0, size
