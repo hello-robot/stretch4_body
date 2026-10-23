@@ -6,8 +6,7 @@ from stretch4_body.core.hello_utils import *
 from stretch4_body.core.gamepad_enums import MotionProfile
 import math
 
-import coal # do not remove this unused import; it is needed by pinocchio
-import pinocchio as pin
+from stretch4_kinematics.state import StretchJointPositions
 
 if TYPE_CHECKING:
     from stretch4_body.core.gamepad_teleop import GamePadTeleop
@@ -318,21 +317,18 @@ class ControlMapping(Enum):
         return actuated_joints
 
     def _map_flying_gripper_ik(self, robot, gamepad_teleop: "GamePadTeleop") -> dict:
-        ikin = gamepad_teleop.flying_gripper_controller
+        controller = gamepad_teleop.flying_gripper_controller
 
-        ikin.q[0] = robot.base.status['x']
-        ikin.q[1] = robot.base.status['y']
-        ikin.q[2] = np.cos(robot.base.status['theta'])
-        ikin.q[3] = np.sin(robot.base.status['theta'])
-        ikin.q[4] = robot.lift.status['pos']
-        ikin.q[5] = robot.arm.status['pos']
-        ikin.q[6] = robot.end_of_arm.status['wrist_yaw']['pos']
-        ikin.q[7] = robot.end_of_arm.status['wrist_pitch']['pos'] 
-        ikin.q[8] = robot.end_of_arm.status['wrist_roll']['pos']
-        
-        pin.forwardKinematics(ikin.model, ikin.data, ikin.q)
-        pin.updateFramePlacements(ikin.model, ikin.data)
-
+        current_pos = StretchJointPositions(
+            base_x=robot.base.status['x'],
+            base_y=robot.base.status['y'],
+            base_theta=robot.base.status['theta'],
+            lift=robot.lift.status['pos'],
+            arm=robot.arm.status['pos'],
+            wrist_yaw=robot.end_of_arm.status['wrist_yaw']['pos'],
+            wrist_pitch=robot.end_of_arm.status['wrist_pitch']['pos'],
+            wrist_roll=robot.end_of_arm.status['wrist_roll']['pos'],
+        )
 
         v_desired = np.zeros(3)
         rot_change = np.zeros(3)
@@ -355,8 +351,6 @@ class ControlMapping(Enum):
             elif gamepad_teleop.controller_state.get('right_shoulder_button_pressed'):
                 rot_change[2] = 1.0
 
-        control_mode = 1
-
         dt = gamepad_teleop.sleep
 
         if gamepad_teleop.motion_profile == MotionProfile.FAST:
@@ -371,10 +365,17 @@ class ControlMapping(Enum):
         else:
             raise ValueError(f"Unknown motion profile: {gamepad_teleop.motion_profile}")
 
-        v_desired_vel = v_desired *gamepad_speed_trans * dt
-        rot_change_vel = rot_change *gamepad_speed_rot * dt
-        v, _ = ikin.compute_ik_step(v_desired_vel, rot_change_vel, control_mode)
-        v_vel = v / dt
+        # Translation is solved by the tool-frame IK (which also compensates wrist yaw for base rotation)
+        target_vel = np.zeros(6)
+        target_vel[:3] = v_desired * gamepad_speed_trans
+        v_joint = controller.update(dt=dt, current_pos=current_pos, current_vel=None, target_vel=target_vel)
+
+        # Rotation maps directly onto the wrist joints
+        v_joint.wrist_yaw += rot_change[0] * gamepad_speed_rot
+        v_joint.wrist_pitch = rot_change[1] * gamepad_speed_rot
+        v_joint.wrist_roll = rot_change[2] * gamepad_speed_rot
+        v_vel = controller._enforce_joint_velocity_limits(v_joint).to_numpy()
+        v = v_vel * dt
 
         actuated_joints = {}
 
