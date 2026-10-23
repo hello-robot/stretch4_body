@@ -3,7 +3,6 @@ from enum import auto
 from enum import Enum
 from typing import TYPE_CHECKING
 from stretch4_body.core.hello_utils import *
-from stretch4_body.core.gamepad_enums import MotionProfile
 import math
 
 from stretch4_kinematics.state import StretchJointPositions
@@ -317,7 +316,7 @@ class ControlMapping(Enum):
         return actuated_joints
 
     def _map_flying_gripper_ik(self, robot, gamepad_teleop: "GamePadTeleop") -> dict:
-        controller = gamepad_teleop.flying_gripper_controller
+        kinematics = gamepad_teleop.flying_gripper_kinematics
 
         current_pos = StretchJointPositions(
             base_x=robot.base.status['x'],
@@ -353,28 +352,27 @@ class ControlMapping(Enum):
 
         dt = gamepad_teleop.sleep
 
-        if gamepad_teleop.motion_profile == MotionProfile.FAST:
-            gamepad_speed_trans = 0.25
-            gamepad_speed_rot = 1.0
-        elif gamepad_teleop.motion_profile == MotionProfile.MEDIUM:
-            gamepad_speed_trans = 0.15
-            gamepad_speed_rot = 0.5
-        elif gamepad_teleop.motion_profile == MotionProfile.SLOW:
-            gamepad_speed_trans = 0.05
-            gamepad_speed_rot = 0.4
-        else:
-            raise ValueError(f"Unknown motion profile: {gamepad_teleop.motion_profile}")
+        # Joint velocity limits of the current motion profile, matching JOINT_SPACE mode
+        vel_xy, _, _, _ = gamepad_teleop.base_command._get_motion_params(is_rotating=False)
+        _, _, vel_w, _ = gamepad_teleop.base_command._get_motion_params(is_rotating=True)
+        v_max = np.array([
+            vel_xy,
+            vel_xy,
+            vel_w,
+            gamepad_teleop.lift_command.max_linear_vel,
+            gamepad_teleop.arm_command.max_linear_vel,
+            gamepad_teleop.wrist_yaw_command.max_vel,
+        ])
 
-        # Translation is solved by the tool-frame IK (which also compensates wrist yaw for base rotation)
+        # Translation is solved by the tool-frame IK (which also compensates wrist yaw for base rotation).
+        # Request the fastest of lift/arm, then scale all joints uniformly so none exceeds its
+        # JOINT_SPACE speed while the gripper keeps its commanded direction.
         target_vel = np.zeros(6)
-        target_vel[:3] = v_desired * gamepad_speed_trans
-        v_joint = controller.update(dt=dt, current_pos=current_pos, current_vel=None, target_vel=target_vel)
-
-        # Rotation maps directly onto the wrist joints
-        v_joint.wrist_yaw += rot_change[0] * gamepad_speed_rot
-        v_joint.wrist_pitch = rot_change[1] * gamepad_speed_rot
-        v_joint.wrist_roll = rot_change[2] * gamepad_speed_rot
-        v_vel = controller._enforce_joint_velocity_limits(v_joint).to_numpy()
+        target_vel[:3] = v_desired * max(v_max[3], v_max[4])
+        v_vel = kinematics.differential_ik(current_pos, "tool_attachment_site_link", target_vel).to_numpy()[:6]
+        speeds = np.abs(v_vel)
+        if np.any(speeds > v_max):
+            v_vel *= np.min(v_max[speeds > 0] / speeds[speeds > 0])
         v = v_vel * dt
 
         actuated_joints = {}
@@ -383,21 +381,23 @@ class ControlMapping(Enum):
         # Smoothing move_by control commands using a high lookahead targeting horizon
         lookahead = 5.0
         inversion = 1 if gamepad_teleop.invert_pitch else -1
-        
-        if not right_trigger_pulled and np.any(v != 0):
-            
-            vel_xy, accel_xy, vel_w, accel_w = gamepad_teleop.base_command._get_motion_params(is_rotating=abs(v_vel[2])>=0.1)
+
+        if not right_trigger_pulled and (np.any(v != 0) or np.any(rot_change[:2] != 0)):
+
+            _, accel_xy, _, accel_w = gamepad_teleop.base_command._get_motion_params(is_rotating=abs(v_vel[2])>=0.1)
             gamepad_teleop.base_command._move(v_vel[0], v_vel[1], v_vel[2], accel_xy, accel_w, robot)
             gamepad_teleop.lift_command._move(v_vel[3], robot)
             gamepad_teleop.arm_command._move(v_vel[4], robot)
-            
-            
+
+            # Wrist rotation steps the same as JOINT_SPACE mode, on top of the IK's yaw compensation
             # Yaw
-            yaw_cmd_rad = v[5] * lookahead
-            gamepad_teleop.wrist_yaw_command._move(np.degrees(yaw_cmd_rad), robot, velocity=abs(v_vel[5]))
+            yaw_cmd_rad = v[5] * lookahead + np.radians(gamepad_teleop.wrist_yaw_command.dx_deg * rot_change[0])
+            yaw_vel = None if rot_change[0] != 0 else abs(v_vel[5])
+            gamepad_teleop.wrist_yaw_command._move(np.degrees(yaw_cmd_rad), robot, velocity=yaw_vel)
             # Pitch
-            pitch_cmd_rad = v[6] * lookahead * inversion
-            gamepad_teleop.wrist_pitch_command._move(np.degrees(pitch_cmd_rad), robot, velocity=abs(v_vel[6]))
+            pitch_cmd_rad = np.radians(gamepad_teleop.wrist_pitch_command.dx_deg * rot_change[1]) * inversion
+            if abs(pitch_cmd_rad) > 0:
+                gamepad_teleop.wrist_pitch_command._move(np.degrees(pitch_cmd_rad), robot)
 
             if abs(v_vel[0]) > 0 or abs(v_vel[1]) > 0 or abs(v_vel[2]) > 0:
                 actuated_joints['base'] = v_vel[0] + v_vel[1] + v_vel[2]
@@ -410,9 +410,9 @@ class ControlMapping(Enum):
             if abs(pitch_cmd_rad) > 0:
                 actuated_joints['joint_wrist_pitch'] = pitch_cmd_rad
         else:
-            roll_cmd_rad = v[7] * lookahead * inversion * -1
+            roll_cmd_rad = np.radians(gamepad_teleop.wrist_roll_command.dx_deg * rot_change[2]) * inversion * -1
             if abs(roll_cmd_rad)> 0:
-                gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot, velocity=abs(v_vel[7]))
+                gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot)
 
             dxl_zero_vel_set_division_factor = 3
             if gamepad_teleop._i % dxl_zero_vel_set_division_factor == 0:
