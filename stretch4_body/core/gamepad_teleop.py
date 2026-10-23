@@ -24,7 +24,7 @@ from stretch4_body.utils.file_access_utils import (
     setup_shared_directory,
 )
 from stretch4_body.utils.stretch_pose_models import RobotJoints
-from stretch4_kinematics.controllers import FlyingGripperVelocityController
+from stretch4_kinematics.kinematic_models import ToolFrameKinematics
 
 # Header constants
 STEP_SLEEP = 1/15
@@ -140,7 +140,7 @@ class GamePadTeleop(Device):
         self._handedness_change_target = None # Set while change_gripper_handedness() is moving the wrist
         self._input_pitch_inverted = None # Pitch inversion used for input, held fixed while the user is rolling the wrist
 
-        self.flying_gripper_controller = FlyingGripperVelocityController()
+        self.flying_gripper_kinematics = ToolFrameKinematics()
 
         self.contact_sensitivity_profile.apply(self.robot)
 
