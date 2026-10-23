@@ -5,10 +5,15 @@ from typing import TYPE_CHECKING
 from stretch4_body.core.hello_utils import *
 import math
 
+import coal # do not remove this unused import; it is needed by pinocchio
+import pinocchio as pin
 from stretch4_kinematics.state import StretchJointPositions
 
 if TYPE_CHECKING:
     from stretch4_body.core.gamepad_teleop import GamePadTeleop
+
+FLYING_GRIPPER_FRAME = "tool_attachment_site_link"
+"""Frame controlled by the FLYING_GRIPPER_IK mapping."""
 
 class ControlMapping(Enum):
     """
@@ -75,6 +80,8 @@ class ControlMapping(Enum):
                 ("D-Pad Up / Down", "Lift"),
                 ("D-Pad Left / Right", "Wrist Roll"),
                 ("A / B Buttons", "Close / Open Gripper"),
+                ("RT + Left Stick / D-Pad", "Move Base, Gripper Holds Still"),
+                ("RT + LB / RB", "Wrist Roll"),
                 ("Modifiers", ""),
                 ("  LT", "Reduce Speed"),
                 ("  Hold Start", "Change Handedness"),
@@ -350,6 +357,17 @@ class ControlMapping(Enum):
             elif gamepad_teleop.controller_state.get('right_shoulder_button_pressed'):
                 rot_change[2] = 1.0
 
+        # RT + Left Stick / D-Pad drives the base (forward, left) in its own frame while the gripper holds still
+        base_input = v_desired[:2].copy()
+        if gamepad_teleop.controller_state.get('top_pad_pressed'): base_input[0] += 1.0
+        elif gamepad_teleop.controller_state.get('bottom_pad_pressed'): base_input[0] -= 1.0
+        if gamepad_teleop.controller_state.get('left_pad_pressed'): base_input[1] += 1.0
+        elif gamepad_teleop.controller_state.get('right_pad_pressed'): base_input[1] -= 1.0
+        base_input = np.clip(base_input, -1.0, 1.0)
+        do_nullspace_motion = right_trigger_pulled and np.any(base_input != 0)
+        if not do_nullspace_motion:
+            gamepad_teleop.nullspace_anchor = None
+
         dt = gamepad_teleop.sleep
 
         # Joint velocity limits of the current motion profile, matching JOINT_SPACE mode
@@ -362,17 +380,24 @@ class ControlMapping(Enum):
             gamepad_teleop.lift_command.max_linear_vel,
             gamepad_teleop.arm_command.max_linear_vel,
             gamepad_teleop.wrist_yaw_command.max_vel,
+            gamepad_teleop.wrist_pitch_command.max_vel,
+            gamepad_teleop.wrist_roll_command.max_vel,
         ])
 
+        def scale_to_limits(v_vel):
+            # Scale all joints uniformly so none exceeds its JOINT_SPACE speed while the gripper keeps its commanded direction
+            speeds = np.abs(v_vel)
+            limits = v_max[:len(v_vel)]
+            if np.any(speeds > limits):
+                v_vel = v_vel * np.min(limits[speeds > 0] / speeds[speeds > 0])
+            return v_vel
+
         # Translation is solved by the tool-frame IK (which also compensates wrist yaw for base rotation).
-        # Request the fastest of lift/arm, then scale all joints uniformly so none exceeds its
-        # JOINT_SPACE speed while the gripper keeps its commanded direction.
+        # Request the fastest of lift/arm and let scale_to_limits() slow it to JOINT_SPACE speeds.
         target_vel = np.zeros(6)
-        target_vel[:3] = v_desired * max(v_max[3], v_max[4])
-        v_vel = kinematics.differential_ik(current_pos, "tool_attachment_site_link", target_vel).to_numpy()[:6]
-        speeds = np.abs(v_vel)
-        if np.any(speeds > v_max):
-            v_vel *= np.min(v_max[speeds > 0] / speeds[speeds > 0])
+        if not right_trigger_pulled:
+            target_vel[:3] = v_desired * max(v_max[3], v_max[4])
+        v_vel = scale_to_limits(kinematics.differential_ik(current_pos, FLYING_GRIPPER_FRAME, target_vel).to_numpy()[:6])
         v = v_vel * dt
 
         actuated_joints = {}
@@ -382,7 +407,47 @@ class ControlMapping(Enum):
         lookahead = 5.0
         inversion = 1 if gamepad_teleop.invert_pitch else -1
 
-        if not right_trigger_pulled and (np.any(v != 0) or np.any(rot_change[:2] != 0)):
+        if do_nullspace_motion:
+            # Hold the gripper at the pose it had when the motion started, correcting drift with proportional feedback.
+            # The base moves relative to its heading at the start, since the base may also rotate to hold the gripper.
+            if gamepad_teleop.nullspace_anchor is None:
+                gamepad_teleop.nullspace_anchor = (kinematics.forward(current_pos, FLYING_GRIPPER_FRAME).copy(), current_pos.base_theta)
+            anchor_pose, anchor_theta = gamepad_teleop.nullspace_anchor
+            current_pose = kinematics.forward(current_pos, FLYING_GRIPPER_FRAME)
+            ee_err_local = pin.log(current_pose.actInv(anchor_pose)).vector
+            kp_ee = 2.0
+
+            base_to_world = np.array([[np.cos(anchor_theta), -np.sin(anchor_theta)], [np.sin(anchor_theta), np.cos(anchor_theta)]])
+            v_ns = kinematics.nullspace_base_control(
+                q=current_pos,
+                v_ee_local_desired=kp_ee * ee_err_local,
+                v_base_world_desired=base_to_world @ (base_input * vel_xy),
+                target_frame=FLYING_GRIPPER_FRAME,
+            ).to_numpy()
+            v_ns = scale_to_limits(v_ns)
+
+            # Stop at the lift/arm/wrist position limits; slowing every joint together keeps the gripper still
+            q_pin = current_pos.to_pinocchio_q()
+            q_joints, v_joints = q_pin[4:], v_ns[3:]
+            room = np.where(v_joints > 0, kinematics.model.upperPositionLimit[4:] - q_joints, kinematics.model.lowerPositionLimit[4:] - q_joints)
+            moving = v_joints != 0
+            if np.any(moving):
+                v_ns *= np.clip(np.min(room[moving] / (v_joints[moving] * dt)), 0.0, 1.0)
+
+            _, accel_xy, _, accel_w = gamepad_teleop.base_command._get_motion_params(is_rotating=abs(v_ns[2])>=0.1)
+            gamepad_teleop.base_command._move(v_ns[0], v_ns[1], v_ns[2], accel_xy, accel_w, robot)
+            gamepad_teleop.lift_command._move(v_ns[3], robot)
+            gamepad_teleop.arm_command._move(v_ns[4], robot)
+            wrist_commands = [gamepad_teleop.wrist_yaw_command, gamepad_teleop.wrist_pitch_command, gamepad_teleop.wrist_roll_command]
+            for wrist_command, wrist_vel in zip(wrist_commands, v_ns[5:]):
+                if abs(wrist_vel) > 0:
+                    wrist_command._move(np.degrees(wrist_vel * dt * lookahead), robot, velocity=abs(wrist_vel))
+
+            actuated_joints['base'] = v_ns[0] + v_ns[1] + v_ns[2]
+            for joint, joint_vel in zip(['lift', 'arm', 'joint_wrist_yaw', 'joint_wrist_pitch', 'joint_wrist_roll'], v_ns[3:]):
+                if abs(joint_vel) > 0:
+                    actuated_joints[joint] = joint_vel
+        elif not right_trigger_pulled and (np.any(v != 0) or np.any(rot_change[:2] != 0)):
 
             _, accel_xy, _, accel_w = gamepad_teleop.base_command._get_motion_params(is_rotating=abs(v_vel[2])>=0.1)
             gamepad_teleop.base_command._move(v_vel[0], v_vel[1], v_vel[2], accel_xy, accel_w, robot)

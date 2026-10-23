@@ -141,6 +141,7 @@ class GamePadTeleop(Device):
         self._input_pitch_inverted = None # Pitch inversion used for input, held fixed while the user is rolling the wrist
 
         self.flying_gripper_kinematics = ToolFrameKinematics()
+        self.nullspace_anchor = None # (gripper pose, base heading) held during flying gripper nullspace motion
 
         self.contact_sensitivity_profile.apply(self.robot)
 
