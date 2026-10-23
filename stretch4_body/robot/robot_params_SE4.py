@@ -1634,7 +1634,8 @@ nominal_params={
     'stretch_gamepad':{
         'enable_fn_button': 0,
         'function_cmd':'',
-        'press_time_span':5},
+        'press_time_span':5,
+        'base_rotation_scale_at_full_arm_extension':0.1}, # Base rotation speed scales linearly from 1.0 (arm retracted) to this (arm fully extended)
     'params':['stretch_body.robot_params_SE4_eoa'],
     'ros': {
         'joints': [{

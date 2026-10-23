@@ -35,17 +35,31 @@ precision_mode
 
 
 class CommandBase:
-    def __init__(self, motion_profile:str = 'default', motion_profile_angular:str = 'slow'):
+    def __init__(self, motion_profile:str = 'default', motion_profile_angular:str = 'slow', use_arm:bool = False):
         self.motion_profile = motion_profile
         self.motion_profile_angular = motion_profile_angular
-        self.params = RobotParams().get_params()[1]['omnibase']
+        robot_params = RobotParams().get_params()[1]
+        self.params = robot_params['omnibase']
         self.dead_zone = 0.0001
 
         self.accel_xy_max = self.params['motion']['max']['accel_xy_m']
         self.accel_w_max = self.params['motion']['max']['accel_w_r']
 
         self.precision_mode = 0.0
-    
+
+        # Linearly slow base rotation as the arm extends, down to this scale at full extension
+        self.use_arm = use_arm
+        self.rotation_scale_at_full_extension = robot_params['stretch_gamepad'].get('base_rotation_scale_at_full_arm_extension', 1.0)
+        if self.use_arm:
+            self.arm_range_m = robot_params['arm']['range_m']
+
+    def _get_arm_extension_rotation_scale(self, robot):
+        if not self.use_arm:
+            return 1.0
+        lo, hi = self.arm_range_m
+        extension = min(max((robot.arm.status['pos'] - lo) / (hi - lo), 0.0), 1.0)
+        return 1.0 - (1.0 - self.rotation_scale_at_full_extension) * extension
+
     def _get_motion_params(self, is_rotating:bool):
         motion_profile = self.motion_profile
         if is_rotating:
@@ -76,7 +90,7 @@ class CommandBase:
 
         v_x=vel_xy*(0 if abs(x)<self.dead_zone else x)
         v_y=vel_xy*(0 if abs(y)<self.dead_zone else y)
-        v_w=vel_w*(0 if abs(w)<self.dead_zone else w)
+        v_w=vel_w*(0 if abs(w)<self.dead_zone else w)*self._get_arm_extension_rotation_scale(robot)
 
         self._move(v_x, v_y, v_w, accel_xy, accel_w, robot)
     
