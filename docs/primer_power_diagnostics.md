@@ -141,7 +141,7 @@ Raw firmware units are kept (`_mv`, `_ma`, `_ms`); convenience floats in V, A an
 | Key | Type | Meaning |
 |---|---|---|
 | `power_state`, `power_state_name` | int, str | `STATE_ACTIVE`, `STATE_SLEEP`, `STATE_SHUTDOWN` and so on |
-| `power_transition_reason_raw`, `power_transition_reason` | int, str | Why the last transition happened: `boot_button`, `user_button`, `esp_sleep_request`, `host_sleep_trigger`, `low_battery`, `user_wake`, `esp_wake_request` and others |
+| `power_transition_reason_raw`, `power_transition_reason` | int, str | Why the last transition happened: `boot_button`, `user_button`, `esp_sleep_request`, `host_sleep_trigger`, `low_battery`, `user_wake`, `esp_wake_request`, `low_battery_recovered` and others |
 | `power_transition_sequence`, `power_transition_timestamp_ms`, `power_transition_uptime_ms` | int | When the last transition happened |
 | `runstop_cause_raw` | int | Runstop cause bits |
 | `periph_power_state_raw`, `periph_power_state` | int, dict of bool | Rails to lift, the three base motors, arm and end of arm |
@@ -398,6 +398,8 @@ Each event has `sequence`, `timestamp_ms`, `timestamp_s`, `event_id`, `event_nam
 | 49 | `eoa_trip` | Cut: source bits (1 ADC filter, 2 U44 comparator), EOA current in 10 mA. Back on: 16 runstop cleared, 32 host enable, 64 ACTIVE entry; 128 runstop clear refused (3 trips in 60 s); data1 the trips in the last 60 s. Source peripheral, firmware v0.1.50p14 and later |
 | 50 | `easter_egg_entered` | 1 runstop hold, 2 host request |
 | 51 | `easter_egg_left` | 2 host request, 3 runstop |
+| 52 | `low_battery_auto_wake` | 1 armed by a low-battery shutdown, 2 armed found at boot, 3 woke on the dock, 4 disarmed by another wake; data1 the SoC, or for 4 that wake's transition reason. Firmware v0.1.56p14 and later |
+| 53 | `button_pulse_rejected` | SLEEP_EN low under 20 ms, not a press: width in ms, count since boot. Firmware v0.1.56p14 and later |
 
 ## 7. `stretch_power_diagnostics`
 

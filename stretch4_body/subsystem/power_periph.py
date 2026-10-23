@@ -347,6 +347,8 @@ class PowerPeriphDefn():
         49: 'eoa_trip',
         50: 'easter_egg_entered',
         51: 'easter_egg_left',
+        52: 'low_battery_auto_wake',
+        53: 'button_pulse_rejected',
     }
     POWER_EVENT_EXPLANATIONS = {
         1: 'PIMU restarted; data0 is the reset-cause bitmask and data1 is the board variant.',
@@ -413,6 +415,8 @@ class PowerPeriphDefn():
              '128 a runstop clear refused after 3 trips in 60 s; data1 is the trips in the last 60 s.'),
         50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host request.',
         51: 'Easter egg mode left; data0 is 2 for a host request, 3 for a runstop entry.',
+        52: 'Low-battery auto-wake; data0 is 1 armed by a low-battery shutdown, 2 armed found at boot, 3 woke on the dock, 4 disarmed by another wake; data1 is the SoC, or for 4 that wake\'s transition reason.',
+        53: 'Power button pulse too short to be a press (under 20 ms), ignored; data0 is its width in ms, data1 the count since boot.',
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',
@@ -427,6 +431,7 @@ class PowerPeriphDefn():
         9: 'power_button_high',
         10: 'user_wake',
         11: 'esp_wake_request',
+        12: 'low_battery_recovered',
     }
     # Schema 2 enum fields (Common.h, PROTOCOL_P14_POWER_DIAGNOSTICS.md). The decoder
     # publishes '<field>_name' beside each raw value; None on a schema 1 snapshot.
