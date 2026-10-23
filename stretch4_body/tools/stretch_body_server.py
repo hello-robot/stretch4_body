@@ -397,7 +397,8 @@ def is_server_active(robot_client:RobotClient, verbose:bool=False, block_timeout
     return is_active
 
 
-def main():
+def main() -> int:
+    """Returns the process exit code: 0 on success, 1 on failure."""
     args = _parse_args()
 
     if args.version:
@@ -414,17 +415,16 @@ def main():
                 print(f"stretch4_body version: {stretch4_body.__version__}")
         else:
             print(f"stretch4_body version: {stretch4_body.__version__}")
-        return
+        return 0
 
     if args.export is not None:
-        export_session_logs(args.export)
-        return
+        return 0 if export_session_logs(args.export) else 1
 
     hu.print_stretch_re_use()
 
     if not is_user_in_group('users'):
         logging.error(f"Error: This user ({os.getlogin()}) is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
-        return
+        return 1
 
 
     if args.log_level:
@@ -451,23 +451,28 @@ def main():
 
     if args.cleanup:
         hu.force_kill_process('stretch_body_server')
-        exit(0)
+        return 0
 
     if args.daemon:
         if not install_and_start_daemon():
-            raise RuntimeError("Could not start the Stretch Body Server system service.")
+            logger.error("Could not start the Stretch Body Server system service.")
+            return 1
         server_wait_s = DAEMON_STARTUP_TIMEOUT_S
     elif args.install_daemon:
         if not install_daemon():
-            raise RuntimeError("Could not install the Stretch Body Server system service.")
-        return print("Stretch Body Server daemon is installed. Server will start on boot. Run `--daemon` to start immediately.")
+            logger.error("Could not install the Stretch Body Server system service.")
+            return 1
+        print("Stretch Body Server daemon is installed. Server will start on boot. Run `--daemon` to start immediately.")
+        return 0
     elif args.uninstall_daemon:
         if not uninstall_daemon():
-            raise RuntimeError("Could not uninstall the Stretch Body Server system service.")
-        return print("Uninstalled Stretch Body Server daemon. Server will not start on boot.")
+            logger.error("Could not uninstall the Stretch Body Server system service.")
+            return 1
+        print("Uninstalled Stretch Body Server daemon. Server will not start on boot.")
+        return 0
 
     elif args.launch:
-        return _launch(robot_client, args)
+        return 0 if _launch(robot_client, args) else 1
     elif args.restart:
         if not daemon_is_installed():
             if is_server_active(robot_client):
@@ -476,40 +481,43 @@ def main():
                     robot_client.kill_server()
                 time.sleep(2.0)  # Wait for shutdown
             else: print("No instances of the server was found. Launching a new instance.")
-            return _launch(robot_client, args)
+            return 0 if _launch(robot_client, args) else 1
 
         if not install_and_start_daemon():
-            raise RuntimeError(f"Could not restart the Stretch Body Server system service.")
-        
+            logger.error("Could not restart the Stretch Body Server system service.")
+            return 1
+
         server_wait_s = DAEMON_STARTUP_TIMEOUT_S
 
     elif args.kill:
-        if not is_server_active(robot_client):
-            print("No server is running.")
-            return
-        
         logger.info("Received user request to kill stretch body server.")
-        if daemon_is_running():
+        # Stop the daemon even if no server answers, since it may be between restarts and would bring the server back
+        daemon_was_running = daemon_is_running()
+        if daemon_is_installed():
             stop_daemon()
 
+        if not is_server_active(robot_client):
+            # The daemon's ExecStopPost archives its session logs
+            print("Kill Stretch Body Server Daemon: SUCCESS" if daemon_was_running else "No server is running.")
+            return 0
+
         if not robot_client.startup(verbose=False, allow_different_user_connection=True):
-            print("Kill Stretch Body Server Daemon: SUCCESS")
+            print("Kill Stretch Body Server: SUCCESS")
             archive_session_logs()
-            return
+            return 0
 
         robot_client.kill_server()
 
         if robot_client.is_server_active():
             print("Kill Stretch Body Server: FAIL")
-        else:
-            print("Kill Stretch Body Server: SUCCESS")
-            archive_session_logs()
+            return 1
 
-        return
+        print("Kill Stretch Body Server: SUCCESS")
+        archive_session_logs()
+        return 0
 
     if args.status_daemon:
-        status_daemon()
-        return
+        return 0 if status_daemon() else 1
 
     if server_wait_s is not None:
         print(f"Waiting up to {server_wait_s:.0f}s for the Stretch Body Server to start...")
@@ -521,37 +529,42 @@ def main():
         if args.status:
             print_status(robot_client)
         
-        try: 
+        try:
             robot_client.startup(verbose=False, allow_different_user_connection=True)
 
             if args.ping:
+                num_successful_pings = 0
                 for i in range(5):
                     if robot_client.ping_server():
                         print("Successful server ping at time", time.time())
+                        num_successful_pings += 1
                     else:
                         print("Failed to ping server. Retrying..")
                     time.sleep(0.75)
-            
+                if num_successful_pings == 0:
+                    return 1
+
             if args.free_up_control:
                 robot_client.free_up_control()
 
         except Exception as e:
             logger.error(Fore.RED + f"Error connecting to stretch body server: {e}" + Style.RESET_ALL)
+            return 1
         finally:
             robot_client.stop()
 
         if args.restart:
             print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has restarted successfully.{Style.RESET_ALL}\nUse --status to see status, or --print for logs.")
 
-    else:
-        print_last_log_from_archive()
+        return 0
 
-        if daemon_is_installed():
-            status_daemon()
+    print_last_log_from_archive()
 
-        print(f"\n\n----------------------\n{Fore.RED + Style.BRIGHT}No active server found. Run `stretch_body_server --restart` to start it.{Style.RESET_ALL} Printed tail of archived logs{' and background-daemon status ' if daemon_is_installed() else ' '}above.\n")
-    
-    return
+    if daemon_is_installed():
+        status_daemon()
+
+    print(f"\n\n----------------------\n{Fore.RED + Style.BRIGHT}No active server found. Run `stretch_body_server --restart` to start it.{Style.RESET_ALL} Printed tail of archived logs{' and background-daemon status ' if daemon_is_installed() else ' '}above.\n")
+    return 1
 
 def _launch(robot_client, args):
 
@@ -583,8 +596,9 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
         if args.profile:
             os.environ['STRETCH_PROFILE'] = '1'
         robot_server.run_server()
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"Unexpected error while running stretch body server: {e}")
+        return False
     finally:
         archive_session_logs()
 
@@ -639,7 +653,8 @@ Type=simple
 {env_lines_str}
 ExecStart=/bin/bash -c "{exec_cmd}"
 ExecStopPost={python_path} -c "from stretch4_body.tools.stretch_body_server import archive_session_logs; print('Stopping daemon...'); archive_session_logs()"
-Restart=on-failure
+# Always, since the server exits 0 even when it goes down unexpectedly. `stretch_body_server --kill` stops the unit via systemctl, which systemd does not restart.
+Restart=always
 RestartSec=10
 
 [Install]
@@ -704,7 +719,7 @@ def install_and_start_daemon() -> bool:
 
     if not daemon_is_running() and is_server_active(RobotClient()):
         print("A non-daemon server is already active, please --kill it first before launching the daemon.")
-        return True
+        return False
 
     # Start the daemon if a SBS server isn't already running on CLI.
     return restart_daemon()
@@ -762,5 +777,5 @@ def install_daemon() -> bool:
     return _manage_daemon("install")
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
 
