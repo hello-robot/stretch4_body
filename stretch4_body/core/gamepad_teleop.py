@@ -187,7 +187,7 @@ class GamePadTeleop(Device):
             self._input_pitch_inverted = self._wrist_pitch_inverted()
 
     def set_joint_command(self):
-        self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name())
+        self.base_command = gamepad_joints.CommandBase(motion_profile=self.motion_profile.get_name(), motion_profile_angular=self.motion_profile.get_one_lower_speed().get_name(), use_arm=self.use_devices['arm'])
         self.lift_command = gamepad_joints.CommandLift(motion_profile=self.motion_profile.get_name() )
         if self.use_devices['arm']:
             self.arm_command = gamepad_joints.CommandArm(motion_profile=self.motion_profile.get_name() )
