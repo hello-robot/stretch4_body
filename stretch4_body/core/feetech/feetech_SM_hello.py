@@ -1017,7 +1017,7 @@ class FeetechSMHello(Device):
                 self.set_motion_params(a_des=a_des)
                 v = v_des  # allow input velocity if direction is opposite to nearest limit
             elif (v_des > 0 and x_curr + d_brake >= lim_upper) or (v_des <= 0 and x_curr - d_brake <= lim_lower) or min(
-                    to_max, to_max) < 0.1:
+                    to_min, to_max) < 0.1:
                 self.set_motion_params(a_des=self.params['motion']['max']['accel'])
                 v = 0  # apply brakes if the braking distance is >= limits
             else:
