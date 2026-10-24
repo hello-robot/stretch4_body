@@ -43,7 +43,12 @@ class OmniBase(Device):
         self.curr_max_vel_w_r = self.params['motion']['max']['vel_w_r']
         self.curr_max_accel_xy_m = self.params['motion']['max']['accel_xy_m']
         self.curr_max_accel_w_r = self.params['motion']['max']['accel_w_r']
-        
+
+        # Velocity ramp state of the three wheel boards, as last commanded by
+        # set_velocity or hard_stop (see _ramp_wheel_speeds). None when unknown.
+        self._ramp = None
+        self._clock = time.monotonic
+
     # ###########  Device Methods #############
 
     def startup(self):
@@ -76,6 +81,7 @@ class OmniBase(Device):
         """
         Force motors into freewheel
         """
+        self._ramp = None
         for w in self.wheels:
             w.enable_freewheel()
 
@@ -83,6 +89,7 @@ class OmniBase(Device):
         """
                 Force motors into incremental position mode
         """
+        self._ramp = None
         for w in self.wheels:
             w.enable_pos_traj_incr()
 
@@ -90,6 +97,7 @@ class OmniBase(Device):
         """
         Force motors into hold mode
          """
+        self._ramp = None
         for w in self.wheels:
             w.enable_hold()
 
@@ -219,7 +227,7 @@ class OmniBase(Device):
 
         # calculate the motor vels
         u = self.base_vel_to_motor_vel([translational_velocity_x, translational_velocity_y, angular_velocity_z])
-        aa = self.compute_motor_acceleration(u, a_m_wheel)
+        aa = self._vel_traj_motor_acceleration(u, a_m_wheel)
         
         if contact_sensitivity_pos is None:
             contact_sensitivity_pos = self.contact_sensitivity_pos
@@ -270,6 +278,7 @@ class OmniBase(Device):
         """
         wheel_idx = int(wheel_name.split('_')[-1])
         w = self.wheels[wheel_idx]
+        self._ramp = None
         v_r = abs(v_r) if v_r is not None else w.params['motion'].get('default', w.params['motion']).get('vel', 5.0)
         a_r = abs(a_r) if a_r is not None else w.params['motion'].get('default', w.params['motion']).get('accel', 5.0)
 
@@ -290,6 +299,7 @@ class OmniBase(Device):
         """
         wheel_idx = int(wheel_name.split('_')[-1])
         w = self.wheels[wheel_idx]
+        self._ramp = None
         v_r = abs(v_r) if v_r is not None else w.params['motion'].get('default', w.params['motion']).get('vel', 5.0)
         a_r = abs(a_r) if a_r is not None else w.params['motion'].get('default', w.params['motion']).get('accel', 5.0)
 
@@ -321,6 +331,7 @@ class OmniBase(Device):
         """
         if (x_m != 0 or y_m !=0) and (w_r != 0):
             return # can't blend translational & rotational cmds, use set_velocity instead
+        self._ramp = None
 
         if (x_m != 0 or y_m != 0):
             if v_m is None:
@@ -393,7 +404,7 @@ class OmniBase(Device):
         u = np.array([0.0, 0.0, 0.0])
         stop_accel = 20
 
-        aa = self.compute_motor_acceleration(u, stop_accel)
+        aa = self._vel_traj_motor_acceleration(u, stop_accel)
 
         ctrl_mode = Stepper.MODE_VEL_TRAJ if self.params['use_vel_traj'] else Stepper.MODE_VEL_PID
         self.wheels[0].set_command(mode=ctrl_mode, v_des=u[0], a_des=abs(aa[0]))
@@ -578,6 +589,66 @@ class OmniBase(Device):
         Vb = self.H0_inv @ u_w
         return Vb
 
+    def _ramp_wheel_speeds(self, now):
+        """
+        Where each wheel board's velocity ramp is now (motor rad/s), worked out
+        from the commands set_velocity and hard_stop sent, with the firmware's
+        rules (hello_stepper2 MODE_VEL_TRAJ): the board slews its ramp speed
+        toward the last v_des at the last a_des, and one second after the last
+        command its velocity watchdog makes the target zero.
+        Returns None when that is not known, so the caller starts from the
+        measured speed instead: no velocity command yet, a position or other
+        mode was commanded since, or a board is not in MODE_VEL_TRAJ (safety,
+        runstop, guarded event).
+        """
+        r = self._ramp
+        if r is None:
+            return None
+        if any(w.status['mode'] != Stepper.MODE_VEL_TRAJ for w in self.wheels):
+            return None
+        dt = now - r['t']
+        if dt < 0:
+            return None
+        g = np.array(r['g'], dtype=float)
+        t_live = dt
+        if r['watchdog'] and dt > 1.0:
+            t_live = 1.0
+        step = r['a'] * t_live
+        g = g + np.clip(r['v'] - g, -step, step)
+        if t_live < dt:
+            step = r['a'] * (dt - t_live)
+            g = g + np.clip(-g, -step, step)
+        return g
+
+    def _start_wheel_speeds(self):
+        """
+        Ramp speeds to start from when the boards' ramps are not known. A board
+        entering MODE_VEL_TRAJ starts its ramp from its own speed estimate, so
+        use the status speed, except that a board reporting it is not moving is
+        taken as zero: its speed is below vel_near_setpoint_d, and the status
+        value there is mostly noise.
+        """
+        return np.array([0.0 if not w.status.get('is_moving', True) else w.status['vel']
+                         for w in self.wheels], dtype=float)
+
+    def _vel_traj_motor_acceleration(self, u_target, a_m_wheel):
+        """
+        Per-wheel ramp rates (motor rad/s^2) for a MODE_VEL_TRAJ command so all
+        three wheels reach u_target (motor rad/s) together, measured from where
+        the boards' ramps are rather than from the status speed, which is
+        10 Hz filtered and one server cycle old. Remembers the command sent.
+        """
+        now = self._clock()
+        u_target = np.array(u_target, dtype=float)
+        g = self._ramp_wheel_speeds(now)
+        if g is None:
+            g = self._start_wheel_speeds()
+        aa = self.compute_wheel_acceleration(u_target / self.params['gr'], a_m_wheel,
+                                             u_current_w=g / self.params['gr'])
+        watchdog = all(w.params['gains'].get('enable_vel_watchdog', 0) for w in self.wheels)
+        self._ramp = {'t': now, 'v': u_target, 'a': np.abs(aa), 'g': g, 'watchdog': watchdog}
+        return aa
+
     def compute_motor_acceleration(self, u_target, a_m_wheel):
         """
         Take target velocities (motor frame) (rad/s) and a desired acceleration
@@ -587,23 +658,27 @@ class OmniBase(Device):
         u_target_w=u_target/self.params['gr']
         return self.compute_wheel_acceleration(u_target_w,a_m_wheel)
 
-    def compute_wheel_acceleration(self, u_target_w, a_m_wheel):
+    def compute_wheel_acceleration(self, u_target_w, a_m_wheel, u_current_w=None):
         """
         Take target velocities (wheel frame) (rad/s) and a desired acceleration
         Return the accelerations (motor frame) that achieve the target
         at the same time in the future.
+        u_current_w: wheel velocities to ramp from (wheel frame, rad/s);
+        the measured status velocities when None.
         """
-        wheel_speeds = np.array([self.wheels[0].status['vel'],
-                                 self.wheels[1].status['vel'],
-                                 self.wheels[2].status['vel']])  # current motor velocities
-
-        u_current_w = wheel_speeds / self.params['gr']  # current wheel velocities
+        if u_current_w is None:
+            wheel_speeds = np.array([self.wheels[0].status['vel'],
+                                     self.wheels[1].status['vel'],
+                                     self.wheels[2].status['vel']])  # current motor velocities
+            u_current_w = wheel_speeds / self.params['gr']  # current wheel velocities
 
         delta_u = u_target_w - u_current_w
         max_delta = np.max(np.abs(delta_u))
 
-        if max_delta == 0:
-            accel = np.zeros_like(delta_u)
+        if max_delta < 1e-9:
+            # Already there: send the full rate to every wheel, never 0, so a
+            # board whose ramp is a hair short of the target still finishes it.
+            accel = np.full_like(delta_u, a_m_wheel, dtype=float)
         else:
             # Avoid divide by zero by multiplying instead of dividing
             accel = (delta_u / max_delta) * a_m_wheel
