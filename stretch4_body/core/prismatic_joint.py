@@ -44,6 +44,7 @@ class PrismaticJoint(Device):
                                                'force': 0.0, 
                                                'motor': self.motor.status, 
                                                'in_collision_stop':{'pos': False, 'neg': False},
+                                               'contact_latch':{'pos': False, 'neg': False},
                                                'braking_distance':0,
                                                'soft_motion_limits': self.get_soft_motion_limits(),
                                                'at_limit':{'pos': False, 'neg': False}}
@@ -59,6 +60,8 @@ class PrismaticJoint(Device):
         self.ts_collision_stop = {'pos': 0, 'neg': 0}
         self.contact_sensitivity_pos = self.motor.params['guarded_contact']['sensitivity_default']['coeff_sensitivity_pos']
         self.contact_sensitivity_neg = self.motor.params['guarded_contact']['sensitivity_default']['coeff_sensitivity_neg']
+        self._last_vel_cmd = 0.0          # last v_m sent by set_velocity
+        self._was_in_guarded_event = False
 
     # ###########  Device Methods #############
     def startup(self):
@@ -97,6 +100,29 @@ class PrismaticJoint(Device):
         self.status['braking_distance']=self.get_braking_distance()
         self.status['soft_motion_limits'] = self.get_soft_motion_limits()
         self.status['at_limit'] = self.get_at_limit(self.status['pos'])
+        self._step_contact_latch()
+
+    def _step_contact_latch(self):
+        """
+        A guarded contact puts the board in safety, and the next command of any
+        kind takes it out again (HelloController.cpp, any new command clears
+        guarded_override). A client streaming set_velocity at 10 to 100 Hz
+        therefore pushes on into the contact a cycle later, trips again, and
+        repeats. When a contact trips while set_velocity was driving the joint,
+        latch that direction: set_velocity in it is dropped until a command of
+        zero or the other way, or clear_contact_latch(). move_to and move_by
+        are not affected.
+        """
+        in_event = bool(self.motor.status.get('in_guarded_event'))
+        if in_event and not self._was_in_guarded_event and self.params.get('latch_contact_on_set_velocity', 1):
+            if self._last_vel_cmd > 0:
+                self.status['contact_latch']['pos'] = True
+            elif self._last_vel_cmd < 0:
+                self.status['contact_latch']['neg'] = True
+        self._was_in_guarded_event = in_event
+
+    def clear_contact_latch(self):
+        self.status['contact_latch'] = {'pos': False, 'neg': False}
 
     def push_command(self,blocking=True):
         return self.motor.push_command(blocking)
@@ -233,8 +259,22 @@ class PrismaticJoint(Device):
             )
             return
 
+        latch = self.status['contact_latch']
+        if (latch['pos'] and v_m > 0) or (latch['neg'] and v_m < 0):
+            self.logger.warning(
+                'Contact in direction %s for %s. Send zero or reverse to move that way again' % (
+                    'pos' if v_m > 0 else 'neg', self.name),
+                extra={'throttle_s': 1.0}
+            )
+            return
+        if v_m <= 0:
+            latch['pos'] = False
+        if v_m >= 0:
+            latch['neg'] = False
+
         v_m=min(self.params['motion']['max']['vel_m'],v_m) if v_m>=0 else max(-1*self.params['motion']['max']['vel_m'],v_m)
         v_r = self.translate_m_to_motor_rad(v_m)
+        self._last_vel_cmd = v_m
 
         if stiffness is not None:
             stiffness = max(0.0, min(1.0, stiffness))
@@ -360,6 +400,7 @@ class PrismaticJoint(Device):
         contact_sensitivity_pos: postive contact sensitivity factor (Range: 0.0 (max) to 1.0 (min))
         contact_sensitivity_neg: negative contact sensitivity factor (Range: 0.0 (max) to 1.0 (min))
         """
+        self._last_vel_cmd = 0.0  # not under set_velocity (see _step_contact_latch)
 
         if req_calibration:
             if not self.motor.status['pos_calibrated']:
@@ -427,6 +468,7 @@ class PrismaticJoint(Device):
         contact_sensitivity_pos: postive contact sensitivity factor (Range: 0.0 (max) to 1.0 (min))
         contact_sensitivity_neg: negative contact sensitivity factor (Range: 0.0 (max) to 1.0 (min))
         """
+        self._last_vel_cmd = 0.0  # not under set_velocity (see _step_contact_latch)
 
         if req_calibration:
             if not self.motor.status['pos_calibrated']:
@@ -804,4 +846,5 @@ class PrismaticJointStatus(TypedDict):
     force: float 
     motor: StepperStatus
     in_collision_stop: PrismaticJointCollisionStatus
+    contact_latch: PrismaticJointCollisionStatus
     braking_distance: float 
