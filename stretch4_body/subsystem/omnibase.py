@@ -184,12 +184,8 @@ class OmniBase(Device):
         """
 
         # motion limits
-        translational_velocity_x = np.clip(translational_velocity_x, -self.curr_max_vel_xy_m,
-                                           self.curr_max_vel_xy_m)
-        translational_velocity_y = np.clip(translational_velocity_y, -self.curr_max_vel_xy_m,
-                                           self.curr_max_vel_xy_m)
-        angular_velocity_z = np.clip(angular_velocity_z, -self.curr_max_vel_w_r,
-                                     self.curr_max_vel_w_r)
+        translational_velocity_x, translational_velocity_y, angular_velocity_z = self.scale_twist_to_limits(
+            translational_velocity_x, translational_velocity_y, angular_velocity_z)
 
         if a_m is not None:
             a_m = min(abs(a_m), self.curr_max_accel_xy_m)
@@ -240,6 +236,24 @@ class OmniBase(Device):
             self.wheels[2].set_command(mode=ctrl_mode, v_des=u[2], a_des=abs(aa[2]), stiffness=stiffness)
         else:
             self.wheels[2].set_command(mode=ctrl_mode, v_des=u[2], a_des=abs(aa[2]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg, stiffness=stiffness)
+
+    def scale_twist_to_limits(self, vx, vy, wz):
+        """
+        Bring a twist inside the current limits by scaling all of it by one
+        factor, so the base keeps its heading and its path curvature and only
+        goes slower along that path. curr_max_vel_xy_m limits the speed in the
+        x-y plane (the length of (vx, vy)), curr_max_vel_w_r the turn rate.
+        Clipping each component on its own, as before, changed the direction
+        of travel (0.6, 0.2 at a 0.3 limit became 0.3, 0.2) and the curvature
+        (a turn whose rate saturated became a wider turn).
+        """
+        s = 1.0
+        v_xy = math.hypot(vx, vy)
+        if v_xy > self.curr_max_vel_xy_m:
+            s = min(s, self.curr_max_vel_xy_m / v_xy)
+        if abs(wz) > self.curr_max_vel_w_r:
+            s = min(s, self.curr_max_vel_w_r / abs(wz))
+        return vx * s, vy * s, wz * s
 
     def translate_by(self,x_m,y_m,v_m=None,a_m=None, contact_sensitivity_pos=None, contact_sensitivity_neg=None):
         """
