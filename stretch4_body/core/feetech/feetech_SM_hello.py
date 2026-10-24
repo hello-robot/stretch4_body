@@ -840,8 +840,9 @@ class FeetechSMHello(Device):
         old_x_des = x_des
         x_des = min(max(self.get_soft_motion_limits()[0], x_des), self.get_soft_motion_limits()[1])
         if x_des != old_x_des:
-            self.logger.debug(
-                'Clipping move_to({0}) with soft limits {1}'.format(old_x_des, self.soft_motion_limits['current']))
+            self.logger.warning(
+                'Clipping move_to({0}) with soft limits {1}'.format(old_x_des, self.soft_motion_limits['current']),
+                extra={'throttle_s': 1.0})
 
         t_des = self.world_rad_to_ticks(x_des)
         # t_des = max(self.range_t[0], min(self.range_t[1], t_des))

@@ -368,7 +368,7 @@ class PrismaticJoint(Device):
             old_x_m = x_m
             x_m = min(max(self.soft_motion_limits['current'][0], x_m), self.soft_motion_limits['current'][1]) #Only clip motion when calibrated
             if x_m != old_x_m:
-                self.logger.debug(f'Clipping move_to({old_x_m}) with soft limits {self.soft_motion_limits['current']}')
+                self.logger.warning(f'Clipping move_to({old_x_m}) with soft limits {self.soft_motion_limits['current']}', extra={'throttle_s': 1.0})
 
         if self.status['in_collision_stop']['pos'] and self.status['pos'] < x_m:
             self.logger.warning(
