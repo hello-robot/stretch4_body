@@ -72,10 +72,14 @@ class RoutineManager(Device):
             self.next_routine = 'routine_nop'
             self.next_routine_id = 0
             self.logger.warning(f'Routine {self.status["active_routine"]} is running. Rejecting command {routine_name}|{routine_id}')
+            self.status['last_routine_id'] = routine_id
+            self.status['last_routine_successful'] = False
             return
         if routine_name in self.routines.keys():
             if not self.routines[routine_name].is_valid:
                 self.logger.warning(f'Routine {routine_name} is not valid. Rejecting command {routine_name}|{routine_id}')
+                self.status['last_routine_id'] = routine_id
+                self.status['last_routine_successful'] = False
                 return
             self.logger.info(f'Got routine to run: {routine_name} with id {routine_id}')
             self.next_routine=routine_name
@@ -84,3 +88,5 @@ class RoutineManager(Device):
             self.next_routine_kwargs = kwargs
         else:
             self.logger.error(f'Invalid routine name: {routine_name}')
+            self.status['last_routine_id'] = routine_id
+            self.status['last_routine_successful'] = False
