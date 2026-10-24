@@ -147,13 +147,13 @@ def _describe(consumers):
 
 
 class SentryLidarIdle(Sentry):
-    """Powers the head lidars down after idle_timeout_s with no lidar data consumer."""
+    """Powers the head lidars down once no lidar data consumer is left (after idle_timeout_s, 0 by default)."""
 
     def __init__(self, robot):
         Sentry.__init__(self, name='sentry_lidar_idle', robot=robot)
         p = self.params
-        self.idle_timeout_s = float(p.get('idle_timeout_s', 300))
-        self.min_on_s = float(p.get('min_on_s', 60))
+        self.idle_timeout_s = float(p.get('idle_timeout_s', 0))
+        self.min_on_s = float(p.get('min_on_s', 0))
         self.poll_period_s = max(1.0, float(p.get('poll_period_s', 1.0)))
         self.hold_timeout_s = float(p.get('hold_timeout_s', 0))
         self.pimu_state_max_age_s = float(p.get('pimu_state_max_age_s', 2.0))

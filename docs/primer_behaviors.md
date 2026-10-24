@@ -76,7 +76,7 @@ Process names (status and logs only) are looked up through `/proc/<pid>/fd` when
 
 * ON within one poll of a consumer appearing, only while the PIMU reports `STATE_ACTIVE` in a status sample no older than `pimu_state_max_age_s`.
 * OFF after `idle_timeout_s` with no consumer and at least `min_on_s` after the last ON, also only with a fresh ACTIVE sample. Without power-state telemetry the sentry never cuts the rail.
-* At server start the rail is assumed on (firmware powers it at every wake) and a full idle countdown starts. When the PIMU returns to ACTIVE from another state the same reset happens.
+* At server start the rail is assumed on (firmware powers it at every wake) and a full idle countdown starts; with the default `idle_timeout_s` of 0 the rail goes off on the first poll unless a consumer is already there. When the PIMU returns to ACTIVE from another state the same reset happens.
 * On server stop, if the sentry had cut the rail and the PIMU is ACTIVE, the rail is turned back on (`restore_on_stop`), so tools run with the server stopped find the lidars powered.
 
 **Manual hold.** A client `set_lidar_on` (`REx_lidar on`, `RobotClient.power_periph.set_lidar_on()`, the FCC exerciser) holds the rail on. The hold ends on:
@@ -101,7 +101,7 @@ Process names (status and logs only) are looked up through `/proc/<pid>/fd` when
 | `pimu_state` | `active`, `inactive` or `unknown` |
 | `scan_age_s` | age of the last /proc scan |
 | `on_events`, `off_events` | rail changes since server start |
-| `last_action`, `last_reason` | e.g. `off`, `idle 300 s, no consumer` |
+| `last_action`, `last_reason` | e.g. `off`, `idle 0 s, no consumer` |
 
 `status['power_periph']['lidar_cmd']` holds the last host request (`action` on, off or release, `source`, `ts`, `seq`) even with the sentry disabled. Every rail change is logged at info by the `sentry_lidar_idle` logger with its reason.
 
@@ -110,8 +110,8 @@ Process names (status and logs only) are looked up through `/proc/<pid>/fd` when
 | Param | Default | Meaning |
 |---|---|---|
 | `enabled` | 1 | 0: the sentry is not built and the rail behaves as before |
-| `idle_timeout_s` | 300 | no consumer for this long, then rail off |
-| `min_on_s` | 60 | never cut sooner than this after an ON |
+| `idle_timeout_s` | 0 | no consumer for this long, then rail off; 0 cuts on the first poll without one |
+| `min_on_s` | 0 | never cut sooner than this after an ON |
 | `poll_period_s` | 1.0 | /proc scan period, clamped to at least 1 s |
 | `udp_ports` | [2368, 2378] | lidar data ports |
 | `lidar_ips` | [192.168.1.201, 192.168.1.202] | PTC peers that count |

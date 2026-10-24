@@ -164,13 +164,31 @@ class Rig:
 
 @pytest.fixture
 def rig(monkeypatch):
-    return Rig(monkeypatch)
+    # The countdown cases run with a timer; the shipped default is no timer (see test_default_*).
+    return Rig(monkeypatch, idle_timeout_s=300, min_on_s=60)
 
 
 def test_params_defaults():
     p = RobotParams.get_params()[1]['sentry_lidar_idle']
-    assert p['enabled'] == 1 and p['idle_timeout_s'] == 300 and p['hold_timeout_s'] == 0
+    assert p['enabled'] == 1 and p['idle_timeout_s'] == 0 and p['min_on_s'] == 0 and p['hold_timeout_s'] == 0
     assert 'sentry_lidar_idle' in RobotParams.get_params()[1]['sentry_manager']['controllers']
+
+
+def test_default_cuts_on_first_poll_without_consumer(monkeypatch):
+    r = Rig(monkeypatch)
+    st = r.run(1)
+    assert r.pp.sent == [('off', 'sentry')] and st['rail_cmd'] == 'off'
+
+
+def test_default_follows_consumer_within_one_poll(monkeypatch):
+    r = Rig(monkeypatch)
+    r.run(1)
+    r.run(1, CONSUMER)
+    assert r.pp.sent[-1] == ('on', 'sentry')
+    r.run(30, CONSUMER)
+    assert r.pp.sent[-1] == ('on', 'sentry')
+    r.run(1)
+    assert r.pp.sent == [('off', 'sentry'), ('on', 'sentry'), ('off', 'sentry')]
 
 
 def test_startup_counts_down_then_cuts_at_idle_timeout(rig):
@@ -231,7 +249,7 @@ def test_release_restarts_countdown(rig):
 
 
 def test_hold_timeout_param(monkeypatch):
-    r = Rig(monkeypatch, hold_timeout_s=600)
+    r = Rig(monkeypatch, hold_timeout_s=600, idle_timeout_s=300, min_on_s=60)
     r.pp.set_lidar_on()
     st = r.run(1)
     assert st['held'] and st['hold_remaining_s'] == 600
