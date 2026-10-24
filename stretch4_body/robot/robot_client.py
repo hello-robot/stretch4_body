@@ -1338,7 +1338,7 @@ class WristJointClient(SubsystemClient):
         print('Hardware Error: Input Voltage Error: ', self.status['input_voltage_error'])
         print('Hardware Error: Overheating Error: ', self.status['overtemp_error'])
         print('Hardware Error: Motor Encoder Error: ', self.status['motor_encoder_error'])
-        print('Hardware Error: Over Current Error: ', self.status['over_current_error'])
+        print('Hardware Error: Over Current Error: ', self.status['overcurrent_error'])
         print('Hardware Error: Overload Error: ', self.status['overload_error'])
         print('Watchdog Errors: ', self.status['watchdog_errors'])
         print('Timestamp PC', self.status['timestamp_pc'])

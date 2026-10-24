@@ -109,3 +109,22 @@ def test_status_default_says_not_started():
     assert FeetechSMHello._firmware_unread('not started') == {
         'version': None, 'firmware_main': None, 'firmware_sub': None, 'model': None,
         'read_time': None, 'error': 'not started'}
+
+
+def test_over_current_bit_reaches_check_servo_errors():
+    from unittest.mock import MagicMock
+    from stretch4_body.core.feetech.protocol_packet_handler import ERRBIT_OVERELE
+    h = FeetechSMHello.__new__(FeetechSMHello)
+    h.name = 'wrist_yaw'
+    h.hw_valid = True
+    h.logger = MagicMock()
+    h.warn_error = False
+    h.ts_over_eff_start = None
+    h.params = {'stall_min_vel': 0.01, 'stall_max_effort': 100, 'stall_max_time': 1.0}
+    h.status = {'pos': 0.0, 'vel': 0.0, 'effort': 0.0}
+    h.get_braking_distance = lambda: 0.0
+    h.get_at_limit = lambda pos: False
+    h.pull_status({'x': None, 'v': None, 'current_mA': None, 'temp': None, 'ts': 0.0, 'err': ERRBIT_OVERELE})
+    assert h.status['overcurrent_error']
+    assert h.check_servo_errors() is False
+    assert h.warn_error
