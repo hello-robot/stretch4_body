@@ -3,8 +3,8 @@
 import argparse
 import time
 import numpy as np
-from scipy.optimize import curve_fit
 import stretch4_body.core.hello_utils as hu
+from stretch4_body.core.contact_fit import fit_contact_line, ContactFitError
 hu.print_stretch_re_use()
 
 parser=argparse.ArgumentParser(description='Collect data from stepper motor')
@@ -91,12 +91,15 @@ def collect_data(device, mode, r=device):
     time.sleep(0.2)
     acc = []
     eff = []
+    # The firmware threshold is coeff_acc * cmd.a_des with a_des in motor
+    # rad/s^2, so the fit uses the same. (The sample used to mix accel_m x
+    # 57.3 and the commanded a_des, which can read 0 while coasting.)
+    a_motor = device.translate_m_to_motor_rad(ades)
     while cnt < 2:
         eff.append(device.status['motor']['effort_ticks'])
-        acc.append(ades*57.29577951308232)
+        acc.append(a_motor)
         device.pull_status()
         eff.append(device.motor.status['effort_ticks'])
-        acc.append(device.motor._command['a_des'])
         if device.status['pos'] <= 1.1*xbottom and not goUp:
             goUp = True
             cnt = cnt + 1
@@ -124,9 +127,6 @@ def preprocess_data(eff_pos, eff_neg, skew_pos, skew_neg):
         eff_neg[i] += skew_neg
     return eff_pos, eff_neg
 
-def model(acc, a, b):
-    return a*acc + b;    
-    
 acc = []
 eff_pos = []
 eff_neg = []
@@ -144,8 +144,23 @@ while abs(device.status['pos']-xbottom) > 0.005:
     device.pull_status()
 print('Data collection ended')
 eff_pos, eff_neg = preprocess_data(eff_pos, eff_neg, skew_pos, skew_neg)
-coeff_pos, _ = curve_fit(model, acc, eff_pos)
-coeff_neg, _ = curve_fit(model, acc, eff_neg)
+# A profile whose peak effort sat at the current clamp says nothing about the
+# effort it needs; it is left out of the fit (core/contact_fit.py).
+clamp_pos = device.motor.current_to_effort_ticks(abs(device.motor.params['gains']['iMax_pos']))
+clamp_neg = device.motor.current_to_effort_ticks(abs(device.motor.params['gains']['iMax_neg']))
+try:
+    a_p, b_p, kept_p = fit_contact_line(acc, eff_pos, clamp_pos)
+    a_n, b_n, kept_n = fit_contact_line(acc, eff_neg, clamp_neg)
+except ContactFitError as e:
+    print('Calibration not saved:', e)
+    device.stop()
+    exit(1)
+for name, kept in (('pos', kept_p), ('neg', kept_n)):
+    for i, k in enumerate(kept):
+        if not k:
+            print('Profile %d %s effort at the current clamp, left out of the fit' % (i + 1, name))
+coeff_pos = np.array([a_p, b_p])
+coeff_neg = np.array([a_n, b_n])
 print("Old Coeff were : ")
 print("Pos Coeff: ", device.motor.params['gains']['coeff_acc_pos'], device.motor.params['gains']['coeff_intercept_pos'])
 print("Neg Coeff: ", device.motor.params['gains']['coeff_acc_neg'], device.motor.params['gains']['coeff_intercept_neg'])
