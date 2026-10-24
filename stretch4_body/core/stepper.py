@@ -1,4 +1,4 @@
-from typing import Any, TypedDict
+from typing import Any, Optional, TypedDict
 
 from stretch4_body.core.transport.transport import *
 from stretch4_body.core.device import Device
@@ -91,6 +91,14 @@ class StepperDefn():
     DIAG_TRAJ_WAITING_ON_SYNC = 8192  # DEPRECATED: Currently waiting on a sync signal before starting trajectory
     DIAG_IN_SYNC_MODE = 16384  # Currently running in sync mode
     DIAG_IS_TRACE_ON = 32768  # Is trace recording
+    DIAG_VEL_TRAJ_AT_ERROR_BOUND = 65536  # MODE_VEL_TRAJ tracking error held at gains.vTe_d this cycle
+    DIAG_VEL_WATCHDOG_EXPIRED = 131072  # No velocity command for 1 s, the board is ramping to zero
+
+    # First hello_stepper2 versions that report each bit. Older firmware never
+    # sets them, so there the status reads None (not known) rather than False.
+    # These follow the firmware branch numbers and move with them at merge.
+    DIAG_MIN_VERSION = {DIAG_VEL_TRAJ_AT_ERROR_BOUND: (0, 1, 10),
+                        DIAG_VEL_WATCHDOG_EXPIRED: (0, 1, 11)}
 
     CONFIG_SAFETY_HOLD = 1  # Hold position in safety mode? Otherwise freewheel
     CONFIG_ENABLE_RUNSTOP = 2  # Recognize runstop signal?
@@ -491,7 +499,8 @@ class StepperTrace(StepperDefn):
 
 class StepperAux(StepperDefn):
     def __init__(self):
-        self.status_aux={'cmd_cnt_rpc':0,'cmd_cnt_exec':0,'cmd_rpc_overflow':0,'sync_irq_cnt':0,'sync_irq_overflow':0}
+        self.status_aux={'cmd_cnt_rpc':0,'cmd_cnt_exec':0,'cmd_rpc_overflow':0,'sync_irq_cnt':0,'sync_irq_overflow':0,
+                         'enc_parity_err_cnt':None,'enc_ef_cnt':None}
         self._load_test_payload = arr.array('B', range(256)) * 4
     def push_load_test(self):
         """
@@ -550,6 +559,17 @@ class StepperAux(StepperDefn):
         sidx += 2
         self.status_aux['sync_irq_overflow'] = unpack_uint16_t(s[sidx:])
         sidx += 2
+        sidx += 2  # ctrl_cycle_cnt, not filled in by the firmware
+        # AS5047 frame counts since power-up, in firmware that sends them
+        # (StatusAux of 20 bytes). None on older firmware.
+        if len(s) >= sidx + 8:
+            self.status_aux['enc_parity_err_cnt'] = unpack_uint32_t(s[sidx:])
+            sidx += 4
+            self.status_aux['enc_ef_cnt'] = unpack_uint32_t(s[sidx:])
+            sidx += 4
+        else:
+            self.status_aux['enc_parity_err_cnt'] = None
+            self.status_aux['enc_ef_cnt'] = None
         return sidx
 
     def _rpc_status_aux_reply(self, reply):
@@ -705,6 +725,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
                        'transport': self.transport.status,'pos_calibrated':0,'runstop_on':0,'near_pos_setpoint':0,'near_vel_setpoint':0,
                        'is_moving':0,'is_moving_filtered':0,'is_drv_fault':0,'is_mg_accelerating':0,'is_mg_moving':0,'calibration_rcvd': 0,'in_guarded_event':0,
                        'in_safety_event':0,'waiting_on_sync':0,'in_sync_mode':0,'trace_on':0,'ctrl_cycle_cnt':0,
+                       'vel_traj_at_error_bound':None,'vel_watchdog_expired':None,
                        'voltage':0, 'temperature':0}
 
         self.status_zero=self.status.copy()
@@ -897,6 +918,8 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         print('       In Safety Event:', self.status['in_safety_event'])
         print('       Waiting on Sync:', self.status['waiting_on_sync'])
         print('       Trace recording:', self.status['trace_on'])
+        print('       VEL_TRAJ error at bound:', self.status['vel_traj_at_error_bound'])
+        print('       Velocity watchdog expired:', self.status['vel_watchdog_expired'])
 
     def pause_transport(self):
         self.transport.pause()
@@ -976,6 +999,23 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         sidx += 4
         return sidx
     
+    def _firmware_version_tuple(self):
+        """(major, minor, patch) of a hello-stepper2.vX.Y.ZpN firmware string, else None."""
+        v = self.board_info.get('firmware_version') if self.board_info else None
+        if not v or not v.startswith('hello-stepper2.v'):
+            return None
+        try:
+            return tuple(int(x) for x in v[len('hello-stepper2.v'):].split('p')[0].split('.'))
+        except ValueError:
+            return None
+
+    def _diag_if_supported(self, diag, bit):
+        """The diag bit as a bool if this firmware reports it, else None."""
+        v = self._firmware_version_tuple()
+        if v is None or v < self.DIAG_MIN_VERSION[bit]:
+            return None
+        return (diag & bit) > 0
+
     def _unpack_status(self,s,unpack_to=None):
 
         if unpack_to is None:
@@ -1009,6 +1049,8 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         unpack_to['waiting_on_sync'] = unpack_to['diag'] & self.DIAG_WAITING_ON_SYNC > 0
         unpack_to['in_sync_mode'] = unpack_to['diag'] & self.DIAG_IN_SYNC_MODE > 0
         unpack_to['trace_on'] = unpack_to['diag'] & self.DIAG_IS_TRACE_ON > 0
+        unpack_to['vel_traj_at_error_bound'] = self._diag_if_supported(unpack_to['diag'], self.DIAG_VEL_TRAJ_AT_ERROR_BOUND)
+        unpack_to['vel_watchdog_expired'] = self._diag_if_supported(unpack_to['diag'], self.DIAG_VEL_WATCHDOG_EXPIRED)
 
         # if unpack_to['diag'] & self.DIAG_TRAJ_WAITING_ON_SYNC > 0:
         #     unpack_to['waypoint_traj']['state']='waiting_on_sync'
@@ -1334,6 +1376,8 @@ class StepperStatus(TypedDict):
     in_sync_mode: int
     trace_on: int
     ctrl_cycle_cnt: int
+    vel_traj_at_error_bound: Optional[bool]
+    vel_watchdog_expired: Optional[bool]
     waypoint_traj: StepperBaseWaypointTrajStatus
     voltage: float
     temperature: float
