@@ -33,6 +33,9 @@ class OmniBase(Device):
         self.H0_inv = inverse_3x3_matrix(self.H0)
         self._init_odom = time.perf_counter()
         self.status['pose_time_s'] = None
+        self._odom_last_pos = None   # wheel motor positions at the last odometry step (rad)
+        self._odom_last_t = None     # monotonic time of the last odometry step (s)
+        self._odom_clock = time.monotonic
         self.lsvl=None #Line sensor velocity limit. Set by Robot when possible.
         self.contact_sensitivity_pos = 0.5
         self.contact_sensitivity_neg = 0.5
@@ -487,14 +490,20 @@ class OmniBase(Device):
             log[w.name]=w.get_rate_log()
         return log
 
+    # A wheel position step further than this from speed x time is not motion
+    # (board reset, a re-marked position): that step falls back to speed x time.
+    ODOM_MAX_POS_JUMP_RAD = 2.0
+
     def _update_odom(self, dt):
         """
         Calculate SE2 position of the base in odom frame from wheel odometry
         Important:
          - Assumes pull_status() was just called
-         - Assumes the user calls this method at a regular frequency (>30hz)
 
-        dt: 1/frequency at which this method is called
+        dt: None (normal use) integrates the change in wheel encoder position
+        since the last call, so the result does not depend on how regularly
+        this is called or on the host clock. A number integrates the status
+        wheel speeds over dt seconds instead, as before.
         """
         wheel_speeds = np.array([self.wheels[0].status['vel'],
                                  self.wheels[1].status['vel'],
@@ -504,15 +513,23 @@ class OmniBase(Device):
         self.status['y_vel'] = float(Vb[1])
         self.status['theta_vel'] = float(Vb[2])
 
+        pos = np.array([w.status['pos'] for w in self.wheels], dtype=float)
+        last_pos = self._odom_last_pos
+        self._odom_last_pos = pos
         if dt is None:
-            if self.status['pose_time_s'] is None:
-                #print("pose_time_s is NONE")
-                self.status['pose_time_s'] = time.time()
+            t = self._odom_clock()
+            dt = 0.0 if self._odom_last_t is None else t - self._odom_last_t
+            self._odom_last_t = t
+            Sb = Vb * dt
+            if last_pos is not None:
+                d_motor = pos - last_pos
+                if np.all(np.abs(d_motor - wheel_speeds * dt) < self.ODOM_MAX_POS_JUMP_RAD):
+                    Sb = self.H0_inv @ (d_motor / self.params['gr'])
+        else:
+            Sb = Vb * dt
 
-            dt = time.time() - self.status['pose_time_s']
-
-        Sb = Vb*dt
-        Sb = rotation_3x3_matrix(self.status['theta']) @ Sb
+        # Rotate the step into the odom frame at the heading halfway through it.
+        Sb = rotation_3x3_matrix(self.status['theta'] + float(Sb[2]) / 2) @ Sb
         self.status['x'] += float(Sb[0])
         self.status['y'] += float(Sb[1])
         self.status['theta'] += float(Sb[2])
