@@ -125,9 +125,13 @@ class RobotClient(SubsystemClient):
         """
         self.logger.info('Starting robot homing routine')
         finished, rid = self.routines.routine_robot_home(do_push, wait_on_completion, timeout, do_pull)
-        if wait_on_completion:  
-            if not finished:
+        if wait_on_completion:
+            if not finished and self.status['routines'].get('last_routine_id') != rid:
                 self.logger.error("Homing routine timed out before completion.")
+            elif not finished and self.is_runstopped():
+                self.logger.error("Cannot home while run-stopped")
+            elif not finished:
+                self.logger.error("Homing routine failed.")
             else:
                 self.logger.info("Homing routine ended.")
         else:
