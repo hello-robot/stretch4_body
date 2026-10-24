@@ -10,6 +10,7 @@ import numpy
 from stretch4_body.core.device import Device
 from stretch4_body.core.feetech.feetech_SM_servo import *
 from stretch4_body.core.feetech.protocol_packet_handler import *
+from stretch4_body.core.feetech.moving_goal import MovingGoal
 from stretch4_body.core.hello_utils import *
 class FeetechCommErrorStats(Device):
     def __init__(self, name, logger):
@@ -126,6 +127,13 @@ class FeetechSMHello(Device):
             self.vel_brake_zone_thresh = 0.2  # initial/minimum brake zone thresh value
             self._prev_set_vel_ts = None
             self._is_moving = False
+            # set_velocity moves a goal position (moving_goal.py); see set_velocity.
+            m = self.params['motion']
+            self._vel_goal = MovingGoal(lead_s=m.get('vel_goal_lead_s', 0.04),
+                                        max_lag_rad=m.get('vel_goal_max_lag_rad', 0.5))
+            self._vel_goal_timeout_s = m.get('vel_goal_timeout_s', 1.0)
+            self._vel_goal_last_cmd = None
+            self._clock = time.monotonic
 
             self.ts_collision_stop = {'pos': 0.0, 'neg': 0.0}
 
@@ -354,6 +362,7 @@ class FeetechSMHello(Device):
                 self.enable_torque()
             self.motor.enable_pwm()
             self.in_vel_mode = False
+            self._leave_vel_goal()
         except (termios.error, FeetechCommError):
             self.logger.warning('FeetechSMHello communication error during enable_pwm on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
@@ -365,6 +374,7 @@ class FeetechSMHello(Device):
             return
         try:
             self.in_vel_mode = True
+            self._leave_vel_goal()
             if not self.status['torque_enabled']:
                 self.enable_torque()
             self.motor.enable_vel()
@@ -386,6 +396,7 @@ class FeetechSMHello(Device):
             return
         self.motor.disable_torque()
         self.status['torque_enabled'] = False
+        self._leave_vel_goal()
 
     def set_motion_params(self, v_des=None, a_des=None, force=False):
         try:
@@ -650,6 +661,7 @@ class FeetechSMHello(Device):
             self.motor.disable_torque()
             self.motor.enable_torque()
             self._is_moving = False
+            self._leave_vel_goal()
         except (termios.error, FeetechCommError):
             self.logger.warning('FeetechSMHello communication error during quick_stop on %s: ' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
@@ -676,6 +688,7 @@ class FeetechSMHello(Device):
         if not self._is_moving:
             return False
 
+        self._leave_vel_goal()
         if self.in_vel_mode or not self.status['torque_enabled']:
             self.enable_pos()
 
@@ -764,6 +777,7 @@ class FeetechSMHello(Device):
                 if self.params['enable_torque_after_runstop']:
                     self.enable_torque()
         self.was_runstopped=is_runstopped
+        self._step_vel_goal_watchdog()
 
     def pause_sentry(self):
         self.sentry_paused = True
@@ -833,6 +847,7 @@ class FeetechSMHello(Device):
             )
             return
 
+        self._leave_vel_goal()
         if self.in_vel_mode or not self.status['torque_enabled']:
             self.enable_pos()
         # print('Motion Params',v_des,a_des)
@@ -912,7 +927,18 @@ class FeetechSMHello(Device):
 
     def set_velocity(self, v_des: float, a_des: float | None = None) -> None:
         """
-        Command the motor to move at a target velocity.
+        Command the joint to move at a target velocity.
+
+        The servo stays in position mode and follows a goal that moves at the
+        commanded velocity (moving_goal.py): the goal speed ramps to v_des at
+        a_des, the goal moves by speed x the time since the last call, it is
+        never re-based on the measured position, it stays within
+        vel_goal_max_lag_rad of it, and it stops on the soft limits. Call it
+        every cycle while moving. v_des = 0 ramps to a stop and holds there.
+        With no call for vel_goal_timeout_s the goal stops where it is
+        (step_sentry). move_to, move_by, hold, pwm, torque off and runstop
+        leave this mode; the next set_velocity starts again from the measured
+        position.
 
         Args:
             v_des: Target velocity in radians per second.
@@ -926,61 +952,77 @@ class FeetechSMHello(Device):
             return
         if self.was_runstopped:
             return
-
-        if abs(v_des) <= self.params['motion']['vel_is_moving_thresh']:
-            self.hold_position()
-            return
-
-        v = min(self.params['motion']['max']['vel'], abs(v_des))
-
-        if self.status['in_collision_stop']['pos'] and v_des > 0:
-            self._prev_set_vel_ts = time.time()
-            self.logger.warning(
-                'set_velocity in collision . Motion disabled in direction %s for %s. Not executing set_velocity' % (
-                    'pos', self.name),
-                extra={'throttle_s': 1.0}
-            )
-            return
-
-        if self.status['in_collision_stop']['neg'] and v_des < 0:
-            self._prev_set_vel_ts = time.time()
-            self.logger.warning(
-                'set_velocity in collision. Motion disabled in direction %s for %s. Not executing set_velocity' % (
-                    'neg', self.name),
-                extra={'throttle_s': 1.0}
-            )
-            return
-
-        v_des = -1 * v if v_des < 0 else v
-        nretry = 2
         if not self.hw_valid:
             return
         if self.params['req_calibration'] and not self.status['pos_calibrated']:
             self.logger.warning('Feetech not calibrated: %s' % self.name)
             print('Feetech not calibrated:', self.name)
             return
-        success = False
 
-        if not self.in_vel_mode or not self.status['torque_enabled']:
-            self.enable_velocity_ctrl()
+        m = self.params['motion']
+        v_max = m['max']['vel']
+        v_des = max(-v_max, min(v_max, v_des))
+        if abs(v_des) <= m['vel_is_moving_thresh']:
+            v_des = 0.0
+        a = m['default']['accel'] if a_des is None else min(m['max']['accel'], abs(a_des))
+        if a <= 0:
+            a = m['default']['accel']
 
+        if self.status['in_collision_stop']['pos'] and v_des > 0:
+            self.logger.warning(
+                'set_velocity in collision. Motion disabled in direction %s for %s. Stopping' % ('pos', self.name),
+                extra={'throttle_s': 1.0})
+            v_des = 0.0
+        if self.status['in_collision_stop']['neg'] and v_des < 0:
+            self.logger.warning(
+                'set_velocity in collision. Motion disabled in direction %s for %s. Stopping' % ('neg', self.name),
+                extra={'throttle_s': 1.0})
+            v_des = 0.0
+
+        now = self._clock()
+        nretry = 2
         for i in range(nretry):
             try:
-                if self.params['set_safe_velocity'] and self.in_vel_brake_zone:  # in_vel_brake_zone only when sentry is active
-                    self._step_vel_braking(v_des, a_des)
-                else:
-                    self.set_motion_params(a_des=a_des)
-                    t_des = self.world_rad_to_ticks_per_sec(v_des)
-                    self.motor.set_vel(t_des)
-                    self._prev_set_vel_ts = time.time()
-                self._is_moving = True
-                success = True
+                if not self._vel_goal.active:
+                    if v_des == 0.0:
+                        return  # not moving under set_velocity, nothing to stop
+                    if self.in_vel_mode or not self.status['torque_enabled']:
+                        self.enable_pos()
+                    # The goal does the ramp; let the servo follow it as fast as it can.
+                    self.set_motion_params(v_des=m['max']['vel'], a_des=m['max']['accel'])
+                    self._vel_goal.start(self.status['pos'], now)
+                lo, hi = self.get_soft_motion_limits()
+                goal = self._vel_goal.step(v_des, a, now, lo, hi, x_measured=self.status['pos'])
+                self.motor.go_to_pos(self.world_rad_to_ticks(goal))
+                self._vel_goal_last_cmd = now
+                self._prev_set_vel_ts = time.time()
+                self._is_moving = self._vel_goal.v != 0.0
                 break
             except(termios.error, FeetechCommError, IndexError):
                 self.logger.warning('FeetechSMHello communication error during set_velocity on %s: ' % self.name)
                 self.comm_errors.add_error(rx=True, gsr=False)
                 if self.bubble_up_comm_exception:
                     raise FeetechCommError
+
+    def _leave_vel_goal(self):
+        if hasattr(self, '_vel_goal'):
+            self._vel_goal.leave()
+            self._vel_goal_last_cmd = None
+
+    def _step_vel_goal_watchdog(self):
+        """Stop a set_velocity goal that has had no command for vel_goal_timeout_s."""
+        g = getattr(self, '_vel_goal', None)
+        if g is None or not g.active or g.v == 0.0 or self._vel_goal_last_cmd is None:
+            return
+        if self._clock() - self._vel_goal_last_cmd < self._vel_goal_timeout_s:
+            return
+        try:
+            self.motor.go_to_pos(self.world_rad_to_ticks(g.freeze()))
+            self._is_moving = False
+            self.status['watchdog_errors'] = self.status.get('watchdog_errors', 0) + 1
+            self.logger.warning(f'No set_velocity for {self._vel_goal_timeout_s} s on {self.name}, stopped')
+        except (termios.error, FeetechCommError):
+            self.comm_errors.add_error(rx=False, gsr=False)
 
     def _step_vel_braking(self, v_des, a_des):
         """
