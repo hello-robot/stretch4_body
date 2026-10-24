@@ -297,7 +297,8 @@ class FakeClient:
         self.status['pimu'] = self.status['power_periph']
         self.status['base'] = self.status['omnibase']
 
-    def startup(self):
+    def startup(self, **kwargs):
+        self.startup_kwargs = kwargs
         return True
 
     def pull_status(self):
@@ -340,6 +341,15 @@ def test_daemon_logs_each_sample_as_it_was_polled(tmp_path):
     assert len(samples) == 12
     assert [s['lift']['pos'] for s in samples] == pytest.approx([0.5 + 0.001 * i for i in range(12)])
     assert [s['pimu']['power_event_log']['cursor_sequence'] for s in samples] == [9] * 7 + [10] * 5
+
+
+def test_daemon_waits_for_the_server_to_come_up(tmp_path):
+    """The logger starts while the server is still booting; one try lost the whole boot's log."""
+    do_exit = multiprocessing.Event()
+    client = FakeClient(1, do_exit)
+    sl.writer_daemon(str(tmp_path), 1000.0, do_exit, 5000, logging.getLogger('test'),
+                     client_factory=lambda: client)
+    assert client.startup_kwargs == {'block_timeout_s': 60.0}
 
 
 def test_daemon_starts_every_file_complete_and_never_overwrites(tmp_path):

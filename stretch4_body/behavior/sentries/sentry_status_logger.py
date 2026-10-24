@@ -105,7 +105,7 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
 
     # Set up client to communicate with RobotServer asynchronously without blocking its loops
     r = client_factory()
-    if not r.startup():
+    if not r.startup(block_timeout_s=60.0):
         logger.error("SentryStatusLogger daemon failed to start RobotClient")
         return
 
