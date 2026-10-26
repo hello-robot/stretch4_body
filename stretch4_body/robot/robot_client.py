@@ -122,6 +122,8 @@ class RobotClient(SubsystemClient):
         
         The call blocks until completion.
         """
+        if self._refuse_if_runstopped('home'):
+            return False
         self.logger.info('Starting robot homing routine')
         finished, rid = self.routines.routine_robot_home(do_push, wait_on_completion, timeout, do_pull)
         if wait_on_completion:  
@@ -899,6 +901,8 @@ class PrismaticJointClient(SubsystemClient):
         This moves the joint to the hard stop to calibrate its position.
         Blocking call.
         """
+        if self._refuse_if_runstopped('home %s' % self.name):
+            return False
         self.logger.info('Homing %s...'%self.name)
         rid=self._queue_command(subsystem="routines", command="routine_%s_home"%self.name)
         self.push_command()
@@ -1222,6 +1226,8 @@ class WristJointClient(SubsystemClient):
         timeout : float, optional
             Timeout in seconds, by default 20.
         """
+        if self._refuse_if_runstopped('home %s' % self.joint_name):
+            return False
         rid = self._queue_command(subsystem="routines", command="routine_wrist_joint_home",joint_name=self.joint_name,end_pos=end_pos)
         self.push_command(priority=3)
         if wait_on_completion:
@@ -1552,6 +1558,8 @@ class EndOfArmClient(SubsystemClient):
         timeout : float, optional
             Timeout in seconds, by default 45.
         """
+        if self._refuse_if_runstopped('home %s' % self.name):
+            return False
         rid=self._queue_command(subsystem="routines", command="routine_end_of_arm_home")
         self.logger.info('Homing %s ...'%self.name)
         self.push_command()
