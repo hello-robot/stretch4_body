@@ -277,6 +277,10 @@ class FeetechSMServo():
         if self.port_handler is None:# or not self.port_handler.is_open:
             self.port_handler = PortHandler(self.usb)
         self.packet_handler = sms_sts(self.port_handler)
+        if self.port_handler.is_open and self.port_handler.getBaudRate() == self.baud:
+            # Port shared with a chain and already open. Reopening it would disrupt the other servos on the bus
+            self.hw_valid = True
+            return True
         if not self.port_handler.openPort():
             self.packet_handler=None
             self.port_handler = None

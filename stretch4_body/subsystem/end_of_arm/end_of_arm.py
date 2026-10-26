@@ -1,3 +1,4 @@
+import inspect
 import threading
 from enum import Enum
 
@@ -405,6 +406,16 @@ class EndOfArm(FeetechSMChain):
         """
         #Naive version. Should override with tool specific safe motions.
         raise NotImplementedError('EndOfArm Homing not implemented at this level.')
+
+    def home_unhomed(self, wait_on_completion=True):
+        """
+        Homes only the joints that need it, eg. the ones that went offline when a tool was swapped
+        over the quick connect (see FeetechSMChain._step_reconnect).
+        Tools whose home() does not take only_unhomed are fully homed instead.
+        """
+        if 'only_unhomed' in inspect.signature(self.home).parameters:
+            return self.home(wait_on_completion=wait_on_completion, only_unhomed=True)
+        return self.home(wait_on_completion=wait_on_completion)
 
     def home_joint(self, joint_name=None,end_pos=0,wait_on_completion:bool=True):
         """

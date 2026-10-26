@@ -113,17 +113,19 @@ class RobotClient(SubsystemClient):
         if self.is_server_active():
             self.stop()
 
-    def home(self, do_push=True,wait_on_completion=True,timeout=60, do_pull=True):
+    def home(self, do_push=True,wait_on_completion=True,timeout=60, do_pull=True, only_unhomed=False):
         """
         Home the robot.
         
         This routine homes all the joints of the robot. This is required to match the
         internal kinematic model with the physical robot state.
+        If only_unhomed, joints that are already homed are skipped, eg. so that swapping
+        a tool over the quick connect only homes that tool's joints.
         
         The call blocks until completion.
         """
         self.logger.info('Starting robot homing routine')
-        finished, rid = self.routines.routine_robot_home(do_push, wait_on_completion, timeout, do_pull)
+        finished, rid = self.routines.routine_robot_home(do_push, wait_on_completion, timeout, do_pull, only_unhomed)
         if wait_on_completion:  
             if not finished:
                 self.logger.error("Homing routine timed out before completion.")
@@ -326,7 +328,7 @@ class RoutinesClient(SubsystemClient):
         if do_push:
             self.push_command()
 
-    def run(self, routine_name, do_push=True, wait_on_completion=True, timeout=20, do_pull=True, priority=0):
+    def run(self, routine_name, do_push=True, wait_on_completion=True, timeout=20, do_pull=True, priority=0, **kwargs):
         """
         Run a specified routine.
         
@@ -347,6 +349,8 @@ class RoutinesClient(SubsystemClient):
             Timeout in seconds to wait for completion, by default 20.
         do_pull : bool, optional
             If wait_on_completion, whether to call pull_status() within this method.
+        **kwargs
+            Passed on to the routine's run().
         Returns
         -------
         bool, rid
@@ -356,7 +360,7 @@ class RoutinesClient(SubsystemClient):
              - or routine completed but failed
             rid is the id of the routine that was/is running
         """
-        rid=self._queue_command(subsystem="routines", command=routine_name)
+        rid=self._queue_command(subsystem="routines", command=routine_name, **kwargs)
         if do_push:
             self.push_command(priority=priority)
         if wait_on_completion:
@@ -402,7 +406,7 @@ class RoutinesClient(SubsystemClient):
         """
         return self.run('routine_wrist_handedness', do_push, wait_on_completion, timeout, do_pull)
 
-    def routine_robot_home(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
+    def routine_robot_home(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True,only_unhomed=False):
         """
         Run the robot home routine.
         
@@ -416,8 +420,11 @@ class RoutinesClient(SubsystemClient):
             Timeout in seconds, by default 20.
         do_pull : bool, optional
             If wait_on_completion, whether to call pull_status() within this method.
+        only_unhomed : bool, optional
+            If True, skip the joints that are already homed.
         """
-        return self.run('routine_robot_home', do_push, wait_on_completion, timeout, do_pull, priority=3)
+        kwargs = {'only_unhomed': True} if only_unhomed else {}
+        return self.run('routine_robot_home', do_push, wait_on_completion, timeout, do_pull, priority=3, **kwargs)
 
     def routine_wrist_joint_home(self,joint_name,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
         """

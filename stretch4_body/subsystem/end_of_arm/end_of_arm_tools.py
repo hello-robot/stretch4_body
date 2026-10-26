@@ -7,6 +7,12 @@ import time
 
 # ##########################################################3#
 
+WRIST_JOINTS = ('wrist_pitch', 'wrist_roll', 'wrist_yaw')
+
+def _needs_homing(eoa: "EndOfArm", joints):
+    """True if any of the joints present needs homing (eg. it went offline and was reconnected)"""
+    return any(eoa.motors[j].is_calibration_required() for j in joints if j in eoa.motors)
+
 def _home_joint(eoa: "EndOfArm", joint_name: str):
     """
     Homes one wrist joint and leaves it at the tool's `homing` position for that joint (radians),
@@ -20,15 +26,18 @@ def _home_joint(eoa: "EndOfArm", joint_name: str):
         return False
     return True
 
-def _home_tool_joints(eoa: "EndOfArm"):
+def _home_tool_joints(eoa: "EndOfArm", only_unhomed=False):
     """
     Homes every configured joint besides the three wrist joints -- the tool's own actuated
     joint(s), present only when the tool declared a driver. Each one's final position after
     homing comes from `homing.<joint_name>` in the tool's params, in that joint's own
     command/actuator units, defaulting to 0 (closed, for a gripper).
+    only_unhomed: skip the joints that are already homed.
     """
     for joint in eoa.motors:
-        if joint in ('wrist_pitch', 'wrist_roll', 'wrist_yaw'):
+        if joint in WRIST_JOINTS:
+            continue
+        if only_unhomed and not _needs_homing(eoa, [joint]):
             continue
         end_pos = eoa.params.get('homing', {}).get(joint, 0)
         if not eoa.motors[joint].home(end_pos=end_pos) or eoa.cancel_homing_event.is_set():
@@ -36,23 +45,30 @@ def _home_tool_joints(eoa: "EndOfArm"):
             return False
     return True
 
-def home_dw4_joints(eoa: "EndOfArm"):
-    success = eoa.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+def home_dw4_joints(eoa: "EndOfArm", only_unhomed=False):
+    """
+    only_unhomed: home only what needs it, eg. after a tool swap over the quick connect only the
+    gripper needs homing. The wrist is homed as a unit whenever any of its joints needs it, as
+    pre-homing drives pitch in PWM mode (invalidating its calibration) and the homing order keeps
+    the joints clear of each other.
+    """
+    if not only_unhomed or _needs_homing(eoa, WRIST_JOINTS):
+        success = eoa.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
 
-    if not success or eoa.cancel_homing_event.is_set():
-        eoa.logger.error("Wrist pitch pre-homing failed")
-        return False
+        if not success or eoa.cancel_homing_event.is_set():
+            eoa.logger.error("Wrist pitch pre-homing failed")
+            return False
 
-    time.sleep(0.5)
-    if not _home_joint(eoa, 'yaw'):
-        return False
-    if not _home_joint(eoa, 'roll'):
-        return False
-    eoa.motors['wrist_pitch'].motor.set_overcurrent(eoa.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
-    if not _home_joint(eoa, 'pitch'):
-        return False
+        time.sleep(0.5)
+        if not _home_joint(eoa, 'yaw'):
+            return False
+        if not _home_joint(eoa, 'roll'):
+            return False
+        eoa.motors['wrist_pitch'].motor.set_overcurrent(eoa.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
+        if not _home_joint(eoa, 'pitch'):
+            return False
 
-    return _home_tool_joints(eoa)
+    return _home_tool_joints(eoa, only_unhomed)
 
 
 class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
@@ -75,11 +91,11 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
         self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
         self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
 
-    def home(self, wait_on_completion=True):
+    def home(self, wait_on_completion=True, only_unhomed=False):
         def _do_home():
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
-            success = home_dw4_joints(self)
+            success = home_dw4_joints(self, only_unhomed)
             self.status['is_homing'] = False
             return success
         if wait_on_completion:
@@ -120,12 +136,12 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
 
         self.move_to('stretch_gripper', self.params['stow']['stretch_gripper'])
 
-    def home(self, wait_on_completion=True):
+    def home(self, wait_on_completion=True, only_unhomed=False):
         def _do_home():
             self.logger.debug(f'Homing {self.name} started.')
             start_time = time.time()
             self.status['is_homing'] = True
-            success = home_dw4_joints(self)
+            success = home_dw4_joints(self, only_unhomed)
             self.status['is_homing'] = False
             self.logger.debug(f'Homing {self.name} completed in {time.time() - start_time} seconds.')
             return success
@@ -168,11 +184,11 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
 
         self.move_to('parallel_gripper', self.params['stow']['parallel_gripper'])
 
-    def home(self, wait_on_completion=True):
+    def home(self, wait_on_completion=True, only_unhomed=False):
         def _do_home():
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
-            success = home_dw4_joints(self)
+            success = home_dw4_joints(self, only_unhomed)
             self.status['is_homing'] = False
             return success
 
@@ -207,11 +223,11 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
         self.logger.info(f"Wrist yaw stow position: {self.params['stow']['wrist_yaw']}")
 
-    def home(self, wait_on_completion=True):
+    def home(self, wait_on_completion=True, only_unhomed=False):
         def _do_home():
             self.logger.info(f'Homing {self.name}')
             self.status['is_homing'] = True
-            success = self._home_tablet_joints()
+            success = self._home_tablet_joints(only_unhomed)
             self.status['is_homing'] = False
             return success
         if wait_on_completion:
@@ -221,7 +237,9 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
         thread.start()
         return None
 
-    def _home_tablet_joints(self):
+    def _home_tablet_joints(self, only_unhomed=False):
+        if only_unhomed and not _needs_homing(self, WRIST_JOINTS):
+            return True
         success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
 
         if not success or self.cancel_homing_event.is_set():

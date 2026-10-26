@@ -71,10 +71,15 @@ class RoutineEndOfArmHome(RoutineHome):
         def is_not_homing():
             return not self.robot.eoa_loop.status['is_homing']
 
+        # only_unhomed: home only the joints that need it, eg. the ones swapped over the quick connect
+        only_unhomed = kwargs.pop('only_unhomed', False)
+        if only_unhomed and self.robot.eoa_loop.is_homed():
+            self.logger.info('%s already homed' % self.name.capitalize())
+            return True
         kwargs['wait_on_completion'] = False
 
-        cmd = ['end_of_arm', 'home', cmd_id,args,kwargs]
-        
+        cmd = ['end_of_arm', 'home_unhomed' if only_unhomed else 'home', cmd_id,args,kwargs]
+
         self.robot.eoa_loop.q_cmd.put(cmd)
         self.wait_duration(1.5) #Let homing begin
         
@@ -252,11 +257,20 @@ class RoutineRobotHome(RoutineHome):
 
 
     def _run_homing(self,cmd_id,*args, **kwargs):
+        """
+        only_unhomed (kwarg): skip the joints that are already homed, eg. so that swapping a tool
+        over the quick connect only homes that tool's joints.
+        """
+        only_unhomed = kwargs.get('only_unhomed', False)
+        def needs_homing(subsystem_name):
+            subsystem = self.robot.get_subsystem(subsystem_name)
+            return subsystem is not None and not (only_unhomed and subsystem.is_homed())
+
         success = True
-        if success and self.robot.get_subsystem('lift') is not None:
+        if success and needs_homing('lift'):
             self.active_subroutine = RoutineLiftHome(self.robot)
             success = success and self.active_subroutine._run_homing(cmd_id,*args,**kwargs)
-        if success and self.robot.get_subsystem('arm') is not None:
+        if success and needs_homing('arm'):
             self.active_subroutine = RoutineArmHome(self.robot)
             success = success and self.active_subroutine._run_homing(cmd_id,*args, **kwargs)
         if success and self.robot.get_subsystem('end_of_arm') is not None:
