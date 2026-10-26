@@ -1,12 +1,18 @@
 
-from enum import auto
-from enum import Enum
-from typing import TYPE_CHECKING
-from stretch4_body.core.hello_utils import *
+from enum import (
+    auto,
+    Enum,
+)
 import math
+from typing import (
+    Any,
+    TYPE_CHECKING,
+)
 
-import coal # do not remove this unused import; it is needed by pinocchio
-import pinocchio as pin
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
+from stretch4_body.core.hello_utils import *
 from stretch4_kinematics.state import StretchJointPositions
 
 if TYPE_CHECKING:
@@ -14,6 +20,53 @@ if TYPE_CHECKING:
 
 FLYING_GRIPPER_FRAME = "tool_attachment_site_link"
 """Frame controlled by the FLYING_GRIPPER_IK mapping."""
+
+
+def _compute_ee_err_local(current_pose: Any, anchor_pose: Any) -> np.ndarray:
+    """
+    Compute the 6D local end-effector error vector in SE(3).
+
+    Calculates the spatial twist error [v, w] in the current local tool frame
+    from current and anchor poses without relying on Pinocchio.
+
+    Args:
+        current_pose: Current end-effector pose object with rotation (3x3)
+            and translation (3,) attributes.
+        anchor_pose: Anchor end-effector pose object with rotation (3x3)
+            and translation (3,) attributes.
+
+    Returns:
+        6-element numpy array containing 3D linear velocity error followed by
+        3D angular velocity error in the current local frame.
+    """
+    r_cur = current_pose.rotation
+    p_cur = current_pose.translation
+    r_anc = anchor_pose.rotation
+    p_anc = anchor_pose.translation
+
+    r_rel = r_cur.T @ r_anc
+    p_rel = r_cur.T @ (p_anc - p_cur)
+
+    # Angular error via SO(3) logarithm (rotation vector)
+    rot = R.from_matrix(r_rel)
+    w = rot.as_rotvec()
+    theta = float(np.linalg.norm(w))
+
+    # Linear error via SE(3) left Jacobian inverse: v = V^-1 * p_rel
+    w_cross = np.array([
+        [0.0, -w[2], w[1]],
+        [w[2], 0.0, -w[0]],
+        [-w[1], w[0], 0.0],
+    ])
+    if theta < 1e-6:
+        alpha = 1.0 / 12.0 + theta**2 / 720.0
+    else:
+        alpha = (1.0 - (theta / (2.0 * np.tan(theta / 2.0)))) / (theta**2)
+
+    v_inv = np.eye(3) - 0.5 * w_cross + alpha * (w_cross @ w_cross)
+    v = v_inv @ p_rel
+
+    return np.concatenate([v, w])
 
 class ControlMapping(Enum):
     """
@@ -322,7 +375,21 @@ class ControlMapping(Enum):
          
         return actuated_joints
 
-    def _map_flying_gripper_ik(self, robot, gamepad_teleop: "GamePadTeleop") -> dict:
+    def _map_flying_gripper_ik(self, robot: Any, gamepad_teleop: "GamePadTeleop") -> dict[str, float]:
+        """
+        Map gamepad input to Cartesian flying gripper inverse kinematics and base motion.
+
+        Computes velocity commands for the arm, lift, wrist, and mobile base using differential
+        inverse kinematics or nullspace control depending on trigger and stick inputs.
+
+        Args:
+            robot: Robot hardware client or instance.
+            gamepad_teleop: Gamepad teleoperation controller providing current joystick state
+                and command objects.
+
+        Returns:
+            Dictionary mapping actuated joint names to commanded velocities.
+        """
         kinematics = gamepad_teleop.flying_gripper_kinematics
 
         current_pos = StretchJointPositions(
@@ -414,7 +481,7 @@ class ControlMapping(Enum):
                 gamepad_teleop.nullspace_anchor = (kinematics.forward(current_pos, FLYING_GRIPPER_FRAME).copy(), current_pos.base_theta)
             anchor_pose, anchor_theta = gamepad_teleop.nullspace_anchor
             current_pose = kinematics.forward(current_pos, FLYING_GRIPPER_FRAME)
-            ee_err_local = pin.log(current_pose.actInv(anchor_pose)).vector
+            ee_err_local = _compute_ee_err_local(current_pose, anchor_pose)
             kp_ee = 2.0
 
             base_to_world = np.array([[np.cos(anchor_theta), -np.sin(anchor_theta)], [np.sin(anchor_theta), np.cos(anchor_theta)]])
