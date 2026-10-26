@@ -1,4 +1,5 @@
 from stretch4_body.core.device import Device
+from stretch4_body.robot.robot import Robot
 import time
 
 # #########################################################3
@@ -6,7 +7,7 @@ class Routine(Device):
     """ Base class for all routines """
     def __init__(self,name,robot,timeout=None, req_params=False):
         Device.__init__(self,name,req_params)
-        self.robot=robot
+        self.robot:Robot=robot
         self.timeout=timeout
 
         self.is_canceled = False
@@ -21,7 +22,7 @@ class Routine(Device):
         return Device.startup(self)
 
     def check_runstop(self):
-        if not self.is_canceled and 'power_periph' in self.robot.status and self.robot.status['power_periph']['runstop_event']:
+        if not self.is_canceled and self.robot.is_runstopped():
             self.logger.warning(f"Routine {self.name} canceled during `check_runstop`.")
             self.cancel()
             
@@ -121,6 +122,24 @@ class Routine(Device):
                 return True
         self.logger.warning(f"Routine {self.name} timed out during `wait_on_cb`.")
         return False
+    
+    def pause_behaviors(self):
+        """Pause sentries and safe_motion controllers (subject to exclusion lists).
+        Returns (sm_to_pause, sentry_to_pause) so they can be unpaused later."""
+        exclude_sentry_pause = self.params.get('exclude_sentry_pause', [])
+        exclude_safe_m_pause = self.params.get('exclude_safe_motion_pause', [])
+
+        sm_to_pause = [k for k in self.robot.safe_motion_manager.controllers.keys() if k not in exclude_safe_m_pause]
+        sentry_to_pause = [k for k in self.robot.sentry_manager.sentries.keys() if k not in exclude_sentry_pause]
+
+        self.robot.safe_motion_manager.pause(sm_to_pause)
+        self.robot.sentry_manager.pause(sentry_to_pause)
+        return sm_to_pause, sentry_to_pause
+
+    def unpause_behaviors(self, sm_to_pause, sentry_to_pause):
+        """Unpause previously paused sentries and safe_motion controllers."""
+        self.robot.safe_motion_manager.unpause(sm_to_pause)
+        self.robot.sentry_manager.unpause(sentry_to_pause)
 
 class RoutineNOP(Routine):
     """

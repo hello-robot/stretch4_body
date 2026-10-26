@@ -1318,6 +1318,8 @@ nominal_params={
     'routine_robot_stow':{
         'py_module_name': 'stretch4_body.behavior.routines.routine_stow',
         'py_class_name': 'RoutineRobotStow',
+        'exclude_sentry_pause': ['sentry_status_logger','sentry_ubuntu_power_management','sentry_cpu_temp'],
+        'exclude_safe_motion_pause': ['safe_motion_overtilt_avoid'],
         'enabled': 1
     },
     'routine_wrist_handedness':{

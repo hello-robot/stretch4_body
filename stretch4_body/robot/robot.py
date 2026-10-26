@@ -98,13 +98,6 @@ class Robot(RobotCore):
 
         self.GLOBAL_EXCEPTIONS_LIST.append(Exec[thread_name])
 
-
-    def enable_collision_mgmt(self):
-        pass #self.collision.enable() #legacy
-
-    def disable_collision_mgmt(self):
-        pass #self.collision.disable() #legacy
-
     def get_stow_pos(self, joint):
         """
         Return the stow position of a joint.
