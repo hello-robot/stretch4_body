@@ -360,6 +360,21 @@ def test_report_shows_a_tripped_eoa_output():
     assert cli.report_dict(st, evaluate(st), 'live')['key_values']['EOA output'].startswith('tripped')
 
 
+def test_charging_text_names_where_the_charge_path_stops():
+    on = {'adapter_voltage_present': True, 'esp_adapter_disagree': 0, 'voltage_36v0_mv': 36800,
+          'charger_enable_command': True, 'charger_current_ma': 6500, 'battery_soc': 50}
+    assert cli.charging_text(on) == 'charging, 6.5 A'
+    assert cli.charging_text(dict(on, charger_current_ma=1600)).startswith(
+        'voltage present but not charging (1.6 A)')
+    assert cli.charging_text(dict(on, charger_current_ma=1600, battery_soc=95)).startswith('pack near full')
+    assert cli.charging_text(dict(on, voltage_36v0_mv=33000)) == '36 V bus low at 33.0 V: contacts or supply'
+    assert cli.charging_text(dict(on, esp_adapter_disagree=2)).startswith('charger on the 36 V bus but')
+    off = dict(on, adapter_voltage_present=False, voltage_36v0_mv=500)
+    assert cli.charging_text(off).startswith('no charger voltage at the robot')
+    assert cli.charging_text(dict(off, esp_adapter_disagree=1)).startswith(
+        'charger at the input, not on the 36 V bus (0.5 V): Q14 or U12')
+
+
 def test_eoa_output_text_off_by_request_and_older_status():
     assert cli.eoa_output_text({'eoa_output_tripped': False,
                                 'periph_power_state': {'power_to_eoa': False},

@@ -238,6 +238,7 @@ def key_values(pp):
             d.get('charge_stop_state_name'), d['charge_stop_state'],
             ', policy on' if d.get('charge_stop_enabled') else ', policy compiled out')
     lines.append(('Charger', charger))
+    lines.append(('Charging', charging_text(d)))
     lines.append(('Rails', 'NUC %s %s, 5V0 %s, 36VDD %s, 12V0 %s, 20V0 aux %s' % (
         _fmt(d.get('voltage_cpu_mv'), ' V', 0.001, 1), _fmt(d.get('current_cpu_ma'), ' A', 0.001),
         _fmt(d.get('voltage_5v0_mv'), ' V', 0.001), _fmt(d.get('voltage_36v0_mv'), ' V', 0.001, 1),
@@ -274,6 +275,29 @@ def eoa_output_text(pp):
     else:
         state = 'on' if on else ('off by request' if on is False else 'n/a')
     return '%s, %s' % (state, _fmt(pp.get('current_eoa'), ' A'))
+
+
+def charging_text(d):
+    """Where the charge path stops. The ESP's dock detect is taken ahead of Q14
+    and the 36 V reading after it, so the two locate a dock fault."""
+    bus = _fmt(d.get('voltage_36v0_mv'), ' V', 0.001, 1)
+    amps = _fmt(d.get('charger_current_ma'), ' A', 0.001, 1)
+    if d.get('esp_adapter_disagree') == 1:
+        return ('charger at the input, not on the 36 V bus (%s): Q14 or U12 on the dock path, '
+                'or a barrel charger without mains' % bus)
+    if not d.get('adapter_voltage_present'):
+        return 'no charger voltage at the robot: none plugged in, or the dock, supply, contacts or F8'
+    if d.get('esp_adapter_disagree') == 2:
+        return 'charger on the 36 V bus but the ESP does not see it: ESP link or its detect input'
+    if (d.get('voltage_36v0_mv') or 0) < 35000:
+        return '36 V bus low at %s: contacts or supply' % bus
+    if not d.get('charger_enable_command'):
+        return 'charger off (charge stop %s, or the host)' % d.get('charge_stop_state_name')
+    if (d.get('charger_current_ma') or 0) < 3000:
+        if (d.get('battery_soc') or 0) >= 90:
+            return 'pack near full, charger current %s' % amps
+        return 'voltage present but not charging (%s): charger or BMS' % amps
+    return 'charging, %s' % amps
 
 
 def recent_events(pp, count):
