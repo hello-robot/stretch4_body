@@ -42,7 +42,7 @@ dependencies = [
     "ninja",
     "pyzmq",
     "hello-robot-stretch4-urdf>=2026.10.08",
-    "hello-robot-stretch4-kinematics>=2026.9.15",
+    "hello-robot-stretch4-kinematics>=2026.10.23",
     "hello-robot-stretch4-pyhesai-wrapper>=2026.8.25",
 ]
 
