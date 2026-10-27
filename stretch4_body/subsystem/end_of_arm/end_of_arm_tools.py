@@ -134,19 +134,18 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
             return False
 
         time.sleep(0.5)
-        if not self.home_joint('wrist_yaw'):
+        
+        if not self.home_joint('wrist_yaw', set_homing_status=False):
             return False
 
         # The tablet hits the arm before pitch reaches its hardstop unless roll
         # is first rotated to a clearance position. 
         roll_clearance = self.params['homing']['wrist_roll']
-        success = self.motors['wrist_roll'].home(end_pos=roll_clearance)
-        if not success or self.cancel_homing_event.is_set():
-            self.logger.error("roll homing failed")
+        if not self.home_joint('wrist_roll', end_pos=roll_clearance, set_homing_status=False):
             return False
 
         self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
-        if not self.home_joint('wrist_pitch'):
+        if not self.home_joint('wrist_pitch', set_homing_status=False):
             return False
 
         self.move_to('wrist_roll', 0.0)
