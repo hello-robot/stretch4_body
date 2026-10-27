@@ -406,10 +406,13 @@ class EndOfArm(FeetechSMChain):
         #Naive version. Should override with tool specific safe motions.
         raise NotImplementedError('EndOfArm Homing not implemented at this level.')
 
-    def home_joint(self, joint_name=None,end_pos=0,wait_on_completion:bool=True):
+    def home_joint(self, joint_name=None,end_pos=None,wait_on_completion:bool=True):
         """
         Home to hardstops
+        end_pos: final position after homing. Defaults to the tool's `homing.<joint_name>` param, else 0.
         """
+        if end_pos is None:
+            end_pos = self.params.get('homing', {}).get(joint_name, 0)
         self.logger.info(f'--------- Homing {joint_name} ----')
         self.status['is_homing'] = True
         if wait_on_completion:
