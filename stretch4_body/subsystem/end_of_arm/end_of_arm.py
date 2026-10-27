@@ -404,9 +404,7 @@ class EndOfArm(FeetechSMChain):
                 continue
             
             self.move_to(joint_name, stow_position)
-            
-            # if self.cancel_homing_event.is_set():
-            #     self.logger.error(f"Stowing canceled during {joint_name} homing.")
+
         return True
 
 

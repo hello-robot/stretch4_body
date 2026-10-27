@@ -675,9 +675,9 @@ SE4_eoa_wrist_dw4_tool_tablet={
         'stow': {
             'arm': 0.007,
             'lift': 0.258,
-            'wrist_pitch': -0.446,
-            'wrist_roll': 0.051,
-            'wrist_yaw': -0.710,
+            'wrist_pitch': 1.5961,
+            'wrist_roll': 3.9224,
+            'wrist_yaw': 4.2177,
             'lift_prestow': 0.5,
         },
         'homing': {
