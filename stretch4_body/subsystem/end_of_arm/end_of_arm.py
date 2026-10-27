@@ -382,9 +382,33 @@ class EndOfArm(FeetechSMChain):
             return
         with self.pt_lock:
             self.motors[joint].pose(p, v_r, a_r)
+    
+    def stow(self) -> bool|None:
+        
+        """
+        Stowing folds in the gripper and wrist within the base's footprint.
+        """
+        self.logger.info(f'--------- Stowing {self.name} ----')
+        
+        # self.home()
+        
+        joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
 
-    def stow(self):
-        pass #Override by specific tool
+        joints += [name for name in self.motors if name not in joints]
+
+        for joint_name in joints:
+            stow_position = self.params['stow'].get(joint_name, None)
+            
+            if stow_position is None:
+                self.logger.warning(f"Skipping {joint_name} stow, since there is no stow position.")
+                continue
+            
+            self.move_to(joint_name, stow_position)
+            
+            # if self.cancel_homing_event.is_set():
+            #     self.logger.error(f"Stowing canceled during {joint_name} homing.")
+        return True
+
 
     def is_homed(self):
         #Return true if calibration is  required
