@@ -40,7 +40,7 @@ SCHEMA1_FIELDS = [
     ('bms_alarm_mask_raw', 109, 'B'), ('bms_mos_mask_raw', 110, 'B'),
     ('bms_last_failure_rx_len', 112, 'H'), ('bms_last_failure_event', 114, 'H'),
     ('bms_last_failure_function', 116, 'B'), ('bms_last_failure_exception_code', 117, 'B'),
-    ('bms_last_failure_address', 118, 'B'), ('reserved1', 119, 'B'),
+    ('bms_last_failure_address', 118, 'B'), ('imu_tap_count', 119, 'B'),
     ('esp_status_age_ms', 120, 'I'), ('esp_rx_packets', 124, 'I'), ('esp_crc_errors', 128, 'I'),
     ('esp_rx_overflows', 132, 'I'), ('esp_requests_sent', 136, 'I'),
     ('esp_tx_queue_drops', 140, 'I'), ('voltage_cpu_mv', 144, 'i'), ('voltage_5v0_mv', 148, 'i'),
@@ -61,7 +61,7 @@ SCHEMA2_FIELDS = [
     ('esp_rx_length_errors', 225, 'I'), ('esp_rx_unknown_ids', 229, 'I'),
     ('esp_tx_mark_resets', 233, 'I'), ('esp_shutdown_cmd_sends', 237, 'I'),
     ('esp_adapter_disagree', 241, 'B'), ('wait_sd_ack', 242, '?'), ('reserved2', 243, 'B'),
-    ('reserved3', 244, 'B'), ('ina_vbat_mv', 245, 'i'), ('ina_current_ma', 249, 'i'),
+    ('imu_tap_last', 244, 'B'), ('ina_vbat_mv', 245, 'i'), ('ina_current_ma', 249, 'i'),
     ('ina_flags', 253, 'B'), ('ina_reserved', 254, 'B'),
 ]
 SCHEMA2_ONLY_KEYS = [name for name, _, _ in SCHEMA2_FIELDS] + ['eye_left', 'eye_right', 'adc_reinit_cnt']

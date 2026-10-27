@@ -1258,7 +1258,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         'shutdown_wait_cap_ms', 'adc_reinit_cnt', 'adc_stale', 'adapter_presence_source',
         'esp_rx_length_errors', 'esp_rx_unknown_ids', 'esp_tx_mark_resets',
         'esp_shutdown_cmd_sends', 'esp_adapter_disagree', 'wait_sd_ack', 'reserved2',
-        'reserved3', 'ina_vbat_mv', 'ina_current_ma', 'ina_flags', 'ina_reserved',
+        'imu_tap_last', 'ina_vbat_mv', 'ina_current_ma', 'ina_flags', 'ina_reserved',
     )
     # Fields that exist only in schema 3, None in a decoded schema 1 or 2 snapshot.
     POWER_DIAGNOSTICS_SCHEMA3_KEYS = ('esp_version_state', 'esp_version_requests', 'esp_version')
@@ -1389,7 +1389,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         decoded['bms_last_failure_function'] = u8()
         decoded['bms_last_failure_exception_code'] = u8()
         decoded['bms_last_failure_address'] = u8()
-        decoded['reserved1'] = u8()
+        decoded['imu_tap_count'] = u8()
 
         decoded['esp_status_age_ms'] = u32()
         decoded['esp_rx_packets'] = u32()
@@ -1439,7 +1439,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             decoded['esp_adapter_disagree'] = u8()
             decoded['wait_sd_ack'] = bool(u8())
             decoded['reserved2'] = u8()
-            decoded['reserved3'] = u8()
+            decoded['imu_tap_last'] = u8()
             decoded['ina_vbat_mv'] = i32()
             decoded['ina_current_ma'] = i32()
             decoded['ina_flags'] = u8()
