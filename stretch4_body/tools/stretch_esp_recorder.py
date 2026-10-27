@@ -28,7 +28,7 @@ BAUD = 115200
 RECORD_SIZE = 16
 # FlightRecord.h: ms, sequence, state, kind, event_id, faults, five union bytes, crc
 HEAD = struct.Struct('<IBBBBH')
-SAMPLE = struct.Struct('<Hh')
+SAMPLE = struct.Struct('<HhB')
 EVENT = struct.Struct('<hh')
 KIND_NAMES = {0: 'sample', 1: 'burst', 2: 'event'}
 KIND_EVENT = 2
@@ -66,9 +66,10 @@ def decode(raw):
         r['event_id'] = event_id
         r['data0'], r['data1'] = EVENT.unpack_from(raw, HEAD.size)
     else:
-        dv, da = SAMPLE.unpack_from(raw, HEAD.size)
+        dv, da, nuc = SAMPLE.unpack_from(raw, HEAD.size)
         r['bus_v'] = dv / 10.0
         r['bus_a'] = da / 10.0
+        r['nuc_a'] = nuc / 50.0
     return r
 
 
@@ -153,14 +154,14 @@ def samples_of(records, dump_wall_s, port=PORT):
     """
     times = wall_times(records, dump_wall_s)
     events = []
-    bus_v = bus_a = None
+    bus_v = bus_a = nuc_a = None
     trimmer = StatusLogTrimmer()
     samples = []
     for i, r in enumerate(records):
         if r['kind'] == KIND_EVENT:
             events.append(event_dict(r, len(events) + 1, times[i]))
         else:
-            bus_v, bus_a = r['bus_v'], r['bus_a']
+            bus_v, bus_a, nuc_a = r['bus_v'], r['bus_a'], r['nuc_a']
         diag = {
             '_valid': True,
             'schema_version': None,
@@ -177,6 +178,7 @@ def samples_of(records, dump_wall_s, port=PORT):
             'button_fault_mask': r['faults'],
             'battery_voltage_mv': None if bus_v is None else int(round(bus_v * 1000)),
             'battery_current_ma': None if bus_a is None else int(round(bus_a * 1000)),
+            'current_cpu_ma': None if nuc_a is None else int(round(nuc_a * 1000)),
             'record_kind': KIND_NAMES.get(r['kind'], 'unknown_%d' % r['kind']),
             'record_sequence': r['sequence'],
         }
@@ -215,7 +217,8 @@ def record_line(r, wall_s):
         e = event_dict(r, 0, wall_s)
         return '%s  %s (%d): %s  [%s; %s]' % (head, e['event_name'], e['event_id'],
                                              describe_power_event(e), bits, tail)
-    return '%s  %5.1f V %6.1f A  [%s; %s]' % (head, r['bus_v'], r['bus_a'], bits, tail)
+    return '%s  %5.1f V %6.1f A  NUC %4.2f A  [%s; %s]' % (head, r['bus_v'], r['bus_a'], r['nuc_a'],
+                                                         bits, tail)
 
 
 # ------------------------------------------------------------------------ main

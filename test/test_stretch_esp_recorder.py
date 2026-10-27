@@ -11,15 +11,15 @@ T_DUMP = 1781000600.0
 
 
 def record(ms, sequence, kind=0, state=0x68, faults=0, cause=0, bus_v=26.4, bus_a=-1.3,
-           event_id=0, data0=0, data1=0):
+           nuc_a=1.2, event_id=0, data0=0, data1=0):
     """One FlightRecord as the PIMU packs it: state 0x68 is ACTIVE with PWR_EN,
     ROBOT_ACTIVE and NUC_5V high."""
     head = cli.HEAD.pack(ms, sequence, state, kind | (cause << 4), event_id, faults)
     if kind == cli.KIND_EVENT:
-        body = cli.EVENT.pack(data0, data1)
+        body = cli.EVENT.pack(data0, data1) + b'\x00'
     else:
-        body = cli.SAMPLE.pack(int(round(bus_v * 10)), int(round(bus_a * 10)))
-    raw = head + body + b'\x00'
+        body = cli.SAMPLE.pack(int(round(bus_v * 10)), int(round(bus_a * 10)), int(round(nuc_a * 50)))
+    raw = head + body
     return raw + bytes([cli.crc8(raw)])
 
 
@@ -68,6 +68,7 @@ def test_dump_reads_blocks_skips_chatter_and_the_torn_record():
     assert len(records) == 20 + 4 + 1 + 8
     assert [r['sequence'] for r in records[19:22]] == [19, 21, 22]
     assert records[0]['bus_v'] == 26.4 and records[0]['bus_a'] == -1.3
+    assert records[0]['nuc_a'] == 1.2
     assert records[0]['pwr_en'] and records[0]['nuc_5v'] and not records[0]['button']
     ev = records[24]
     assert ev['kind'] == cli.KIND_EVENT and ev['event_id'] == 2 and ev['data1'] == 3
@@ -110,7 +111,7 @@ def test_main_writes_the_log_and_prints_records(tmp_path, capsys, monkeypatch):
     text = capsys.readouterr().out
     assert '33 records (1 power events)' in text
     assert 'power_state_transition (2): STATE_ACTIVE -> STATE_SLEEP' in text
-    assert '26.4 V   -1.3 A  [PWR_EN ROBOT_ACTIVE NUC_5V; faults 0x0000]' in text
+    assert '26.4 V   -1.3 A  NUC 1.20 A  [PWR_EN ROBOT_ACTIVE NUC_5V; faults 0x0000]' in text
     assert 'runstop button, faults 0x0002' in text
     assert len(json.loads(out.read_text())) == 33
 
