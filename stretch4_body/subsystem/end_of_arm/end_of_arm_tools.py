@@ -20,6 +20,10 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
+        
+    def home(self, wait_on_completion=True):
+        return self._home(wait_on_completion)
+    
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -46,6 +50,10 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
+
+    def home(self, wait_on_completion=True):
+        return self._home(wait_on_completion)
+    
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -78,6 +86,9 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
         
+    def home(self, wait_on_completion=True):
+        return self._home(wait_on_completion)
+        
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -102,6 +113,9 @@ class EOA_Wrist_DW4_Tool_Calibration(EOA_Wrist_DW4_Tool_NIL):
     """
     def __init__(self, name='eoa_wrist_dw4_tool_calibration'):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
+
+    def home(self, wait_on_completion=True):
+        return self._home(wait_on_completion)
 
 
 class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):

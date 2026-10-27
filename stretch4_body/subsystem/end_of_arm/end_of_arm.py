@@ -420,6 +420,7 @@ class EndOfArm(FeetechSMChain):
 
         joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
 
+        joints = [name for name in self.motors if name in joints] # Remove yaw/roll/pitch if they aren't in self.motors.
         joints += [name for name in self.motors if name not in joints]
 
         for joint_name in joints:
@@ -434,7 +435,10 @@ class EndOfArm(FeetechSMChain):
 
         return success
 
-    def home(self, wait_on_completion=True):
+    def _home(self, wait_on_completion:bool=True):
+        """
+        Standard homing sequence - homes all the joints in self.motors.
+        """
 
         if wait_on_completion:
             return self._home_all_joints()
@@ -444,6 +448,9 @@ class EndOfArm(FeetechSMChain):
         thread.start()
 
         return None
+
+    def home(self, wait_on_completion=True):
+        raise NotImplementedError("Homing is not implemented for this joint. Override this method and call _home() for standard homing.")
 
     def home_joint(self, joint_name:str,end_pos:float|None=None, set_homing_status:bool=True):
         """
