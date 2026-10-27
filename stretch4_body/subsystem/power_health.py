@@ -953,6 +953,8 @@ def describe_power_event(event):
         if d0 == 3:
             return 'runstop raised by the firmware: low SoC, %d %%' % d1
         return 'runstop raised by the firmware: %s, %.1f A' % (_RUNSTOP_CAUSES.get(d0, 'cause %d' % d0), d1 / 10.0)
+    if eid == 57:
+        return 'boot step %d %s, %.1f s after the wake' % (d0, _name(_Defn.BOOT_STEP_NAMES, d0), d1 / 10.0)
     if eid in (15, 20):
         return 'mask 0x%02X -> 0x%02X' % (d0 & 0xFFFF, d1 & 0xFFFF)
     if eid in (17, 18):

@@ -59,6 +59,9 @@ class RobotCore(Device):
         ready=True
         for s in self.subsystems:
             ready = ready and self.subsystems[s].startup()
+        if ready and self.get_subsystem('power_periph') is not None:
+            self.power_periph.set_boot_step(self.power_periph.BOOT_STEP_SUBSYSTEMS)
+            self.power_periph.push_command()
         return ready
 
     def stop(self):

@@ -343,6 +343,10 @@ Use `stretch_status --rate 10` to view the status of the robot.
 
 ==================================
 """)
+        pp = self.get_subsystem('power_periph')
+        if pp is not None:
+            pp.set_boot_step(pp.BOOT_STEP_CONTROL_LOOP)
+            pp.push_command()
         try:
             while not self.do_exit:
 

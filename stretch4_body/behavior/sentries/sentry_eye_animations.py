@@ -13,6 +13,8 @@ class SentryEyeAnimations(Sentry):
         self.last_push_count = 0
         self.yield_until = 0
         self.rainbow_sent = False
+        self.boot_step_sent = False
+        self.boot_step_ts = 0
 
     def startup(self):
         if not Sentry.startup(self):
@@ -29,6 +31,18 @@ class SentryEyeAnimations(Sentry):
     def step(self):
         if not self.is_valid:
             return
+
+        # A wake puts the PIMU back on its boot progress: hand the eyes over again
+        eye = getattr(self.robot.power_periph, 'power_diagnostics', {}).get('eye_left') or {}
+        if self.boot_step_sent and eye.get('animation') == PowerPeriphDefn.EYE_ANIM_BOOT_PROGRESS \
+                and time.time() - self.boot_step_ts > 3.0:
+            self.boot_step_sent = False
+            self.rainbow_sent = False
+
+        if not self.boot_step_sent and self.robot.power_periph:
+            self.robot.power_periph.set_boot_step(PowerPeriphDefn.BOOT_STEP_EYES)
+            self.boot_step_sent = True
+            self.boot_step_ts = time.time()
 
         ts = time.time()
         # Another client commanded the eyes: leave them alone for a while
