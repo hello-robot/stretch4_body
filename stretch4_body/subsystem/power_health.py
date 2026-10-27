@@ -968,7 +968,7 @@ def describe_power_event(event):
     if eid == 34:
         return 'ended by wake %s at step %d' % (_name(reason, d0), d1)
     if eid == 35:
-        return 'charger stopped: %s; SoC %d, cell max %d mV' % (
+        return 'charger stopped: BMS high-voltage alarm held 5 s with %s; SoC %d, cell max %d mV' % (
             _bits((d0 >> 8) & 0xFF, _STOP_REASONS), d0 & 0xFF, d1)
     if eid == 36:
         return 'charger restarted: %s; SoC %d, pack %d mV' % (
