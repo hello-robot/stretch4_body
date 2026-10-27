@@ -448,11 +448,16 @@ class EndOfArm(FeetechSMChain):
 
         return None
 
-    def home_joint(self, joint_name:str,end_pos:float|None=None, set_homing_status:bool=True):
+    def home_joint(self, joint_name:str,end_pos:float|None=None, set_homing_status:bool=True, wait_on_completion:bool=True) -> bool|None:
         """
         Home to hardstops
         end_pos: final position after homing. Defaults to the tool's `homing.<joint_name>` param, else 0.
+        wait_on_completion: if False, home in a background thread and return None.
         """
+        if not wait_on_completion:
+            threading.Thread(target=self.home_joint, args=(joint_name, end_pos, set_homing_status)).start()
+            return None
+
         self.logger.info(f'--------- Homing {joint_name} ----')
 
         if end_pos is None:
