@@ -209,25 +209,32 @@ class Robot(RobotCore):
 
 
 
-    def home(self):
+    def home(self, only_unhomed=False):
         """
         Cause the robot to home its joints by moving to hardstops
         Blocking.
+        only_unhomed: skip the joints that are already homed, eg. so that swapping a tool
+        over the quick connect only homes that tool's joints.
         """
-    
+        def needs_homing(subsystem_name):
+            subsystem = self.get_subsystem(subsystem_name)
+            return subsystem is not None and not (only_unhomed and subsystem.is_homed())
 
-        if self.get_subsystem('lift') is not None:
+        if needs_homing('lift'):
             self.logger.info('--------- Homing Lift ----')
             self.lift.home()
 
         # Home the arm
-        if self.get_subsystem('arm') is not None:
+        if needs_homing('arm'):
             self.logger.info('--------- Homing Arm ----')
             self.arm.home()
 
         if self.get_subsystem('end_of_arm') is not None:
             self.logger.info('--------- Homing EndOfArm ----')
-            self.end_of_arm.home()
+            if only_unhomed:
+                self.end_of_arm.home_unhomed()
+            else:
+                self.end_of_arm.home()
 
 
 

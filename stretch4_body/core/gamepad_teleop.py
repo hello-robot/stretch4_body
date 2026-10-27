@@ -654,7 +654,8 @@ class GamePadTeleop(Device):
                     return
                 self.do_single_beep(robot)
                 play_sound(get_sounds_dir()+f'/homing.wav')
-                robot.home()
+                # Only home what needs it, eg. just the gripper after it was swapped over the quick connect
+                robot.home(only_unhomed=True)
             self.start_button_counter.trigger_on_tap(do_home)
             return
 

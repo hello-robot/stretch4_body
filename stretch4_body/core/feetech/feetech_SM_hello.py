@@ -127,6 +127,7 @@ class FeetechSMHello(Device):
             self._is_moving = False
 
             self.ts_collision_stop = {'pos': 0.0, 'neg': 0.0}
+            self.ts_last_comm_success = time.time() # Last successful status read, used by FeetechSMChain to detect a servo that went offline
 
             self.cancel_homing_event = threading.Event()
             if chain is not None:
@@ -232,6 +233,7 @@ class FeetechSMHello(Device):
                     self.hw_valid = False
                     return False
 
+                self.ts_last_comm_success = time.time()
                 # if self.params['use_pos_current_ctrl']:
                 #     self.enable_pos_current_ctrl()
                 return True
@@ -391,6 +393,41 @@ class FeetechSMHello(Device):
     def is_homed(self):
         return self.status['pos_calibrated']
 
+    def mark_offline(self):
+        """
+        Marks a servo that stopped responding (eg. its tool was unplugged from the quick connect) as offline.
+        Commands and status reads are skipped until reconnect(), and it needs homing.
+        """
+        self.hw_valid = False
+        self._is_moving = False
+        self.status['is_moving'] = False
+        self.status['pos_calibrated'] = False
+        self.status['soft_motion_limits'] = self.get_soft_motion_limits()
+
+    def reconnect(self):
+        """
+        Restarts an offline servo (see mark_offline) once it answers a ping again.
+        Its calibration is cleared, as the servo on the bus may have lost power or been swapped for
+        another, so it needs homing.
+        Raises OSError if the serial port itself is gone, so the caller can reopen it.
+        Returns True if the servo is back online.
+        """
+        try:
+            if not self.motor.do_ping(verbose=False):
+                return False
+            # Ping first: startup() falls back to scanning baud rates on the shared port when the servo is absent
+            if not self.startup():
+                self.hw_valid = False
+                return False
+            self.motor.set_is_calibrated(0)
+        except (termios.error, FeetechCommError, IndexError) as e:
+            self.logger.warning(f'FeetechSMHello communication error during reconnect on {self.name}. {e}')
+            self.hw_valid = False
+            return False
+        self.status['pos_calibrated'] = False
+        self.status['soft_motion_limits'] = self.get_soft_motion_limits()
+        return True
+
     def check_servo_errors(self):
         if self.status['overload_error']:
             msg = 'WARNING: Servo %s in error state: overload_error. Reboot servo with stretch_robot_feetech_reboot' % self.name
@@ -546,6 +583,7 @@ class FeetechSMHello(Device):
         # Now update status dictionary
 
         if pos_valid:
+            self.ts_last_comm_success = ts
             self.status['pos_ticks'] = x
             self.status['pos'] = self.ticks_to_world_rad(float(x))
         if vel_valid:

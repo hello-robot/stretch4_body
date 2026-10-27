@@ -5,11 +5,17 @@ from stretch4_body.core.hello_utils import check_usb_disconnection
 from stretch4_body.core.device import Device
 from stretch4_body.core.feetech.feetech_SM_servo import *
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechCommErrorStats, FeetechCommErrorStatsStatus
+import os
 import time
 import importlib
 import struct
 import array as arr
 import threading
+
+# A servo not responding for this long is marked offline, and needs homing once reconnected
+SERVO_OFFLINE_AFTER_S = 0.5
+# How often offline servos are pinged to reconnect them
+SERVO_RECONNECT_EVERY_S = 1.0
 
 SMS_END=0
 def SMS_MAKEWORD(a, b):
@@ -74,6 +80,11 @@ class FeetechSMChain(Device):
         self.status_mux_id = 0
 
         self.cancel_homing_event = cancel_homing_event or threading.Event()
+
+        # Servos that dropped off the bus (eg. a tool swapped over the quick connect) are retried until they return
+        self.reconnect_enabled = False # Set once startup succeeds
+        self.offline_motors = set()
+        self.ts_last_reconnect_attempt = 0.0
 
     def add_motor(self,m):
         self.motors[m.name]=m
@@ -161,6 +172,7 @@ class FeetechSMChain(Device):
                 self.hw_valid = False
                 return False
         Device.startup(self)
+        self.reconnect_enabled = True
         return True
 
     def _thread_loop(self):
@@ -176,6 +188,7 @@ class FeetechSMChain(Device):
 
     def stop(self):
         Device.stop(self)
+        self.reconnect_enabled = False
         if not self.hw_valid:
             return
         for motor in self.motors:
@@ -196,9 +209,68 @@ class FeetechSMChain(Device):
 
 
     def pull_status(self):
-        if not self.hw_valid:
-            return
+        if self.hw_valid:
+            self._pull_motor_status()
+        self._step_reconnect()
 
+    def _step_reconnect(self):
+        """
+        Marks servos that stopped responding as offline (and so needing homing), then periodically
+        tries to bring them back. Only the servos that went offline need homing once reconnected,
+        eg. swapping just the gripper leaves the wrist joints homed.
+        If the USB device itself went away, the port is reopened once it returns.
+        """
+        if not self.reconnect_enabled:
+            return
+        now = time.time()
+        for name, m in self.motors.items():
+            if name in self.offline_motors:
+                continue
+            if not m.hw_valid or now - m.ts_last_comm_success > SERVO_OFFLINE_AFTER_S:
+                self.logger.warning(f'{self.name}: {name} went offline. It will need homing once reconnected.')
+                m.mark_offline()
+                self.offline_motors.add(name)
+
+        if not self.offline_motors or now - self.ts_last_reconnect_attempt < SERVO_RECONNECT_EVERY_S:
+            return
+        self.ts_last_reconnect_attempt = now
+
+        if not os.path.exists(self.usb):
+            if self.hw_valid:
+                self.logger.warning(f'{self.name}: USB disconnected: {self.usb}')
+                self._close_lost_port()
+            return
+        if not self.hw_valid:
+            if not self.create_port_handler():
+                return
+            self.logger.info(f'{self.name}: USB reconnected: {self.usb}')
+            for m in self.motors.values():
+                m.motor.port_handler = self.port_handler
+                m.motor.create_port_handler()
+
+        for name in sorted(self.offline_motors):
+            try:
+                with self.pt_lock:
+                    reconnected = self.motors[name].reconnect()
+            except OSError as e:
+                # Serial port is stale (eg. the USB device came back between checks), so reopen it next attempt
+                self.logger.warning(f'{self.name}: Serial port error while reconnecting {name}: {e}')
+                self._close_lost_port()
+                return
+            if reconnected:
+                self.logger.warning(f'{self.name}: {name} reconnected. Homing required.')
+                self.offline_motors.discard(name)
+
+    def _close_lost_port(self):
+        self.hw_valid = False
+        for m in self.motors.values():
+            m.hw_valid = False
+        try:
+            self.port_handler.closePort()
+        except (OSError, AttributeError):
+            pass
+
+    def _pull_motor_status(self):
         try:
             ts = time.time()
             error=False
