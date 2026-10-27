@@ -20,9 +20,6 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
-        
-    def home(self, wait_on_completion=True):
-        return self._home(wait_on_completion)
     
     def stow(self):
         # Fold in wrist and gripper
@@ -50,9 +47,6 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
-
-    def home(self, wait_on_completion=True):
-        return self._home(wait_on_completion)
     
     def stow(self):
         # Fold in wrist and gripper
@@ -86,9 +80,6 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
         
-    def home(self, wait_on_completion=True):
-        return self._home(wait_on_completion)
-        
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -114,9 +105,6 @@ class EOA_Wrist_DW4_Tool_Calibration(EOA_Wrist_DW4_Tool_NIL):
     def __init__(self, name='eoa_wrist_dw4_tool_calibration'):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
 
-    def home(self, wait_on_completion=True):
-        return self._home(wait_on_completion)
-
 
 class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
     """
@@ -126,21 +114,10 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
         self.logger.info(f"Wrist yaw stow position: {self.params['stow']['wrist_yaw']}")
 
-    def home(self, wait_on_completion=True):
-        def _do_home():
-            self.logger.info(f'Homing {self.name}')
-            self.status['is_homing'] = True
-            success = self._home_tablet_joints()
-            self.status['is_homing'] = False
-            return success
-        if wait_on_completion:
-            return _do_home()
-
-        thread = threading.Thread(target=_do_home)
-        thread.start()
-        return None
-
-    def _home_tablet_joints(self):
+    def _home_all_joints(self):
+        """
+        Overrides EndOfArm's _home_all_joints() method for a custom homing sequence:
+        """
         success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
 
         if not success or self.cancel_homing_event.is_set():

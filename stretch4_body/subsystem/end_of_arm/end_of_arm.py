@@ -401,56 +401,51 @@ class EndOfArm(FeetechSMChain):
         self.cancel_homing_event.set()
         self.logger.warning(f"Feetech homing cancelled for: {self.name}")
 
+    def _home_all_joints(self):
+        self.logger.info(f'Homing {self.name}')
+        self.status['is_homing'] = True
 
-    def _home(self, wait_on_completion:bool=True)->bool|None:
+        if 'wrist_pitch' in self.motors:
+            success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+
+            if not success or self.cancel_homing_event.is_set():
+                self.logger.error("Wrist pitch pre-homing failed")
+                self.status['is_homing'] = False
+                return False
+
+            time.sleep(0.5)
+
+            self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
+
+        joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
+
+        joints = [name for name in self.motors if name in joints] # Remove yaw/roll/pitch if they aren't in self.motors.
+        joints += [name for name in self.motors if name not in joints]
+
+        for joint_name in joints:
+            success = self.home_joint(joint_name, set_homing_status=False)
+            if not success:
+                self.logger.error(f"{joint_name} homing failed")
+                break
+            if self.cancel_homing_event.is_set():
+                self.logger.error(f"Homing canceled during {joint_name} homing.")
+            
+        self.status['is_homing'] = False
+
+        return success
+
+    def home(self, wait_on_completion:bool=True) -> bool|None:
         """
-        Standard homing sequence - homes all the joints in self.motors.
+        Homes the wrist joints. Warning: self-collision detection is usually disabled during homing! If you are implementing a new tool, be sure to update the homing parameters for the joints, so that your tool does not collide with the robot.
         """
-
-        def _home_all_joints():
-            self.logger.info(f'Homing {self.name}')
-            self.status['is_homing'] = True
-
-            if 'wrist_pitch' in self.motors:
-                success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
-
-                if not success or self.cancel_homing_event.is_set():
-                    self.logger.error("Wrist pitch pre-homing failed")
-                    self.status['is_homing'] = False
-                    return False
-
-                time.sleep(0.5)
-
-                self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
-
-            joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
-
-            joints = [name for name in self.motors if name in joints] # Remove yaw/roll/pitch if they aren't in self.motors.
-            joints += [name for name in self.motors if name not in joints]
-
-            for joint_name in joints:
-                success = self.home_joint(joint_name, set_homing_status=False)
-                if not success:
-                    self.logger.error(f"{joint_name} homing failed")
-                    break
-                if self.cancel_homing_event.is_set():
-                    self.logger.error(f"Homing canceled during {joint_name} homing.")
-                
-            self.status['is_homing'] = False
-
-            return success
-
         if wait_on_completion:
-            return _home_all_joints()
+            return self._home_all_joints()
         
-        thread = threading.Thread(target=_home_all_joints)
+        thread = threading.Thread(target=self._home_all_joints)
 
         thread.start()
 
         return None
-
-    def home(self, wait_on_completion:bool=True) -> bool|None:
-        raise NotImplementedError(f"Homing is not implemented for {self.name}. Override this method and call _home() for standard homing.")
 
     def home_joint(self, joint_name:str,end_pos:float|None=None, set_homing_status:bool=True):
         """
