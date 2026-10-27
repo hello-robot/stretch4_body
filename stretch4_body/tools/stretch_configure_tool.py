@@ -257,6 +257,7 @@ def main(quick, auto_detect):
         # Reload RobotParams in-place to ensure the new tool settings are loaded from disk
         from stretch4_body.core.robot_params import RobotParams
         RobotParams.reload()
+        from stretch4_body.utils.lift_clearance import ensure_lift_clearance
 
         if server_was_running:
             from stretch4_body.robot.robot_client import RobotClient
@@ -277,6 +278,8 @@ def main(quick, auto_detect):
                 r.pull_status()
                 if r.is_runstopped():
                     print("Robot is runstopped. Clear the runstop, then run stretch_robot_home.")
+                elif r.get_subsystem('lift') is not None and not ensure_lift_clearance(r.lift, root=r, tool=new_tool):
+                    print("The end_of_arm was not homed. Run stretch_robot_home once the lift is clear.")
                 else:
                     print('Homing end_of_arm...')
                     success = r.end_of_arm.home()
