@@ -349,6 +349,8 @@ class PowerPeriphDefn():
         52: 'low_battery_auto_wake',
         53: 'button_pulse_rejected',
         54: 'nuc_boot_watch',
+        55: 'button_faults',
+        56: 'runstop_raised',
     }
     POWER_EVENT_EXPLANATIONS = {
         1: 'PIMU restarted; data0 is the reset-cause bitmask and data1 is the board variant.',
@@ -424,6 +426,10 @@ class PowerPeriphDefn():
         54: ('NUC boot watch; data0 is 1 NUC not booted 60 s into ACTIVE (data1 1 VBUS low, 0 no fresh ESP '
              'status), 2 seen up by VBUS, 3 seen up by host traffic (data1 ms since ACTIVE), 4 not-booted '
              'ended by leaving ACTIVE (data1 seconds).'),
+        55: ('The power button fault mask changed; data0 holds the error bits (steady red), data1 the charging '
+             'problem bits (red blink).'),
+        56: ('The firmware raised a runstop; data0 is the cause (3 low SoC, 4 high current), data1 the SoC or '
+             'the system current in tenths of an amp.'),
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',
