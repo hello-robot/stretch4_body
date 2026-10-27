@@ -13,6 +13,8 @@ from stretch4_body.subsystem.power_periph import PowerPeriphDefn
 from stretch4_body.subsystem.power_health import PowerHealthEvaluator, PowerHealthThresholds
 from stretch4_body.utils.freeable_file_lock import FreeableFileLock
 from stretch4_body.robot import firmware_versions
+from stretch4_body.core import scheduling
+from stretch4_body.core.robot_params import RobotParams
 
 import logging
 import importlib
@@ -34,6 +36,12 @@ class RobotServer(RobotCore):
     """
 
     def __init__(self):
+        # Cpu affinity before anything is built: every helper process and device transport thread
+        # the server creates from here on inherits it. The real-time class is applied to the
+        # control thread alone in run_controller, so only the loop that needs it gets it.
+        self._scheduling_policy = RobotParams.get_params()[1].get('robot', {}).get('server', {}).get('scheduling')
+        self._scheduling = scheduling.apply({'cpus': (self._scheduling_policy or {}).get('cpus')}, label='server')
+        self._scheduling['transport_rt_priority'] = scheduling.export_transport_priority(self._scheduling_policy)
         RobotCore.__init__(self)
         # Extend RobotCore with additional RobotServer specific subsystems and behaviors
 
@@ -816,6 +824,11 @@ class RobotServer(RobotCore):
 
     def run_controller(self):
         self.t_print_last = time.time()
+        rt = scheduling.apply({'rt_priority': (self._scheduling_policy or {}).get('rt_priority', 0)},
+                              logger=self.logger, label='control_loop')
+        self._scheduling.update({'policy': rt['policy'], 'rt_priority': rt['rt_priority'],
+                                 'skipped': self._scheduling['skipped'] + rt['skipped']})
+        self.status['server']['scheduling'] = self._scheduling
         use_tqdm=0
         if use_tqdm:
             from tqdm import tqdm

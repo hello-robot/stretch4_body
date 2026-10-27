@@ -418,7 +418,6 @@ nominal_params={
     'robot_server':{
         # 'control_loop_rate_Hz': 100,
         # 'network_loop_rate_Hz':50,
-        # 'cpu_affinity': 17
         },
     # ########### ROUTINES ################################
 

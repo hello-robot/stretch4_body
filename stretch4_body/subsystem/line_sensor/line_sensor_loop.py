@@ -8,6 +8,7 @@ from stretch4_body.core.device import Device
 from multiprocessing import Process, Event
 from stretch4_body.core.worker_loop import *
 import stretch4_body.core.hello_utils as hu
+from stretch4_body.core import scheduling
 from stretch4_body.subsystem.line_sensor import calibration, calibration_store
 from stretch4_body.subsystem.line_sensor.pixart_j3_reader import PixartJ3Reader
 
@@ -132,7 +133,8 @@ class LineSensorLoop(Device):
                       self.params['line_sensor_geometry']['pixart_report_num'],)
             )
             self.pjr_process.start()
-            #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.pjr_process.pid)) #Assign process to core
+            self.status['scheduling'] = scheduling.apply(self.params.get('scheduling'), pid=self.pjr_process.pid,
+                                                         logger=self.logger, label='line_sensor_loop')
             
             # Wait for system to start posting status.
             ts=time.time()
