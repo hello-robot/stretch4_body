@@ -44,14 +44,6 @@ class RoutineRobotStow(routine.Routine):
                     self.logger.warning(f'Lift failed to reach final position when stowing. Expecting {pos_lift} but got {self.robot.lift.status["pos"]:.3f}')
                     return False
 
-
-        # if 'end_of_arm' in self.robot.subsystems:
-        #     # Run pre stow specific to each end of arm
-        #     cmd = ['end_of_arm', 'pre_stow', cmd_id, args, kwargs]
-        #     # This will cause the EoA process to stop comms while stowing
-        #     self.robot.eoa_loop.q_cmd.put(cmd)
-        #     self.wait_duration(5.0)
-
         if 'arm' in self.robot.subsystems:
             pos_arm = cfg['arm']
             threshold = 0.025

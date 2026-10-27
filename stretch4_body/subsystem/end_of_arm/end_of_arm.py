@@ -386,9 +386,6 @@ class EndOfArm(FeetechSMChain):
     def stow(self):
         pass #Override by specific tool
 
-    def pre_stow(self,robot=None):
-        pass #Override by specific tool
-
     def is_homed(self):
         #Return true if calibration is  required
         for m in self.motors:
@@ -522,8 +519,4 @@ class EndOfArm(FeetechSMChain):
     #
     #     return ret
     
-    def pre_stow(self,robot=None):
-        pass
-
-
 

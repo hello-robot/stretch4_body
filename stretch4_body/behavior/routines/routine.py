@@ -1,5 +1,10 @@
+from typing import TYPE_CHECKING
+
 from stretch4_body.core.device import Device
-from stretch4_body.robot.robot import Robot
+
+if TYPE_CHECKING:
+    from stretch4_body.robot.robot import Robot
+    
 import time
 
 # #########################################################3

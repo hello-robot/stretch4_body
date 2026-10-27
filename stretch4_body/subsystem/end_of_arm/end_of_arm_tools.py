@@ -28,12 +28,6 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
         self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
         self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
 
-    def pre_stow(self,robot=None):
-        if robot:
-            robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
-        else:
-            self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
-
 class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
     """
     Wrist Yaw / Pitch / Roll /Gripper for version 4 of DexWrist
@@ -53,17 +47,8 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
         self.logger.info(f'--------- Stowing {self.name} ----')
         self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
         self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
-        time.sleep(3.0)
         self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
-
-
         self.move_to('stretch_gripper', self.params['stow']['stretch_gripper'])
-
-    def pre_stow(self,robot=None):
-        if robot:
-            robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
-        else:
-            self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
 
 
 class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
@@ -83,19 +68,13 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
+        
+        self.home()
+
         self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
         self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
-        time.sleep(3.0)
         self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
-
-
         self.move_to('parallel_gripper', self.params['stow']['parallel_gripper'])
-
-    def pre_stow(self,robot=None):
-        if robot:
-            robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
-        else:
-            self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
 
 
 class EOA_Wrist_DW4_Tool_Calibration(EOA_Wrist_DW4_Tool_NIL):
