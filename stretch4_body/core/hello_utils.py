@@ -3,7 +3,6 @@ import math
 import os
 import pwd
 import time
-import fcntl
 import logging
 import logging.handlers
 import numpy as np
@@ -22,7 +21,7 @@ from colorama import Fore, Back, Style, init
 import psutil
 import click
 
-from stretch4_body.utils.file_access_utils import acquire_lock_if_available, release_lock, setup_shared_directory
+from stretch4_body.utils.file_access_utils import acquire_lock, acquire_lock_if_available, release_lock, setup_shared_directory
 
 def print_stretch_re_use():
     print("For use with S T R E T C H (R) from Hello Robot Inc.")
@@ -936,15 +935,7 @@ class HelloLoggerFile(logging.Formatter):
 
 class MultiProcessRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """
-    A RotatingFileHandler that the server's processes can share.
-
-    Each server process (end of arm loop, line sensor loop, sentries, ...) has its own handler
-    on the same file. A plain RotatingFileHandler only rotates its own stream: the other
-    processes keep writing into the renamed file, find it full, and rotate again, pushing the
-    fresh log aside. One rollover becomes one per process, the session ends up scattered out of
-    order across segments, and backupCount is used up within seconds, deleting the oldest logs.
-
-    Here a lock file serializes writes and rollovers across processes, the size is read from
+    A RotatingFileHandler that the server's processes can share. A lock file serializes writes and rollovers across processes, the size is read from
     the file rather than this process's stream position, and a process reopens the log when it
     finds that another process has rotated it.
     """
@@ -953,24 +944,31 @@ class MultiProcessRotatingFileHandler(logging.handlers.RotatingFileHandler):
         # Hidden, so it doesn't match the 'stretch_body_server.log*' globs that collect the logs
         self._lock_path = os.path.join(os.path.dirname(self.baseFilename),
                                        '.' + os.path.basename(self.baseFilename) + '.lock')
-        self._lock_fd = None
-        self._lock_pid = None
+        self._emitting = False
 
     def emit(self, record):
+        if self._emitting:
+            # Re-entered while holding the lock, e.g. handleError() writing to a stderr that is
+            # routed back into logging. Locking again would wait on our own lock forever.
+            super().emit(record)
+            return
+
+        # acquire_lock() opens the lock file afresh each time (so forked processes never share
+        # it) and makes it 0o666, so every user's processes can take it
         try:
-            if self._lock_pid != os.getpid():
-                # A forked child opens its own: flock() locks belong to the open file, and
-                # fork() shares that, so parent and child would never exclude each other
-                self._lock_fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o666)
-                self._lock_pid = os.getpid()
-            fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
-            try:
-                self._reopen_if_rotated()
-                super().emit(record)
-            finally:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            locked = acquire_lock(self._lock_path, blocking=True)
+        except OSError:
+            locked = False # Can't open the lock file: log anyway, without serializing
+        self._emitting = True
+        try:
+            self._reopen_if_rotated()
+            super().emit(record)
         except Exception:
             self.handleError(record)
+        finally:
+            self._emitting = False
+            if locked:
+                release_lock(self._lock_path)
 
     def _reopen_if_rotated(self):
         if self.stream is None:
