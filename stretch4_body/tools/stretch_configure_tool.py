@@ -286,7 +286,7 @@ def main(quick, auto_detect):
 
     # Reload RobotParams in-place to ensure the new tool settings are loaded from disk
     RobotParams.reload()
-    from stretch4_body.utils.lift_clearance import ensure_lift_clearance, hold_lift_stiff
+    from stretch4_body.utils.lift_clearance import ensure_lift_clearance, set_lift_safety_hold
 
     if server_was_running:
         from stretch4_body.robot.robot_client import RobotClient
@@ -308,6 +308,7 @@ def main(quick, auto_detect):
         return print(HOME_HINT)
 
     time.sleep(2.0) # Extra wait for server to be fully ready
+    has_lift = r.get_subsystem('lift') is not None
     success = False
     try:
         r.pull_status()
@@ -315,14 +316,9 @@ def main(quick, auto_detect):
             if not click.confirm('The runstop is active. Release it, then continue homing?', default=True):
                 break
             r.pull_status()
-        has_lift = r.get_subsystem('lift') is not None
         if r.is_runstopped():
             print("Skipped homing because the runstop is active. Release the runstop first.")
         else:
-            if has_lift and r.lift.is_homed():
-                # Actively hold the lift, as its safety mode may not counterbalance the new tool yet
-                r.lift.move_to(r.lift.status['pos'])
-                r.push_command()
             if has_lift and not ensure_lift_clearance(r.lift, root=r, tool=new_tool):
                 print("Skipped homing because the lift is too low for the tool to move safely. Raise the lift first.")
             else:
@@ -335,11 +331,11 @@ def main(quick, auto_detect):
     except Exception as e:
         print(f"Error during homing: {e}")
     finally:
+        if not server_was_running and has_lift:
+            # Stopping the direct Robot puts the lift in safety mode, which only
+            # counterbalances it, so make that hold position too
+            set_lift_safety_hold(r.lift)
         r.stop()
-        if not server_was_running:
-            # Stopping the direct Robot drops the lift back to its default
-            # safety mode, without the new tool's feedforward.
-            hold_lift_stiff()
 
     if success:
         print("\nDone! The new tool is ready to use.")

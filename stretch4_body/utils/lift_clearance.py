@@ -13,14 +13,24 @@ def get_lift_clearance(robot_params, tool):
     return max(lift_prestow, LIFT_CLEARANCE_MIN_M)
 
 
+def set_lift_safety_hold(lift, stiffness=1.0):
+    """
+    Make a direct API lift hold its position stiffly once it is in safety mode, eg, after lift.stop().
+
+    Normally the lift only counterbalances in safety mode, using a feedforward sized for the configured tool, so it droops
+    when the tool is heavier than that, or when nothing has applied the tool's feedforward yet (eg, a stopped server).
+    The gains are pushed on the lift's next push_command(), which stop() does, and last until the lift gains are next
+    pushed, eg, when the server or a direct Robot starts up.
+    """
+    lift.motor.gains['safety_hold'] = 1
+    lift.motor.gains['safety_stiffness'] = stiffness
+    lift.motor.set_gains()
+
+
 def hold_lift_stiff(stiffness=1.0):
     """
     Make the lift hold its position stiffly while in safety mode, over the direct API (the server must be stopped).
-
-    Normally the lift only counterbalances in safety mode, using a feedforward sized for the configured tool, so it droops
-    when a heavier tool is attached until the server restarts and applies the new tool's feedforward.
-    This lasts until the lift gains are next pushed, eg, when the server or a direct Robot starts up.
-    Returns True on success.
+    See set_lift_safety_hold(). Returns True on success.
     """
     from stretch4_body.core.robot_params import RobotParams
     from stretch4_body.subsystem.lift import Lift
@@ -28,9 +38,7 @@ def hold_lift_stiff(stiffness=1.0):
     if 'lift' not in RobotParams.get_params()[1]['robot']['subsystems']:
         return True
     l = Lift()
-    # Set before startup, so the first gains pushed already hold
-    l.motor.gains['safety_hold'] = 1
-    l.motor.gains['safety_stiffness'] = stiffness
+    set_lift_safety_hold(l, stiffness) # Set before startup, so the first gains pushed already hold
     if not l.startup():
         print('Could not connect to the lift to hold it in place.')
         return False
@@ -38,33 +46,44 @@ def hold_lift_stiff(stiffness=1.0):
     return True
 
 
-def ensure_lift_clearance(lift, root=None, tool=None, timeout=15.0):
-    """
-    If the lift is below the clearance the tool needs, ask to raise it there.
+def _refresh_status(root):
+    # A direct Robot's status thread already keeps the lift status fresh, and pulling
+    # from this thread as well would compete with it for the serial ports
+    body_thread = getattr(root, 'body_thread', None)
+    if body_thread is not None and body_thread.is_alive():
+        return
+    root.pull_status()
 
-    `lift`: a Lift, LiftClient, or a robot's lift subsystem.
-    `root`: the object to pull status / push commands through (eg, the Robot or RobotClient that owns `lift`). Defaults to `lift`.
+
+def ensure_lift_clearance(lift, root, tool=None, timeout=15.0):
+    """
+    Make sure the lift is high enough for the tool to move without hitting the base, asking to raise it if not.
+    When it is, the lift is left actively holding its position, so it doesn't droop under the tool while the tool moves.
+
+    `lift`: a robot's lift subsystem.
+    `root`: the Robot or RobotClient that owns `lift`, to pull status / push commands through. A Robot is needed rather than
+    a standalone direct Lift, as the lift runs in sync mode and only moves on the motor sync that Robot.push_command() sends.
     `tool`: the tool to get the clearance for. Defaults to the configured tool.
     Returns True if the lift is (now) high enough, False if the user declined or the lift could not get there.
     """
-    if root is None:
-        root = lift
     if tool is None:
         tool = lift.robot_params['robot']['tool']
     lift_min = get_lift_clearance(lift.robot_params, tool)
 
-    root.pull_status()
+    _refresh_status(root)
     if not lift.is_homed():
         print(f'The lift is not homed, so it cannot be raised to the {lift_min:.3f} m needed to clear the tool. Run stretch_lift_home first.')
         return False
 
     lift_pos = lift.status['pos']
     if lift_pos >= lift_min:
+        lift.move_to(lift_pos)
+        root.push_command()
         return True
 
     print(f'The lift is at {lift_pos:.3f} m, below the {lift_min:.3f} m needed for the tool to clear the base.')
     if not click.confirm(f'Raise the lift to {lift_min:.3f} m automatically?', default=True):
-        print('Aborted. Raise the lift manually and try again.')
+        print('Not raising the lift. Raise it manually and try again.')
         return False
 
     print('Raising lift...')
@@ -76,7 +95,7 @@ def ensure_lift_clearance(lift, root=None, tool=None, timeout=15.0):
     ts = time.time()
     while time.time() - ts < timeout:
         time.sleep(0.1)
-        root.pull_status()
+        _refresh_status(root)
         if lift.status['pos'] >= lift_min - 0.01:
             return True
     print(f'The lift did not reach {lift_min:.3f} m (at {lift.status["pos"]:.3f} m). Aborting.')

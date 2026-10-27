@@ -32,6 +32,8 @@ class Robot(RobotCore):
             self.end_of_arm = self.subsystems['end_of_arm']
             self.status['end_of_arm'] = self.subsystems['end_of_arm'].status
             self.status_aux['end_of_arm'] = self.subsystems['end_of_arm'].status_aux
+            if 'lift' in self.params['subsystems']:
+                self.lift.set_i_feedforward_payload(self.robot_params[self.eoa_name]['i_feedforward_payload'])
 
 
         self.dirty_push_command = False
