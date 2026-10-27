@@ -347,6 +347,9 @@ class PowerPeriphDefn():
         49: 'eoa_trip',
         50: 'easter_egg_entered',
         51: 'easter_egg_left',
+        52: 'low_battery_auto_wake',
+        53: 'button_pulse_rejected',
+        54: 'nuc_boot_watch',
     }
     POWER_EVENT_EXPLANATIONS = {
         1: 'PIMU restarted; data0 is the reset-cause bitmask and data1 is the board variant.',
@@ -413,6 +416,13 @@ class PowerPeriphDefn():
              '128 a runstop clear refused after 3 trips in 60 s; data1 is the trips in the last 60 s.'),
         50: 'Easter egg mode entered; data0 is 1 for a 5 s runstop hold, 2 for a host request.',
         51: 'Easter egg mode left; data0 is 2 for a host request, 3 for a runstop entry.',
+        52: ('Low-battery auto-wake; data0 is 1 armed by a low-battery shutdown, 2 armed found in flash at '
+             'boot, 3 woke, 4 disarmed by another wake; data1 is the SoC, or that wake\'s transition reason for 4.'),
+        53: ('A power button pulse too short to be a press was ignored; data0 is its width in ms, data1 the '
+             'pulses rejected since boot.'),
+        54: ('NUC boot watch; data0 is 1 NUC not booted 15 s into ACTIVE (data1 1 VBUS low, 0 no fresh ESP '
+             'status), 2 seen up by VBUS, 3 seen up by host traffic (data1 ms since ACTIVE), 4 not-booted '
+             'ended by leaving ACTIVE (data1 seconds).'),
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',

@@ -683,6 +683,13 @@ def test_describe_event_49(ev, text):
     assert describe_power_event(ev) == text
 
 
+def test_events_52_to_54_are_named():
+    assert PowerPeriphAux.POWER_EVENT_NAMES[52] == 'low_battery_auto_wake'
+    assert PowerPeriphAux.POWER_EVENT_NAMES[53] == 'button_pulse_rejected'
+    assert PowerPeriphAux.POWER_EVENT_NAMES[54] == 'nuc_boot_watch'
+    assert 'VBUS' in PowerPeriphAux.POWER_EVENT_EXPLANATIONS[54]
+
+
 def test_event_49_eoa_trip_is_named_and_explained():
     assert PowerPeriphAux.POWER_EVENT_NAMES[49] == 'eoa_trip'
     assert '10 mA' in PowerPeriphAux.POWER_EVENT_EXPLANATIONS[49]
