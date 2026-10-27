@@ -11,6 +11,15 @@ import contextlib
 from colorama import Fore, Style
 from stretch4_body.core.feetech.feetech_SM_servo import FeetechSMServo
 
+SERVER_START_FAILED_MSG = '''Could not start the stretch_body_server. Start it manually with:
+
+stretch_body_server --restart
+
+Then home the tool with:
+
+stretch_robot_home or stretch_dex_wrist_home
+'''
+
 def get_fleet_directory():
     return os.environ['HELLO_FLEET_PATH'] + '/' + os.environ['HELLO_FLEET_ID'] + '/'
 
@@ -107,6 +116,12 @@ def main(quick, auto_detect):
         ok, server_was_running = stop_server_for_power_change(reason='swap the tool')
         if not ok:
             return print('Aborted. The tool was not changed.')
+
+        # Hold the lift in place so it doesn't droop under the new tool's weight
+        # before the server restarts and applies the new tool's feedforward.
+        from stretch4_body.utils.lift_clearance import hold_lift_stiff
+        if not hold_lift_stiff():
+            print('WARNING: The lift may droop when the tool is swapped. Support the arm while swapping.')
 
         try:
             from stretch4_body.subsystem.power_periph import PowerPeriph
@@ -252,12 +267,12 @@ def main(quick, auto_detect):
 
     if not quick and is_do_home:
         if server_was_running and not start_server():
-            return print('Could not start the stretch_body_server. Home the tool once it is up.')
+            return print(SERVER_START_FAILED_MSG)
 
         # Reload RobotParams in-place to ensure the new tool settings are loaded from disk
         from stretch4_body.core.robot_params import RobotParams
         RobotParams.reload()
-        from stretch4_body.utils.lift_clearance import ensure_lift_clearance
+        from stretch4_body.utils.lift_clearance import ensure_lift_clearance, hold_lift_stiff
 
         if server_was_running:
             from stretch4_body.robot.robot_client import RobotClient
@@ -276,28 +291,44 @@ def main(quick, auto_detect):
             success = False
             try:
                 r.pull_status()
+                while r.is_runstopped():
+                    if not click.confirm('Robot is runstopped. Clear the runstop, then retry homing?', default=True):
+                        break
+                    r.pull_status()
+                has_lift = r.get_subsystem('lift') is not None
                 if r.is_runstopped():
-                    print("Robot is runstopped. Clear the runstop, then run stretch_robot_home.")
-                elif r.get_subsystem('lift') is not None and not ensure_lift_clearance(r.lift, root=r, tool=new_tool):
-                    print("The end_of_arm was not homed. Run stretch_robot_home once the lift is clear.")
+                    print("Homing failed because the robot is runstopped. Clear the runstop, then run stretch_robot_home.")
                 else:
-                    print('Homing end_of_arm...')
-                    success = r.end_of_arm.home()
-                    if not success:
-                        print("Homing failed. Run stretch_robot_home to try again.")
+                    if has_lift and r.lift.is_homed():
+                        # Actively hold the lift, as its safety mode may not counterbalance the new tool yet
+                        r.lift.move_to(r.lift.status['pos'])
+                        r.push_command()
+                    if has_lift and not ensure_lift_clearance(r.lift, root=r, tool=new_tool):
+                        print("The end_of_arm was not homed. Run stretch_robot_home once the lift is clear.")
+                    else:
+                        print('Homing end_of_arm...')
+                        success = r.end_of_arm.home()
+                        if not success:
+                            print("Homing failed. Run stretch_robot_home to try again.")
             except Exception as e:
                 print(f"Error during homing: {e}")
             finally:
                 r.stop()
+                if not server_was_running:
+                    # Stopping the direct Robot drops the lift back to its default
+                    # safety mode, without the new tool's feedforward.
+                    hold_lift_stiff()
             if success:
                 print("Done! You are ready to use the tool.")
+        elif server_was_running:
+            print("Failed to connect to the stretch_body_server. Make sure it is running (`stretch_body_server --restart`), then run stretch_robot_home.")
         else:
-            print("Failed to connect to the robot. Please try homing manually.")
+            print("Failed to connect to the robot. Please try homing manually with stretch_robot_home.")
     else:
         # The server was stopped to change tool power, so bring it back even
         # when the user skips homing.
-        if server_was_running:
-            start_server()
+        if server_was_running and not start_server():
+            return print(SERVER_START_FAILED_MSG)
         print("""Done! You may need to home the robot for the tool to be recognized.
 
 It is strongly recommended to run:
