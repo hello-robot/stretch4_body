@@ -11,8 +11,6 @@ import logging
 import struct
 import threading
 
-import pytest
-
 from stretch4_body.core.transport.transport import Transport
 from stretch4_body.core.transport.transport_pyserial import (
     SyncTransactionHandler,

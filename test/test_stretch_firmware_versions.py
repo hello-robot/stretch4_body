@@ -3,7 +3,6 @@ import json
 import socket
 import struct
 import threading
-import types
 
 import pytest
 

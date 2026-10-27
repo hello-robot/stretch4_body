@@ -108,7 +108,7 @@ def test_older_firmware_gets_three_tries_then_no_reply_without_errors(monkeypatc
 
 
 def test_a_reopen_asks_again(monkeypatch):
-    clock = Clock(monkeypatch)
+    Clock(monkeypatch)
     r, port = opened_reader(monkeypatch)
     r.step()
     port.feed(STATUS)
@@ -130,7 +130,7 @@ def test_a_reopen_asks_again(monkeypatch):
 
 
 def test_a_write_timeout_is_a_lost_try_not_a_reader_failure(monkeypatch):
-    clock = Clock(monkeypatch)
+    Clock(monkeypatch)
     r, port = opened_reader(monkeypatch)
 
     def timeout(data):
