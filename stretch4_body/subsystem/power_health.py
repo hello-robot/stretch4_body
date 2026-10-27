@@ -891,7 +891,7 @@ def health_line(power_health):
 
 # ---------------------------------------------------------------------- events
 
-_RESTART_REASONS = ((0x01, 'alarm clear and SoC below 90'), (0x02, 'alarm clear and pack below 26.8 V'),
+_RESTART_REASONS = ((0x01, 'alarm clear and SoC down to the restart level (85 from v0.1.72p14, below 90 before)'), (0x02, 'alarm clear and pack below 26.8 V'),
                     (0x04, 'policy disabled or host took charger control'),
                     (0x08, 'adapter removed'))
 _STOP_REASONS = ((0x01, 'SoC at or above 85'), (0x02, 'cell max at or above 3450 mV'))
