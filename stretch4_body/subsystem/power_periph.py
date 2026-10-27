@@ -782,6 +782,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         (self._eye_animation_left, self._eye_animation_right, self._eye_animation_intensity,
          self._eye_animation_r, self._eye_animation_g, self._eye_animation_b) = clean
         self._dirty_eye_animation = True
+        self.eye_animation_count += 1
         return True
 
     def eye_frame_supported(self):
@@ -1810,6 +1811,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._eye_animation_r = 255
         self._eye_animation_g = 255
         self._eye_animation_b = 255
+        self.eye_animation_count = 0
 
         if usb is None:
             usb = self.params['usb_name']
