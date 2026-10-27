@@ -10,7 +10,7 @@ Usage:
     stretch_system_check --sensors        # Lidar + camera check (no server needed)
     stretch_system_check --check_updates  # pip + firmware + workspace git updates, with commands to run
     stretch_system_check --repos          # ROS2 workspace (~/ament_ws/src) git status only
-    stretch_system_check --verbose        # Show additional detail in all checks
+    stretch_system_check --verbose        # Show every check, not just warnings and errors, with additional detail
     stretch_system_check --direct         # Use Robot API directly instead of server client
     stretch_system_check --export [DIR]   # Save a diagnostics zip for support to DIR (default: $HELLO_FLEET_PATH/log/exports)
 """
@@ -26,6 +26,9 @@ import sys
 import io
 import re
 import json
+import itertools
+import threading
+import contextlib
 import fnmatch
 import argparse
 import subprocess
@@ -46,7 +49,8 @@ from stretch4_body.subsystem.line_sensor import calibration_store
 parser = argparse.ArgumentParser(
     description='Check that all Stretch 4 robot hardware is present and reporting sane values'
 )
-parser.add_argument('-v', '--verbose',  help='Print additional detail',                  action='store_true')
+parser.add_argument('-v', '--verbose',  help='Print every check and additional detail (default: only warnings and errors)',
+                                        action=argparse.BooleanOptionalAction, default=False)
 parser.add_argument('-d', '--direct',   help='Use direct Robot API (no server)',          action='store_true')
 parser.add_argument('--firmware',       help='Kill server, check firmware, restart server', action='store_true')
 parser.add_argument('--sensors',        help='Check lidars and cameras',                 action='store_true')
@@ -58,6 +62,10 @@ parser.add_argument('--export',         help='Save a diagnostics zip (status his
                                              'to the given directory (defaults to $HELLO_FLEET_PATH/log/exports)',
                                         nargs='?', const='', metavar='DIR', default=None)
 args = parser.parse_args()
+
+# Without --verbose the hardware checks only print warnings and errors. The update,
+# repo and export modes are reports the user asked for, so they always print in full.
+QUIET = not (args.verbose or args.check_updates or args.repos or args.export is not None)
 
 logging.getLogger('stretch4_body').setLevel(logging.WARNING)
 logging.getLogger('stretch_body_client').setLevel(logging.WARNING)
@@ -100,7 +108,10 @@ click.secho(f'  Serial Number : {stretch_serial_no}',                           
 click.secho(f'  Tool          : {TOOL_DISPLAY.get(stretch_tool, stretch_tool)}',    fg='bright_white')
 if args.verbose:
     click.secho(f'  Batch         : {stretch_batch}',                               fg='bright_white')
-click.secho('========================================\n', fg='cyan', bold=True)
+click.secho('========================================', fg='cyan', bold=True)
+if QUIET:
+    click.secho('  Showing warnings and errors only. Run with --verbose to see every check.', fg='yellow')
+click.echo()
 
 
 # Robot client handle — assigned in main() after server startup
@@ -113,29 +124,120 @@ r = None
 
 _SKIP_REASONS = {}
 
+# In QUIET mode every line is one of three kinds:
+#   heading - a section title or a group label inside one; held back until a problem is reported under it
+#   problem - a [WARN], [FAIL] or [SKIP]; always shown, along with the headings above it
+#   detail  - a [PASS] or an informational line; hidden, unless it is indented under the problem
+#             printed just before it, since then it explains that problem
+# With --verbose all three print as they come.
+_headings = []           # open headings, outermost first: [indent, styled line, shown]
+_problem_indent = None   # indent of the last problem while its explanation may follow
+
+# The working animation drawn on the bottom line in QUIET mode
+_animation = {'label': '', 'stop': None, 'thread': None}
+_print_lock = threading.Lock()
+
+
+def _indent(line):
+    plain = click.unstyle(line).lstrip('\n')
+    return len(plain) - len(plain.lstrip(' '))
+
+def _echo(line='', **style):
+    """Print a line unconditionally, clearing the working animation first so it isn't overprinted."""
+    with _print_lock:
+        if _animation['stop'] is not None:
+            sys.stdout.write('\r\033[K')
+        click.secho(line, **style)
+
+def _heading(line, **style):
+    global _problem_indent
+    _problem_indent = None
+    if not QUIET:
+        _echo(line, **style)
+        return
+    indent = _indent(line)
+    while _headings and _headings[-1][0] >= indent:
+        _headings.pop()
+    _headings.append([indent, click.style(line, **style), False])
+
+def _problem(line, **style):
+    global _problem_indent
+    for heading in _headings:
+        if not heading[2]:
+            _echo(heading[1])
+            heading[2] = True
+    _echo(line, **style)
+    _problem_indent = _indent(line)
+
+def _detail(line, **style):
+    global _problem_indent
+    if not QUIET or (_problem_indent is not None and _indent(line) > _problem_indent):
+        _echo(line, **style)
+    else:
+        _problem_indent = None
+
 def print_section(title):
-    click.secho(f'\n---- {title} ----', fg='cyan', bold=True)
+    global _headings
+    _headings = []
+    _animation['label'] = f'Checking {title}...'
+    _heading(f'\n---- {title} ----', fg='cyan', bold=True)
+
+def print_group(line, **style):
+    """A label inside a section; the lines indented under it belong to it."""
+    _heading(line, **(style or {'fg': 'white', 'bold': True}))
 
 def print_result(passed, msg, indent=2):
     pad = ' ' * indent
     if passed:
-        click.secho(f'{pad}[PASS] {msg}', fg='green')
+        _detail(f'{pad}[PASS] {msg}', fg='green')
     else:
-        click.secho(f'{pad}[FAIL] {msg}', fg='red')
+        _problem(f'{pad}[FAIL] {msg}', fg='red')
 
 def print_warn(msg, indent=2):
-    click.secho(f'{" " * indent}[WARN] {msg}', fg='yellow')
+    _problem(f'{" " * indent}[WARN] {msg}', fg='yellow')
+
+def print_skip(msg, indent=2, expected=False):
+    """A check that didn't run. An expected skip (one that needs a flag to run) is not a problem."""
+    line = f'{" " * indent}[SKIP] {msg}'
+    _detail(line, fg='yellow') if expected else _problem(line, fg='yellow')
 
 def print_info(msg, indent=4):
-    click.secho(f'{" " * indent}{msg}', fg='white')
+    _detail(f'{" " * indent}{msg}', fg='white')
 
 def print_version_info(msg, update_ver=None, indent=4):
     """Print a version line, appending '(Update Available: x.y.z)' when newer on PyPI."""
-    click.secho(f'{" " * indent}{msg}', fg='white', nl=False)
+    line = click.style(f'{" " * indent}{msg}', fg='white')
     if update_ver:
-        click.secho(f'  (Update Available: {update_ver})', fg='yellow', bold=True)
-    else:
-        click.echo()
+        line += click.style(f'  (Update Available: {update_ver})', fg='yellow', bold=True)
+    _detail(line)
+
+
+def _animate(stop):
+    for frame in itertools.cycle(SPINNER_FRAMES):
+        with _print_lock:
+            sys.stdout.write(f'\r\033[K  {frame} {_animation["label"]}')
+            sys.stdout.flush()
+        if stop.wait(0.08):
+            break
+    with _print_lock:
+        sys.stdout.write('\r\033[K')
+        sys.stdout.flush()
+
+@contextlib.contextmanager
+def working():
+    """In QUIET mode, animate a spinner naming the section being checked until the block exits."""
+    if not QUIET or not sys.stdout.isatty():
+        yield
+        return
+    _animation['stop'] = threading.Event()
+    _animation['thread'] = threading.Thread(target=_animate, args=(_animation['stop'],), daemon=True)
+    _animation['thread'].start()
+    try:
+        yield
+    finally:
+        _animation['stop'].set()
+        _animation['thread'].join()
+        _animation['stop'] = _animation['thread'] = None
 
 def val_in_range(label, val, vmin, vmax):
     ok = vmin <= val <= vmax
@@ -412,7 +514,7 @@ def print_workspace_repos(repos, indent=4):
     pad = ' ' * indent
     for x in repos:
         if x['status'] == GIT_NOT_A_REPO:
-            click.secho(f'{pad}{x["name"]:<{col}} : {GIT_NOT_A_REPO}', fg='white')
+            _detail(f'{pad}{x["name"]:<{col}} : {GIT_NOT_A_REPO}', fg='white')
             continue
 
         where = f'{x["branch"]} @ {x["sha"]}' if x['branch'] else f'@ {x["sha"]}'
@@ -420,14 +522,14 @@ def print_workspace_repos(repos, indent=4):
             where += ' *'
 
         if x['status'] in GIT_NEEDS_PULL:
-            click.secho(f'{pad}{x["name"]:<{col}} : {where}', fg='white', nl=False)
             note = x['detail'] or x['status']
-            click.secho(f'  (Update Available: {note})', fg='yellow', bold=True)
+            _detail(click.style(f'{pad}{x["name"]:<{col}} : {where}', fg='white')
+                    + click.style(f'  (Update Available: {note})', fg='yellow', bold=True))
         elif x['status'] == GIT_OK:
-            click.secho(f'{pad}{x["name"]:<{col}} : {where}  (up to date)', fg='white')
+            _detail(f'{pad}{x["name"]:<{col}} : {where}  (up to date)', fg='white')
         else:
             detail = f' — {x["detail"]}' if x['detail'] else ''
-            click.secho(f'{pad}{x["name"]:<{col}} : {where}  ({x["status"]}{detail})', fg='white')
+            _detail(f'{pad}{x["name"]:<{col}} : {where}  ({x["status"]}{detail})', fg='white')
 
     if any(x['dirty'] for x in repos):
         print_info('* = uncommitted local changes', indent=indent)
@@ -487,15 +589,9 @@ def print_software_versions():
 
     if pip_extras:
         col = max(len(k) for k in pip_extras)
-        click.secho('\n  Python / pip:', fg='white', bold=True)
+        print_group('\n  Python / pip:')
         for name in sorted(pip_extras):
             print_version_info(f'  {name:<{col}} : {pip_extras[name]}', updates.get(name))
-
-    if not pypi_reachable:
-        print_warn('Could not reach PyPI — update availability not checked')
-    elif updates:
-        print_info(f'Update with: {PIP_UPDATE_CMD} ' + ' '.join(sorted(updates)))
-        print_info('Run with --check_updates for pip + firmware update commands')
 
     # ROS2 packages — auto-discovered via AMENT_PREFIX_PATH
     try:
@@ -520,7 +616,7 @@ def print_software_versions():
                         pass
         if ros2_pkgs:
             col = max(len(k) for k in ros2_pkgs)
-            click.secho('\n  ROS2 Packages:', fg='white', bold=True)
+            print_group('\n  ROS2 Packages:')
             for pkg in sorted(ros2_pkgs):
                 print_info(f'  {pkg:<{col}} : {ros2_pkgs[pkg]}')
     except Exception:
@@ -529,10 +625,48 @@ def print_software_versions():
     # ROS2 workspace repos — git branch/sha and whether the remote is ahead
     src, repos = check_workspace_repos()
     if repos:
-        click.secho(f'\n  ROS2 Workspace ({src}):', fg='white', bold=True)
+        print_group(f'\n  ROS2 Workspace ({src}):')
         print_workspace_repos(repos, indent=4)
-        if any(x['command'] for x in repos):
-            print_info('Run with --repos for the git commands to update them')
+
+    return {**core, **pip_extras}, updates, pypi_reachable, repos
+
+
+UPDATES_SECTION = 'Updates'
+
+
+def check_available_updates(installed, pip_updates, pypi_reachable, repos):
+    """
+    Warn about the updates --check_updates would find without stopping the server:
+    newer hello-robot-* releases on PyPI, and workspace repos behind their remote.
+    Firmware is left out, since querying it needs exclusive access to the USB devices.
+
+    Takes what print_software_versions() already gathered, so nothing is queried twice.
+    """
+    print_section(UPDATES_SECTION)
+
+    if not pypi_reachable:
+        print_warn('Could not reach PyPI — pip update availability not checked')
+    elif pip_updates:
+        print_warn(f'{len(pip_updates)} pip package update(s) available:')
+        col = max(len(n) for n in pip_updates)
+        for name in sorted(pip_updates):
+            print_info(f'{name:<{col}} : {installed[name]} → {pip_updates[name]}')
+        print_info(f'Update with: {PIP_UPDATE_CMD} ' + ' '.join(sorted(pip_updates)))
+    else:
+        print_result(True, 'hello-robot pip packages are up to date')
+
+    behind = [x['name'] for x in repos if x['status'] in GIT_NEEDS_PULL]
+    unreachable = [x['name'] for x in repos if x['status'] == GIT_UNREACHABLE]
+    if behind:
+        print_warn(f'{len(behind)} ROS2 workspace repo(s) behind their remote: ' + ', '.join(behind))
+        print_info('Run with --repos for the git commands to update them')
+    elif repos and not unreachable:
+        print_result(True, 'ROS2 workspace repos are up to date')
+    if unreachable:
+        print_warn('Could not reach the remote for: ' + ', '.join(unreachable))
+
+    print_info('Firmware updates are not checked here — run with --check_updates '
+               '(stops the robot server while it queries the boards)', indent=2)
 
 
 def check_usb_devices():
@@ -1240,14 +1374,43 @@ def check_eye_animations():
 
 def check_audio():
     print_section('Audio')
+    cmd = [sys.executable, '-m', 'stretch4_body.tools.stretch_audio_test', '--check-only']
     try:
-        res = subprocess.run(
-            [sys.executable, '-m', 'stretch4_body.tools.stretch_audio_test', '--check-only']
-        )
-        return res.returncode == 0
+        if not QUIET:
+            return subprocess.run(cmd).returncode == 0
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except Exception as e:
         print_result(False, f'Failed to run audio tests: {e}')
         return False
+
+    # Replay the audio test's report through the helpers above, so only its problems
+    # are shown. Its own summary only repeats them, so it is dropped.
+    in_summary, reported = False, False
+    for line in res.stdout.splitlines():
+        header = _RE_SECTION.match(line.strip())
+        if header:
+            in_summary = header.group('title') == 'Summary'
+            if not in_summary:
+                print_group(f'  {header.group("title")}', fg='cyan', bold=True)
+            continue
+        if in_summary or not line.strip():
+            continue
+        result = _RE_RESULT.match(line)
+        if result and result.group('status') == 'FAIL':
+            _problem(line, fg='red')
+            reported = True
+        elif result and result.group('status') in ('WARN', 'SKIP'):
+            _problem(line, fg='yellow')
+            reported = True
+        else:
+            _detail(line, fg='green' if result else 'white')
+
+    if res.returncode != 0 and not reported:
+        # It failed without saying why in a result line (e.g. it crashed), so show how it ended
+        print_result(False, f'Audio test exited with code {res.returncode}')
+        for line in res.stdout.splitlines()[-10:]:
+            print_info(line)
+    return res.returncode == 0
 
 
 def check_calibrations():
@@ -1258,7 +1421,7 @@ def check_calibrations():
     fleet_id   = os.environ.get('HELLO_FLEET_ID', stretch_serial_no)
     cal_root   = os.path.join(fleet_path, fleet_id)
 
-    click.secho('    Steppers:', fg='white', bold=True)
+    print_group('    Steppers:')
     stepper_dir = os.path.join(cal_root, 'calibration_steppers')
     for m in ['hello-motor-arm', 'hello-motor-lift',
               'hello-motor-omni-0', 'hello-motor-omni-1', 'hello-motor-omni-2']:
@@ -1270,7 +1433,7 @@ def check_calibrations():
         if not ok:
             all_pass = False
 
-    click.secho('    Cameras:', fg='white', bold=True)
+    print_group('    Cameras:')
     cam_dir = os.path.join(cal_root, 'calibration_cameras')
     from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
@@ -1296,7 +1459,7 @@ def check_calibrations():
     if not ok:
         all_pass = False
 
-    click.secho('    Line Sensors:', fg='white', bold=True)
+    print_group('    Line Sensors:')
     ls_dir = os.path.join(cal_root, 'calibration_line_sensors')
 
     ls_names = (rp.RobotParams._robot_params
@@ -1313,7 +1476,7 @@ def check_calibrations():
         print_result(False, f'tare directory missing: {tare_dir}', indent=6)
         all_pass = False
 
-    click.secho('    Lidars:', fg='white', bold=True)
+    print_group('    Lidars:')
     hesai_dir = os.path.join(cal_root, 'calibration_hesais')
     for side in ('left', 'right'):
         ok = os.path.isfile(os.path.join(hesai_dir, f'{side}_lidar_calibration.dat'))
@@ -1321,7 +1484,7 @@ def check_calibrations():
         if not ok:
             all_pass = False
 
-    click.secho('    OmniBase:', fg='white', bold=True)
+    print_group('    OmniBase:')
     imu_dir = os.path.join(cal_root, 'calibration_omnibase_imu')
     has_imu_cal = os.path.isdir(imu_dir) and any(os.listdir(imu_dir))
     print_result(has_imu_cal, 'IMU calibration', indent=6)
@@ -1484,7 +1647,14 @@ def _spin(label, stop_event):
 
 def _with_spinner(label, fn):
     """Run fn() while a spinner animates next to label, and return whatever fn() returned."""
-    import threading
+    if _animation['stop'] is not None:
+        # The working animation is already running; relabel it rather than draw a second spinner
+        previous, _animation['label'] = _animation['label'], label
+        try:
+            return fn()
+        finally:
+            _animation['label'] = previous
+
     stop = threading.Event()
     thread = threading.Thread(target=_spin, args=(label, stop), daemon=True)
     thread.start()
@@ -1566,7 +1736,7 @@ def _check_camera_streams(counts, last_frames, elapsed, streams):
     all_pass = True
     active = []
 
-    print_info('Stream active:')
+    print_group('    Stream active:', fg='white')
     for name, key, _, _ in streams:
         seen = counts.get(key, 0) > 0
         print_result(seen, name, indent=6)
@@ -1575,7 +1745,7 @@ def _check_camera_streams(counts, last_frames, elapsed, streams):
         else:
             all_pass = False
 
-    print_info('FPS:')
+    print_group('    FPS:', fg='white')
     for name, key, expected_fps, _ in streams:
         if key not in active:
             continue
@@ -1585,7 +1755,7 @@ def _check_camera_streams(counts, last_frames, elapsed, streams):
         if not ok:
             all_pass = False
 
-    print_info('Resolution:')
+    print_group('    Resolution:', fg='white')
     for name, key, _, expected_size in streams:
         if key not in active:
             continue
@@ -1616,13 +1786,13 @@ def _check_camera(label, camera_type, expected_usb_speed, check_depth=False):
     try:
         camera = _with_spinner(f'{label}: connecting...', camera_type.start_synced)
     except Exception as e:
-        click.secho(f'  {label}', fg='cyan', bold=True)
+        print_group(f'  {label}', fg='cyan', bold=True)
         print_result(False, f'Could not open camera: {e}')
         return False
 
     all_pass = True
     try:
-        click.secho(f'  {label}', fg='cyan', bold=True)
+        print_group(f'  {label}', fg='cyan', bold=True)
 
         is_open = camera.is_open()
         print_result(is_open, f'Pipeline running  (id={camera.device.getDeviceId()})')
@@ -1734,7 +1904,7 @@ def check_sensors():
 
     for side, cfg in LIDARS.items():
         ip, port = cfg['ip'], cfg['ptc_port']
-        click.secho(f'\n  {side.capitalize()} lidar ({ip})', fg='cyan', bold=True)
+        print_group(f'\n  {side.capitalize()} lidar ({ip})', fg='cyan', bold=True)
 
         ping_ok = subprocess.call(
             ['ping', '-c', '3', '-i', '0.2', '-W', '1', ip],
@@ -1764,7 +1934,7 @@ def check_sensors():
         if ptc_available:
             _check_lidar_ptc(ip)
 
-    click.secho(f'\n  Streaming check (listening 5 s for UDP packets)...', fg='white')
+    print_group('\n  Streaming check (listening 5 s for UDP packets)...', fg='white')
     stream_results = _check_lidar_streaming(LIDARS, timeout=5.0)
     for side, streaming in stream_results.items():
         ip = LIDARS[side]['ip']
@@ -1783,27 +1953,27 @@ def check_sensors():
 # ==============================================================================
 
 def _kill_server():
-    click.secho('  Stopping robot server...', fg='yellow')
+    _echo('  Stopping robot server...', fg='yellow')
     ret = subprocess.call(
         ['stretch_body_server', '--kill'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     if ret == 0:
-        click.secho('  Server stopped.', fg='yellow')
+        _echo('  Server stopped.', fg='yellow')
     else:
-        click.secho(f'  Server stop may have failed (exit code {ret}).', fg='yellow')
+        _echo(f'  Server stop may have failed (exit code {ret}).', fg='yellow')
     return ret == 0
 
 
 def _restart_server():
-    click.secho('  Restarting robot server...', fg='yellow')
+    _echo('  Restarting robot server...', fg='yellow')
     subprocess.Popen(
         ['stretch_body_server', '--restart'],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    click.secho('  Server restarting in background.', fg='yellow')
+    _echo('  Server restarting in background.', fg='yellow')
 
 
 # ==============================================================================
@@ -2168,7 +2338,8 @@ def export_diagnostics(export_dir):
 
     print_section('Diagnostics Export')
     staging = tempfile.mkdtemp(prefix='stretch_system_check_export_')
-    passthrough = (['--verbose'] if args.verbose else []) + (['--direct'] if args.direct else [])
+    # Always verbose: the report is built from every check's result, not just the problems
+    passthrough = ['--verbose'] + (['--direct'] if args.direct else [])
     fleet_dir = _fleet_dir()
     contents = {'fleet_dir': fleet_dir, 'status_zips': [], 'session_logs': [],
                 'commands': [], 'params': [], 'udev': False, 'web_teleop': []}
@@ -2335,11 +2506,12 @@ def main():
         sys.exit(0 if ok else 1)
 
     if args.firmware:
-        click.secho('\n---- Firmware Check Mode ----', fg='cyan', bold=True)
-        _kill_server()
-        results['USB Devices'] = check_usb_devices()
-        results['Firmware']    = check_firmware_versions()
-        _restart_server()
+        with working():
+            print_section('Firmware Check Mode')
+            _kill_server()
+            results['USB Devices'] = check_usb_devices()
+            results['Firmware']    = check_firmware_versions()
+            _restart_server()
 
         print_section('Summary')
         all_pass = True
@@ -2348,64 +2520,66 @@ def main():
             print_result(passed, name)
             if not passed:
                 all_pass = False
-        click.echo()
-        click.secho('All firmware checks PASSED.' if all_pass else 'One or more firmware checks FAILED.',
-                    fg='green' if all_pass else 'red', bold=True)
+        _echo()
+        _echo('All firmware checks PASSED.' if all_pass else 'One or more firmware checks FAILED.',
+              fg='green' if all_pass else 'red', bold=True)
         sys.exit(0 if all_pass else 1)
 
     if args.sensors:
-        results['Sensors'] = check_sensors()
+        with working():
+            results['Sensors'] = check_sensors()
         print_section('Summary')
         all_pass = results['Sensors']
         print_result(all_pass, 'Sensors')
-        click.echo()
-        click.secho('All sensor checks PASSED.' if all_pass else 'One or more sensor checks FAILED.',
-                    fg='green' if all_pass else 'red', bold=True)
+        _echo()
+        _echo('All sensor checks PASSED.' if all_pass else 'One or more sensor checks FAILED.',
+              fg='green' if all_pass else 'red', bold=True)
         sys.exit(0 if all_pass else 1)
 
     # Full system check
-    print_software_versions()
-    results['USB Devices'] = check_usb_devices()
-    results['Firmware']    = None  # requires --firmware
-    results['Calibrations'] = check_calibrations()
+    with working():
+        check_available_updates(*print_software_versions())
+        results['USB Devices'] = check_usb_devices()
+        results['Firmware']    = None  # requires --firmware
+        results['Calibrations'] = check_calibrations()
 
-    if args.direct:
-        from stretch4_body.robot.robot import Robot
-        r = Robot()
-    else:
-        from stretch4_body.robot.robot_client import RobotClient
-        r = RobotClient()
+        if args.direct:
+            from stretch4_body.robot.robot import Robot
+            r = Robot()
+        else:
+            from stretch4_body.robot.robot_client import RobotClient
+            r = RobotClient()
 
-    _old_stdout, _old_stderr = sys.stdout, sys.stderr
-    sys.stdout = sys.stderr = io.StringIO()
-    server_online = r.startup()
-    sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        _old_stdout, _old_stderr = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = io.StringIO()
+        server_online = r.startup()
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
 
-    if not server_online:
-        click.secho(
-            '\n[WARN] Could not connect to robot server — live hardware checks skipped.\n'
-            '       Launch the server first:  stretch_body_server --launch\n',
-            fg='yellow'
-        )
-        r = None
-    else:
-        r.pull_status()
+        if not server_online:
+            _echo(
+                '\n[WARN] Could not connect to robot server — live hardware checks skipped.\n'
+                '       Launch the server first:  stretch_body_server --launch\n',
+                fg='yellow'
+            )
+            r = None
+        else:
+            r.pull_status()
 
-    results['Line Sensors'] = check_line_sensors()
-    results['Eye LEDs']     = check_eye_animations()
-    results['Audio']        = check_audio()
+        results['Line Sensors'] = check_line_sensors()
+        results['Eye LEDs']     = check_eye_animations()
+        results['Audio']        = check_audio()
 
-    if r is not None:
-        results['Power/Battery'] = check_power_periph()
-        results['ESP32']         = check_esp32()
-        results['OmniBase']      = check_omnibase()
-        results['Arm']           = check_arm()
-        results['Lift']          = check_lift()
-        results['End-of-Arm']    = check_end_of_arm()
-        results['IMU']           = check_imu()
-    else:
-        for name in _REQUIRE_SERVER:
-            results[name] = None
+        if r is not None:
+            results['Power/Battery'] = check_power_periph()
+            results['ESP32']         = check_esp32()
+            results['OmniBase']      = check_omnibase()
+            results['Arm']           = check_arm()
+            results['Lift']          = check_lift()
+            results['End-of-Arm']    = check_end_of_arm()
+            results['IMU']           = check_imu()
+        else:
+            for name in _REQUIRE_SERVER:
+                results[name] = None
 
     print_section('Summary')
     all_pass = True
@@ -2414,15 +2588,16 @@ def main():
         if passed is None:
             skip_reason = _SKIP_REASONS.get(name) or (
                 'run with --firmware to check' if name == 'Firmware' else 'server offline')
-            click.secho(f'  [SKIP] {name} ({skip_reason})', fg='yellow')
+            # Firmware is always skipped here, so it is only worth a line in verbose output
+            print_skip(f'{name} ({skip_reason})', expected=name == 'Firmware')
         else:
             print_result(passed, name)
             if not passed:
                 all_pass = False
 
-    click.echo()
-    click.secho('All checks PASSED.' if all_pass else 'One or more checks FAILED.',
-                fg='green' if all_pass else 'red', bold=True)
+    _echo()
+    _echo('All checks PASSED.' if all_pass else 'One or more checks FAILED.',
+          fg='green' if all_pass else 'red', bold=True)
 
     if r is not None:
         r.stop()
@@ -2722,11 +2897,16 @@ def _match_hint(messages):
 def _build_actions(captures):
     """Derives the Recommended actions list from the parsed captures."""
     actions = []
+    # The system check's own Updates section is a subset of the --check_updates capture,
+    # which gets a dedicated action below
+    has_update_check = any(c['kind'] == 'updates' for c in captures)
 
     for capture in captures:
         for section in capture['sections']:
             if section.get('rollup'):
                 continue  # its rows repeat the sections above
+            if has_update_check and section['title'] == UPDATES_SECTION:
+                continue
             for status, severity in (('FAIL', 'critical'), ('WARN', 'warning')):
                 hits = [r for r in section['results'] if r['status'] == status]
                 if not hits:
