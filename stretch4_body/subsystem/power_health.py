@@ -900,6 +900,14 @@ _WAIT_CAUSE = {0: 'no wait configured', 1: 'NUC off', 2: 'cap reached',
                4: 'cap reached with only stale "off" status'}
 
 
+_BUTTON_ERRORS = ((0x001, 'BMS silent'), (0x002, 'BMS unreliable'), (0x004, 'pack temperature'),
+                  (0x008, 'BMS protection'), (0x010, 'NUC not booted'), (0x020, 'NUC off unconfirmed'),
+                  (0x040, 'over current'), (0x080, 'ESP silent'), (0x100, 'watchdog reset'))
+_BUTTON_CHARGING = ((0x01, 'adapter fault'), (0x02, 'charge FET open'), (0x04, 'charge stopped'),
+                    (0x08, 'no bus voltage'), (0x10, 'not charging'))
+_RUNSTOP_CAUSES = {3: 'low SoC', 4: 'high current', 5: 'end of arm current'}
+
+
 def _bits(value, table):
     names = [text for bit, text in table if value & bit]
     return ' + '.join(names) or 'none'
@@ -939,6 +947,12 @@ def describe_power_event(event):
             d0, _name(_Defn.POWER_EVENT_NAMES, d1))
     if eid == 14:
         return 'BMS level 1 alarms %s -> %s' % (_bits(d0, _BMS_ALARMS), _bits(d1, _BMS_ALARMS))
+    if eid == 55:
+        return 'button faults: error %s, charging %s' % (_bits(d0, _BUTTON_ERRORS), _bits(d1, _BUTTON_CHARGING))
+    if eid == 56:
+        if d0 == 3:
+            return 'runstop raised by the firmware: low SoC, %d %%' % d1
+        return 'runstop raised by the firmware: %s, %.1f A' % (_RUNSTOP_CAUSES.get(d0, 'cause %d' % d0), d1 / 10.0)
     if eid in (15, 20):
         return 'mask 0x%02X -> 0x%02X' % (d0 & 0xFFFF, d1 & 0xFFFF)
     if eid in (17, 18):
