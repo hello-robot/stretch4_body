@@ -128,3 +128,33 @@ def collect(robot, startup_time, now=None):
     enabled = 'line_sensor_loop' in robot.params.get('server', {}).get('subsystems', [])
     rows.append(line_sensor_row(robot.status.get('line_sensor_loop'), enabled))
     return rows
+
+
+class FirmwareVersions:
+    """Keeps robot.status['firmware_versions'] at 1 Hz. Startup versions do not change;
+    the ESP, end of arm and line sensor ones arrive later. Never raises."""
+
+    def __init__(self, robot):
+        self.robot = robot
+        self.startup_time = None
+        self.last = 0.0
+        self.failed = False
+        robot.status['firmware_versions'] = {'boards': [], 'time': None}
+
+    def startup(self):
+        self.startup_time = time.time()
+        self.update(force=True)
+
+    def update(self, force=False):
+        now = time.time()
+        if not force and now - self.last < 1.0:
+            return
+        self.last = now
+        try:
+            self.robot.status['firmware_versions'] = {
+                'boards': collect(self.robot, self.startup_time, now),
+                'time': now}
+        except Exception as e:
+            if not self.failed:
+                self.robot.logger.warning('firmware versions not collected: %s', e)
+                self.failed = True
