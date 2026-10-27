@@ -1460,8 +1460,8 @@ nominal_params={
         'py_class_name': 'SentryLidarIdle',
         'required_subsystems': ['power_periph'],
         'enabled': 1,                # 0: never cut the rail (rail behaves as before)
-        'idle_timeout_s': 300,       # no consumer for this long, then rail off
-        'min_on_s': 60,              # never cut sooner than this after an ON
+        'idle_timeout_s': 0,         # no consumer for this long, then rail off (0: at once)
+        'min_on_s': 0,               # never cut sooner than this after an ON
         'poll_period_s': 1.0,        # /proc/net scan period, clamped to >= 1 s
         'udp_ports': [2368, 2378],   # lidar data ports (right, left)
         'lidar_ips': ['192.168.1.201', '192.168.1.202'],
