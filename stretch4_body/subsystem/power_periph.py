@@ -437,6 +437,7 @@ class PowerPeriphDefn():
         9: 'power_button_high',
         10: 'user_wake',
         11: 'esp_wake_request',
+        12: 'low_battery_recovered',
     }
     # Schema 2 enum fields (Common.h, PROTOCOL_P14_POWER_DIAGNOSTICS.md). The decoder
     # publishes '<field>_name' beside each raw value; None on a schema 1 snapshot.

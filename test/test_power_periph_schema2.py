@@ -342,10 +342,11 @@ def test_capability_and_validity_bits_of_schema_2_are_named():
 
 
 def test_every_firmware_event_id_and_transition_reason_has_a_name():
-    ids = list(range(1, 37)) + list(range(40, 48)) + [50, 51]
+    ids = list(range(1, 37)) + list(range(40, 48)) + [50, 51, 52, 53]
     for event_id in ids:
         assert event_id in PowerPeriphAux.POWER_EVENT_NAMES, event_id
         assert event_id in PowerPeriphAux.POWER_EVENT_EXPLANATIONS, event_id
     assert PowerPeriphAux.POWER_EVENT_NAMES[40] == 'adc_bank_reinit'
     assert PowerPeriphAux.POWER_EVENT_NAMES[47] == 'esp_shutdown_cmd_delivered'
     assert PowerPeriphAux.POWER_TRANSITION_REASON_NAMES[11] == 'esp_wake_request'
+    assert PowerPeriphAux.POWER_TRANSITION_REASON_NAMES[12] == 'low_battery_recovered'
