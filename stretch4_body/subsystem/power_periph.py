@@ -419,7 +419,7 @@ class PowerPeriphDefn():
              'boot, 3 woke, 4 disarmed by another wake; data1 is the SoC, or that wake\'s transition reason for 4.'),
         53: ('A power button pulse too short to be a press was ignored; data0 is its width in ms, data1 the '
              'pulses rejected since boot.'),
-        54: ('NUC boot watch; data0 is 1 NUC not booted 15 s into ACTIVE (data1 1 VBUS low, 0 no fresh ESP '
+        54: ('NUC boot watch; data0 is 1 NUC not booted 60 s into ACTIVE (data1 1 VBUS low, 0 no fresh ESP '
              'status), 2 seen up by VBUS, 3 seen up by host traffic (data1 ms since ACTIVE), 4 not-booted '
              'ended by leaving ACTIVE (data1 seconds).'),
     }
