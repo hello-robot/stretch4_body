@@ -3,7 +3,9 @@ import math
 import os
 import pwd
 import time
+import fcntl
 import logging
+import logging.handlers
 import numpy as np
 import sys
 import signal
@@ -931,6 +933,65 @@ class HelloLoggerFile(logging.Formatter):
             except TypeError:
                 formatter = logging.Formatter(self.base_fmt, self.datefmt, self.style_char)
         return formatter.format(record)
+
+class MultiProcessRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    A RotatingFileHandler that the server's processes can share.
+
+    Each server process (end of arm loop, line sensor loop, sentries, ...) has its own handler
+    on the same file. A plain RotatingFileHandler only rotates its own stream: the other
+    processes keep writing into the renamed file, find it full, and rotate again, pushing the
+    fresh log aside. One rollover becomes one per process, the session ends up scattered out of
+    order across segments, and backupCount is used up within seconds, deleting the oldest logs.
+
+    Here a lock file serializes writes and rollovers across processes, the size is read from
+    the file rather than this process's stream position, and a process reopens the log when it
+    finds that another process has rotated it.
+    """
+    def __init__(self, filename, *args, **kwargs):
+        super().__init__(filename, *args, **kwargs)
+        # Hidden, so it doesn't match the 'stretch_body_server.log*' globs that collect the logs
+        self._lock_path = os.path.join(os.path.dirname(self.baseFilename),
+                                       '.' + os.path.basename(self.baseFilename) + '.lock')
+        self._lock_fd = None
+        self._lock_pid = None
+
+    def emit(self, record):
+        try:
+            if self._lock_pid != os.getpid():
+                # A forked child opens its own: flock() locks belong to the open file, and
+                # fork() shares that, so parent and child would never exclude each other
+                self._lock_fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o666)
+                self._lock_pid = os.getpid()
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
+            try:
+                self._reopen_if_rotated()
+                super().emit(record)
+            finally:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+        except Exception:
+            self.handleError(record)
+
+    def _reopen_if_rotated(self):
+        if self.stream is None:
+            return
+        try:
+            current = os.stat(self.baseFilename)
+            ours = os.fstat(self.stream.fileno())
+            rotated = (current.st_dev, current.st_ino) != (ours.st_dev, ours.st_ino)
+        except FileNotFoundError:
+            rotated = True # Rotated away, or archived: start the file again
+        if rotated:
+            self.stream.close()
+            self.stream = self._open()
+
+    def shouldRollover(self, record):
+        if self.stream is None:
+            self.stream = self._open()
+        if self.maxBytes <= 0:
+            return False
+        size = os.fstat(self.stream.fileno()).st_size
+        return size > 0 and size + len(self.format(record)) + 1 >= self.maxBytes
 
 class LoggerThrottleFilter(logging.Filter):
     """

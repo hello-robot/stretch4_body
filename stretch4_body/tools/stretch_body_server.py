@@ -15,6 +15,9 @@ import zipfile
 from datetime import datetime
 import fcntl
 import json
+import psutil
+import shutil
+import threading
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -33,6 +36,11 @@ LOG_DIR = hu.get_stretch_directory('log/stretch_body_logger')
 LOG_FILE = os.path.join(LOG_DIR,"stretch_body_server.log")
 NUM_EXPORTED_SESSION_LOGS = 5
 DAEMON_STARTUP_TIMEOUT_S = 15.0
+DAEMON_RESTART_S = 10 # systemd retries a daemon that exited with an error after this long
+DAEMON_MAX_RESTARTS = 3 # and gives up after this many retries in a row
+DEFAULT_KEPT_SESSIONS = 100
+SERVICE_NAME = 'stretch_body_server.service'
+MAX_ERROR_LINES = 30
 logger = logging.getLogger('stretch_body_server')
 
 def print_status(robot_client):
@@ -46,11 +54,8 @@ def print_status(robot_client):
     print('Running as a daemon: ' + f'{"Yes" if daemon_is_running() else "No"}')
     print('Daemon is installed: ' + f'{"Yes" if daemon_is_installed() else "No"}')
 
-    if daemon_is_installed():
-        status_daemon()
-
     print("")
-    print("Use `stretch_body_server --print` to view the latest logs.")
+    print("Use `stretch_body_server --logs` to view the latest logs.")
     print("")
 
 
@@ -151,9 +156,9 @@ Each line is formatted as:
 
     [timestamp] [logger name] [LEVEL]: message
 
-On the robot itself, `stretch_body_server --print` tails the log of the running
-session, and `stretch_body_server --status` shows the server's control loop rate
-and daemon state.
+On the robot itself, `stretch_body_server --logs` follows the log of the running
+session (or opens the last session's log when no server is running), and
+`stretch_body_server --status` shows the server's control loop rate and daemon state.
 
 For a full diagnostics bundle -- these logs plus system checks, the robot's USB
 device listing and the `stretch_status` telemetry history -- run:
@@ -194,30 +199,181 @@ def export_session_logs(export_dir:str='', n:int=NUM_EXPORTED_SESSION_LOGS):
     return zip_path
 
 
-def print_last_log_from_archive():    
-    archive_dir = os.path.join(LOG_DIR, 'archive')
-    archives = glob.glob(os.path.join(archive_dir, 'stretch_body_server_logs_*.tar.gz'))
-    if not archives:
-        print(f"No log files found. Start stretch_body_server to initialize logging.")
-        return
-    
-    latest_archive = max(archives, key=os.path.getmtime)
+def prune_logs(keep:int=DEFAULT_KEPT_SESSIONS) -> bool:
+    """
+    Deletes all but the newest `keep` archived sessions, and the stretchbody_<timestamp>.log
+    files older versions wrote (nothing writes them now). Asks first when run interactively.
+    """
+    if keep < 0:
+        print("Error: KEEP must be 0 or more.")
+        return False
+
+    archives = sorted(glob.glob(os.path.join(LOG_DIR, 'archive', 'stretch_body_server_logs_*.tar.gz')),
+                      key=os.path.getmtime, reverse=True)[keep:]
+    legacy = glob.glob(os.path.join(LOG_DIR, 'stretchbody_*.log'))
+    doomed = archives + legacy
+    if not doomed:
+        print(f"Nothing to prune in {LOG_DIR}.")
+        return True
+
+    size_mb = sum(os.path.getsize(f) for f in doomed) / (1024 * 1024)
+    print(f"This deletes {size_mb:.1f} MB from {LOG_DIR}:")
+    if archives:
+        print(f"  {len(archives)} archived sessions older than the newest {keep}")
+    if legacy:
+        print(f"  {len(legacy)} stretchbody_*.log files left by older versions")
+    if sys.stdin.isatty() and input("Continue? [y/N] ").strip().lower() not in ('y', 'yes'):
+        print("Nothing deleted.")
+        return True
+
+    failed = 0
+    for f in doomed:
+        try:
+            os.remove(f)
+        except OSError as e:
+            print(f"Could not delete {f}: {e}")
+            failed += 1
+    print(f"Deleted {len(doomed) - failed} files.")
+    return failed == 0
+
+
+def _segment_order(name:str) -> int:
+    """Sort key putting a session's rotated log segments oldest first: .log.N, ..., .log.1, .log"""
+    suffix = name.rsplit('.log', 1)[-1].lstrip('.')
+    return -int(suffix) if suffix.isdigit() else 0
+
+
+def last_session_log():
+    """
+    Returns (lines, source) for the most recent server session: the unarchived log when a
+    server ended without archiving it (e.g. it crashed), otherwise the newest archive.
+    Returns (None, None) if there are no logs at all.
+    """
+    active = [f for f in glob.glob(os.path.join(LOG_DIR, 'stretch_body_server.log*'))
+              if os.path.getsize(f) > 0]
+    archives = glob.glob(os.path.join(LOG_DIR, 'archive', 'stretch_body_server_logs_*.tar.gz'))
+    newest_archive = max(archives, key=os.path.getmtime, default=None)
+
+    if active and (newest_archive is None
+                   or max(map(os.path.getmtime, active)) >= os.path.getmtime(newest_archive)):
+        lines = []
+        for f in sorted(active, key=lambda f: _segment_order(os.path.basename(f))):
+            with open(f, errors='replace') as fh:
+                lines += fh.read().splitlines()
+        return lines, os.path.join(LOG_DIR, 'stretch_body_server.log')
+
+    if newest_archive is None:
+        return None, None
+
+    lines = []
     try:
-        with tarfile.open(latest_archive, "r:gz") as tar:
-            try:
-                member = tar.getmember("stretch_body_server.log")
-            except KeyError:
-                return
-            
-            f = tar.extractfile(member)
-            if f:
-                lines = f.readlines()
-                if lines:
-                    for line in lines[-10:]:
-                        color_print(line.decode('utf-8'))
-                    print(f"\nSee archive for full session log: {os.path.join(archive_dir, os.path.basename(latest_archive))}")
-    except:
-        pass 
+        with tarfile.open(newest_archive, "r:gz") as tar:
+            for member in sorted(tar.getmembers(), key=lambda m: _segment_order(m.name)):
+                f = tar.extractfile(member)
+                if f:
+                    lines += f.read().decode('utf-8', errors='replace').splitlines()
+    except (tarfile.TarError, OSError) as e:
+        lines.append(f"Could not read {newest_archive}: {e}")
+    return lines, newest_archive
+
+
+_RE_ANSI = re.compile(r'\x1b\[[0-9;]*m')
+_RE_RECORD_LEVEL = re.compile(r'^\[[^\]]+\] \[[^\]]+\] \[(?P<level>[A-Z]+)\]: ')
+
+def find_errors(lines:list) -> list:
+    """
+    The ERROR and CRITICAL records in a server log, with the indented lines that continue
+    them, and any Python traceback, including a bare one (a crash before logging is set up
+    only reaches the journal). Other unformatted lines are output the server printed, which
+    in the journal is interleaved with its log records, so they are left out.
+    """
+    errors, in_error, in_traceback = [], False, False
+    for line in lines:
+        line = _RE_ANSI.sub('', line).rstrip()
+        if not line:
+            continue
+        record = _RE_RECORD_LEVEL.match(line)
+        if record:
+            in_error = record.group('level') in ('ERROR', 'CRITICAL')
+            in_traceback = False
+            if in_error:
+                errors.append(line)
+        elif line.startswith('Traceback (most recent call last)'):
+            in_traceback = True
+            errors.append(line)
+        elif in_traceback:
+            errors.append(line)
+            # The unindented line naming the exception ends the traceback
+            in_traceback = line[0].isspace()
+        elif in_error and line[0].isspace():
+            errors.append(line)
+        else:
+            in_error = False
+    return errors
+
+
+def print_errors(errors:list, limit:int=MAX_ERROR_LINES):
+    for line in errors[:limit]:
+        print('  ' + colorize(line))
+    if len(errors) > limit:
+        print(f"  ... and {len(errors) - limit} more. See `stretch_body_server --logs` for the full log.")
+
+
+def page(text:str):
+    """Shows text in a pager opened at its end, so it can be scrolled; prints it when not on a terminal."""
+    if not sys.stdout.isatty() or not shutil.which('less'):
+        print(text)
+        return
+    try:
+        # -R: keep colors. +G: open at the end. -F -X: print output that fits on one screen
+        # directly, and leave the last page on screen after quitting.
+        subprocess.run(['less', '-R', '-F', '-X', '+G'], input=text, text=True)
+    except KeyboardInterrupt:
+        pass
+
+
+def show_last_session_log() -> bool:
+    """Opens the most recent session's full log, then lists the errors it logged."""
+    lines, source = last_session_log()
+    if lines is None:
+        print("No server logs found. Start the server with `stretch_body_server --restart` to create one.")
+        return False
+
+    quit_hint = ' (press q to quit)' if sys.stdout.isatty() else ''
+    page('\n'.join([f"==== Last session's log: {source} ===="]
+                   + [colorize(line) for line in lines]
+                   + [f"==== End of the last session's log{quit_hint} ===="]))
+
+    errors = find_errors(lines)
+    if errors:
+        print(f"\nThe last session logged these errors:")
+        print_errors(errors)
+    print(f"\n{Fore.RED + Style.BRIGHT}No server is running.{Style.RESET_ALL} Start it with `stretch_body_server --restart`.")
+    return True
+
+
+def print_server_down():
+    """Explains why there is no server: the daemon's state and the errors the last session logged."""
+    print(f"{Fore.RED + Style.BRIGHT}No server is running.{Style.RESET_ALL}")
+
+    if daemon_is_installed():
+        props = _daemon_props('ActiveState', 'SubState', 'NRestarts')
+        if props.get('SubState') == 'auto-restart':
+            print(f"The daemon failed to start; systemd retries it in {DAEMON_RESTART_S} s "
+                  f"(up to {DAEMON_MAX_RESTARTS} times). Stop it with `stretch_body_server --kill`.")
+        elif props.get('ActiveState') == 'failed':
+            print("The daemon failed to start, and systemd has stopped retrying it.")
+        else:
+            print("The daemon is installed but not running.")
+
+    lines, source = last_session_log()
+    errors = find_errors(lines or [])
+    if errors:
+        print(f"\nThe last session ({os.path.basename(source)}) logged these errors:")
+        print_errors(errors, limit=10)
+
+    print("\nStart it with `stretch_body_server --restart`, "
+          "or see the last session's full log with `stretch_body_server --logs`.")
 
 
 #Establish a global variable that will prevent recursive logging so std outputs can be captured in the log file and also streamed to console
@@ -226,25 +382,42 @@ class LoggerWriter:
     def __init__(self, level, original_stream):
         self.level = level
         self.original_stream = original_stream
+        # Python writes a traceback in fragments ('TypeError', ': ', the message), so they are
+        # buffered into whole lines; otherwise each fragment would become a log record of its own
+        self._buffer = ''
+        self._lock = threading.Lock()
 
     def write(self, message):
-        global _IS_LOGGING
         if _IS_LOGGING:
             self.original_stream.write(message)
             return
-        else:
-            msg = message.strip()
-            if msg:
-                _IS_LOGGING = True
-                try:
-                    logger.log(self.level, msg)
-                finally:
-                    _IS_LOGGING = False
-            
+        with self._lock:
+            self._buffer += message
+            *lines, self._buffer = self._buffer.split('\n')
+        for line in lines:
+            self._log(line)
+
+    def _log(self, line):
+        global _IS_LOGGING
+        msg = line.rstrip() # keep the indentation that structures a traceback
+        if msg:
+            _IS_LOGGING = True
+            try:
+                logger.log(self.level, msg)
+            finally:
+                _IS_LOGGING = False
+
     def flush(self):
         self.original_stream.flush()
 
 def color_print(line):
+    print(colorize(line))
+
+def colorize(line):
+    """Colors a log line by its fields and level, when printing to a terminal."""
+    line = line.rstrip('\n')
+    if not sys.stdout.isatty():
+        return line
 
     level_colors = {
         'DEBUG': Fore.CYAN,
@@ -255,17 +428,14 @@ def color_print(line):
     }
     date_color = Fore.BLUE
     name_color = Fore.GREEN
-    
-    line = line.rstrip('\n')
+
     match = re.match(r'^(\[[^\]]+\]) (\[[^\]]+\]) (\[(.*?)\]): (.*)$', line)
 
     if match:
         time_str, name_str, level_wrapper, level_str, msg = match.groups()
         level_color = level_colors.get(level_str, Fore.WHITE)
-        colored_line = f"{date_color}{time_str}{Style.RESET_ALL} {name_color}{name_str}{Style.RESET_ALL} {level_color}{level_wrapper}:{Style.RESET_ALL} {level_color}{msg}{Style.RESET_ALL}"
-        print(colored_line)
-    else:
-        print(line)
+        return f"{date_color}{time_str}{Style.RESET_ALL} {name_color}{name_str}{Style.RESET_ALL} {level_color}{level_wrapper}:{Style.RESET_ALL} {level_color}{msg}{Style.RESET_ALL}"
+    return line
 
 
 def tail_log_file(log_file:str, n:int=50):    
@@ -368,11 +538,15 @@ def _parse_args():
     group.add_argument("--ping", help="Ping a running server",action="store_true")
     group.add_argument("--status", help="Prints status of the running server",action="store_true")
 
-    parser.add_argument("--print", help="Print the server log to console", action="store_true")
-    parser.add_argument("--log_level", help="Set server logging level (DEBUG, INFO, WARN, ERROR, CRITICAL)",default="INFO")
+    parser.add_argument("--print", "--log", "--logs", dest="print", action="store_true",
+                        help="Show the server log: follows it live while a server runs, otherwise opens the last session's full log")
+    parser.add_argument("--log_level", help="Set server logging level (DEBUG, INFO, WARN, ERROR, CRITICAL). Defaults to INFO")
 
     group.add_argument("--export", help=f"Export the last {NUM_EXPORTED_SESSION_LOGS} session logs to a zip file in the given directory (defaults to $HELLO_FLEET_PATH/log/exports)",
                        nargs='?', const='', metavar='DIR', default=None)
+    group.add_argument("--prune_logs", help=f"Delete all but the newest KEEP archived session logs (default {DEFAULT_KEPT_SESSIONS}), "
+                                            "and the stretchbody_*.log files left by older versions",
+                       nargs='?', const=DEFAULT_KEPT_SESSIONS, type=int, metavar='KEEP', default=None)
 
     group.add_argument("--kill", "--stop", help="Kill a running server",action="store_true")
     group.add_argument("--restart", help="Restart a running server",action="store_true")
@@ -387,9 +561,28 @@ def _parse_args():
     parser.add_argument("--uninstall_daemon", help="Uninstall so that server will not start automatically on login.", action="store_true")
     group.add_argument("--status_daemon", help="Prints status of the daemon",action="store_true")
 
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     args= parser.parse_args()
 
     return args
+
+def _server_processes() -> list:
+    """The processes of a server running from the command line (`--launch`), other than this one."""
+    procs = []
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        cmdline = proc.info.get('cmdline') or []
+        if proc.info['pid'] != os.getpid() and '--launch' in cmdline \
+                and any(arg.endswith('stretch_body_server') for arg in cmdline):
+            procs.append(proc)
+    return procs
+
+def wait_for_server_exit(timeout_s:float=15.0) -> bool:
+    """Waits for a stopped server's processes to exit. Returns False if some are still running."""
+    _, alive = psutil.wait_procs(_server_processes(), timeout=timeout_s)
+    return not alive
 
 def is_server_active(robot_client:RobotClient, verbose:bool=False, block_timeout_s:float|None=None) -> bool:
     is_active = robot_client.startup(verbose=verbose, allow_different_user_connection=True, block_timeout_s=block_timeout_s) and robot_client.is_server_active()
@@ -397,7 +590,8 @@ def is_server_active(robot_client:RobotClient, verbose:bool=False, block_timeout
     return is_active
 
 
-def main():
+def main() -> int:
+    """Returns the process exit status: 0 on success, 1 if the requested action failed."""
     args = _parse_args()
 
     if args.version:
@@ -414,29 +608,32 @@ def main():
                 print(f"stretch4_body version: {stretch4_body.__version__}")
         else:
             print(f"stretch4_body version: {stretch4_body.__version__}")
-        return
+        return 0
 
     if args.export is not None:
-        export_session_logs(args.export)
-        return
+        return 0 if export_session_logs(args.export) else 1
+
+    if args.prune_logs is not None:
+        return 0 if prune_logs(args.prune_logs) else 1
 
     hu.print_stretch_re_use()
 
     if not is_user_in_group('users'):
         logging.error(f"Error: This user ({os.getlogin()}) is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
-        return
+        return 1
 
 
-    if args.log_level:
-        log_level_str = args.log_level.upper()
-        if hasattr(logging, log_level_str):
+    log_level_str = (args.log_level or 'INFO').upper()
+    if hasattr(logging, log_level_str):
+        if args.log_level: # Only worth a line when asked for, not on every command
             print(f"Setting log level to {log_level_str}")
-            RobotParams.set_logging_level(log_level_str, handler='console_handler')
-            RobotParams.set_logging_level(log_level_str, handler='file_handler')
-            # Force the master root logger to be at least as permissive
-            RobotParams._robot_params['logging']['root']['level'] = log_level_str
-        else:
-            print(f"Invalid log level: {args.log_level}")
+        RobotParams.set_logging_level(log_level_str, handler='console_handler')
+        RobotParams.set_logging_level(log_level_str, handler='file_handler')
+        # Force the master root logger to be at least as permissive
+        RobotParams._robot_params['logging']['root']['level'] = log_level_str
+    else:
+        print(f"Invalid log level: {args.log_level}")
+        return 1
 
     user_params, robot_params = RobotParams.get_params()
     log_file = robot_params['logging']['handlers']['file_handler']['filename']
@@ -447,113 +644,127 @@ def main():
         sys.stderr = LoggerWriter(logging.ERROR, sys.__stderr__)
 
     robot_client = RobotClient()
-    server_wait_s = None # Set when this call (re)starts the daemon, so the server has time to come up before we check on it
+    daemon_started_at = None # Set when this call (re)starts the daemon, so we wait for its server to come up
 
     if args.cleanup:
         hu.force_kill_process('stretch_body_server')
-        exit(0)
+        return 0
 
     if args.daemon:
+        daemon_started_at = time.time()
         if not install_and_start_daemon():
-            raise RuntimeError("Could not start the Stretch Body Server system service.")
-        server_wait_s = DAEMON_STARTUP_TIMEOUT_S
+            print(f"{Fore.RED + Style.BRIGHT}Could not start the Stretch Body Server daemon.{Style.RESET_ALL}")
+            return 1
     elif args.install_daemon:
         if not install_daemon():
-            raise RuntimeError("Could not install the Stretch Body Server system service.")
-        return print("Stretch Body Server daemon is installed. Server will start on boot. Run `--daemon` to start immediately.")
+            print(f"{Fore.RED + Style.BRIGHT}Could not install the Stretch Body Server daemon.{Style.RESET_ALL}")
+            return 1
+        print("Stretch Body Server daemon is installed. Server will start on boot. Run `--daemon` to start immediately.")
+        return 0
     elif args.uninstall_daemon:
         if not uninstall_daemon():
-            raise RuntimeError("Could not uninstall the Stretch Body Server system service.")
-        return print("Uninstalled Stretch Body Server daemon. Server will not start on boot.")
+            print(f"{Fore.RED + Style.BRIGHT}Could not uninstall the Stretch Body Server daemon.{Style.RESET_ALL}")
+            return 1
+        print("Uninstalled Stretch Body Server daemon. Server will not start on boot.")
+        return 0
 
     elif args.launch:
-        return _launch(robot_client, args)
+        return 0 if _launch(robot_client, args) else 1
     elif args.restart:
         if not daemon_is_installed():
             if is_server_active(robot_client):
                 print("Stopping existing server...")
                 with robot_client:
                     robot_client.kill_server()
-                time.sleep(2.0)  # Wait for shutdown
+                wait_for_server_exit()
             else: print("No instances of the server was found. Launching a new instance.")
-            return _launch(robot_client, args)
+            return 0 if _launch(robot_client, args) else 1
 
+        daemon_started_at = time.time()
         if not install_and_start_daemon():
-            raise RuntimeError(f"Could not restart the Stretch Body Server system service.")
-        
-        server_wait_s = DAEMON_STARTUP_TIMEOUT_S
+            print(f"{Fore.RED + Style.BRIGHT}Could not restart the Stretch Body Server daemon.{Style.RESET_ALL}")
+            return 1
 
     elif args.kill:
-        if not is_server_active(robot_client):
+        # A daemon that keeps failing to start has no server to answer, but still has to be stopped
+        daemon_up = daemon_is_running() or daemon_is_retrying()
+        if not daemon_up and not is_server_active(robot_client):
             print("No server is running.")
-            return
+            return 0
         
         logger.info("Received user request to kill stretch body server.")
-        if daemon_is_running():
-            stop_daemon()
+        if daemon_up and not stop_daemon():
+            print("Kill Stretch Body Server Daemon: FAIL")
+            return 1
 
         if not robot_client.startup(verbose=False, allow_different_user_connection=True):
             print("Kill Stretch Body Server Daemon: SUCCESS")
             archive_session_logs()
-            return
+            return 0
 
         robot_client.kill_server()
 
         if robot_client.is_server_active():
             print("Kill Stretch Body Server: FAIL")
-        else:
-            print("Kill Stretch Body Server: SUCCESS")
-            archive_session_logs()
-
-        return
+            return 1
+        # The server stops answering before its processes finish shutting down, and it archives
+        # its own session as it exits. Archiving now would split the session in two.
+        if not wait_for_server_exit():
+            print("Kill Stretch Body Server: FAIL (its processes are still running; "
+                  "`stretch_body_server --cleanup` force kills them)")
+            return 1
+        print("Kill Stretch Body Server: SUCCESS")
+        archive_session_logs() # Anything left, e.g. if it could not archive its own
+        return 0
 
     if args.status_daemon:
-        status_daemon()
-        return
+        return 0 if status_daemon() else 1
 
-    if server_wait_s is not None:
-        print(f"Waiting up to {server_wait_s:.0f}s for the Stretch Body Server to start...")
+    if daemon_started_at is not None:
+        if not wait_for_daemon(robot_client, daemon_started_at):
+            return 1
+        print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has {'restarted' if args.restart else 'started'} successfully.{Style.RESET_ALL}\nUse --status to see status, or --logs for logs.")
 
-    if is_server_active(robot_client, block_timeout_s=server_wait_s):
+    if not is_server_active(robot_client):
         if args.print:
-            tail_log_file(log_file)
+            return 0 if show_last_session_log() else 1
+        print_server_down()
+        return 1
 
-        if args.status:
-            print_status(robot_client)
+    if args.print:
+        print("Following the server log. Press Ctrl+C to stop.")
+        tail_log_file(log_file)
+
+    if args.status:
+        print_status(robot_client)
+
+    ok = True
+    try: 
+        robot_client.startup(verbose=False, allow_different_user_connection=True)
+
+        if args.ping:
+            ok = False
+            for i in range(5):
+                if robot_client.ping_server():
+                    print("Successful server ping at time", time.time())
+                    ok = True
+                else:
+                    print("Failed to ping server. Retrying..")
+                time.sleep(0.75)
         
-        try: 
-            robot_client.startup(verbose=False, allow_different_user_connection=True)
+        if args.free_up_control:
+            robot_client.free_up_control()
 
-            if args.ping:
-                for i in range(5):
-                    if robot_client.ping_server():
-                        print("Successful server ping at time", time.time())
-                    else:
-                        print("Failed to ping server. Retrying..")
-                    time.sleep(0.75)
-            
-            if args.free_up_control:
-                robot_client.free_up_control()
+    except Exception as e:
+        logger.error(Fore.RED + f"Error connecting to stretch body server: {e}" + Style.RESET_ALL)
+        ok = False
+    finally:
+        robot_client.stop()
 
-        except Exception as e:
-            logger.error(Fore.RED + f"Error connecting to stretch body server: {e}" + Style.RESET_ALL)
-        finally:
-            robot_client.stop()
+    return 0 if ok else 1
 
-        if args.restart:
-            print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has restarted successfully.{Style.RESET_ALL}\nUse --status to see status, or --print for logs.")
-
-    else:
-        print_last_log_from_archive()
-
-        if daemon_is_installed():
-            status_daemon()
-
-        print(f"\n\n----------------------\n{Fore.RED + Style.BRIGHT}No active server found. Run `stretch_body_server --restart` to start it.{Style.RESET_ALL} Printed tail of archived logs{' and background-daemon status ' if daemon_is_installed() else ' '}above.\n")
-    
-    return
-
-def _launch(robot_client, args):
+def _launch(robot_client, args) -> bool:
+    """Runs the server in this process until it is stopped. Returns False if it could not start or crashed."""
 
     if is_server_active(robot_client):
         if StretchBodyServer.is_server_owned_by_current_user():
@@ -579,16 +790,28 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
 """)
         return False
 
+    ok = False
     try:
         if args.profile:
             os.environ['STRETCH_PROFILE'] = '1'
         robot_server.run_server()
-    except Exception as e: 
-        logger.error(f"Unexpected error while running stretch body server: {e}")
+        ok = True
+    except SystemExit as e:
+        ok = not e.code # run_server() exits with 1 when the server fails to start
+    except Exception:
+        logger.exception("Unexpected error while running stretch body server")
     finally:
+        if not ok and sys.stdout.isatty():
+            # The errors scrolled past among the startup and shutdown messages, so repeat them
+            # (not under the daemon, whose output is the journal)
+            print(f"\n{Fore.RED + Style.BRIGHT}The Stretch Body Server failed.{Style.RESET_ALL}")
+            errors = find_errors(last_session_log()[0] or [])
+            if errors:
+                print("It logged these errors:")
+                print_errors(errors)
         archive_session_logs()
 
-    return True
+    return ok
 
 def get_service_file_content(log_level: str) -> str:
     """Creates the linux service file that gets copied to ~/.config/systemd/user/"""
@@ -632,6 +855,9 @@ def get_service_file_content(log_level: str) -> str:
 Description=Stretch Body Server Service
 After=network.target
 Wants=network.target
+# Give up after {DAEMON_MAX_RESTARTS} failed retries in a row: {DAEMON_MAX_RESTARTS + 1} starts within the interval
+StartLimitIntervalSec=600
+StartLimitBurst={DAEMON_MAX_RESTARTS + 1}
 
 [Service]
 Type=simple
@@ -640,7 +866,7 @@ Type=simple
 ExecStart=/bin/bash -c "{exec_cmd}"
 ExecStopPost={python_path} -c "from stretch4_body.tools.stretch_body_server import archive_session_logs; print('Stopping daemon...'); archive_session_logs()"
 Restart=on-failure
-RestartSec=10
+RestartSec={DAEMON_RESTART_S}
 
 [Install]
 WantedBy=default.target
@@ -677,12 +903,14 @@ def _manage_daemon(action:str):
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
             
         elif action == "start":
+            _reset_start_limit()
             subprocess.run(["systemctl", "--user", "start", "stretch_body_server.service"], check=True)
             
         elif action == "stop":
             subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=True)
             
         elif action == "restart":
+            _reset_start_limit()
             subprocess.run(["systemctl", "--user", "restart", "stretch_body_server.service"], check=True)
             
         elif action == "status":
@@ -704,7 +932,7 @@ def install_and_start_daemon() -> bool:
 
     if not daemon_is_running() and is_server_active(RobotClient()):
         print("A non-daemon server is already active, please --kill it first before launching the daemon.")
-        return True
+        return False
 
     # Start the daemon if a SBS server isn't already running on CLI.
     return restart_daemon()
@@ -716,8 +944,11 @@ def restart_daemon() -> bool:
     if not daemon_is_running() and is_server_active(RobotClient()):
         logger.error("A non-daemon server is already active, please --kill it first before launching the daemon.")
         return False
-    print("Archiving existing stretch_body_server.log files...")
-    archive_session_logs()
+    if not daemon_is_running():
+        # A running daemon archives its own session when systemd stops it (ExecStopPost).
+        # Archiving here too would split that session in two, while it is still writing.
+        print("Archiving existing stretch_body_server.log files...")
+        archive_session_logs()
     return _manage_daemon("restart")
 
 def status_daemon() -> bool:
@@ -739,6 +970,74 @@ def daemon_is_running() -> bool:
         print("Error: 'systemctl' command not found. Are you on a systemd Linux machine?")
         return False
     
+def daemon_is_retrying() -> bool:
+    """True while systemd waits to start the daemon again after it exited with an error."""
+    return _daemon_props('SubState').get('SubState') == 'auto-restart'
+
+def _daemon_props(*names) -> dict:
+    """Properties of the daemon's systemd unit, e.g. ActiveState. Empty if systemctl is unavailable."""
+    try:
+        result = subprocess.run(['systemctl', '--user', 'show', SERVICE_NAME, *[f'--property={n}' for n in names]],
+                                capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return {}
+    return dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+
+def _daemon_journal(since:float) -> list:
+    """The daemon's output since the given time: its log records, plus anything it printed before logging was set up."""
+    try:
+        result = subprocess.run(['journalctl', '--user', '-u', SERVICE_NAME, '--since', f'@{int(since)}',
+                                 '-o', 'cat', '--no-pager'], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return []
+    return [_RE_ANSI.sub('', line) for line in result.stdout.splitlines()]
+
+def _reset_start_limit():
+    """
+    Clears systemd's count of recent starts. It counts manual starts too, so without this a few
+    --restart calls in a row would use up the retries, and systemd would refuse to start it.
+    """
+    subprocess.run(["systemctl", "--user", "reset-failed", SERVICE_NAME], capture_output=True, check=False)
+
+def wait_for_daemon(robot_client, started_at:float, timeout_s:float=DAEMON_STARTUP_TIMEOUT_S) -> bool:
+    """
+    Waits for the (re)started daemon's server to answer. Gives up as soon as the daemon's
+    process exits rather than waiting out the timeout or systemd's retries, and reports why it failed.
+    """
+    print(f"Waiting up to {timeout_s:.0f}s for the Stretch Body Server to start...")
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if is_server_active(robot_client, block_timeout_s=1.0):
+            return True
+        if _daemon_props('ActiveState').get('ActiveState') != 'active':
+            break # The server process exited
+    report_daemon_failure(started_at, timeout_s)
+    return False
+
+def report_daemon_failure(started_at:float, timeout_s:float):
+    props = _daemon_props('ActiveState', 'SubState', 'ExecMainStatus')
+    if props.get('ActiveState') == 'active':
+        print(f"\n{Fore.RED + Style.BRIGHT}The Stretch Body Server is running, but did not answer within {timeout_s:.0f}s.{Style.RESET_ALL}")
+        print("It may still be starting up. Check again with `stretch_body_server --status`.")
+    else:
+        print(f"\n{Fore.RED + Style.BRIGHT}The Stretch Body Server failed to start "
+              f"(exit status {props.get('ExecMainStatus', '?')}).{Style.RESET_ALL}")
+
+    output = _daemon_journal(started_at) or last_session_log()[0] or []
+    errors = find_errors(output)
+    if errors:
+        print("It logged these errors:")
+        print_errors(errors)
+    elif output:
+        print("It logged no errors. The last lines of its output:")
+        for line in output[-15:]:
+            print('  ' + colorize(line))
+
+    if props.get('SubState') == 'auto-restart':
+        print(f"\nThe daemon will retry in the background, up to {DAEMON_MAX_RESTARTS} times. "
+              "Stop it with `stretch_body_server --kill`.")
+    print(f"See the full log with `stretch_body_server --logs`, or `journalctl --user -u {SERVICE_NAME}`.")
+
 def daemon_is_installed() -> bool:
     try:
         result = subprocess.run(
@@ -762,5 +1061,5 @@ def install_daemon() -> bool:
     return _manage_daemon("install")
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
 
