@@ -35,7 +35,7 @@ class RoutineRobotStow(routine.Routine):
         self.logger.info(f'Stowing robot for tool {tool}')
 
         if 'lift' in self.robot.subsystems:
-            pos_lift = cfg. get('lift_prestow', 0.35) # Enough to clear the tool from hitting the base
+            pos_lift = cfg.get('lift_prestow', 0.35) # Enough to clear the tool from hitting the base
             if self.robot.lift.status['pos'] < pos_lift:
                 # If the lift is below pos_lift, raise it to avoid the tool hitting the base
                 self.logger.info('--------- Pre-Stowing Lift ----')
