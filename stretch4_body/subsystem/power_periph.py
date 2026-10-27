@@ -271,12 +271,11 @@ class PowerPeriphDefn():
     RPC_REPLY_REJECTED = 38
     RPC_REJECTED_REPLY_BYTES = 5
     RPC_REJECT_REASON_NAMES = {1: 'unknown id', 2: 'short request', 3: 'empty request'}
-    # RPC ids 39 and 40 (Easter egg set and clear, v0.1.38p14 to v0.1.50p14) are retired,
-    # never reuse them. The Easter egg now goes as TRIGGER_EASTER_EGG_ON/OFF (v0.1.51p14).
-    # Diagnostics schema asked for first. Schema 3 (firmware v0.1.53p14) is the 289-byte
-    # snapshot: schema 2 plus the ESP firmware version. Schema 2 (v0.1.47p14 to
-    # v0.1.52p14) is its first 255 bytes; schema 1 its first 190, the only schema of
-    # v0.1.18p14 to v0.1.23p14. Newer firmware answers an older schema with that prefix.
+    # RPC ids 39 and 40 (Easter egg set and clear) are retired, never reuse them. The
+    # Easter egg goes as TRIGGER_EASTER_EGG_ON/OFF.
+    # Diagnostics schema asked for first. Schema 3 is the 289-byte snapshot: schema 2
+    # plus the ESP firmware version. Schema 2 is its first 255 bytes; schema 1 its first
+    # 190. Newer firmware answers an older schema with that prefix.
     # The reply header, the snapshot's schema_version and struct_size must all agree
     # with these sizes.
     POWER_DIAGNOSTICS_SCHEMA_VERSION = 3
@@ -546,7 +545,7 @@ class PowerPeriphDefn():
         """
         Every PIMU RPC leaves through here. The transport is shared by every board and
         has no device-aware reply hook, so this is the one place a rejected reply
-        (id 38, five bytes, firmware v0.1.26p14 and later) is caught before it reaches
+        (id 38, five bytes) is caught before it reaches
         the decoder the request expected.
         """
         def on_reply(reply):
@@ -1081,9 +1080,9 @@ class PowerPeriphAux(PowerPeriphDefn):
         """Pull the protocol-14 snapshot and a cursor-paged event-log page.
 
         Asks for schema 3. Firmware that answers unsupported-schema is asked once more
-        with the schema its error header names when that is lower (2 from v0.1.47p14 to
-        v0.1.52p14), else with schema 1 (v0.1.18p14 to v0.1.23p14), and that schema is
-        kept from then on: within this call when blocking, on the next pull otherwise.
+        with the schema its error header names when that is lower, else with schema 1,
+        and that schema is kept from then on: within this call when blocking, on the next
+        pull otherwise.
         """
         if not self.hw_valid or not self.supports_power_diagnostics():
             return False
@@ -1627,8 +1626,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             status_name = self.POWER_DIAGNOSTICS_REPLY_STATUS_NAMES.get(
                 reply_status, 'unknown_%d' % reply_status)
             # The header of an error reply carries the newest schema the firmware
-            # speaks (1 on v0.1.18p14, 2 from v0.1.24p14, 3 from v0.1.53p14), not the
-            # one asked for.
+            # speaks, not the one asked for.
             error_shape_valid = (
                 schema_version >= 1 and
                 header_size == self.POWER_EVENT_LOG_HEADER_SIZE and

@@ -47,12 +47,12 @@ Before P14 the host saw a handful of PIMU values (voltage, current, SoC, runstop
 | Power state | State, last transition and its reason, runstop cause, peripheral rail mask | Tells "user pressed the button" from "low battery" from "ESP asked to sleep" |
 | BMS link | Last good sample age, valid replies, CRC, timeout, overflow and protocol error counters, last failure detail | The firmware holds low-battery and charger decisions on a BMS sample older than 5 s |
 | Battery | Pack voltage and current, SoC, SoH, cycles, cell and FET temperatures, alarm and MOS masks | The numbers behind every battery decision |
-| INA228 witness (.43) | VBAT and current measured on the PIMU, independent of the BMS | A second opinion on pack voltage; catches a BMS that reports wrong values |
-| ESP link | Status age, packet and error counters, frame length and unknown-id rejects (.42), shutdown command resends (.48) | The ESP carries the 12 V and 20 V readings, the NUC on/off signal and the adapter detect bit |
-| Adapter | PIMU 36 V measurement, ESP adapter bit, which one is trusted (.42), disagreement mask (.42) | Charging and wake decisions depend on adapter presence |
-| Charger | Enable command, expected active, charger current, charge-stop state (.24) | Shows whether the firmware stopped charging and why |
-| NUC shutdown wait (.27) | Whether the rails are held for the NUC, how long, how the last wait ended | Tells a clean NUC shutdown from rails cut under a running NUC |
-| ADC banks (.39) | Stale mask, rebuild counters, which source the adapter check uses | Some boards stall an ADC sequencer; rails then read held values |
+| INA228 witness | VBAT and current measured on the PIMU, independent of the BMS | A second opinion on pack voltage; catches a BMS that reports wrong values |
+| ESP link | Status age, packet and error counters, frame length and unknown-id rejects, shutdown command resends | The ESP carries the 12 V and 20 V readings, the NUC on/off signal and the adapter detect bit |
+| Adapter | PIMU 36 V measurement, ESP adapter bit, which one is trusted, disagreement mask | Charging and wake decisions depend on adapter presence |
+| Charger | Enable command, expected active, charger current, charge-stop state | Shows whether the firmware stopped charging and why |
+| NUC shutdown wait | Whether the rails are held for the NUC, how long, how the last wait ended | Tells a clean NUC shutdown from rails cut under a running NUC |
+| ADC banks | Stale mask, rebuild counters, which source the adapter check uses | Some boards stall an ADC sequencer; rails then read held values |
 | PIMU health | Uptime, reset causes, loop time and overruns, board temperature | Reboots and overload of the PIMU itself |
 | Event log | 64-entry ring of timestamped power events with two data words each | The sequence that led to a sleep, shutdown or charge stop |
 
@@ -288,24 +288,24 @@ Thresholds live in one place, `PowerHealthThresholds` in `stretch4_body/subsyste
 | `esp_freshness` | ESP status 2 s old (the firmware's own stale mark) | warn | 12 V, 20 V and `cpu_on_status` are not current |
 | | 5 s old, or none since boot | fault | Check the ESP is running and the PIMU to ESP UART |
 | `esp_link_errors` | 10 or more CRC errors, RX overflows and TX drops in the last minute | warn | Check the UART harness and grounding |
-| `esp_frame_errors` (.42) | 60 or more length or unknown-id rejects in the last minute (one a second at a 50 Hz poll) | fault | The ESP build sends a different `Esp_Status` layout. Pair hello_esp with this PIMU |
+| `esp_frame_errors` | 60 or more length or unknown-id rejects in the last minute (one a second at a 50 Hz poll) | fault | The ESP build sends a different `Esp_Status` layout. Pair hello_esp with this PIMU |
 | | Any reject in the last minute | warn | A healthy link has none |
 | | `esp_tx_mark_resets` nonzero | warn | Firmware bug with no known path; report it with the output |
-| `adc_banks` (.39) | A bank stale | warn | Readings of that bank are held until the 1 s rebuild |
+| `adc_banks` | A bank stale | warn | Readings of that bank are held until the 1 s rebuild |
 | | A bank stale for 5 s | fault | The rebuild is not recovering it; the rails it measures are not measured |
 | | A rebuild in the last minute | warn | This board's ADC sequencer stalls (seen at about 1.5 per minute on board 5341D1FA) |
 | | Rebuilds only longer ago | ok | Counts are in the message |
-| `adapter_source` (.42) | Source 1 `esp_fallback` or 2 `held` | warn | ADC0 is stale; adapter presence is not measured by the PIMU |
-| `adapter_agreement` (.42) | Any nonzero disagreement mask | warn | 1: ESP says adapter, no 36 V, check dock contacts and 36VDD. 2: 36 V but ESP bit clear, check the ESP adapter detect |
-| `vbat_cross_check` (.43) | INA228 and BMS differ by 500 mV or more for 3 samples in a row | warn | Measure VBAT with a DMM and compare both |
+| `adapter_source` | Source 1 `esp_fallback` or 2 `held` | warn | ADC0 is stale; adapter presence is not measured by the PIMU |
+| `adapter_agreement` | Any nonzero disagreement mask | warn | 1: ESP says adapter, no 36 V, check dock contacts and 36VDD. 2: 36 V but ESP bit clear, check the ESP adapter detect |
+| `vbat_cross_check` | INA228 and BMS differ by 500 mV or more for 3 samples in a row | warn | Measure VBAT with a DMM and compare both |
 | | Same, 2000 mV or more | fault | One of the two readings is wrong |
 | | INA228 did not answer at boot, or its last read failed | warn | Check U2 and its I2C bus |
 | | BMS not fresh at the sample, RDK build, or no INA in this build | unknown | Nothing to compare |
-| `shutdown_wait` (.27) | Rails held for 80 percent of the 90 s cap | warn | The NUC has not reported off and will lose power at the cap |
+| `shutdown_wait` | Rails held for 80 percent of the 90 s cap | warn | The NUC has not reported off and will lose power at the cap |
 | | Last wait ended at the cap (2) or at the cap with only stale "off" status (4) | warn | The NUC did not shut down in 90 s, or its state was never confirmed. Check the NUC shutdown path and ESP status |
-| `shutdown_command` (.48) | `wait_sd_ack` set in ACTIVE | warn | Every transition clears it; report it |
+| `shutdown_command` | `wait_sd_ack` set in ACTIVE | warn | Every transition clears it; report it |
 | | Resending during SHUTDOWN | ok | Normal; up to about 900 sends across the 90 s dwell |
-| `charge_stop` (.24) | Any state | ok | Information: idle, arming (alarm sustained 5 s) or hold (10 min dwell). Notes when the policy is compiled out |
+| `charge_stop` | Any state | ok | Information: idle, arming (alarm sustained 5 s) or hold (10 min dwell). Notes when the policy is compiled out |
 | `rpc_rejections` | An RPC 38 rejection in the last minute | warn | The body sent a request this firmware does not know; check the pairing |
 | | A refused reply in the last minute | warn | See `rpc_reply_last_error` |
 | `pimu_reboots` | A reboot seen while the server ran | warn | See event 1 and its reset cause |
@@ -314,7 +314,7 @@ Thresholds live in one place, `PowerHealthThresholds` in `stretch4_body/subsyste
 | `event_log` | The host missed events (coverage gap) | warn | Events between the two sequences are lost to the host |
 | | Firmware ring overwrote entries the host had already read | ok | Normal on a busy robot |
 | | Not read yet | unknown | |
-| `eoa_output` (.50) | `eoa_output_tripped` set | warn | The PIMU cut the EOA port on an overcurrent. Clear the runstop to restore it, or call `restore_eoa_power()` |
+| `eoa_output` | `eoa_output_tripped` set | warn | The PIMU cut the EOA port on an overcurrent. Clear the runstop to restore it, or call `restore_eoa_power()` |
 | | Tripped, and the last event 49 is a refused runstop clear (3 trips in 60 s) | fault | Likely a real short. Find it, then `restore_eoa_power()` |
 | | Firmware older than `v0.1.50p14`, or no status bit | unknown | |
 
@@ -432,7 +432,7 @@ When the server is older than this body and publishes no `power_health`, the too
 A healthy robot:
 
 ```text
-Stretch power diagnostics, stretch-se4-4056, live from stretch_body_server, 2026-10-16 14:20:05
+Stretch power diagnostics, stretch-se4-XXXX, live from stretch_body_server, 2026-10-16 14:20:05
 PIMU firmware hello-pimu2.v0.1.50p14 (p14), diagnostics schema 2, sample 0.1 s old
 
 Overall [ OK  ] All 19 judged checks ok.
@@ -478,7 +478,7 @@ Last 2 power events (of 2 held, cursor 2, 0 gaps, firmware drops 0)
 A board whose ADC0 sequencer stalled ten seconds ago:
 
 ```text
-Stretch power diagnostics, stretch-se4-4056, live from stretch_body_server, 2026-10-16 14:20:05
+Stretch power diagnostics, stretch-se4-XXXX, live from stretch_body_server, 2026-10-16 14:20:05
 PIMU firmware hello-pimu2.v0.1.50p14 (p14), diagnostics schema 2, sample 0.1 s old
 
 Overall [WARN ] warn: adc_banks.
@@ -554,7 +554,7 @@ Measured bytes per logged sample (`json.dumps`, as the logger writes), before th
 
 | Content | Bytes per sample |
 |---|---|
-| Whole sample, June 2026 log from stretch-se4-4032, pre-P14 body | 37,285 |
+| Whole sample, pre-P14 body log | 37,285 |
 | P14 keys, one copy, empty event log | 11,274 |
 | P14 keys, one copy, full 64-event log | 40,832 |
 | of which `power_event_log` with 64 events (about 460 B per event) | 29,770 |
@@ -571,7 +571,7 @@ The logger now writes a trimmed copy (the published status is unchanged; format 
 - `power_event_log` is written when it changes (its cursor moves), `status_aux_meta.transitions` on a power-state transition, `power_diagnostics`, `power_diagnostics_meta` and `power_health` when they change. `power_diagnostics_meta` carries ages that tick every cycle, so it is written every sample (about 600 B); the others about twice a second;
 - the first sample of every file has every carried value, and the readers rebuild each sample exactly.
 
-Measured on the June 2026 stretch-se4-4032 sample (`test/fixtures/status_sample_4032_20260602.json`) with P14 keys added and the subsystem dicts shared as `RobotClient` holds them, over a simulated 60 s file (6000 samples, a new diagnostics sample every 0.5 s):
+Measured on the pre-P14 sample in `test/fixtures/status_sample_4032_20260602.json` with P14 keys added and the subsystem dicts shared as `RobotClient` holds them, over a simulated 60 s file (6000 samples, a new diagnostics sample every 0.5 s):
 
 | Body | Bytes per sample | Per minute | 5000 MB holds |
 |---|---|---|---|
@@ -585,13 +585,13 @@ What is left in a trimmed sample: the five subsystems' own values (about 11.4 KB
 
 So the status log is a flight recorder for about the last hour. The event log and the transition list no longer matter: each is written once per file and again only when it changes. The PIMU itself keeps the last 64 events across a host restart, so after an incident read them live first.
 
-Until October 2026 the logger also kept references to RobotClient's live subsystem dicts and serialized a whole minute at once, so every sample in a file carried the subsystem values of the last one (only `timestamp` and the top-level `server`, `routines` and `safety_layer` differed). Subsystem and power values in older logs are one snapshot per file, not per sample.
+Older loggers also kept references to RobotClient's live subsystem dicts and serialized a whole minute at once, so every sample in a file carried the subsystem values of the last one (only `timestamp` and the top-level `server`, `routines` and `safety_layer` differed). Subsystem and power values in older logs are one snapshot per file, not per sample.
 
 To pull logs off a robot, from your workstation:
 
 ```bash
 # Everything the logger holds (HELLO_FLEET_PATH is ~/stretch_user on a robot)
-rsync -av hello-robot@stretch-se4-4056.local:stretch_user/log/stretch_status/ ./4056_status/
+rsync -av hello-robot@stretch-se4-XXXX.local:stretch_user/log/stretch_status/ ./stretch_status/
 # or on the robot, one zip of all files, then copy it off
 stretch_status --export ~/
 ```
@@ -602,8 +602,8 @@ Copy the logs soon after the incident: with about an hour of history, a robot le
 
 | PIMU firmware | Body | What you get |
 |---|---|---|
-| `v0.1.53p14` or later (schema 3) | `feature/firmware-versions` or later | Everything in this primer, plus the ESP firmware version |
-| `v0.1.47p14` or later (schema 2) | `c11d9fe` or later on `feature/firmware-p14` | Everything in this primer |
+| `v0.1.53p14` or later (schema 3) | `40f8cd3` or later | Everything in this primer, plus the ESP firmware version |
+| `v0.1.47p14` or later (schema 2) | `c11d9fe` or later | Everything in this primer |
 | `v0.1.18p14` to `v0.1.23p14` (schema 1) | same | Schema 1 snapshot; S2 fields `None`, their checks `unknown` |
 | p13 or older | same | Aux status only; `power_health` asks for a PIMU update |
 | `v0.1.47p14` or later | older than `c11d9fe` | Schema 1 requested and served; no `power_health` (the CLI computes it locally) |

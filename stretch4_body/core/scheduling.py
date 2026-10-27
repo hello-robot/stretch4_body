@@ -3,10 +3,10 @@
 The Stretch 4 NUC (Core Ultra) has P-cores, E-cores and two low-power E-cores on the SoC tile
 that run at about a third of a P-core's capacity. The kernel parks lightly loaded periodic
 threads on the slow pair whenever it can, and under load it evicts the control loop there,
-which is where the worst control frames came from on stretch-se4-4056 (Stretch Lab, Stretch
-4.5 wiki, "NUC cores", 2026-10-15). This module turns a small policy dict from robot params
-into sched_setaffinity and sched_setscheduler calls. It never fails the caller: anything the
-kernel or the user's limits refuse is logged and skipped, and the result says what was applied.
+which is where the worst control frames come from. This module turns a small policy dict
+from robot params into sched_setaffinity and sched_setscheduler calls. It never fails the
+caller: anything the kernel or the user's limits refuse is logged and skipped, and the
+result says what was applied.
 
     policy = {'cpus': 'p+e', 'rt_priority': 0}
 

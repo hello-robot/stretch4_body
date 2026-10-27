@@ -194,7 +194,7 @@ def june_sample():
 
 
 def june_like_live(i, n_events=64):
-    """The June 4032 sample as RobotClient holds it now: subsystem server dicts are the
+    """The June sample as RobotClient holds it now: subsystem server dicts are the
     top-level ones (the June logger wrote them stale), aliases are the same objects, and
     the P14 power keys are present with a full event log. i ticks the fast values."""
     st = june_sample()

@@ -160,7 +160,7 @@ def test_truncated_log_keeps_samples_before_the_damage(tmp_path):
 
 
 def test_spliced_log_skips_the_damaged_sample_and_goes_on(tmp_path):
-    """The June 2026 logs on 4032 hold splices like 'fals{' partway through."""
+    """Real status logs hold splices like 'fals{' partway through."""
     text = FIXTURE.read_text()
     second = text.index('{"timestamp"', 10)
     bad = tmp_path / 'status_splice.json'
@@ -172,7 +172,7 @@ def test_spliced_log_skips_the_damaged_sample_and_goes_on(tmp_path):
 
 
 def test_log_that_starts_mid_sample(tmp_path):
-    """Some June files start inside a sample, with no opening bracket."""
+    """Some real log files start inside a sample, with no opening bracket."""
     text = FIXTURE.read_text()
     bad = tmp_path / 'status_mid.json'
     bad.write_text(text[200:])

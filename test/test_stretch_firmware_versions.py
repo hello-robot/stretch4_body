@@ -44,7 +44,7 @@ def test_decode_inventory_fields():
 
 
 def test_app_version_trailing_byte_is_dropped():
-    # NUC 4000 bench lidars, 2026-10-16: APP read 15.AF.B0.00.02.L0.
+    # Some lidars report APP as 15.AF.B0.00.02.L0.
     raw = bytearray(inventory_payload())
     raw[72:104] = field('15.AF.B0.00.02.L0', 32)
     inv = cmd.decode_inventory(bytes(raw))

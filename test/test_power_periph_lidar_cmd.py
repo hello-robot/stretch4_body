@@ -1,7 +1,7 @@
 """Lidar and AUX rail setters: one bit per rail in a trigger word, and the lidar_cmd record.
 
-Firmware v0.1.49p14 resolves an ON and OFF bit for one rail in the same word as off-wins,
-so the host clears the opposite bit and the last request wins. No hardware.
+The firmware resolves an ON and OFF bit for one rail in the same word as off-wins, so
+the host clears the opposite bit and the last request wins. No hardware.
 """
 import array as arr
 import struct

@@ -1,6 +1,6 @@
 """The async v1 push handler must decode the ACK and forward its payload.
 
-Review of 2026-10-16, finding A: AsyncTransactionHandler.do_push_transaction_v1
+AsyncTransactionHandler.do_push_transaction_v1
 unpacked two values from receiveFramedData() (which returns three) and then read
 an unpopulated frame_buf_in, so every valid ACK raised after the frame was sent.
 These tests run the real handler against a fake serial port that serves

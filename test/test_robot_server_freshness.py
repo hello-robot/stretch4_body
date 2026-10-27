@@ -1,6 +1,6 @@
 """BMS and ESP freshness track host time and go stale with the diagnostics.
 
-Audit finding 5: bms_freshness and esp_freshness were classified once from the
+Regression guard: bms_freshness and esp_freshness were classified once from the
 firmware's snapshot-time ages and never touched again, so after the
 diagnostics stopped arriving the server kept publishing 'fresh' next to a
 transport timeout and available=True. Uses the fake PowerPeriph server

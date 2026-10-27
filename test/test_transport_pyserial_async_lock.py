@@ -1,6 +1,6 @@
 """The async RPC paths must never leave the serial lock held.
 
-Audit finding 3: do_pull_rpc_async and do_push_rpc_async released self.lock
+Regression guard: do_pull_rpc_async and do_push_rpc_async released self.lock
 only on a normal return, so a decoder exception or a cancelled task kept the
 lock forever and every later serial transaction waited on it. These tests run
 the real methods with a fake transaction handler, no serial port.

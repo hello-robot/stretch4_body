@@ -1,4 +1,4 @@
-"""PIMU rejected-request reply (id 38, firmware v0.1.26p14) handled before the decoders.
+"""PIMU rejected-request reply (id 38) handled before the decoders.
 
 Drives PowerPeriph through a fake transport, no hardware. The fixed reply is five
 bytes: 38, the request id received, a reason (1 unknown id, 2 short request,

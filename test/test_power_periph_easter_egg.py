@@ -1,8 +1,8 @@
-"""PIMU Easter egg mode: trigger bits out (firmware v0.1.51p14), readback.
+"""PIMU Easter egg mode: trigger bits out, readback.
 
 Drives PowerPeriph through a fake transport, no hardware. Set and clear go out as
 RPC 5 trigger bits 24 (on) and 25 (off); the firmware applies off when both are
-set, the host never sends both. RPC 39/40 (v0.1.38p14 to v0.1.50p14) are retired.
+set, the host never sends both. RPC 39/40 are retired.
 The mode reads back as bit 20 of the status state word and, once
 the snapshot schema is bumped, as the u8 at snapshot offset 204.
 """

@@ -20,7 +20,7 @@ class Animation:
 
 # Mirrors enum EyeAnimation in stretch_firmware_ii
 # arduino/hello_pimu2/EyeAnimationManager.h, descriptions from the render functions in
-# EyeAnimationManager.cpp (develop, pimu protocol p13). Id 0 is EYE_ANIM_NOP ("leave this
+# EyeAnimationManager.cpp (pimu protocol p13). Id 0 is EYE_ANIM_NOP ("leave this
 # eye as it is") and is not an animation, so it is not listed. Keep in sync with
 # PowerPeriphDefn.EYE_ANIM_* (test/test_eyes.py checks the two agree).
 # Eye animations arrived in hello-pimu2 v0.1.9p13; circle_cw and circle_ccw (13, 14) need

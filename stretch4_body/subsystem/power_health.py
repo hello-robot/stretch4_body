@@ -54,7 +54,7 @@ class PowerHealthThresholds:
     BMS_CONSECUTIVE_FAILURES_WARN = 3
     BMS_ERRORS_PER_MIN_WARN = 6
 
-    # ESP frames rejected by the length check or as unknown ids (v0.1.42p14). A healthy
+    # ESP frames rejected by the length check or as unknown ids. A healthy
     # link has none. The PIMU polls the ESP at 50 Hz, so 60 a minute (one a second)
     # means most frames of some kind are refused: an ESP build with a different
     # Esp_Status layout, which the PIMU then treats as no status at all.
@@ -62,11 +62,11 @@ class PowerHealthThresholds:
     # CRC errors, RX overflows and TX queue drops on the same UART, summed.
     ESP_LINK_ERRORS_PER_MIN_WARN = 10
 
-    # An ADC bank is marked stale after 100 ms without a sweep and rebuilt after 1 s
-    # (v0.1.39p14). Stale for 5 s means the rebuild is not recovering it.
+    # An ADC bank is marked stale after 100 ms without a sweep and rebuilt after 1 s.
+    # Stale for 5 s means the rebuild is not recovering it.
     ADC_STALE_FAULT_S = 5.0
 
-    # INA228 VBAT witness against the BMS pack voltage (v0.1.43p14). The two sit on
+    # INA228 VBAT witness against the BMS pack voltage. The two sit on
     # either side of the BMS FETs, fuse, R13 (5 mOhm) and the harness, and are sampled
     # up to 1 s apart, so they differ by the path drop under load plus both errors.
     # 500 mV covers about 10 A through 30 mOhm plus the BMS's own error; 2 V is beyond
@@ -891,7 +891,7 @@ def health_line(power_health):
 
 # ---------------------------------------------------------------------- events
 
-_RESTART_REASONS = ((0x01, 'alarm clear and SoC down to the restart level (85 from v0.1.72p14, below 90 before)'), (0x02, 'alarm clear and pack below 26.8 V'),
+_RESTART_REASONS = ((0x01, 'alarm clear and SoC down to the restart level (85)'), (0x02, 'alarm clear and pack below 26.8 V'),
                     (0x04, 'policy disabled or host took charger control'),
                     (0x08, 'adapter removed'))
 _STOP_REASONS = ((0x01, 'SoC at or above 85'), (0x02, 'cell max at or above 3450 mV'))

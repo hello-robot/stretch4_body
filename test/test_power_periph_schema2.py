@@ -1,5 +1,5 @@
-"""Power diagnostics schema 2 (firmware v0.1.47p14), the schema 1 fallback, and
-schema 3 (v0.1.53p14, the ESP firmware version appended).
+"""Power diagnostics schema 2, the schema 1 fallback, and schema 3 (the ESP firmware
+version appended).
 
 The two replies in test/fixtures are the bytes the firmware's native test packs
 (stretch_firmware_ii tests/native/test_power_diag_reply.cpp): a snapshot with a
@@ -252,7 +252,7 @@ def test_error_header_naming_an_unknown_newer_schema_falls_back_to_1():
 
 
 def test_unsupported_schema_falls_back_to_schema_1_once_and_remembers():
-    # v0.1.18p14 answers a newer schema request with status 2 and header schema 1.
+    # Schema 1 firmware answers a newer schema request with status 2 and header schema 1.
     power = p14_power([error_reply(2, header_schema=1), load_fixture(1)])
     assert power.pull_power_diagnostics(blocking=True)
     assert [p[1] for p in power.transport.payloads] == [3, 1]

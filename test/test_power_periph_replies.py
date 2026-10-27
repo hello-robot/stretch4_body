@@ -1,6 +1,6 @@
 """Ordinary PIMU replies are validated before they touch live status.
 
-Audit finding 4: the status, motor sync and trigger callbacks indexed reply[0]
+The status, motor sync and trigger callbacks indexed reply[0]
 without a length check and decoded straight into self.status, so a short
 payload raised struct.error half way through and left a mix of old and new
 fields with no marker. These tests construct the real protocol classes with a

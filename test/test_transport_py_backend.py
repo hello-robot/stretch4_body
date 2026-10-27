@@ -1,6 +1,6 @@
 """The Python serial backend routes pushes as pushes and reports success.
 
-Audit finding 6: Transport.do_rpc on BACKEND_PY_SERIAL always called the pull
+Transport.do_rpc on BACKEND_PY_SERIAL always called the pull
 transaction, whatever is_push said, and always returned None, so a push longer
 than one pull frame was truncated and every synchronous caller saw failure
 even when its callback had decoded a good reply. These tests use the real

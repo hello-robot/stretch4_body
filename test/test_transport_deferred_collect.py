@@ -1,6 +1,6 @@
 """Nonblocking RPC collection must not stall on background telemetry.
 
-Audit finding 1: load_rpc_results(wait_on_result=True) waited up to one second
+Regression guard: load_rpc_results(wait_on_result=True) waited up to one second
 for every unfinished RPC, including the diagnostics pull queued at 2 Hz, and
 then dropped every id whether or not it had finished. These tests drive the
 real Transport methods against a scripted C transport, no hardware.
@@ -101,7 +101,7 @@ def test_deferred_rpc_expires_on_monotonic_deadline():
 
 
 def test_deferred_rpc_ready_after_deadline_is_expired_not_loaded():
-    """Review of 2026-10-16, finding B: a reply that lands after the deadline
+    """A reply that lands after the deadline
     must not run its callback or count as a success."""
     transport = make_transport({31: [1]})
     queue(transport, 31, wait_on_collect=False, timeout_s=0.02)
