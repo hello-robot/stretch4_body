@@ -13,6 +13,7 @@ class SentryEyeAnimations(Sentry):
         self.last_push_count = 0
         self.yield_until = 0
         self.rainbow_sent = False
+        self.boot_step_sent = False
 
     def startup(self):
         if not Sentry.startup(self):
@@ -29,6 +30,10 @@ class SentryEyeAnimations(Sentry):
     def step(self):
         if not self.is_valid:
             return
+
+        if not self.boot_step_sent and self.robot.power_periph:
+            self.robot.power_periph.set_boot_step(PowerPeriphDefn.BOOT_STEP_EYES)
+            self.boot_step_sent = True
 
         ts = time.time()
         # Another client commanded the eyes: leave them alone for a while

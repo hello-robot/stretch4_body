@@ -145,3 +145,12 @@ def test_snapshot_field_comes_from_the_schema_2_decoder(pimu):
     struct.pack_into('<BBH', cut, 0, 2, 0, len(cut))
     assert pimu._unpack_power_diagnostics(arr.array('B', cut)) == 0
     assert 'easter_egg_mode' not in pimu.power_diagnostics
+
+
+def test_boot_step_goes_in_bits_26_to_29_and_a_later_step_replaces_it(pimu):
+    pimu.set_boot_step(PowerPeriph.BOOT_STEP_SUBSYSTEMS)
+    pimu.set_boot_step(PowerPeriph.BOOT_STEP_CONTROL_LOOP)
+    pimu.set_easter_egg_mode(True)
+    word = pushed_word(pimu)
+    assert (word >> 26) & 0xF == PowerPeriph.BOOT_STEP_CONTROL_LOOP
+    assert word & ~PowerPeriph.TRIGGER_BOOT_STEP_MASK == PowerPeriph.TRIGGER_EASTER_EGG_ON

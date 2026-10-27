@@ -351,6 +351,7 @@ class PowerPeriphDefn():
         54: 'nuc_boot_watch',
         55: 'button_faults',
         56: 'runstop_raised',
+        57: 'boot_step',
     }
     POWER_EVENT_EXPLANATIONS = {
         1: 'PIMU restarted; data0 is the reset-cause bitmask and data1 is the board variant.',
@@ -430,6 +431,8 @@ class PowerPeriphDefn():
              'problem bits (red blink).'),
         56: ('The firmware raised a runstop; data0 is the cause (3 low SoC, 4 high current), data1 the SoC or '
              'the system current in tenths of an amp.'),
+        57: ('A boot step after a wake is done; data0 is the step (1 to 10, the eye ring LED it lights), data1 '
+             'tenths of a second since the wake.'),
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',
@@ -544,6 +547,24 @@ class PowerPeriphDefn():
     TRIGGER_SLEEP = (1 << 23)
     TRIGGER_EASTER_EGG_ON = (1 << 24)
     TRIGGER_EASTER_EGG_OFF = (1 << 25)
+    TRIGGER_BOOT_STEP_SHIFT = 26  # bits 26 to 29, firmware v0.1.83p14
+    TRIGGER_BOOT_STEP_MASK = (0xF << 26)
+
+    BOOT_STEP_NAMES = {
+        1: 'wake',
+        2: 'rails on',
+        3: 'NUC VBUS',
+        4: 'USB configured',
+        5: 'port opened',
+        6: 'first host RPC',
+        7: 'host config',
+        8: 'subsystems started',
+        9: 'control loop running',
+        10: 'eyes handed over',
+    }
+    BOOT_STEP_SUBSYSTEMS = 8
+    BOOT_STEP_CONTROL_LOOP = 9
+    BOOT_STEP_EYES = 10
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -711,6 +732,16 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
     def clear_easter_egg_mode(self):
         self.set_easter_egg_mode(False)
+
+    def set_boot_step(self, step):
+        """
+        Report a host boot step (BOOT_STEP_SUBSYSTEMS, _CONTROL_LOOP, _EYES) for the eye
+        boot progress, firmware v0.1.83p14 and later. Goes out in the trigger step field on
+        the next push_command; a later call before the push replaces it. Older firmware
+        ignores the field.
+        """
+        self._trigger = (self._trigger & ~self.TRIGGER_BOOT_STEP_MASK) | (step << self.TRIGGER_BOOT_STEP_SHIFT)
+        self._dirty_trigger = True
 
     def set_fan_on(self):
         self._trigger = self._trigger | self.TRIGGER_FAN_ON

@@ -5,6 +5,7 @@ from stretch4_body.behavior.sentries.sentry_eye_animations import SentryEyeAnima
 class FakePowerPeriph(PowerPeriphPeriphControl):
     def __init__(self):
         self.eye_animation_count = 0
+        self._trigger = 0
         self.pushes = 0
     def push_command(self):
         self.pushes += 1

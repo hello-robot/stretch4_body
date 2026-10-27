@@ -591,6 +591,7 @@ def event(event_id, data0=0, data1=0, power_state=0):
     (event(14, 0, 2), 'BMS level 1 alarms none -> cell voltage high'),
     (event(55, 0x40, 0), 'button faults: error over current, charging none'),
     (event(56, 4, 123), 'runstop raised by the firmware: high current, 12.3 A'),
+    (event(57, 3, 46), 'boot step 3 NUC VBUS, 4.6 s after the wake'),
     (event(46, 0, 1), 'esp_only'),
     (event(45, -3, (0x22 << 8) | 4), 'unknown id'),
     (event(1, 0x21, 0), 'power_on, watchdog'),
