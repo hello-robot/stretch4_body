@@ -113,3 +113,9 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
     def __init__(self, name='eoa_wrist_dw4_tool_tablet'):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
         self.logger.info(f"Wrist yaw stow position: {self.params['stow']['wrist_yaw']}")
+
+    def _home_all_joints(self):
+        success = super()._home_all_joints()
+        if success:
+            self.move_to('wrist_roll', 0.0)
+        return success
