@@ -7,54 +7,6 @@ import time
 
 # ##########################################################3#
 
-def _home_joint(eoa: "EndOfArm", joint_name: str):
-    """
-    Homes one wrist joint and leaves it at the tool's `homing` position for that joint (radians),
-    or at 0 when the tool sets none. A joint homed before another can use this to hold clear of it.
-    """
-    joint = f"wrist_{joint_name}"
-    end_pos = eoa.params.get('homing', {}).get(joint, 0)
-    success = eoa.motors[joint].home(end_pos=end_pos)
-    if not success or eoa.cancel_homing_event.is_set():
-        eoa.logger.error(f"{joint_name} homing failed")
-        return False
-    return True
-
-def _home_tool_joints(eoa: "EndOfArm"):
-    """
-    Homes every configured joint besides the three wrist joints -- the tool's own actuated
-    joint(s), present only when the tool declared a driver. Each one's final position after
-    homing comes from `homing.<joint_name>` in the tool's params, in that joint's own
-    command/actuator units, defaulting to 0 (closed, for a gripper).
-    """
-    for joint in eoa.motors:
-        if joint in ('wrist_pitch', 'wrist_roll', 'wrist_yaw'):
-            continue
-        end_pos = eoa.params.get('homing', {}).get(joint, 0)
-        if not eoa.motors[joint].home(end_pos=end_pos) or eoa.cancel_homing_event.is_set():
-            eoa.logger.error(f"{joint} homing failed")
-            return False
-    return True
-
-def home_dw4_joints(eoa: "EndOfArm"):
-    success = eoa.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
-
-    if not success or eoa.cancel_homing_event.is_set():
-        eoa.logger.error("Wrist pitch pre-homing failed")
-        return False
-
-    time.sleep(0.5)
-    if not _home_joint(eoa, 'yaw'):
-        return False
-    if not _home_joint(eoa, 'roll'):
-        return False
-    eoa.motors['wrist_pitch'].motor.set_overcurrent(eoa.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
-    if not _home_joint(eoa, 'pitch'):
-        return False
-
-    return _home_tool_joints(eoa)
-
-
 class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
     """
     Wrist Yaw / Pitch / Roll only for version 3 of DexWrist
@@ -74,21 +26,6 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
         self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
         self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
         self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
-
-    def home(self, wait_on_completion=True):
-        def _do_home():
-            self.logger.info(f'Homing {self.name}')
-            self.status['is_homing'] = True
-            success = home_dw4_joints(self)
-            self.status['is_homing'] = False
-            return success
-        if wait_on_completion:
-            return _do_home()
-        
-        thread = threading.Thread(target=_do_home)
-        thread.start()
-        return None
-        
 
     def pre_stow(self,robot=None):
         if robot:
@@ -120,23 +57,6 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
 
         self.move_to('stretch_gripper', self.params['stow']['stretch_gripper'])
 
-    def home(self, wait_on_completion=True):
-        def _do_home():
-            self.logger.debug(f'Homing {self.name} started.')
-            start_time = time.time()
-            self.status['is_homing'] = True
-            success = home_dw4_joints(self)
-            self.status['is_homing'] = False
-            self.logger.debug(f'Homing {self.name} completed in {time.time() - start_time} seconds.')
-            return success
-        if wait_on_completion:
-            return _do_home()
-        
-        thread = threading.Thread(target=_do_home)
-        thread.start()
-        return None
-
-
     def pre_stow(self,robot=None):
         if robot:
             robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
@@ -157,6 +77,7 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
+        
     def stow(self):
         # Fold in wrist and gripper
         self.logger.info(f'--------- Stowing {self.name} ----')
@@ -167,22 +88,6 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
 
 
         self.move_to('parallel_gripper', self.params['stow']['parallel_gripper'])
-
-    def home(self, wait_on_completion=True):
-        def _do_home():
-            self.logger.info(f'Homing {self.name}')
-            self.status['is_homing'] = True
-            success = home_dw4_joints(self)
-            self.status['is_homing'] = False
-            return success
-
-        if wait_on_completion:
-            return _do_home()
-        
-        thread = threading.Thread(target=_do_home)
-        thread.start()
-        return None
-
 
     def pre_stow(self,robot=None):
         if robot:
@@ -229,7 +134,7 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
             return False
 
         time.sleep(0.5)
-        if not _home_joint(self, 'yaw'):
+        if not self.home_joint('wrist_yaw'):
             return False
 
         # The tablet hits the arm before pitch reaches its hardstop unless roll
@@ -241,7 +146,7 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
             return False
 
         self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
-        if not _home_joint(self, 'pitch'):
+        if not self.home_joint('wrist_pitch'):
             return False
 
         self.move_to('wrist_roll', 0.0)
