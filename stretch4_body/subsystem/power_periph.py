@@ -366,7 +366,9 @@ class PowerPeriphDefn():
         11: 'A complete BMS Modbus frame failed CRC validation.',
         12: 'The BMS receive frame exceeded the fixed receive buffer.',
         13: 'BMS communication recovered; data0 is the consecutive failure count.',
-        14: 'One or more BMS alarm bits changed; data0/data1 are the old/new masks.',
+        14: ('BMS level 1 alarm mask changed: bit 0 pack voltage high, bit 1 cell voltage high, bit 2 cell '
+             'voltage difference high; data0 old, data1 new. Cell voltage high held 5 s with SoC 85 or more '
+             'stops the charger.'),
         15: 'One or more BMS MOS state bits changed; data0/data1 are the old/new masks.',
         16: ('The ESP-observed NUC USB port-A VBUS-presence input changed. This '
              'does not prove that the NUC OS is running or that the NUC rail is healthy.'),

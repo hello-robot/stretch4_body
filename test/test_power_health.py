@@ -588,6 +588,7 @@ def event(event_id, data0=0, data1=0, power_state=0):
     (event(35, (0x03 << 8) | 87, 3460), 'SoC 87'),
     (event(35, (0x03 << 8) | 87, 3460), 'cell max 3460 mV'),
     (event(35, (0x01 << 8) | 100, 0), 'charger stopped: BMS high-voltage alarm held 5 s with SoC at or above 85'),
+    (event(14, 0, 2), 'BMS level 1 alarms none -> cell voltage high'),
     (event(46, 0, 1), 'esp_only'),
     (event(45, -3, (0x22 << 8) | 4), 'unknown id'),
     (event(1, 0x21, 0), 'power_on, watchdog'),

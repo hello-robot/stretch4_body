@@ -895,6 +895,7 @@ _RESTART_REASONS = ((0x01, 'alarm clear and SoC down to the restart level (85)')
                     (0x04, 'policy disabled or host took charger control'),
                     (0x08, 'adapter removed'))
 _STOP_REASONS = ((0x01, 'SoC at or above 85'), (0x02, 'cell max at or above 3450 mV'))
+_BMS_ALARMS = ((0x01, 'pack voltage high'), (0x02, 'cell voltage high'), (0x04, 'cell voltage difference high'))
 _WAIT_CAUSE = {0: 'no wait configured', 1: 'NUC off', 2: 'cap reached',
                4: 'cap reached with only stale "off" status'}
 
@@ -936,7 +937,9 @@ def describe_power_event(event):
     if eid == 13:
         return 'recovered after %d failures (last failure %s)' % (
             d0, _name(_Defn.POWER_EVENT_NAMES, d1))
-    if eid in (14, 15, 20):
+    if eid == 14:
+        return 'BMS level 1 alarms %s -> %s' % (_bits(d0, _BMS_ALARMS), _bits(d1, _BMS_ALARMS))
+    if eid in (15, 20):
         return 'mask 0x%02X -> 0x%02X' % (d0 & 0xFFFF, d1 & 0xFFFF)
     if eid in (17, 18):
         return 'age %d ms, NUC VBUS %d' % (d0, d1)
