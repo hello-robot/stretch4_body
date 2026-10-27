@@ -9,6 +9,10 @@ class SentryEyeAnimations(Sentry):
         self.next_action_time = time.time()
         self.behavior = self.params.get('behavior', 'curious')
         self.status={'active_behavior':'curious'}
+        self.yield_s = 30.0
+        self.last_push_count = 0
+        self.yield_until = 0
+        self.rainbow_sent = False
 
     def startup(self):
         if not Sentry.startup(self):
@@ -27,6 +31,14 @@ class SentryEyeAnimations(Sentry):
             return
 
         ts = time.time()
+        # Another client commanded the eyes: leave them alone for a while
+        if self.robot.power_periph and self.robot.power_periph.eye_animation_count != self.last_push_count:
+            self.yield_until = ts + self.yield_s
+            self.last_push_count = self.robot.power_periph.eye_animation_count
+        if ts < self.yield_until:
+            self.next_action_time = ts
+            self.rainbow_sent = False
+            return
         
         # Color change logic: white to light pink randomly every 10s or so
         if not hasattr(self, 'next_color_change_time'):
@@ -44,6 +56,14 @@ class SentryEyeAnimations(Sentry):
 
         # Dynamically fetch behavior in case configuration is changed
         self.behavior = self.params.get('behavior', 'curious')
+
+        if self.behavior == 'rainbow':
+            if not self.rainbow_sent and self.robot.power_periph:
+                self.robot.power_periph.set_eye_animation(
+                    PowerPeriphDefn.EYE_ANIM_RAINBOW_SPIN, PowerPeriphDefn.EYE_ANIM_RAINBOW_SPIN, intensity=255)
+                self.robot.power_periph.push_command()
+                self.last_push_count = self.robot.power_periph.eye_animation_count
+                self.rainbow_sent = True
 
         if self.behavior == 'curious':
             action_triggered = False
@@ -106,3 +126,4 @@ class SentryEyeAnimations(Sentry):
                         intensity=255, r=r, g=g, b=b
                     )
                     self.robot.power_periph.push_command()
+                    self.last_push_count = self.robot.power_periph.eye_animation_count

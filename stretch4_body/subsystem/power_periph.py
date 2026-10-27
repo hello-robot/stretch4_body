@@ -495,6 +495,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._eye_animation_g = g
         self._eye_animation_b = b
         self._dirty_eye_animation = True
+        self.eye_animation_count += 1
 
     def actuator_control(self, motor_type, enable, blocking=True):
         mt = [None, 'lift', 'omni-0', 'omni-1', 'omni-2', 'arm', 'eoa']
@@ -762,6 +763,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._eye_animation_r = 255
         self._eye_animation_g = 255
         self._eye_animation_b = 255
+        self.eye_animation_count = 0
 
         if usb is None:
             usb = self.params['usb_name']
