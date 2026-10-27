@@ -419,9 +419,10 @@ class EndOfArm(FeetechSMChain):
 
         joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
 
-        joints = [name for name in self.motors if name in joints] # Remove yaw/roll/pitch if they aren't in self.motors.
+        joints = [name for name in joints if name in self.motors] # Remove yaw/roll/pitch if they aren't in self.motors.
         joints += [name for name in self.motors if name not in joints]
 
+        self.logger.info(f"Homing joints: {joints}")
         for joint_name in joints:
             success = self.home_joint(joint_name, set_homing_status=False)
             if not success:
