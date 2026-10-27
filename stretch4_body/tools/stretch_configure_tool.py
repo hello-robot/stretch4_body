@@ -272,14 +272,22 @@ def main(quick, auto_detect):
         
         if connected:
             time.sleep(2.0) # Extra wait for server to be fully ready
-            print('Homing end_of_arm...')
+            success = False
             try:
-                r.end_of_arm.home()
+                r.pull_status()
+                if r.is_runstopped():
+                    print("Robot is runstopped. Clear the runstop, then run stretch_robot_home.")
+                else:
+                    print('Homing end_of_arm...')
+                    success = r.end_of_arm.home()
+                    if not success:
+                        print("Homing failed. Run stretch_robot_home to try again.")
             except Exception as e:
                 print(f"Error during homing: {e}")
             finally:
                 r.stop()
-            print("Done! You are ready to use the tool.")
+            if success:
+                print("Done! You are ready to use the tool.")
         else:
             print("Failed to connect to the robot. Please try homing manually.")
     else:
