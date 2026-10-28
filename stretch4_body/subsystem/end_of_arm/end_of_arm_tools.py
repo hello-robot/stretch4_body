@@ -1,9 +1,6 @@
-import threading
 from stretch4_body.core.hello_utils import *
 from stretch4_body.subsystem.end_of_arm.end_of_arm import EndOfArm
 import time
-
-
 
 # ##########################################################3#
 
@@ -20,19 +17,6 @@ class EOA_Wrist_DW4_Tool_NIL(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
-    
-    def stow(self):
-        # Fold in wrist and gripper
-        self.logger.info(f'--------- Stowing {self.name} ----')
-        self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
-        self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
-        self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
-
-    def pre_stow(self,robot=None):
-        if robot:
-            robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
-        else:
-            self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
 
 class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
     """
@@ -47,23 +31,6 @@ class EOA_Wrist_DW4_Tool_SG4(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
-    
-    def stow(self):
-        # Fold in wrist and gripper
-        self.logger.info(f'--------- Stowing {self.name} ----')
-        self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
-        self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
-        time.sleep(3.0)
-        self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
-
-
-        self.move_to('stretch_gripper', self.params['stow']['stretch_gripper'])
-
-    def pre_stow(self,robot=None):
-        if robot:
-            robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
-        else:
-            self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
 
 
 class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
@@ -79,23 +46,6 @@ class EOA_Wrist_DW4_Tool_PG4(EndOfArm):
             'wrist_yaw_joint':'wrist_yaw',
             'wrist_pitch_joint': 'wrist_pitch',
             'wrist_roll_joint':'wrist_roll'}
-        
-    def stow(self):
-        # Fold in wrist and gripper
-        self.logger.info(f'--------- Stowing {self.name} ----')
-        self.move_to('wrist_yaw', self.params['stow']['wrist_yaw'])
-        self.move_to('wrist_roll', self.params['stow']['wrist_roll'])
-        time.sleep(3.0)
-        self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
-
-
-        self.move_to('parallel_gripper', self.params['stow']['parallel_gripper'])
-
-    def pre_stow(self,robot=None):
-        if robot:
-            robot.end_of_arm.move_to('wrist_pitch', robot.end_of_arm.params['stow']['wrist_pitch'])
-        else:
-            self.move_to('wrist_pitch', self.params['stow']['wrist_pitch'])
 
 
 class EOA_Wrist_DW4_Tool_Calibration(EOA_Wrist_DW4_Tool_NIL):
@@ -112,7 +62,6 @@ class EOA_Wrist_DW4_Tool_Tablet(EOA_Wrist_DW4_Tool_NIL):
     """
     def __init__(self, name='eoa_wrist_dw4_tool_tablet'):
         EOA_Wrist_DW4_Tool_NIL.__init__(self, name)
-        self.logger.info(f"Wrist yaw stow position: {self.params['stow']['wrist_yaw']}")
 
     def _home_all_joints(self):
         success = super()._home_all_joints()
