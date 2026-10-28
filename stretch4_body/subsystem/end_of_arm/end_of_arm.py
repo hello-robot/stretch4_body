@@ -1,5 +1,6 @@
 import threading
 from enum import Enum
+import time
 
 import numpy as np
 
@@ -174,6 +175,7 @@ class GripperHandedness(Enum):
         for joint, x_r in self.get_joint_targets().items():
             slow = params[joint]['motion']['slow']
             end_of_arm.move_to(joint, x_r, slow['vel'], slow['accel'])
+
 
 
 class EndOfArm(FeetechSMChain):
@@ -399,25 +401,77 @@ class EndOfArm(FeetechSMChain):
         self.cancel_homing_event.set()
         self.logger.warning(f"Feetech homing cancelled for: {self.name}")
 
-    def home(self):
-        """
-        Home to hardstops
-        """
-        #Naive version. Should override with tool specific safe motions.
-        raise NotImplementedError('EndOfArm Homing not implemented at this level.')
-
-    def home_joint(self, joint_name=None,end_pos=0,wait_on_completion:bool=True):
-        """
-        Home to hardstops
-        """
-        self.logger.info(f'--------- Homing {joint_name} ----')
+    def _home_all_joints(self):
+        self.logger.info(f'Homing {self.name}')
         self.status['is_homing'] = True
-        if wait_on_completion:
-            self.motors[joint_name].home(end_pos=end_pos)
-        else:
-            thread = threading.Thread(target=self.motors[joint_name].home, args=(end_pos,))
-            thread.start()
+
+        if 'wrist_pitch' in self.motors:
+            success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+
+            if not success or self.cancel_homing_event.is_set():
+                self.logger.error("Wrist pitch pre-homing failed")
+                self.status['is_homing'] = False
+                return False
+
+            time.sleep(0.5)
+
+            self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
+
+        joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
+
+        joints = [name for name in joints if name in self.motors] # Remove yaw/roll/pitch if they aren't in self.motors.
+        joints += [name for name in self.motors if name not in joints]
+
+        self.logger.info(f"Homing joints: {joints}")
+        for joint_name in joints:
+            success = self.home_joint(joint_name, set_homing_status=False)
+            if not success:
+                self.logger.error(f"{joint_name} homing failed")
+                break
+            if self.cancel_homing_event.is_set():
+                self.logger.error(f"Homing canceled during {joint_name} homing.")
+            
         self.status['is_homing'] = False
+
+        return success
+
+    def home(self, wait_on_completion:bool=True) -> bool|None:
+        """
+        Homes the wrist joints. Warning: self-collision detection is usually disabled during homing! If you are implementing a new tool, be sure to update the homing parameters for the joints, so that your tool does not collide with the robot.
+        """
+        if wait_on_completion:
+            return self._home_all_joints()
+        
+        thread = threading.Thread(target=self._home_all_joints)
+
+        thread.start()
+
+        return None
+
+    def home_joint(self, joint_name:str,end_pos:float|None=None, set_homing_status:bool=True, wait_on_completion:bool=True) -> bool|None:
+        """
+        Home to hardstops
+        end_pos: final position after homing. Defaults to the tool's `homing.<joint_name>` param, else 0.
+        wait_on_completion: if False, home in a background thread and return None.
+        """
+        if not wait_on_completion:
+            threading.Thread(target=self.home_joint, args=(joint_name, end_pos, set_homing_status)).start()
+            return None
+
+        self.logger.info(f'--------- Homing {joint_name} ----')
+
+        if end_pos is None:
+            end_pos = self.params.get('homing', {}).get(joint_name, 0)
+
+        if set_homing_status:
+            self.status['is_homing'] = True
+
+        success = self.motors[joint_name].home(end_pos=end_pos)
+
+        if set_homing_status:
+            self.status['is_homing'] = False
+
+        return success
 
 
     def is_tool_present(self,class_name):

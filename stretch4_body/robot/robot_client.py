@@ -1213,14 +1213,15 @@ class WristJointClient(SubsystemClient):
         Enable torque on the joint to actively hold position.
         """
         self._queue_command(f'{self.joint_name}.end_of_arm', "enable_torque", self.joint_name)
-    def home(self, end_pos=0,wait_on_completion=True, timeout=20):
+    def home(self, end_pos=None,wait_on_completion=True, timeout=20):
         """
         Home the joint.
         
         Parameters
         ----------
         end_pos : float, optional
-            Final position after homing (radians), by default 0.
+            Final position after homing, in the joint's units. By default the tool's
+            `homing.<joint_name>` param, else 0.
         wait_on_completion : bool, optional
             If True, block until completion, by default True.
         timeout : float, optional

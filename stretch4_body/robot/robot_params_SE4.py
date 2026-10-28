@@ -618,6 +618,9 @@ SE4_eoa_wrist_dw4_tool_pg4={
         #'dxl_latency_timer': 64,
         'wrist': 'eoaw_dw4',
         'tool': 'eoat_pg4',
+        'homing': {
+            'parallel_gripper': 0.04, #Aperture (m) the gripper opens to after homing
+        },
         'stow': {
             'arm': 0.0,
             'lift': 0.15,
