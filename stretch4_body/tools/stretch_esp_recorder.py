@@ -30,8 +30,12 @@ RECORD_SIZE = 16
 HEAD = struct.Struct('<IBBBBH')
 SAMPLE = struct.Struct('<HhB')
 EVENT = struct.Struct('<hh')
-KIND_NAMES = {0: 'sample', 1: 'burst', 2: 'event'}
+KIND_NAMES = {0: 'sample', 1: 'burst', 2: 'event', 3: 'esp'}
 KIND_EVENT = 2
+KIND_ESP = 3
+# FlightRecord.h FREC_ESP_*: a pin the ESP drives or reads, data0 its new level
+ESP_EVENT_NAMES = {1: 'nuc_power_key', 2: 'nuc_5v', 3: 'system_shutdown'}
+CPU_SD_SOURCES = {1: 'sleep or shutdown notice', 2: 'boot watchdog'}
 STATE_MASK = 0x07
 PWR_EN = 0x08
 BUTTON = 0x10
@@ -62,7 +66,7 @@ def decode(raw):
         'nuc_5v': bool(state & NUC_5V), 'runstop': bool(state & RUNSTOP),
         'runstop_cause': kind >> 4, 'faults': faults,
     }
-    if r['kind'] == KIND_EVENT:
+    if r['kind'] in (KIND_EVENT, KIND_ESP):
         r['event_id'] = event_id
         r['data0'], r['data1'] = EVENT.unpack_from(raw, HEAD.size)
     else:
@@ -158,6 +162,8 @@ def samples_of(records, dump_wall_s, port=PORT):
     trimmer = StatusLogTrimmer()
     samples = []
     for i, r in enumerate(records):
+        if r['kind'] == KIND_ESP:
+            continue
         if r['kind'] == KIND_EVENT:
             events.append(event_dict(r, len(events) + 1, times[i]))
         else:
@@ -202,6 +208,17 @@ def cause_name(cause):
     return RUNSTOP_CAUSES[cause] if cause < len(RUNSTOP_CAUSES) else 'unknown_%d' % cause
 
 
+def describe_esp(r):
+    level, data1 = r['data0'], r['data1']
+    if r['event_id'] == 1:
+        if level:
+            return 'pressed by the %s' % CPU_SD_SOURCES.get(data1, 'source %d' % data1)
+        return 'released after %d ms' % data1
+    if r['event_id'] == 2:
+        return '%s, %d ms after the edge before' % ('up' if level else 'down', data1)
+    return 'high' if level else 'low after %d ms' % data1
+
+
 def record_line(r, wall_s):
     when = datetime.datetime.fromtimestamp(wall_s).strftime('%H:%M:%S.%f')[:-3]
     head = '%s  PIMU +%10.3f s  #%3d  %-6s %-19s' % (
@@ -213,6 +230,9 @@ def record_line(r, wall_s):
     tail = 'faults 0x%04X' % r['faults']
     if r['runstop']:
         tail = 'runstop %s, ' % cause_name(r['runstop_cause']) + tail
+    if r['kind'] == KIND_ESP:
+        return '%s  ESP %s (%d): %s  [%s; %s]' % (
+            head, ESP_EVENT_NAMES.get(r['event_id'], 'unknown'), r['event_id'], describe_esp(r), bits, tail)
     if r['kind'] == KIND_EVENT:
         e = event_dict(r, 0, wall_s)
         return '%s  %s (%d): %s  [%s; %s]' % (head, e['event_name'], e['event_id'],

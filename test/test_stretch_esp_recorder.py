@@ -15,7 +15,7 @@ def record(ms, sequence, kind=0, state=0x68, faults=0, cause=0, bus_v=26.4, bus_
     """One FlightRecord as the PIMU packs it: state 0x68 is ACTIVE with PWR_EN,
     ROBOT_ACTIVE and NUC_5V high."""
     head = cli.HEAD.pack(ms, sequence, state, kind | (cause << 4), event_id, faults)
-    if kind == cli.KIND_EVENT:
+    if kind in (cli.KIND_EVENT, cli.KIND_ESP):
         body = cli.EVENT.pack(data0, data1) + b'\x00'
     else:
         body = cli.SAMPLE.pack(int(round(bus_v * 10)), int(round(bus_a * 10)), int(round(nuc_a * 50)))
@@ -126,3 +126,19 @@ def test_stat_and_clear_pass_the_console_line_through(capsys, monkeypatch):
     monkeypatch.setattr(cli, 'open_port', lambda path: port)
     assert cli.main(['--clear']) == 0
     assert port.written == b'frec clear\n'
+
+
+def test_esp_records_print_and_stay_out_of_the_replay(tmp_path, capsys, monkeypatch):
+    records = [record(1000, 1),
+               record(1012, 1, kind=cli.KIND_ESP, event_id=1, data0=1, data1=2),
+               record(1050, 2),
+               record(1062, 2, kind=cli.KIND_ESP, event_id=1, data0=0, data1=50)]
+    port = FakePort([b'FREC 4\n', b''.join(records), b'FREC 0\n'])
+    monkeypatch.setattr(cli, 'open_port', lambda path: port)
+    monkeypatch.setattr(cli.time, 'time', lambda: T_DUMP)
+    out = tmp_path / 'esp.json'
+    assert cli.main(['--out', str(out), '--print']) == 0
+    text = capsys.readouterr().out
+    assert 'ESP nuc_power_key (1): pressed by the boot watchdog' in text
+    assert 'ESP nuc_power_key (1): released after 50 ms' in text
+    assert len(json.loads(out.read_text())) == 2
