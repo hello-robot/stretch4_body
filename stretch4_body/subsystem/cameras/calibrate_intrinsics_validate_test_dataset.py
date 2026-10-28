@@ -3,6 +3,9 @@ This script helps the user collect a test dataset and validate camera intrinsics
 calculating the RMSE projection error for this new dataset that was not used to train the calibration model.
 This tool is mostly for sanity checking and quick validation, it is not part of the calibration pipeline.
 """
+import logging
+
+logger = logging.getLogger(__name__)
 import time
 
 import cv2
@@ -160,7 +163,7 @@ class RGBCalibrationValidateRMSE(CalibrateIntrinsics):
             <= MIN_NUMBER_OBJECT_POINTS_FOR_SOLVE_PNP
         ):
             msg2 = f"Skipping this image; object_points array is empty or less than {MIN_NUMBER_OBJECT_POINTS_FOR_SOLVE_PNP}. Are there no markers in the scene?"
-            print(msg2)
+            logger.info(msg2)
             self.log_message(msg2, LogLevels.WARN)
             return
 
@@ -171,7 +174,7 @@ class RGBCalibrationValidateRMSE(CalibrateIntrinsics):
 
         if not rmse_result:
             msg2 = "RMSE calculation failed, not saving this image."
-            print(msg2)
+            logger.info(msg2)
             self.log_message(msg2, LogLevels.ERROR)
             return
 
@@ -267,6 +270,7 @@ Run this flag after you have completed and saved a calibration. This mode will g
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     """
     Example usage:
     python3 calibrate_intrinsics_validate.py --center --recording_dir ./recordings_calibration_validation --charuco_board_names BOARD_5x7_30mm_22mm_4x4_start_id_0

@@ -2,6 +2,8 @@
 import importlib
 import threading
 import signal
+import os
+import sys
 import traceback
 from serial import SerialException
 import time
@@ -23,10 +25,15 @@ class Robot(RobotCore):
             self.eoa_name = self.params['tool']
             module_name = self.robot_params[self.eoa_name]['py_module_name']
             class_name = self.robot_params[self.eoa_name]['py_class_name']
-            self.subsystems['end_of_arm'] = getattr(importlib.import_module(module_name), class_name)()
+
+            from stretch4_body.core.robot_params import RobotParams
+            mod = RobotParams.import_user_tool_module(self.eoa_name, module_name, is_server=True)
+            self.subsystems['end_of_arm'] = getattr(mod, class_name)(self.eoa_name)
             self.end_of_arm = self.subsystems['end_of_arm']
             self.status['end_of_arm'] = self.subsystems['end_of_arm'].status
             self.status_aux['end_of_arm'] = self.subsystems['end_of_arm'].status_aux
+            if 'lift' in self.params['subsystems']:
+                self.lift.set_i_feedforward_payload(self.robot_params[self.eoa_name]['i_feedforward_payload'])
 
 
         self.dirty_push_command = False
@@ -93,13 +100,6 @@ class Robot(RobotCore):
 
         self.GLOBAL_EXCEPTIONS_LIST.append(Exec[thread_name])
 
-
-    def enable_collision_mgmt(self):
-        pass #self.collision.enable() #legacy
-
-    def disable_collision_mgmt(self):
-        pass #self.collision.disable() #legacy
-
     def get_stow_pos(self, joint):
         """
         Return the stow position of a joint.
@@ -153,12 +153,18 @@ class Robot(RobotCore):
         """
         Cause the robot to move to its stow position
         Blocking.
+        Returns True if the robot ends up stowed.
         """
 
 
         tool = self.params['tool']
         cfg = self.robot_params[tool]['stow']
         self.logger.info(f'Stowing robot for tool {tool}')
+
+        self.pull_status()
+        if self.is_stowed():
+            self.logger.info('Robot is already stowed, nothing to do')
+            return True
         pos_lift = cfg['lift']
         arm_pos = cfg['arm']
 
@@ -172,10 +178,6 @@ class Robot(RobotCore):
             while not self.lift.motor.status['near_pos_setpoint'] and time.time() - ts < 4.0:
                 time.sleep(0.1)
 
-
-        if self.get_subsystem('end_of_arm') is not None:
-            # Run pre stow specific to each end of arm
-            self.end_of_arm.pre_stow(self)
 
         if self.get_subsystem('arm') is not None:
             # Bring in arm before bring down
@@ -202,6 +204,11 @@ class Robot(RobotCore):
                 while not self.lift.motor.status['near_pos_setpoint'] and time.time() - ts < 12.0:
                     time.sleep(0.1)
 
+        self.pull_status()
+        stowed = self.is_stowed()
+        if not stowed:
+            self.logger.warning('Stow finished but the robot is not at its stow positions')
+        return stowed
 
 
     def home(self):
@@ -285,6 +292,19 @@ class Robot(RobotCore):
             self.subsystems['lift'].step_sentry(self.status)
         if self.get_subsystem('end_of_arm') is not None:
             self.subsystems['end_of_arm'].step_sentry(self.status)
+
+    def set_guarded_contact_sensitivity(self, mode_name=None):
+        """
+        Set the guarded contact sensitivity.
+        """
+        if mode_name is None:
+            mode_name = 'default'
+        if mode_name not in self.params['guarded_contact']:
+            self.logger.error(f"set_guarded_contact_sensitivity: Invalid mode name: {mode_name}")
+            return
+        for s in self.subsystems:
+            if hasattr(self.subsystems[s], 'set_guarded_contact_sensitivity') and s in self.params['guarded_contact'][mode_name]:
+                self.subsystems[s].set_guarded_contact_sensitivity(self.params['guarded_contact'][mode_name][s])
 
 class EndOfArmStatusThread(threading.Thread):
     """

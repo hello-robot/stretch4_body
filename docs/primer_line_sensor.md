@@ -1,68 +1,202 @@
 # Line Sensor System Documentation
 
-The line sensor system is designed to provide high-speed, reliable distance measurements across an array of up to 6 Pixart sensors, streaming firehose serial data into a multiprocessing architecture.
+Six PixArt J3 sensors ring the base, each pointing down and forward, each
+reporting 320 range bins at ~30 Hz. Together they see the floor immediately
+around the robot: obstacles, and cliffs.
 
-## Status Fields (`LineSensorLoop`)
+The firmware streams newline-delimited JSON over a USB CDC port
+(`/dev/hello-pixart-j3`). A background process decodes it; the robot server
+publishes it; clients consume it over ZMQ.
 
-The `LineSensorLoop` class pulls status from a multiprocessing queue and populates its internal `status` dictionary. The data comes directly from `PixartJ3Reader`.
+## The status codes come first
 
-### Global Status Fields
-*   `last_frame_time`: Timestamp indicating when the last complete frame (all 6 sensors) was processed.
-*   `rate_hz`: The overall update rate of the complete frame, expected to hover around 30Hz.
-*   `frame_advance_err`: Counter tracking instances where the sequential frame ID from the microcontroller does not advance exactly by 1 (indicates out of order or dropped frames).
-*   `not_six_sensors_err`: Counter for when a frame is deemed "processed" but it did not contain data for all 6 sensors.
-*   `frame_not_full_err`: Counter for when a frame ID increments before all 6 sensors for the *previous* frame ID were received.
-*   `sensors_last_frame`: A dictionary containing occurrences of each sensor index seen in the last processed frame.
+A bin does not always carry a distance. The chip has two status codes:
 
-### Per-Sensor Status Fields (`sensor_0` through `sensor_5`)
-*   `ts_last_read`: The timestamp when this specific sensor's data was most recently read.
-*   `frame_id`: Sequential identifier assigned by the sensor/microcontroller.
-*   `rate_hz`: The update rate calculated specifically for this sensor's data arrivals.
-*   `ranges`: Array of distance readings (typically 320 elements) reported by the sensor in meters.
+| raw | metres | meaning |
+|---|---|---|
+| `0xFF80` | 5.11 | **No detection at all.** No reflection came back. Ambiguous: a dark floor, a lighting condition, or a void. |
+| `0xFE80` | 5.09 | **Detected, but beyond the range limit.** Something returned from further than the sensor can measure. |
 
-## Relevant Parameters
+Because the sensors point *down*, 5.09 is the stronger cliff evidence: the beam
+travelled past where the floor should have been and found something far away.
 
-The line sensor system behavior is shaped by parameters passed to `LineSensorLoop`, which are loaded from user config files.
+These are classified **once**, at decode, in `line_sensor/protocol.py`, before
+any conversion or correction:
 
-*   `loop_rate_Hz`: Defines the speed of the background `worker_loop` process. Because reading from the serial port is async to the sensors, running this at a high rate (e.g., 100Hz or faster) ensures minimal latency.
-*   `sensor_names`: List of logical names for the sensors initialized in the status dictionary (e.g., `['sensor_0', ..., 'sensor_5']`).
-*   `bus_sensor_map`: A nested list `[[2, 3], [0, 1], [4, 5]]` that maps hardware I2C/SPI bus numbers and device numbers directly to a linear logical index (0-5).
-*   `flip_range_ordering`: Boolean parameter that dictates whether the `ranges` array should be reversed. Used to correct for physical sensor orientations relative to the robot body.
+* `ranges[bin]` is set to `NaN` wherever the bin is not a distance;
+* `codes[bin]` carries the identity (`CODE_VALID`, `CODE_BEYOND_LIMIT`,
+  `CODE_NO_RETURN`, `CODE_OTHER_INVALID`).
 
-## Multiprocessing Architecture
+## Status schema
 
-Achieving a stable 30Hz control rate requires handling a firehose of JSON strings over a serial port without blocking the main robot control thread. 
+### `health` — subsystem-wide
 
-The system leverages Python's `multiprocessing.Process` to place the `PixartJ3Reader` into an isolated process. This background process runs `worker_loop`, a highly optimized loop executing at `loop_rate_Hz`. It continually polls the serial interface, parses JSON strings, extracts the array data, and builds frames. 
+| field | meaning |
+|---|---|
+| `streaming` | decoding is running. **False means no cliff detection.** |
+| `port_open` | the serial port is open. False during a dropout. |
+| `disabled_sensors` | names switched off at runtime, by choice |
+| `sensors_dead` | names not reporting, by fault. Empty during normal operation. |
+| `rate_hz` | whole-frame rate, ~30 Hz |
+| `reader_restarts` | serial recoveries so far. A climbing number means a flaky cable. |
+| `decode_errors`, `frame_advance_err`, `frame_not_full_err`, `not_six_sensors_err` | counters; all should stay flat |
 
-Because all of this parsing and aggregation logic is isolated from the main application via multiprocessing, it does not interrupt or throttle the primary control loop, guaranteeing that the robot can comfortably process data while maintaining a solid 30Hz system loop rate.
+`disabled` and `dead` are deliberately different: one is a choice, the other is
+a fault. A disabled sensor never appears in `sensors_dead`.
 
-## Flow of Control
+### `sensor_0` … `sensor_5` — per sensor
 
-The data lifecycle moves from the serial port to the main application through several stages:
+| field | meaning |
+|---|---|
+| `ranges` | float64[320], metres, `NaN` at every non-measurement bin |
+| `codes` | uint8[320], `protocol.CODE_*` — the authority on 5.09 vs 5.11 |
+| `n_no_return`, `n_beyond_limit` | counts of each code this report |
+| `missed_frames` | consecutive frames not reported; 0 while healthy |
+| `enabled` | False if switched off at runtime |
+| `frame_id`, `ts_last_read`, `rate_hz` | |
 
-1.  **Serial Reader:** The background process rapidly calls `PixartJ3Reader.step()`. This method reads bytes from the serial buffer, pieces together JSON lines, and assigns the range data to specific sensor dictionaries based on the `bus_sensor_map`.
-2.  **Status Compilation:** Once `PixartJ3Reader` determines a frame is complete or out-of-order, it updates its internal `status` dictionary to reflect the latest state of all arrays and diagnostic counters.
-3.  **Queue Transport:** The `worker_loop` captures this updated dictionary and pushes it onto a non-blocking `CircularMultiprocessingQueue` (`q_status`).
-4.  **Main Process Polling:** The main control application calls `LineSensorLoop.pull_status()`. This function flushes out all stale entries from `q_status` and updates the primary `status` dictionary with only the freshest data available.
-5.  **Consumer Access:** Any higher-level modules simply read the array using `LineSensorLoop.status['sensor_X']['ranges']`.
+### `calibration` — served by the body
 
-## Associated Tools
+The tare is loaded, fingerprint-checked and published **by the robot**, so no
+consumer opens a YAML file or repeats the validation
 
-There are several tools available to diagnose, calibrate, and visualize the line sensor system:
+| field | meaning |
+|---|---|
+| `loaded` | names with an accepted tare |
+| `rejected` | `{name: why}` for every refusal |
+| `id` | changes when the calibration changes; cache on this |
+| `sensor_N` | packed tare |
 
-*   `REx_line_sensor_calibrate.py`: Factory tool used for calibrating the line sensor arrays.
-*   `stretch_line_sensor_viz_3d.py`: Visualization tool that opens an interactive 3D rendering of the line sensor ranges. Includes features like `--nice_viz` and `--odom` for mapping the ground surface using live robot odometry.
+## Parameters
 
-## Data Flow Architecture
+Under `line_sensor_loop` in the robot params:
 
-The block diagram below illustrates the flow of line sensor data from the hardware sensors all the way to the client application interface.
+* `loop_rate_Hz` — 250. The reader polls far faster than the sensors report.
+* `sensor_names` — `sensor_0` … `sensor_5`, clockwise from robot forward.
+* `bus_sensor_map` — **`[[1, 0], [3, 2], [5, 4]]`**. Maps `distances<bus><dev>`
+  in the JSON to a logical sensor index. Change it if the cables are plugged in
+  differently.
+* `flip_range_ordering` — whether to reverse each 320-bin array.
+* `line_sensor_geometry` — FOV, mounting angles, emitter height and pitch
+  diameter, `pixart_report_num`.
+
+`bus_sensor_map` and `flip_range_ordering` **raise if missing** rather than
+defaulting. A wrong bin order mirrors every reading left-to-right and nothing
+downstream can detect it; a wrong bus map rotates the whole ring. Six identical
+60-degree wedges tile the circle, so *any* mapping error produces a complete,
+plausible-looking result. Only a physical observation can catch it — occlude
+one wedge and confirm the expected sensor index responds.
+
+## Two lossy hops, and what that forces
 
 ```mermaid
 flowchart TD
-    A[Pixart Hardware Sensors] -->|SPI and I2C| B[hello_pixart_j3 Firmware in stretch_firmware_ii]
-    B -->|JSON strings over Serial| C[PixartJ3Reader in Background Worker Process]
-    C -->|Updates internal status dict| D[q_status CircularMultiprocessingQueue]
-    D -->|pull_status| E[LineSensorLoop in Main RobotServer Process]
-    E -->|Multiplexed Robot Status via ZMQ| F[RobotClient Status Dictionary]
+    A[PixArt hardware] -->|SPI / I2C| B[hello_pixart_j3 firmware in stretch_firmware_ii]
+    B -->|newline-delimited JSON over USB CDC| C[PixartJ3Reader, background process at 250 Hz]
+    C -->|complete status| D[q_status: CircularMultiprocessingQueue depth 3]
+    D -->|pull_status| E[LineSensorLoop in the robot server]
+    E -->|whole robot status at 100 Hz| F[ZMQ PUB, CONFLATE=1]
+    F --> G[RobotClient / LineSensorLoopClient]
 ```
+
+Both transports **drop**:
+
+* `q_status.put()` discards the *oldest* message when full. The reader puts at
+  250 Hz; the control loop drains at 48–100 Hz; the queue is 3 deep.
+* The ZMQ status socket sets `CONFLATE=1` on both ends, so a subscriber only
+  ever holds the newest message.
+
+That single fact drives two rules:
+
+1. **Every status message carries all six sensors.** a dropped
+   delta loses that sensor's frame permanently, and the symptom — one sensor
+   frozen while five stream — is indistinguishable from a hardware fault.
+2. **The calibration rides every message.** Publishing it once would be
+   conflated away for any client that connected a moment later, leaving it
+   silently uncalibrated.
+
+`q_cmd` is the exception: it is 100 deep, because dropping the oldest *command*
+means a `set_streaming(False)` quietly does not happen.
+
+## Calibration
+
+Flat-floor tare: park on a clean, light, flat floor with nothing within ~0.5 m,
+record, and subtract the difference between what each bin measures and the
+ideal floor depth.
+
+```
+REx_line_sensor_calibrate --all
+REx_line_sensor_calibrate -s sensor_1 --print-per-bin
+REx_line_sensor_calibrate --all --dry-run
+REx_line_sensor_calibrate --recompute <session_id>     # no robot needed
+```
+
+What it will and will not do:
+
+* Status-code samples never enter the arithmetic. A bin that mostly returns
+  5.09/5.11 is rejected, not averaged.
+* A run is **refused** if too many bins fail — a partial tare is worse than
+  none, because nothing downstream can tell a bad correction from a good one.
+  A dark or glossy floor produces exactly this.
+* Each raw session is one `session.npz`, so a tare can be recomputed later
+  without the robot.
+* A stored tare records a **configuration fingerprint** (bus map, flip,
+  report count, geometry, code mapping). On mismatch it is *refused*, never
+  downgraded to a warning and never quietly replaced with an older file.
+
+## Runtime control
+
+```python
+from stretch4_body.robot.robot_client import RobotClient
+r = RobotClient(); r.startup()
+ls = r.line_sensor_loop
+
+ls.set_streaming(False)                  # pause all six
+ls.set_sensor_enabled('sensor_3', False) # or just one
+r.push_command()                         # nothing happens without this
+
+ls.is_streaming(); ls.disabled_sensors(); ls.dead_sensors()
+```
+
+Neither setting persists. A restart always comes up streaming with all six
+enabled.
+
+While paused the port is still read and the bytes discarded, so the kernel
+buffer cannot fill and hand back a corrupt part-report on resume. A disabled
+sensor is skipped *before* `json.loads`, which is where the reader's time
+actually goes, so it costs less rather than merely publishing less.
+
+## Recovery
+
+A serial error closes the port, marks every enabled sensor dead, and retries
+the open on a 0.5 → 5 s backoff, incrementing `reader_restarts` on success.
+Verified on hardware: deauthorizing the USB node drops the subsystem and it
+returns by itself within ~3 s.
+
+Closing the port matters. It is opened `exclusive=True`, so a descriptor left
+open blocks every later reopen with "device busy" — which is how a single
+transient fault used to kill the subsystem until the next reboot, silently,
+while the process stayed alive.
+
+## Tools
+
+* `REx_line_sensor_calibrate` — flat-floor tare.
+* `stretch_line_sensor_ranges` — live per-bin plot of what each bin reports.
+  Status codes get their own coloured rows so 5.09 and 5.11 are distinguishable
+  at a glance. `--calib` overlays the tare the body serves.
+* `stretch_line_sensor_viz_3d` — interactive 3D view of the projected points,
+  with clustering and cost-map overlays.
+
+Both viewers run on the robot and need a display.
+
+## Consumer checklist
+
+* Read `codes`, never a float comparison, to ask what a bin was.
+* Check `health['streaming']` and `health['disabled_sensors']` before trusting
+  a clear floor. A disabled sensor reports nothing, which is not the same as
+  reporting that nothing is there.
+* Check `sensors_dead`.
+* Use `is_sensor_updated(name)` to skip repeats: status publishes at 100 Hz
+  while sensors report at ~30 Hz, so about 70% of polls carry no new frame.
+* Apply the tare with `LineSensorLoopClient.apply_tare()` rather than
+  subtracting offsets yourself — it leaves status-code bins untouched.

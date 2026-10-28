@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import time
+from functools import partial
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHelloStatus
+from stretch4_body.core.hello_utils import rad_to_deg
 from stretch4_body.core.prismatic_joint import PrismaticJointStatus
 from stretch4_body.core.subsystem_client import SubsystemClient
-import importlib
-from stretch4_body.subsystem.end_of_arm.stretch_gripper import GripperConversion
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import parallel_gripper_servo_rad_to_mm
-from stretch4_body.core.hello_utils import rad_to_deg, deg_to_rad
+from stretch4_body.subsystem.end_of_arm.end_of_arm import GripperHandedness, get_handedness_lift_min
+from stretch4_body.subsystem.line_sensor import calibration
 from stretch4_body.subsystem.omnibase import OmnibaseStatus
 from stretch4_body.subsystem.power_periph import PowerPeriphStatus
+
+if TYPE_CHECKING:
+    from stretch4_body.utils.tool_metadata import ToolMetadata
+
 
 class RobotClient(SubsystemClient):
     """
@@ -16,6 +27,19 @@ class RobotClient(SubsystemClient):
     This class provides access to the robot's subsystems (arm, lift, base, etc.) 
     and high-level routines. It communicates with the robot server to execute commands 
     and retrieve status.
+
+    Usage:
+    ```
+    robot = RobotClient()
+    success = robot.startup()
+    if not success: raise Exception("Could not start robot client")
+    ```
+    
+    or
+    ```
+    with RobotClient() as robot:
+        if robot is None: raise Exception("Could not start robot client")
+    ```
     """
     def __init__(self, client_id=None, ip_address=None):
         """
@@ -40,10 +64,26 @@ class RobotClient(SubsystemClient):
                 self.base = self.omnibase  # legacy naming
             if k == 'end_of_arm':
                 self.eoa_name = self.params['tool']
-                module_name = 'stretch4_body.robot.robot_client'
-                class_name = self.robot_params[self.eoa_name]['py_class_name']+'_Client'
-                self.subsystems[k] = getattr(importlib.import_module(module_name), class_name)(parent=self)
-                self.end_of_arm = self.subsystems[k]
+                eoa_params = self.robot_params.get(self.eoa_name, {})
+                eoa_class = None
+
+                if 'client_module_name' in eoa_params and 'client_class_name' in eoa_params:
+                    from stretch4_body.core.robot_params import RobotParams
+                    declared_module = RobotParams.import_user_tool_module(
+                        self.eoa_name, eoa_params['client_module_name'], is_server=False)
+                    declared = getattr(declared_module, eoa_params['client_class_name'], None)
+                    # 'client_class_name' may instead name a client for the tool's own joint,
+                    # which EndOfArmClient resolves through the tool's metadata.
+                    if isinstance(declared, type) and issubclass(declared, EndOfArmClient):
+                        eoa_class = declared
+
+                if eoa_class is None:
+                    # Every other tool, built-in or user, gets EndOfArmClient bound to its own
+                    # name, which is what reaches that tool's 'devices' entry.
+                    eoa_class = partial(EndOfArmClient, name=self.eoa_name)
+
+                self.end_of_arm:EndOfArmClient = eoa_class(parent=self)
+                self.subsystems[k] = self.end_of_arm
 
         for k in self.params['server']['subsystems']:
             if k == 'line_sensor_loop':
@@ -82,6 +122,8 @@ class RobotClient(SubsystemClient):
         
         The call blocks until completion.
         """
+        if self._refuse_if_runstopped('home'):
+            return False
         self.logger.info('Starting robot homing routine')
         finished, rid = self.routines.routine_robot_home(do_push, wait_on_completion, timeout, do_pull)
         if wait_on_completion:  
@@ -110,6 +152,15 @@ class RobotClient(SubsystemClient):
         else:
             self.logger.info('Stowing routine started with ID: %d'%rid)
 
+    def trigger_runstop(self):
+        return self.power_periph.trigger_runstop()
+    
+    def clear_runstop(self):
+        return self.power_periph.clear_runstop()
+    
+    def is_runstopped(self):
+        return self.power_periph.is_runstopped()
+
     def is_homed(self):
         """
         Check if the robot is homed.
@@ -124,6 +175,20 @@ class RobotClient(SubsystemClient):
             if hasattr(s,'is_homed'):
                 ready = ready and s.is_homed()
         return ready
+    
+    def is_moving(self):
+        """
+        Check if any joints are moving.
+
+        Returns
+        -------
+        bool
+            True if any joint is moving
+        """
+        for s in self.subsystems.values():
+            if hasattr(s,'is_moving') and s.is_moving():
+                return True
+        return False
 
     def wait_on_motion_start(self,subsystem_names,timeout=0.5):
         """
@@ -137,15 +202,14 @@ class RobotClient(SubsystemClient):
             Timeout in seconds, by default 0.5.
         """
         def start_moving():
-            start = True
             for n in subsystem_names:
                 if n in self.subsystems and hasattr(self.subsystems[n],'is_moving'):
-                    if not self.subsystems[n].is_moving():
-                        start = False
-            return  start
+                    if self.subsystems[n].is_moving():
+                        return True
+            return False
         self._wait_on_status(start_moving, timeout, do_pull=True)
 
-    def wait_on_motion_finish(self,subsystem_names,timeout=15.0):
+    def wait_on_motion_finish(self,subsystem_names,timeout=15.0,wait_on_motion_start:bool=True):
         """
         Wait for the specified subsystems to finish moving.
         
@@ -155,14 +219,20 @@ class RobotClient(SubsystemClient):
             List of subsystem names to check.
         timeout : float, optional
             Timeout in seconds, by default 15.0.
+        wait_on_motion_start: bool, optional
+            Call wait_on_motion_start() to wait for the motion to start before waiting on motion to finish.
         """
+        if wait_on_motion_start:
+            self.wait_on_motion_start(subsystem_names)
         def done_moving():
-            done = True
             for n in subsystem_names:
-                if n in self.subsystems and hasattr(self.subsystems[n],'is_moving'):
+                 if n not in self.subsystems:
+                     raise ValueError(f"{n} is not a subsystem in {self.subsystems.keys()}")
+                 if hasattr(self.subsystems[n],'is_moving'):
+                    # print(f"{n=} {self.subsystems[n].is_moving()=}")
                     if self.subsystems[n].is_moving():
-                        done = False
-            return  done
+                        return False
+            return True
         self._wait_on_status(done_moving, timeout, do_pull=True)
 
     def set_guarded_contact_sensitivity(self, mode_name=None):
@@ -262,7 +332,7 @@ class RoutinesClient(SubsystemClient):
         """
         Run a specified routine.
         
-        do_push & do_pull are useful to disable when you're running Stretch Body II
+        do_push & do_pull are useful to disable when you're running Stretch4 Body
         in a multithreaded environment and don't want threads that aren't "main thread"
         to push_command() or pull_status(). E.g. in the ROS2 driver, homing and stowing
         are services by callback threads, so do_push/pull are set to False.
@@ -282,9 +352,10 @@ class RoutinesClient(SubsystemClient):
         Returns
         -------
         bool, rid
-            True if routine completed, False if either:
+            True if routine succeeded, False if either:
              - input arg wait_on_completion=False
              - or timed out before routine completed
+             - or routine completed but failed
             rid is the id of the routine that was/is running
         """
         rid=self._queue_command(subsystem="routines", command=routine_name)
@@ -314,6 +385,24 @@ class RoutinesClient(SubsystemClient):
             If wait_on_completion, whether to call pull_status() within this method.
         """
         return self.run('routine_robot_stow', do_push, wait_on_completion, timeout, do_pull)
+
+    def routine_wrist_handedness(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
+        """
+        Run the wrist handedness routine, which moves the wrist to the opposite handedness (Left/Right)
+        of end_of_arm status['tool_right_handed'].
+
+        Parameters
+        ----------
+        do_push : bool, optional
+            Whether to call push_command() within this method.
+        wait_on_completion : bool, optional
+            If True, block until completion, by default True.
+        timeout : float, optional
+            Timeout in seconds, by default 20.
+        do_pull : bool, optional
+            If wait_on_completion, whether to call pull_status() within this method.
+        """
+        return self.run('routine_wrist_handedness', do_push, wait_on_completion, timeout, do_pull)
 
     def routine_robot_home(self,do_push=True,wait_on_completion=True,timeout=20,do_pull=True):
         """
@@ -461,6 +550,9 @@ class PowerPeriphClient(SubsystemClient):
     def trigger_runstop(self):
         self._queue_command(subsystem="power_periph", command="trigger_runstop")
 
+    def is_runstopped(self):
+        return self.status['runstop_event']
+
     def set_fan_on(self):
         """
         Turn on the cooling fan.
@@ -472,6 +564,18 @@ class PowerPeriphClient(SubsystemClient):
         Turn off the cooling fan.
         """
         self._queue_command(subsystem="power_periph", command="set_fan_off")
+
+    def set_lidar_on(self):
+        """
+        Turn on power to the head lidars.
+        """
+        self._queue_command(subsystem="power_periph", command="set_lidar_on")
+
+    def set_lidar_off(self):
+        """
+        Turn off power to the head lidars.
+        """
+        self._queue_command(subsystem="power_periph", command="set_lidar_off")
 
     def trigger_motor_sync(self):
         """ Legacy function. No longer needed."""
@@ -492,16 +596,15 @@ class PowerPeriphClient(SubsystemClient):
 
     def actuator_control(self, motor_type, enable):
         """
-        Control power to actuators (not typically used by end users).
-        
-        Parameters
-        ----------
-        motor_type : str
-            Motor type identifier.
-        enable : bool
-            True to enable, False to disable.
+        Actuator power cannot be changed through the client.
+
+        Use `REx_actuator_control`, which stops the server, changes power over
+        the direct API, and starts the server again.
         """
-        self._queue_command("power_periph","actuator_control",motor_type,enable)
+        raise NotImplementedError(
+            'Actuator power cannot be changed through the stretch_body_server. '
+            'Use REx_actuator_control (it stops the server, changes power directly, '
+            'then restarts it).')
 
 
 # #####################################################################
@@ -579,7 +682,7 @@ class OmniBaseClient(SubsystemClient):
         """
         self._queue_command("omnibase", "rotate_by", w_r, v_r, a_r)
 
-    def set_velocity(self, vx_m, vy_m, w_r, a_m=None, a_r=None):
+    def set_velocity(self, vx_m, vy_m, w_r, a_m=None, a_r=None, stiffness=1.0):
         """
         Set the base velocity.
         
@@ -596,7 +699,7 @@ class OmniBaseClient(SubsystemClient):
         a_r : float, optional
             Rotational acceleration limit (rad/s^2).
         """
-        self._queue_command("omnibase", "set_velocity", vx_m, vy_m, w_r, a_m, a_r)
+        self._queue_command("omnibase", "set_velocity", vx_m, vy_m, w_r, a_m, a_r, stiffness=stiffness)
 
     def enable_freewheel_mode(self):
         """
@@ -641,12 +744,138 @@ class OmniBaseClient(SubsystemClient):
         self.enable_freewheel_mode()
         SubsystemClient.stop(self)
 
+    def is_moving(self):
+        return self.status['wheel_0']['is_mg_moving'] \
+            and self.status['wheel_1']['is_mg_moving'] \
+                and self.status['wheel_2']['is_mg_moving']
+
 
 # #####################################################################
 
 class LineSensorLoopClient(SubsystemClient):
+    """Client view of the six PixArt line sensors.
+
+    The calibration the body loaded and validated arrives inside the status,
+    so a client never opens a tare file or repeats its validation. Ask this class
+    for the arrays instead of unpacking status['calibration'] by hand.
+    """
+
     def __init__(self,parent=None):
         SubsystemClient.__init__(self,name='line_sensor_loop',parent=parent)
+        self._calib_id = None
+        self._calib = {}          # sensor_name -> (offsets, valid_mask, null_rate)
+        self._frame_id_last = {}
+
+    # -- calibration -------------------------------------------------------
+
+    def _refresh_calibration(self):
+        """Unpack the wire form once per calibration, not once per status."""
+        block = self.status.get('calibration') or {}
+        cid = block.get('id')
+        if cid == self._calib_id:
+            return
+        calib = {}
+        for name in block.get('loaded', []):
+            try:
+                calib[name] = calibration.unpack_tare(block[name])
+            except (KeyError, ValueError) as exc:
+                self.logger.error('%s: unusable tare on the wire: %s', name, exc)
+        self._calib, self._calib_id = calib, cid
+
+    def calibrated_sensors(self):
+        """Names with a tare the body accepted."""
+        self._refresh_calibration()
+        return sorted(self._calib)
+
+    def uncalibrated_sensors(self):
+        """{name: why the body refused its tare}."""
+        return dict((self.status.get('calibration') or {}).get('rejected', {}))
+
+    def bin_reliable(self):
+        """{name: bool array} -- bins whose tare is trustworthy."""
+        self._refresh_calibration()
+        return {n: v[1] for n, v in self._calib.items()}
+
+    def bin_null_rate(self):
+        """{name: float array} -- per-bin no-return rate seen on clear floor."""
+        self._refresh_calibration()
+        return {n: v[2] for n, v in self._calib.items()}
+
+    def apply_tare(self, ranges, sensor_name, codes=None):
+        """Tare one sensor's ranges. An uncalibrated sensor passes through.
+
+        Uses the same routine the body's own tools use, so there is one
+        implementation of what a tare means rather than one per consumer.
+        """
+        self._refresh_calibration()
+        entry = self._calib.get(sensor_name)
+        if entry is None:
+            return np.asarray(ranges, dtype=np.float64)
+        offsets, valid_mask, _ = entry
+        return calibration.apply_tare_array(ranges, offsets, valid_mask, codes)
+
+    def tared_ranges(self, sensor_name):
+        """Latest ranges for one sensor, tared, with its per-bin codes."""
+        s = self.status.get(sensor_name)
+        if not s or not len(s['ranges']):
+            return np.zeros(0), np.zeros(0, dtype=np.uint8)
+        return self.apply_tare(s['ranges'], sensor_name, s['codes']), s['codes']
+
+    # -- liveness ----------------------------------------------------------
+
+    def health(self):
+        return dict(self.status.get('health') or {})
+
+    def dead_sensors(self):
+        """Names that have stopped reporting, or never started.
+
+        Distinct from disabled_sensors(): dead is a fault, disabled is a
+        choice. A disabled sensor never appears here.
+        """
+        return list((self.status.get('health') or {}).get('sensors_dead', []))
+
+    # -- runtime control ---------------------------------------------------
+
+    def is_streaming(self):
+        return bool((self.status.get('health') or {}).get('streaming', False))
+
+    def disabled_sensors(self):
+        """Names switched off at runtime. Check this before trusting a clear
+        floor: a disabled sensor reports nothing, not 'nothing is there'."""
+        return list((self.status.get('health') or {}).get('disabled_sensors', []))
+
+    def reader_restarts(self):
+        """How many times the serial port has recovered itself. A number that
+        keeps climbing means a flaky cable, not a healthy subsystem."""
+        return int((self.status.get('health') or {}).get('reader_restarts', 0))
+
+    def set_streaming(self, on):
+        """Pause or resume the line sensors.
+
+        Takes effect after the next push_command(). Turning them off removes
+        cliff detection; the body reports it in health['streaming'] rather
+        than enforcing anything, so whatever is driving must check.
+        """
+        self._queue_command('line_sensor_loop', 'set_streaming', bool(on))
+
+    def set_sensor_enabled(self, sensor_name, on):
+        """Turn one sensor's decoding on or off. Takes effect after the next
+        push_command(). Not persisted -- a restart comes up with all six on."""
+        self._queue_command('line_sensor_loop', 'set_sensor_enabled',
+                            sensor_name, bool(on))
+
+    def is_sensor_updated(self, sensor_name):
+        """True if this sensor produced a new frame since the last check.
+
+        The status socket is CONFLATE=1 and publishes at 100 Hz while sensors
+        report at ~30 Hz, so most status messages repeat a sensor's previous
+        frame. Without this a consumer processes the same scan three times.
+        """
+        s = self.status.get(sensor_name) or {}
+        fid = s.get('frame_id', 0)
+        changed = self._frame_id_last.get(sensor_name) != fid
+        self._frame_id_last[sensor_name] = fid
+        return changed
 
 # #####################################################################
 
@@ -672,6 +901,8 @@ class PrismaticJointClient(SubsystemClient):
         This moves the joint to the hard stop to calibrate its position.
         Blocking call.
         """
+        if self._refuse_if_runstopped('home %s' % self.name):
+            return False
         self.logger.info('Homing %s...'%self.name)
         rid=self._queue_command(subsystem="routines", command="routine_%s_home"%self.name)
         self.push_command()
@@ -713,7 +944,10 @@ class PrismaticJointClient(SubsystemClient):
             True if the joint needs to be homed/calibrated.
         """
         return self.status.get('motor', {}).get('pos_calibrated', False)
-
+    
+    def is_moving(self):
+        return self.status['motor']['is_mg_moving']
+    
     def enable_safety(self):
         """
         Enable safety mode.
@@ -841,9 +1075,21 @@ class WristJointClient(SubsystemClient):
     """
     Client interface for wrist joints (Yaw, Pitch, Roll).
     """
-    def __init__(self, joint_name,parent=None, ip_address=None):
+    def __init__(self, joint_name:str,parent:EndOfArmClient|None=None, ip_address=None):
         self.joint_name=joint_name
+        self.parent = parent # keep this here for typing
         SubsystemClient.__init__(self, name=joint_name, parent=parent, ip_address=ip_address)
+
+    @property
+    def status(self) -> FeetechSMHelloStatus:
+        if self.parent is not None:
+            return self.parent.status.get(self.name, {})
+        return self._status
+    
+    @status.setter
+    def status(self, value):
+        self._status = value
+
     def do_ping(self):
         """
         Ping the motor to check connectivity.
@@ -854,6 +1100,10 @@ class WristJointClient(SubsystemClient):
         Check if homed.
         """
         return self.status.get('pos_calibrated', False)
+    
+
+    def is_moving(self):
+        return self.status['is_moving']
 
     def move_by(self, x_r, v_r=None, a_r=None):
         """
@@ -902,6 +1152,8 @@ class WristJointClient(SubsystemClient):
         a_r : float, optional
             Acceleration limit (rad/s^2).
         """
+        self.logger.error(f"Cannot send movement command. Joint {self.joint_name} does not support set_velocity.")
+        return False
         if not self.is_homed():
             self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
             return False
@@ -925,6 +1177,32 @@ class WristJointClient(SubsystemClient):
             return False
         self._queue_command(f'{self.joint_name}.end_of_arm', "pose", self.joint_name, p, v_r, a_r)
         return True
+
+    def quick_stop(self) -> bool:
+        """
+        Quickly stop the joint.
+
+        Returns:
+            True if command was queued, False otherwise.
+        """
+        if not self.is_homed():
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
+        self._queue_command(f'{self.joint_name}.end_of_arm', "quick_stop", self.joint_name)
+        return True
+
+    def hold_position(self) -> bool:
+        """
+        Stop and hold the current position of the joint with torque maintained.
+
+        Returns:
+            True if command was queued, False otherwise.
+        """
+        if not self.is_homed():
+            self.logger.error(f"Cannot send movement command. Joint {self.joint_name} has not been homed.")
+            return False
+        self._queue_command(f'{self.joint_name}.end_of_arm', "hold_position", self.joint_name)
+        return True
     def disable_torque(self):
         """
         Disable torque on the joint to make it backdrivable.
@@ -935,19 +1213,22 @@ class WristJointClient(SubsystemClient):
         Enable torque on the joint to actively hold position.
         """
         self._queue_command(f'{self.joint_name}.end_of_arm', "enable_torque", self.joint_name)
-    def home(self, end_pos=0,wait_on_completion=True, timeout=20):
+    def home(self, end_pos=None,wait_on_completion=True, timeout=20):
         """
         Home the joint.
         
         Parameters
         ----------
         end_pos : float, optional
-            Final position after homing (radians), by default 0.
+            Final position after homing, in the joint's units. By default the tool's
+            `homing.<joint_name>` param, else 0.
         wait_on_completion : bool, optional
             If True, block until completion, by default True.
         timeout : float, optional
             Timeout in seconds, by default 20.
         """
+        if self._refuse_if_runstopped('home %s' % self.joint_name):
+            return False
         rid = self._queue_command(subsystem="routines", command="routine_wrist_joint_home",joint_name=self.joint_name,end_pos=end_pos)
         self.push_command(priority=3)
         if wait_on_completion:
@@ -993,54 +1274,27 @@ class WristJointClient(SubsystemClient):
 
 class WristYawClient(WristJointClient):
     """ Client for the wrist yaw joint. """
-    def __init__(self, parent=None, ip_address=None):
+    def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_yaw', parent=parent, ip_address=ip_address)
 
 class WristRollClient(WristJointClient):
     """ Client for the wrist roll joint. """
-    def __init__(self, parent=None, ip_address=None):
+    def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_roll', parent=parent, ip_address=ip_address)
 
 class WristPitchClient(WristJointClient):
     """ Client for the wrist pitch joint. """
-    def __init__(self, parent=None, ip_address=None):
+    def __init__(self, parent:EndOfArmClient|None=None, ip_address=None):
         WristJointClient.__init__(self, joint_name='wrist_pitch', parent=parent, ip_address=ip_address)
 
-class StretchGripperClient(WristJointClient):
-    """ Client for the stretch gripper. """
-    def __init__(self, parent=None, ip_address=None):
-        WristJointClient.__init__(self, joint_name='stretch_gripper', parent=parent, ip_address=ip_address)
-        self.pct_max_open = 100 * abs(self.params['range_deg'][1] / self.params['range_deg'][0])
-        self.poses = {'zero': 0,
-                      'open': self.pct_max_open,
-                      'close': -100}
-        self.status['gripper_conversion'] = {'aperture_m': 0.0,
-                                             'finger_rad': 0.0,
-                                             'finger_effort': 0.0,
-                                             'finger_vel': 0.0}
-        self.gripper_conversion = GripperConversion(self.params)
+class ToolJointClient(WristJointClient):
+    """Flexible client for the end effector tool joint"""
+    def __init__(self, metadata: ToolMetadata, parent: EndOfArmClient | None = None, ip_address=None):
+        WristJointClient.__init__(self, joint_name=metadata.tool_name, parent=parent, ip_address=ip_address)
+        self.tool_metadata = metadata
+        self.poses = metadata.poses
+        self.status['gripper_conversion'] = metadata.status
 
-class ParallelGripperClient(WristJointClient):
-    """ Client for the parallel gripper. """
-    def __init__(self, parent=None, ip_address=None):
-        WristJointClient.__init__(self, joint_name='parallel_gripper', parent=parent, ip_address=ip_address)
-        open_m = parallel_gripper_servo_rad_to_mm(deg_to_rad(self.params['range_deg'][1]), self.params) / 1000.0
-        self.poses = {'zero': 0.0,
-                      'open': open_m,
-                      'mid': open_m / 2.0,
-                      'close': 0.0}
-
-    def move_by_mm(self, x_mm, v_r=None, a_r=None):
-        """
-        Move the parallel gripper by a relative amount in millimeters.
-        """
-        return self.move_by(x_mm / 1000.0, v_r, a_r)
-    
-    def move_to_mm(self, x_mm, v_r=None, a_r=None):
-        """
-        Move the parallel gripper to an absolute position in millimeters.
-        """
-        return self.move_to(x_mm / 1000.0, v_r, a_r)
 # #####################################################################
 class EndOfArmClient(SubsystemClient):
     """
@@ -1050,6 +1304,31 @@ class EndOfArmClient(SubsystemClient):
     def __init__(self,name='end_of_arm',parent=None):
         SubsystemClient.__init__(self,name=name,parent=parent)
         self.joints = list(self.robot_params[self.name].get('devices', {}).keys())
+
+        # These are populated for python typing.
+        self.wrist_pitch: WristPitchClient
+        self.wrist_roll: WristRollClient
+        self.wrist_yaw: WristYawClient
+        self.gripper: ToolJointClient
+
+        from stretch4_body.utils.tool_metadata import get_tool_metadata, is_tool_joint
+
+        for joint in self.joints:
+            # The attributes defined above are assigned in this forloop:
+            device_params = self.robot_params[self.name].get('devices', {}).get(joint, {})
+            if device_params.get('py_class_name') is None:
+                continue
+
+            if is_tool_joint(joint):
+                # A configured tool (built-in gripper, or a user tool registered under this
+                # joint's own name) gets whatever client its metadata declares, and is also
+                # aliased as `self.gripper`. A misconfigured tool raises here rather than
+                # silently falling back to a plain joint client.
+                client = get_tool_metadata(joint).client_class(parent=self)
+                self.gripper = client
+            else:
+                client = WristJointClient(joint_name=joint, parent=self)
+            setattr(self, joint, client)
 
     def do_ping(self, joint):
         """
@@ -1127,6 +1406,8 @@ class EndOfArmClient(SubsystemClient):
         a_r : float, optional
             Acceleration limit (rad/s^2).
         """
+        self.logger.error(f"Cannot send movement command. Joint {joint} does not support set_velocity.")
+        return False
         if joint not in self.joints:
             self.logger.error(f"Joint {joint} not found in end of arm tool.")
             return False
@@ -1160,6 +1441,32 @@ class EndOfArmClient(SubsystemClient):
         self._queue_command(f'{joint}.end_of_arm', "pose", joint, p,v_r, a_r)
         return True
 
+    def change_handedness(self):
+        """
+        Queue a wrist motion to the opposite handedness of status['tool_right_handed'].
+        Call push_command() to execute.
+
+        Refused if the lift is at or below get_handedness_lift_min(), so the wrist does not swing into
+        the ground or base.
+
+        Returns
+        -------
+        GripperHandedness or None
+            The target handedness, or None if refused or the current handedness is unknown.
+        """
+        lift = getattr(self.parent, 'lift', None)
+        lift_min = get_handedness_lift_min()
+        if lift is not None and lift.status['pos'] <= lift_min:
+            self.logger.error(f"Cannot change handedness. Lift too low ({lift.status['pos']:.3f} <= {lift_min}).")
+            return None
+        current = GripperHandedness.from_status(self.status)
+        if current is None:
+            self.logger.error("Cannot change handedness. Handedness unknown (wrist_pitch absent or not homed).")
+            return None
+        target = current.opposite()
+        target.move_to(self)
+        return target
+
     def quick_stop(self,joint):
         """
         Quickly stop a specific joint.
@@ -1173,6 +1480,22 @@ class EndOfArmClient(SubsystemClient):
             self.logger.error(f"Joint {joint} not found in end of arm tool.")
             return False
         self._queue_command(f'{joint}.end_of_arm', "quick_stop",joint)
+        return True
+
+    def hold_position(self, joint: str) -> bool:
+        """
+        Stop and hold the current position of a specific joint with torque maintained.
+
+        Args:
+            joint: Name of the joint.
+
+        Returns:
+            True if command was queued, False otherwise.
+        """
+        if joint not in self.joints:
+            self.logger.error(f"Joint {joint} not found in end of arm tool.")
+            return False
+        self._queue_command(f'{joint}.end_of_arm', "hold_position", joint)
         return True
 
     def disable_torque(self, joint):
@@ -1236,6 +1559,8 @@ class EndOfArmClient(SubsystemClient):
         timeout : float, optional
             Timeout in seconds, by default 45.
         """
+        if self._refuse_if_runstopped('home %s' % self.name):
+            return False
         rid=self._queue_command(subsystem="routines", command="routine_end_of_arm_home")
         self.logger.info('Homing %s ...'%self.name)
         self.push_command()
@@ -1264,21 +1589,15 @@ class EndOfArmClient(SubsystemClient):
         if wait_on_completion:
             self._wait_on_routine(rid,timeout=timeout)
 
-    def TODOwait_on_motion_start(self,joint_names,timeout=0.5):
+    def wait_on_motion_start(self,joint_names,timeout=0.5):
         def start_moving():
-            start = True
-            for n in joint_names:
-                if not self.status[n].is_moving():
-                    start = False
-            return  start
+            start = self.is_moving(joint_names)
+            return start
         self._wait_on_status(start_moving, timeout)
 
-    def TODOwait_on_motion_finish(self,joint_names,timeout=15.0):
+    def wait_on_motion_finish(self,joint_names,timeout=15.0):
         def done_moving():
-            done = True
-            for n in joint_names:
-                if self.subsystems[n].is_moving():
-                    done = False
+            done = not self.is_moving(joint_names)
             return  done
         self._wait_on_status(done_moving, timeout)
 
@@ -1292,6 +1611,12 @@ class EndOfArmClient(SubsystemClient):
         else:
             req_cal = self.robot_params[self.name].get('devices', {}).get(joint, {}).get('req_calibration', True)
             return not req_cal or self.status.get(joint, {}).get('pos_calibrated', False)
+        
+    def is_moving(self, joint_names:list[str]|None = None):
+        req = False
+        for j in joint_names or self.joints:
+            req = req or self.status[j]['is_moving']
+        return req
     
     def is_tool_present(self,class_name):
         """
@@ -1310,42 +1635,6 @@ class EndOfArmClient(SubsystemClient):
         SubsystemClient.stop(self)
 
 # #####################################################################
-class EOA_Wrist_DW4_Tool_NIL_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll only for version 4 of DexWrist
-    """
-    def __init__(self, parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_nil',parent=parent)
-
-class EOA_Wrist_DW4_Tool_SG4_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_sg4',parent=parent)
-
-class EOA_Wrist_DW4_Tool_PG4_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_pg4',parent=parent)
-
-class EOA_Wrist_DW4_Tool_Calibration_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_calibration',parent=parent)
-
-class EOA_Wrist_DW4_Tool_Tablet_Client(EndOfArmClient):
-    """
-    Wrist Yaw / Pitch / Roll /Gripper only for version 4 of DexWrist
-    """
-    def __init__(self,parent=None):
-        EndOfArmClient.__init__(self,name='eoa_wrist_dw4_tool_tablet',parent=parent)
-
-
 
 if __name__ == '__main__':
     if 1:

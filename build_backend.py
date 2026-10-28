@@ -5,9 +5,9 @@ import os
 _orig_which = shutil.which
 
 def _patched_which(cmd, mode=os.F_OK | os.X_OK, path=None):
-    if cmd == 'ninja':
+    if cmd in ('ninja', 'meson'):
         # Return just the command name so meson-python doesn't hardcode the ephemeral pip-build-env path
-        return 'ninja'
+        return cmd
     return _orig_which(cmd, mode, path)
 
 shutil.which = _patched_which

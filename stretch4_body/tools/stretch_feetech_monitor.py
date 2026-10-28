@@ -3,6 +3,7 @@
 import time
 import sys
 import argparse
+import click
 from stretch4_body.core.feetech.feetech_SM_servo import FeetechSMServo
 from stretch4_body.core.feetech.port_handler import PortHandler
 from stretch4_body.core.feetech.sms_sts import sms_sts
@@ -10,12 +11,31 @@ import stretch4_body.core.hello_utils as hu
 
 hu.print_stretch_re_use()
 
+
+def check_server_killed():
+    """Prompt the user to manually kill stretch_body_server before proceeding.
+
+    This tool talks to the Feetech bus directly and conflicts with
+    stretch_body_server, which holds the same serial port open.
+    """
+    click.secho("\nThis tool cannot run while stretch_body_server is active.", fg='yellow', bold=True)
+    click.echo("Please open another terminal and kill the server with:")
+    click.secho("  stretch_body_server --kill", fg='cyan')
+    click.echo("Then check that no server is running with:")
+    click.secho("  stretch_body_server --status", fg='cyan')
+    click.echo()
+    while not click.confirm("No server running in the background?", default=False):
+        click.secho("Please kill the server before proceeding.\n", fg='red')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Monitor Feetech motors status')
     parser.add_argument("--usb", help="The full path to Feetech USB bus", default='/dev/hello-feetech-wrist')
     parser.add_argument("--ids", help="Comma separated list of IDs", default='20,21,22,23')
     parser.add_argument("--rate", help="Update rate in Hz", type=float, default=1.0)
     args = parser.parse_args()
+
+    check_server_killed()
 
     usb = args.usb
     try:

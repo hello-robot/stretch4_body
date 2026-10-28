@@ -1,39 +1,63 @@
-# RGB Cameras
+# Cameras
 
 ## Preview from the Cameras from the command line
 
-You can use the following tool to display the camera feeds in opencv, rerun and store them locally anywhere from the command line: [stretch_camera_show](../stretch4_body/tools/stretch_camera_show.py).
+You can use the following tool to display the camera feeds in opencv, rerun and store them locally anywhere from the command line: [stretch\_camera\_show](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/tools/stretch_camera_show.py).
 
 Run `stretch_camera_show --help` for all the available options.
 
 Examples:
 
 ```
-stretch_camera_show --left --opencv # Display the left head camera only
+stretch_camera_show # Display the left, right and center head cameras in rerun (Default)
 
-stretch_camera_show --right --opencv # Display the right head camera only
+stretch_camera_show --left # Display the left head camera only in rerun
 
-stretch_camera_show --center --opencv # Display the center head camera only
+stretch_camera_show --left --opencv # Display the left head camera only in opencv
 
-stretch_camera_show --left_right --opencv # Display the left, right head cameras only
+stretch_camera_show --left --no-rotate # Display the left head camera without rotation in rerun
 
-stretch_camera_show --left_right_center --opencv # Display the left, right and center head cameras
+stretch_camera_show --gripper # Display the gripper camera feeds and the point cloud from the stereo depth in rerun
 
-stretch_camera_show --gripper --rerun # Display the gripper camera feeds and the point cloud from the stereo depth
+stretch_camera_show --left --recording_directory ./recordings # Store the left head camera to disk as a video (and display in rerun)
 
-stretch_camera_show --left --recording_directory ./recordings # Store images to disk
+stretch_camera_show --left --recording_directory ./recordings --record_format .png # Store one .png per frame instead
+
+stretch_camera_show --recording_directory ./recordings --recording_chunk_seconds 60 # Split the videos into one-minute files
+```
+
+Recording turns the display off, because drawing the imagery costs frames: rerun cannot keep up with the head cameras and backpressures the pipeline that feeds it, which drops the synced left/right pair from 30 fps to around 11 a few minutes into a recording, and has been seen to stall capture altogether. Pass `--rerun` or `--opencv` alongside `--recording_directory` to display it anyway and accept the dropped frames.
+
+Recordings are written to `RECORDING_DIRECTORY/<camera>/<timestamp>/`. `--record_format` takes `.mp4` (the default), which writes video per camera at the camera's configured frame rate, or `.png` and `.jpg`, which write one file per frame, named after the frame's timestamp.
+
+### Video recordings
+
+Video is encoded as HEVC (H.265), on the GPU when the machine has one that can encode it and on the CPU otherwise. This needs `ffmpeg` on the `PATH`; without it recording falls back to OpenCV's mpeg4 encoder, which produces files roughly ten times larger.
+
+A video recording is split into chunks of `--recording_chunk_seconds` (300 by default), named `video_0000.mp4`, `video_0001.mp4` and so on. Chunking matters because an mp4 that never gets closed has no index and will not play back at all, so without it an interrupted recording is lost entirely rather than just its last chunk. Pass `--recording_chunk_seconds 0` to write a single `video.mp4` instead.
+
+Chunks rotate on elapsed real time, not on the length of the recorded video. The two differ whenever a camera delivers below its configured frame rate: the video's own timeline then advances slower than the clock, so a chunk measured in recorded seconds would take proportionally longer to fill. The gap is small when nothing is competing for the frames, but it is wide enough to matter with a display attached, where a "300 second" chunk took over half an hour to close. Note that this also means the video plays back faster than real time when frames were dropped, because it is written at the camera's configured rate.
+
+Long recordings are practical at these settings. Measured on the 12MP center camera, HEVC writes about 10 Mbps where the mpeg4 encoder wrote 112 Mbps, so recording the left, right and center cameras together costs roughly 4.5 GB an hour instead of 63 GB. A static scene compresses much further - the three head cameras together measured 4.1 Mbps, about 1.8 GB an hour - so budget by how much the scene moves.
+
+With the display off, the head cameras hold their configured rates for the whole recording: the left and right cameras measured 30.0, 29.9 and 29.9 fps over successive chunks, and the center camera 96% of its configured 10 fps.
+
+To play the chunks of a recording as one video:
+
+```bash
+printf "file '%s'\n" video_*.mp4 > chunks.txt
+ffmpeg -f concat -safe 0 -i chunks.txt -c copy whole_recording.mp4
 ```
 
 ## Using the Cameras with Python
 
+### Stream-API
 
-### Stream-API 
+The camera subsystem exposes Python [generators](https://book.pythontips.com/en/latest/generators.html) for streaming frames from the cameras. These generators yield [ImageFrame](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/models/image_frame.py) or [SyncedImageFrame](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/models/image_frame.py) objects.
 
-The camera subsystem exposes Python [generators](https://book.pythontips.com/en/latest/generators.html) for streaming frames from the cameras. These generators yield [ImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) or [SyncedImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) objects.
+[ImageFrame](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/models/image_frame.py) is a container for a single camera's image and metadata. Access the image using the `image` attribute, timestamp with `timestamp`, and [AI model results](primer_cameras.md#custom-ai-models-eg-rtmo-pose-estimation) with `ai_model_results`.
 
-[ImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) is a container for a single camera's image and metadata. Access the image using the `image` attribute, timestamp with `timestamp`, and [AI model results](#custom-ai-models-eg-rtmo-pose-estimation) with `ai_model_results`.
-
-[SyncedImageFrame](../stretch4_body/subsystem/cameras/models/image_frame.py) is a container for multiple cameras' images and metadata. You can access the individual camera frames using the `left`, `right`, and `center` attributes of the `SyncedImageFrame` object, which are `ImageFrame` objects.
+[SyncedImageFrame](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/models/image_frame.py) is a container for multiple cameras' images and metadata. You can access the individual camera frames using the `left`, `right`, and `center` attributes of the `SyncedImageFrame` object, which are `ImageFrame` objects.
 
 Using one camera yields an ImageFrame.
 
@@ -47,8 +71,8 @@ for image_frame in stream_left_camera():
     print(f"Got image: {image_frame.image.shape=}, {image_frame.timestamp=}")
 ```
 
-
 Using multiple cameras from the head cameras simultaneously yields a `SyncedImageFrame`.
+
 ```python
 from stretch4_body.subsystem.cameras import *
 
@@ -60,8 +84,8 @@ for image_frame in stream_left_right_camera():
     print(f"Got right image: {image_frame.right.image.shape=}, {image_frame.right.timestamp=}")
 ```
 
-
 Stream from the gripper RGBD camera. This yields a SyncedImageFrame and populates the pointcloud field.
+
 ```python
 from stretch4_body.subsystem.cameras import *
 
@@ -73,6 +97,23 @@ for image_frame in stream_gripper_camera():
     if image_frame.pointcloud is not None:
         print(f"Got pointcloud image: {image_frame.pointcloud.shape=}")
 ```
+
+### Compressed streams
+
+Every stream function has a `*_compressed()` twin (`stream_left_camera_compressed()`, `stream_left_right_camera_compressed()`, `stream_gripper_camera_compressed()`, and so on). They open the same cameras, but the camera MJPEG-encodes frames on-chip, so a head frame costs a couple hundred kilobytes instead of ~7 MB. Use them whenever frames have to leave the process; the head cameras are 1920x1200 and the center camera is 12MP, so raw pixels saturate a transport long before the sensors do.
+
+The default `is_run_pipeline=True` decodes frames for you, so `image` is ordinary BGR and the compressed variants are a drop-in replacement:
+
+```python
+from stretch4_body.subsystem.cameras import *
+
+for image_frame in stream_left_right_camera_compressed():
+    print(f"Got left image: {image_frame.left.image.shape=}")
+```
+
+Pass `is_run_pipeline=False` to keep the JPEG bitstream instead. `ImageFrame.is_compressed()` then returns True, `image` is a 1-D buffer, and `uncompress()` decodes it when you actually need pixels. This is what the ROS 2 camera node does: it forwards the bitstream to the compressed topics without ever decoding it.
+
+Camera configuration (resolution, frame rate, JPEG quality, rotation, exposure) lives in `CAMERA_CONFIGS` in [rgb_camera_config.py](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/models/rgb_camera_config.py) and is read through `RGBCameras.<camera>.config`. A compressed variant reuses its base camera's entry with compression forced on, and `RGBCameras.<camera>.base` gets you back to the camera it derives from.
 
 ## Preview RGBD Cameras from the command line
 
@@ -135,7 +176,7 @@ You can pass custom AI models to the camera pipeline by wrapping them in an `AIM
 
 Here is an example wrapping an RTMO model:
 
-First install 
+First install
 
 ```
 git clone https://github.com/hello-robot/stretch4_human_pose_estimation.git
@@ -331,35 +372,36 @@ for synced_frame in stream_gripper_camera(ai_models_to_use=[yolox_model]):
 
 ## Calibrating your cameras
 
-Cameras are calibrated in the factory and the calibration files are stored in the robot's home directory, under `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/`. 
+Cameras are calibrated in the factory and the calibration files are stored in the robot's home directory, under `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/`.
 
-If you need to re-calibrate your cameras, you can use the following tools. 
+If you need to re-calibrate your cameras, you can use the following tools.
 
-First focus your camera lens using [REx_camera_focus](../stretch4_body/tools/factory/REx_camera_focus.py).
+First focus your camera lens using [REx\_camera\_focus](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/tools/factory/REx_camera_focus.py).
 
-Then calibrate the camera intrinsics and extrinsics using [REx_camera_calibrate](../stretch4_body/tools/factory/REx_camera_calibrate.py).
+Then calibrate the camera intrinsics and extrinsics using [REx\_camera\_calibrate](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/tools/factory/REx_camera_calibrate.py).
 
 The calibration process does the following:
-1. Calibrates the camera intrinsics using [calibrate_camera_intrinsics](../stretch4_body/subsystem/cameras/calibrate_intrinsics.py).
-    This saves the calibration yaml file that contains `head_center`, `head_left`, and `head_right` keys with the K and D matrices, along with other information, at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/calibration_rgb_head_camera.yaml` and a few other yaml files for ROS2 to work correctly.
-2. Verifies the camera intrinsics using [camera_intrinsics_validate_l2_distance](../stretch4_body/subsystem/cameras/camera_intrinsics_validate_l2_distance.py). This uses pre-tape-measured values to verify the camera intrinsics are correct. The values are expected to vary a little across robots, but it's a good "sanity check".
-3. Calibrates the camera-camera extrinsics using [calibrate_extrinsics_cameras](../stretch4_body/subsystem/cameras/calibrate_extrinsics_cameras.py).
-    This saves the calibration transforms as a yaml file containing `left_to_center` and `right_to_center` keys at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/camera_extrinsics.yaml`
-4. Calibrates the camera-lidar extrinsics using [calibrate_extrinsics_lidars](../stretch4_body/subsystem/cameras/calibrate_extrinsics_lidars.py).
-    This appends the camera-lidar extrinsics `transform_right_lidar_to_head_center` key to the `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_dual_lidar/dual_lidar_calibration.yaml` file.
 
-These values are used to estimate the distance to ArUco markers of known size using [detector_aruco.py](../stretch4_body/subsystem/cameras/detectors/detector_aruco.py) that uses `cv2.solve_pnp` or `cv2.fisheye.solve_pnp` depending on the lens type.
+1. Calibrates the camera intrinsics using [calibrate\_camera\_intrinsics](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/calibrate_intrinsics.py). This saves the calibration yaml file that contains `head_center`, `head_left`, and `head_right` keys with the K and D matrices, along with other information, at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/calibration_rgb_head_camera.yaml` and a few other yaml files for ROS2 to work correctly.
+2. Verifies the camera intrinsics using [camera\_intrinsics\_validate\_l2\_distance](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/camera_intrinsics_validate_l2_distance.py). This uses pre-tape-measured values to verify the camera intrinsics are correct. The values are expected to vary a little across robots, but it's a good "sanity check".
+3. Calibrates the camera-camera extrinsics using [calibrate\_extrinsics\_cameras](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/calibrate_extrinsics_cameras.py). This saves the calibration transforms as a yaml file containing `left_to_center` and `right_to_center` keys at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/camera_extrinsics.yaml` and the urdf calibration file at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_values.yaml`.
+4. Calibrates the camera-lidar extrinsics using [calibrate\_extrinsics\_lidars](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/calibrate_extrinsics_lidars.py). This appends the camera-lidar extrinsics `transform_right_lidar_to_head_center` key to the `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_cameras/camera_extrinsics.yaml` file and the urdf calibration file at `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/calibration_values.yaml`.
 
-These values are also used by [emulated_rgbd.py](../stretch4_body/subsystem/cameras/emulated_rgbd.py) to create an colored point clouds and depth images using the left and right lidars, and each head camera using `cv2.projectPoints` or `cv2.fisheye.projectPoints` depending on the lens type. This also requires the lidar extrinsics to be calibrated using https://github.com/hello-robot/stretch_dual_lidar_calibration.
+These values are used to estimate the distance to ArUco markers of known size using [detector\_aruco.py](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/detectors/detector_aruco.py) that uses `cv2.solve_pnp` or `cv2.fisheye.solve_pnp` depending on the lens type.
+
+These values are also used by [emulated\_rgbd.py](https://github.com/hello-robot/stretch4_body/blob/main/stretch4_body/subsystem/cameras/emulated_rgbd.py) to create an colored point clouds and depth images using the left and right lidars, and each head camera using `cv2.projectPoints` or `cv2.fisheye.projectPoints` depending on the lens type. This also requires the lidar extrinsics to be calibrated using https://github.com/hello-robot/stretch\_dual\_lidar\_calibration.
 
 ### Calibration Controls & Offline Replay
 
 During execution of the calibration tools (`REx_camera_calibrate` for camera-lidar or camera intrinsics), progression and commands can be input using either the gamepad controller or terminal keyboard inputs:
-- **Gamepad Control**: Tap `X` to capture a frame / unpause automatic movement, and hold `X` (for 3-4 seconds) to save the calibration to disk.
-- **Keyboard Control**: Type `x` + Enter to capture/unpause, type `s` + Enter to save/exit, and type `q` + Enter to quit without saving. This allows running calibration without a gamepad connected.
+
+* **Gamepad Control**: Tap `X` to capture a frame / unpause automatic movement, and hold `X` (for 3-4 seconds) to save the calibration to disk.
+* **Keyboard Control**: Type `x` + Enter to capture/unpause, type `s` + Enter to save/exit, and type `q` + Enter to quit without saving. This allows running calibration without a gamepad connected.
 
 For camera-lidar calibration, you can also replay a previous session offline:
+
 ```bash
 REx_camera_calibrate --extrinsics_lidar --replay_last
 ```
+
 This offline replay automatically bypasses the gamepad pauses and runs through all poses automatically without requiring user input.

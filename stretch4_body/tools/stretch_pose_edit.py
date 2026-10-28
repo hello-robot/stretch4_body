@@ -32,12 +32,8 @@ class MujocoURDFCollisionVizAnimate(MujocoURDFCollisionViz):
             elif joint in (RobotJoints.wrist_yaw, RobotJoints.wrist_pitch, RobotJoints.wrist_roll):
                 urdf_joint_state[f'{joint.name}_joint'] = joint_pose.position
             elif joint is RobotJoints.gripper:
-                if joint.value == 'parallel_gripper':
-                    joint_val = -joint_pose.position / 2.0
-                else:
-                    joint_val = joint_pose.position
                 for finger_joint in joint.finger_joints:
-                    urdf_joint_state[finger_joint] = joint_val
+                    urdf_joint_state[finger_joint] = joint_pose.position
             else:
                 # Fallback for any other joints
                 urdf_joint_state[f'{joint_name}_joint'] = joint_pose.position

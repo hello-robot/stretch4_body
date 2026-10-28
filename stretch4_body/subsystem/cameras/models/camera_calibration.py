@@ -5,6 +5,7 @@ import numpy as np
 import yaml
 from enum import Enum, auto
 import logging
+logger = logging.getLogger(__name__)
 import cv2
 import cv2.aruco as aruco
 import rerun as rr
@@ -23,9 +24,6 @@ DEFAULT_IMAGES_SAVE_PATH = f"{DEFAULT_CALIBRATION_FOLDER_PATH}/calibration_image
 
 
 class RGBCameraCalibrationFile(Enum):
-    LEFT = auto()
-    CENTER = auto()
-    RIGHT = auto()
     USER = auto()
 
     @property
@@ -34,8 +32,6 @@ class RGBCameraCalibrationFile(Enum):
 
     def _calibration_file_name(self) -> str:
         """Returns the camera calibration file from ~/stretch_user/stretch-se4-xxxx/calibration_cameras/{camera_name}.yaml"""
-        if self.camera_name in ["left", "right", "center"]:
-            return f"calibration_ros_camera_info_{self.camera_name}.yaml"
         if self.camera_name == "user":
             return "calibration_rgb_head_camera.yaml"
         raise ValueError(f"{self.camera_name} is not a valid camera name")
@@ -126,12 +122,17 @@ class RGBCameraCalibration:
         camera_type: "RGBCameras", is_flip_width_and_height: bool
     ) -> "RGBCameraCalibration":
         """Loads a camera's calibration from ~/stretch_user/stretch-se4-xxxx/calibration_cameras/calibration_rgb_head_camera.yaml"""
+        # Compressed variants share the optics, and therefore the calibration, of the camera they derive from.
+        camera_type = camera_type.base
         stretch_user_calibration_file_path = (
             RGBCameraCalibrationFile.USER.get_camera_calibration_file_path()
         )
         with open(stretch_user_calibration_file_path, "r") as f:
             calibration = yaml.load(f, Loader=yaml.FullLoader)
             if not camera_type.name in calibration:
+                if "gripper" in camera_type.name:
+                    raise ValueError(
+                        f"{camera_type.name} was not found in {stretch_user_calibration_file_path}. Please run `REx_camera_calibrate --gripper` first.")
                 raise ValueError(
                     f"{camera_type.name} was not found in {stretch_user_calibration_file_path}. Please run `REx_camera_calibrate --intrinsics` first."
                 )
@@ -241,7 +242,7 @@ class CameraPoseVisualizer:
                 rr.spawn(memory_limit="4GB")
                 self.is_initialized = True
             except Exception as e:
-                print(f"Failed to initialize rerun: {e}")
+                logger.info(f"Failed to initialize rerun: {e}")
 
     def update_pointcloud(
         self,
@@ -332,7 +333,7 @@ class CameraPoseVisualizer:
                 # )
 
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def show_detected_corners(self, image: np.ndarray):
         if not self.is_initialized:
@@ -350,7 +351,7 @@ class CameraPoseVisualizer:
                     rr.Image(image_array, color_model="BGR").compress(),
                 )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def show_dropped_frame(self):
         if not self.is_initialized:
@@ -373,7 +374,7 @@ class CameraPoseVisualizer:
                 rr.Image(image, color_model="BGR").compress(),
             )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def show_last_saved(self, image: np.ndarray):
         if not self.is_initialized:
@@ -391,7 +392,7 @@ class CameraPoseVisualizer:
                     rr.Image(image_array, color_model="BGR").compress(),
                 )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def log_instructions(self, text: str):
         if not self.is_initialized:
@@ -403,7 +404,7 @@ class CameraPoseVisualizer:
                 rr.TextDocument(text, media_type=rr.MediaType.MARKDOWN),
             )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def log_message(self, text: str, level: str = "INFO"):
         if not self.is_initialized:
@@ -412,7 +413,7 @@ class CameraPoseVisualizer:
         try:
             rr.log(f"Console\\ {self.camera_name}", rr.TextLog(text, level=level))
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     def log_capture_status(self, is_auto: bool, is_capture_requested: bool):
         if not self.is_initialized:
@@ -433,7 +434,7 @@ class CameraPoseVisualizer:
                 rr.TextDocument(text, media_type=rr.MediaType.MARKDOWN),
             )
         except Exception as e:
-            print(f"Error in rerun visualization: {e}")
+            logger.info(f"Error in rerun visualization: {e}")
 
     @staticmethod
     def setup_blueprint(camera_names: list[str]):
@@ -480,7 +481,7 @@ class CameraPoseVisualizer:
         try:
             rr.send_blueprint(blueprint)
         except Exception as e:
-            print(f"Failed to send blueprint: {e}")
+            logger.info(f"Failed to send blueprint: {e}")
 
 
 def calculate_per_view_reprojection_error(

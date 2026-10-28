@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from stretch4_body.core.hello_utils import LoopTimer
 import argparse
 from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import (
@@ -5,7 +8,9 @@ from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller impo
     RGBPipelineControllerROS,
     RecordRgbShowImageIn,
 )
+from stretch4_body.subsystem.cameras.enums.recording_file_format import RecordingFileFormat
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS
 
 def show_rgb():
 
@@ -21,14 +26,32 @@ def show_rgb():
         help="Directory used to record the data, if provided, images will be saved to disk in this directory.",
     )
     parser.add_argument(
+        "-f",
+        "--record_format",
+        type=str,
+        default=RecordingFileFormat.mp4.extension,
+        help=f"The file format to record in, only used with --recording_directory. One of: {', '.join(RecordingFileFormat.all_extensions())}. {RecordingFileFormat.mp4.extension} writes one video per camera, the image formats write one file per frame. Default: {RecordingFileFormat.mp4.extension}.",
+    )
+    parser.add_argument(
+        "--recording_chunk_seconds",
+        type=float,
+        default=DEFAULT_RECORDING_CHUNK_SECONDS,
+        help=f"Split a video recording into files of this many seconds, so that an interrupted recording stays playable up to the last completed chunk. Only used with --recording_directory and a video format. 0 writes a single file. Default: {DEFAULT_RECORDING_CHUNK_SECONDS:g}.",
+    )
+    parser.add_argument(
         "--rerun",
         action="store_true",
-        help="Display the recording in a rerun window. Note: this may adversly affect performance. Default: False.",
+        help="Display the recording in a rerun window. (True by default, unless --recording_directory is used.)",
     )
     parser.add_argument(
         "--opencv",
         action="store_true",
-        help="Display the recording in an opencv window. Note: this may adversly affect performance. Default: False.",
+        help="Display the recording in an opencv window.",
+    )
+    parser.add_argument(
+        "--no-rotate",
+        action="store_true",
+        help="Do not rotate the image. Default: False (images are rotated).",
     )
     parser.add_argument(
         "-l", "--left", action="store_true", help="Use the left RGB camera."
@@ -49,7 +72,7 @@ def show_rgb():
         "-lrc",
         "--left_right_center",
         action="store_true",
-        help="Use the synced RGB left and right cameras with the center camera.",
+        help="Use the synced RGB left and right cameras with the center camera. (Default)",
     )
     parser.add_argument(
         "-g", "--gripper", action="store_true", help="Use the gripper camera."
@@ -91,6 +114,11 @@ def show_rgb():
 
     recording_directory = args.recording_directory
 
+    try:
+        recording_file_format = RecordingFileFormat.from_string(args.record_format)
+    except ValueError as error:
+        parser.error(str(error))
+
     show_fps = args.show_fps
 
     camera_type = None
@@ -109,39 +137,51 @@ def show_rgb():
     elif args.gripper:
         camera_type = RGBCameras.gripper_rgbd
     else:
-        raise Exception(
-            "You must specify one of --left, --right, --center, --left_right, --left_right_center, --gripper, or --camera_name to specify the rgb camera to record."
-        )
-    is_record_to_rerun = args.rerun
-    is_record_to_cvimshow = args.opencv
+        camera_type = RGBCameras.synced_left_right_center()
     is_crop = args.crop
     is_rectify = args.rectify
+    is_rotate = not args.no_rotate
 
     detect_aruco_marker_size = args.detect_aruco_marker_size
 
-    show_image_in = None
-    if is_record_to_rerun:
-        show_image_in = RecordRgbShowImageIn.RERUN
-    elif is_record_to_cvimshow:
+    is_display_requested = args.rerun or args.opencv
+
+    if recording_directory is not None and not is_display_requested:
+        show_image_in = None
+    elif args.opencv:
         show_image_in = RecordRgbShowImageIn.CVIMSHOW
-    
-    if not is_record_to_rerun and not is_record_to_cvimshow and not recording_directory:
-        raise Exception("You should specify one of the following: --opencv, --rerun or --recording_directory to specify an output destination for the camera stream.")
+    else:
+        show_image_in = RecordRgbShowImageIn.RERUN
 
     if args.use_ros_for_cameras:
         controller_class = RGBPipelineControllerROS
     else:
         controller_class = RGBPipelineController
 
+    recording_chunk_seconds = args.recording_chunk_seconds
+    if recording_chunk_seconds < 0:
+        parser.error("--recording_chunk_seconds cannot be negative.")
+
+    if recording_directory is not None:
+        logger.info(f"Recording {camera_type.name} to {recording_directory} as {recording_file_format.extension} files.")
+
+        if show_image_in is None:
+            logger.info(
+                "Not displaying the imagery, so that recording keeps up with the cameras. "
+                "Pass --rerun or --opencv to display it anyway, at the cost of dropped frames."
+            )
+
     rgb_pipeline_controller = controller_class(
         camera_type=camera_type,
         recording_directory=recording_directory,
         show_image_in=show_image_in,
-        is_rotate=True,
+        is_rotate=is_rotate,
         is_rectify=is_rectify,
         is_crop=is_crop,
         ai_models_to_use=[],
         detect_aruco_marker_size=detect_aruco_marker_size,
+        recording_file_format=recording_file_format,
+        recording_chunk_seconds=recording_chunk_seconds,
     )
 
     loop_timer = LoopTimer()
@@ -152,15 +192,22 @@ def show_rgb():
         loop_timer.end_of_iteration()
         loop_timer.pretty_print(minimum=True)
         loop_timer.start_of_iteration()
-    if camera_type.is_synced_camera_type():
-        for _ in rgb_pipeline_controller.get_frame_synced(is_run_pipeline=True):
-            print_loop_timer()
-            pass # do nothing, the pipeline will handle the user's pipeline configs
-    else:
-        for _ in rgb_pipeline_controller.get_frame(is_run_pipeline=True):
-            print_loop_timer()
-            pass # do nothing, the pipeline will handle the user's pipeline configs
+    try:
+        if camera_type.is_synced_camera_type():
+            for _ in rgb_pipeline_controller.get_frame_synced(is_run_pipeline=True):
+                print_loop_timer()
+                pass # do nothing, the pipeline will handle the user's pipeline configs
+        else:
+            for _ in rgb_pipeline_controller.get_frame(is_run_pipeline=True):
+                print_loop_timer()
+                pass # do nothing, the pipeline will handle the user's pipeline configs
+    except KeyboardInterrupt:
+        logger.info("Stopping...")
+    finally:
+        # Quitting without stopping would kill the saver threads mid-write, truncating the recording.
+        rgb_pipeline_controller.stop()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     show_rgb()

@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 import argparse
 import time
 import cv2
@@ -12,6 +15,7 @@ from pathlib import Path
 import datetime
 import shutil
 from dataclasses import dataclass
+from stretch4_urdf import record_joint_calibration, get_urdf_from_robot_params
 
 
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
@@ -49,7 +53,7 @@ from stretch4_body.robot.robot_client import RobotClient
 from stretch4_body.subsystem.cameras.calibrate_extrinsics_cameras import CAMERA_EXTRINSICS_YAML_PATH
 
 
-from stretch4_body.subsystem.cameras.models.dual_lidar_calibration import DualLidarCalibration
+
 
 
 @dataclass
@@ -408,7 +412,7 @@ def average_transforms(T_list):
             valid_T_list.append(T)
         else:
             msg = f"Warning: Discarding outlier transform with translation distance {dist:.3f}m from median."
-            print(msg)
+            logger.info(msg)
             try:
                 import rerun as rr
                 rr.log(
@@ -429,7 +433,6 @@ def average_transforms(T_list):
     T_avg[:3, :3] = mean_rot
     T_avg[:3, 3] = t_avg
     return T_avg
-
 
 
 def log_to_rerun(
@@ -528,7 +531,7 @@ class CalibrateLidarToCamera:
         self.saved_poses = 0
 
         if self.is_replaying:
-            print(f"Replaying from folder: {self.replay_folder}")
+            logger.info(f"Replaying from folder: {self.replay_folder}")
             self.replay_poses = sorted([int(d) for d in os.listdir(self.replay_folder) if d.isdigit()])
             self.replay_idx = 0
             
@@ -578,9 +581,9 @@ class CalibrateLidarToCamera:
                     raise ImportError("stretch_python_bridge not found. Did you colcon build?")
             else:
                 try:
-                    from pyhesai_wrapper import stream_lidar_left, stream_lidar_right
+                    from stretch4_pyhesai_wrapper import stream_lidar_left, stream_lidar_right
                 except ImportError:
-                    raise ImportError("pyhesai_wrapper not found. Please install it or use the `--use_ros_for_lidars` flag.")
+                    raise ImportError("stretch4_pyhesai_wrapper not found. Please install it or use the `--use_ros_for_lidars` flag.")
             
             self.lidar_stream = (
                 stream_lidar_right()
@@ -588,45 +591,32 @@ class CalibrateLidarToCamera:
                 else stream_lidar_left()
             )
 
-        print(f"Using Camera: {self.camera_name}, Lidar: {self.lidar_name}")
+        logger.info(f"Using Camera: {self.camera_name}, Lidar: {self.lidar_name}")
 
-        # Ensure output file path
-        self.calib_file = calib_file
-        if not self.calib_file:
-            fleet_path = os.environ.get("HELLO_FLEET_PATH", "")
-            fleet_id = os.environ.get("HELLO_FLEET_ID", "")
-            if fleet_path and fleet_id:
-                self.calib_file = os.path.join(
-                    fleet_path,
-                    fleet_id,
-                    "calibration_dual_lidar",
-                    "camera_lidar_extrinsic_transform.yaml",
-                )
-            else:
-                raise ValueError(
-                    "Calibration file not provided using --calib_file, and HELLO_FLEET_PATH/HELLO_FLEET_ID environment variables are missing."
-                )
+        # Load URDF for calibration
+        urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+        from yourdfpy import URDF
+        import io
+        self.urdf = URDF.load(io.StringIO(urdf_contents))
 
-        print(f"Calibration results will be saved to: {self.calib_file}")
-
-        # Load Calibration Class
-        self.base_calibration = DualLidarCalibration() # Base for floor_to_base and lidar_to_base
-        self.calibration = DualLidarCalibration(self.calib_file)
+        def get_nominal_transform(joint_name):
+            for joint in self.urdf.robot.joints:
+                if joint.name == joint_name:
+                    return np.eye(4) if joint.origin is None else joint.origin
+            return np.eye(4)
 
         # World transform
         self.T_world = None
         try:
-            self.T_world = self.base_calibration.get_world_transform_for_lidar(
-                self.use_right_lidar
-            )
+            T_base_ref = get_nominal_transform("base_ref")
+            T_joint_head = get_nominal_transform("joint_head")
+            if self.use_right_lidar:
+                T_lidar_joint = get_nominal_transform("lidar_right_joint")
+            else:
+                T_lidar_joint = get_nominal_transform("lidar_left_joint")
+            self.T_world = T_base_ref @ T_joint_head @ T_lidar_joint
         except Exception as e:
-            print(f"Warning: could not get T_world: {e}")
-
-        key = f"transform_{self.lidar_name}_lidar_to_{self.camera.name}"
-        if key in self.calibration.data and "data" in self.calibration.data[key]:
-            self.current_average_transform = np.array(
-                self.calibration.data[key]["data"]
-            )
+            logger.warning(f"could not get T_world: {e}")
 
         self.charuco_board = CharucoBoards[
             charuco_board_name
@@ -650,7 +640,7 @@ class CalibrateLidarToCamera:
 
         self.gamepad_teleop = GamePadTeleop(use_server=True, cb_loop=None)
         self.gamepad_teleop.sleep = 0
-        self.gamepad_teleop.startup()
+        self.gamepad_teleop.startup(ignore_singleton_check=True)
         self.left_button_counter = ButtonPressCounter("left_button_pressed")
 
         self.keyframe_recorder = KeyframeRecorder()
@@ -674,7 +664,7 @@ class CalibrateLidarToCamera:
         if poses_file.exists():
             self.keyframe_player.load_from_file(poses_file)
         else:
-            print(f"Warning: poses file {poses_file} does not exist!")
+            logger.warning(f"poses file {poses_file} does not exist!")
 
         self.frame_settled_detector = DetectFrameSettled()
 
@@ -1013,12 +1003,13 @@ class CalibrateLidarToCamera:
 
         import select
         def keyboard_poller():
-            print("\n" + "="*50)
-            print("Keyboard commands enabled:")
-            print("  Press 'x' + Enter to capture/unpause")
-            print("  Press 's' + Enter to save average and exit")
-            print("  Press 'q' + Enter to quit without saving")
-            print("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to capture/unpause")
+  Press 's' + Enter to save average and exit")
+  Press 'q' + Enter to quit without saving")
+{'='*50}\n""")
             
             while not self.quit_requested.is_set():
                 try:
@@ -1034,16 +1025,16 @@ class CalibrateLidarToCamera:
                                 else:
                                     if is_paused.is_set():
                                         rr.log("Logs/action", rr.TextLog("Keyboard 'x': Unpaused. Automatic movement will start!", level="INFO"))
-                                        print("Unpaused via keyboard 'x'!")
+                                        logger.info("Unpaused via keyboard 'x'!")
                                         is_paused.clear()
                                         move_to_next_pose()
                                     else:
                                         request_capture()
                             elif char.lower() == 's':
-                                print("Save requested via keyboard 's'!")
+                                logger.info("Save requested via keyboard 's'!")
                                 request_save()
                             elif char.lower() == 'q':
-                                print("Quit requested via keyboard 'q'!")
+                                logger.info("Quit requested via keyboard 'q'!")
                                 self.quit_requested.set()
                 except Exception as e:
                     time.sleep(0.1)
@@ -1100,12 +1091,12 @@ class CalibrateLidarToCamera:
             if self.move_robot_mode == MoveRobotMode.ARM_POSES:
                 if self.is_replaying:
                     if self.replay_idx >= len(self.replay_poses):
-                        print("Finished replaying all poses. Saving and exiting.")
+                        logger.info("Finished replaying all poses. Saving and exiting.")
                         self.save()
                         break
                 else:
                     if self.keyframe_player.current_pose_index >= len(self.keyframe_player.poses):
-                        print("Finished replaying all poses. Saving and exiting.")
+                        logger.info("Finished replaying all poses. Saving and exiting.")
                         self.save()
                         break
                     
@@ -1121,7 +1112,7 @@ class CalibrateLidarToCamera:
                 latest_lidar_frame = lidar_frame_tmp
 
             if latest_cam_frame is None or latest_lidar_frame is None:
-                print("lidar and camera frames are both None")
+                logger.info("lidar and camera frames are both None")
                 continue
 
             if not self.is_replaying:
@@ -1159,7 +1150,7 @@ class CalibrateLidarToCamera:
 
             if self.is_capture_requested:
                 if not self.waiting_for_settled_printed:
-                    print("Waiting for camera frame to settle...")
+                    logger.info("Waiting for camera frame to settle...")
                     rr.log(
                         "Logs/action",
                         rr.TextLog("Waiting for camera frame to settle...", level="INFO"),
@@ -1167,7 +1158,7 @@ class CalibrateLidarToCamera:
                     self.waiting_for_settled_printed = True
 
                 if is_frame_settled:
-                    print("Frame settled!")
+                    logger.info("Frame settled!")
                     rr.log(
                         "Logs/action",
                         rr.TextLog("Frame settled!", level="INFO"),
@@ -1197,7 +1188,7 @@ class CalibrateLidarToCamera:
                         self.is_capture_requested = False
 
                         if self.move_robot_mode == MoveRobotMode.ARM_POSES:
-                            print("This pose did not have a valid frame! Skipping to next pose.")
+                            logger.info("This pose did not have a valid frame! Skipping to next pose.")
                             move_to_next_pose()
                         continue
 
@@ -1261,7 +1252,7 @@ class CalibrateLidarToCamera:
                     Current Transform: {t_str}
                     Average Transform: {np.array2string(T_avg, formatter={"float_kind": lambda x: "%.4f" % x})}
                     Total: {len(self.captured_transforms)}"""
-                    print(msg)
+                    logger.info(msg)
                     rr.log(
                         f"Logs/capture",
                         rr.TextLog(msg, level="INFO"),
@@ -1323,63 +1314,63 @@ class CalibrateLidarToCamera:
 
             if is_capture_frame and not did_capture_this_frame:
                 msg = "Capture requested, but failed! (Board not fully visible to both Camera and Lidar)"
-                print(msg)
+                logger.info(msg)
                 rr.log("Logs/error", rr.TextLog(msg, level="WARN"))
 
 
 
-        print("Quitting...")
+        logger.info("Quitting...")
         self.cleanup()
 
     def cleanup(self):
         if hasattr(self, '_cleanup_done') and self._cleanup_done:
             return
         self._cleanup_done = True
-        print("Cleaning up CalibrateLidarToCamera...")
+        logger.info("Cleaning up CalibrateLidarToCamera...")
 
         self.quit_requested.set()
 
         # 1. Stop poller threads
         if hasattr(self, 'gamepad_thread'):
-            print("Stopping gamepad poller...")
+            logger.info("Stopping gamepad poller...")
             self.gamepad_thread.join(timeout=0.2)
         if hasattr(self, 'keyboard_thread'):
-            print("Stopping keyboard poller...")
+            logger.info("Stopping keyboard poller...")
             self.keyboard_thread.join(timeout=0.2)
 
         # 2. Stop gamepad teleop subsystem (and its secondary robot client)
         if hasattr(self, 'gamepad_teleop') and self.gamepad_teleop is not None:
             try:
-                print("Stopping GamePadTeleop...")
+                logger.info("Stopping GamePadTeleop...")
                 self.gamepad_teleop.stop()
             except Exception as e:
-                print(f"Warning: error stopping gamepad_teleop: {e}")
+                logger.warning(f"error stopping gamepad_teleop: {e}")
 
         # 3. Close lidar stream
         if hasattr(self, 'lidar_stream') and self.lidar_stream is not None:
             try:
-                print(f"Closing lidar stream for {self.lidar_name}...")
+                logger.info(f"Closing lidar stream for {self.lidar_name}...")
                 self.lidar_stream.close()
             except Exception as e:
-                print(f"Warning: error closing lidar_stream: {e}")
+                logger.warning(f"error closing lidar_stream: {e}")
 
         # 4. Stop camera adapter
         if hasattr(self, 'camera_adapter') and self.camera_adapter is not None:
             try:
-                print(f"Stopping camera adapter for {self.camera.name}...")
+                logger.info(f"Stopping camera adapter for {self.camera.name}...")
                 self.camera_adapter.stop()
             except Exception as e:
-                print(f"Warning: error stopping camera_adapter: {e}")
+                logger.warning(f"error stopping camera_adapter: {e}")
 
         # 5. Stop primary robot client
         if hasattr(self, 'robot') and self.robot is not None:
             try:
-                print("Stopping RobotClient...")
+                logger.info("Stopping RobotClient...")
                 self.robot.stop()
             except Exception as e:
-                print(f"Warning: error stopping robot: {e}")
+                logger.warning(f"error stopping robot: {e}")
         
-        print("Cleanup complete.")
+        logger.info("Cleanup complete.")
 
     def save(self):
         if len(self.captured_transforms) == 0:
@@ -1412,7 +1403,7 @@ class CalibrateLidarToCamera:
             p = Path(out_yaml)
             backup_path = p.with_name(f"{p.stem}_backup_{mod_time}{p.suffix}")
             shutil.copy2(out_yaml, backup_path)
-            print(f"Backed up {out_yaml} to {backup_path}")
+            logger.info(f"Backed up {out_yaml} to {backup_path}")
 
         if os.path.exists(out_yaml):
             with open(out_yaml, "r") as f:
@@ -1420,7 +1411,7 @@ class CalibrateLidarToCamera:
         else:
             existing_data = {}
 
-        # Use the format expected by DualLidarCalibration just in case, but store it in camera_extrinsics
+
         existing_data[key] = {
             "data": self.current_average_transform.tolist(),
             "robot_id": os.environ.get("HELLO_FLEET_ID", ""),
@@ -1430,7 +1421,11 @@ class CalibrateLidarToCamera:
         with open(out_yaml, "w") as f:
             yaml.dump(existing_data, f, default_flow_style=False)
             
-        print(f"Saved transform {l_key} <-> {c_key} to {out_yaml}")
+            
+            
+        logger.info(f"Saved transform {key} to {out_yaml}")
+
+        self.record_to_centralized_yaml()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             poses_file = str(
@@ -1438,7 +1433,7 @@ class CalibrateLidarToCamera:
                 / "models/calibration_poses_extrinsics.yaml"
             )
             self.keyframe_recorder.save_to_file(poses_file)
-            print(f"Saved poses to {poses_file}")
+            logger.info(f"Saved poses to {poses_file}")
             rr.log(
                 "Logs/action",
                 rr.TextLog(
@@ -1446,6 +1441,43 @@ class CalibrateLidarToCamera:
                     level="INFO",
                 ),
             )
+
+    def record_to_centralized_yaml(self):
+        """Write the calibrated camera transform to the centralized stretch_calibration_values.yaml."""
+        try:
+            urdf_contents = get_urdf_from_robot_params(apply_calibration=True)
+            from yourdfpy import URDF
+            import io
+            urdf = URDF.load(io.StringIO(urdf_contents))
+            
+            def get_nominal_transform(joint_name):
+                for joint in urdf.robot.joints:
+                    if joint.name == joint_name:
+                        return joint.origin
+                return np.eye(4)
+
+            camera_joint_name = f"camera_{self.camera_name}_joint"
+            child_link_name = f"camera_{self.camera_name}_link"
+            camera_optical_joint_name = f"camera_{self.camera_name}_optical_joint"
+
+            T_head_lidar = get_nominal_transform(f"lidar_{self.lidar_name}_joint")
+
+            # T_head_camera_optical = T_head_lidar * T_camera_optical_to_lidar
+            # T_head_camera_optical = T_head_lidar * inv(T_lidar_to_camera_optical)
+            T_camera_link_to_optical = get_nominal_transform(camera_optical_joint_name)
+            T_head_camera_optical = T_head_lidar @ np.linalg.inv(self.current_average_transform)
+            T_head_camera = T_head_camera_optical @ np.linalg.inv(T_camera_link_to_optical)
+
+            # T_head_camera = T_head_lidar * T_camera_to_lidar
+            # T_head_camera = T_head_lidar * inv(T_lidar_to_camera)
+            # T_head_camera = T_head_lidar @ np.linalg.inv(self.current_average_transform)
+            
+            xyz = " ".join([f"{x:.18f}" for x in T_head_camera[:3, 3]])
+            rpy = " ".join([f"{x:.18f}" for x in Rotation.from_matrix(T_head_camera[:3, :3]).as_euler('xyz')])
+            
+            record_joint_calibration(camera_joint_name, xyz, rpy, "head_link", child_link_name, os.environ.get("HELLO_FLEET_ID", ""))
+        except Exception as e:
+            logger.warning(f"Failed to record joint calibration to centralized YAML: {e}")
 
 
 def calibrate_extrinsics_camera_lidar(
@@ -1549,6 +1581,7 @@ def calibrate_extrinsics_camera_lidar(
         help="Replay from a specific timestamp folder inside calibration_lidar_points",
     )
     parser.add_argument(
+        "-last",
         "--replay_last",
         action="store_true",
         help="Replay from the last recorded timestamp folder inside calibration_lidar_points",
@@ -1584,4 +1617,5 @@ def REx_calibrate_extrinsics_lidars(interactive: bool):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     calibrate_extrinsics_camera_lidar()

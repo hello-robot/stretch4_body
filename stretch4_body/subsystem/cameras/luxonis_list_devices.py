@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 import depthai as dai
 
 def luxonis_list_devices():
@@ -5,7 +8,7 @@ def luxonis_list_devices():
 
     for info in devices:
         with dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=info.deviceId) as device:
-            print(f"""
+            logger.info(f"""
     Device Name: {device.getProductName()}.
     USB port: {info.name}.
     Device ID: {info.deviceId}.
@@ -18,15 +21,16 @@ def luxonis_list_devices():
 
             
             temp_data = device.getChipTemperature()
-            print(f"Average Temperature: {temp_data.average:.2f}°C")
+            logger.info(f"Average Temperature: {temp_data.average:.2f}°C")
 
             crash_dump = device.getCrashDump()
             crash_reports = crash_dump.crashReports
 
             if len(crash_reports) > 0:
-                print(f"Crash dump found! {[ss.context for crash_report in crash_reports for s in crash_report.threadCallstack for ss in s.callStack]}")
+                logger.info(f"Crash dump found! {[ss.context for crash_report in crash_reports for s in crash_report.threadCallstack for ss in s.callStack]}")
             else:
-                print("No crash dump found")
+                logger.info("No crash dump found")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     luxonis_list_devices()

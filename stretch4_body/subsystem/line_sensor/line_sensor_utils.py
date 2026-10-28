@@ -14,7 +14,8 @@ try:
     HAS_OPEN3D = True
 except ImportError:
     HAS_OPEN3D = False
-from stretch4_body.subsystem.line_sensor.line_sensor_loop import LineSensorLoop
+from stretch4_body.subsystem.line_sensor import calibration
+from stretch4_body.subsystem.line_sensor import calibration_store
 
 class LineSensorGeometry:
     def __init__(self, params):
@@ -66,10 +67,10 @@ class LineSensorGeometry:
         if len(ranges) == 0:
              return np.zeros((0, 3))
 
-        # Filter out invalid readings (Meters)
-        # Assuming max valid range ~4m
-        # Note: Input ranges are in Meters (e.g. 0.2m)
-        valid_mask = (ranges < 4.0) & (ranges > 0)
+        # Keep only bins carrying a distance (meters). Status codes arrive as
+        # NaN from protocol.decode_distances_mm, so there is no magnitude
+        # threshold here: the chip never reports a large distance, only a code.
+        valid_mask = np.isfinite(ranges) & (ranges > 0)
         ranges_m = ranges[valid_mask]
         
         if len(ranges_m) == 0:
@@ -204,287 +205,207 @@ class LineSensorGeometry:
 
 
 class LineSensorCalibration:
+    """Records flat-floor sessions and loads the tare they produce.
+
+    The maths lives in calibration.py and the on-disk layout in calibration_store.py.
     """
-    Calibrates line sensors by assuming the robot is on a flat floor.
-    Features:
-    - Record raw data to timestamped directories.
-    - Load recorded data.
-    - Compute 'model' (range adjustments) to match ideal floor geometry.
-    - Save model to YAML.
-    """
-    def __init__(self, line_sensor_loop):
+
+    def __init__(self, line_sensor_loop, base_dir=None):
         self.lsl = line_sensor_loop
         self.params = self.lsl.params
-        self.sensor_names = self.params['sensor_names']
-        
-        # Data storage: {sensor_name: [list of range arrays]}
-        self.data_samples = {name: [] for name in self.sensor_names}
-        
-        # Calibration results (Tare Offsets): {sensor_name: adjustment_array}
-        self.tare_offsets = {}
-        
-        # Current session directory (set during record)
-        self.session_directory = None
+        self.sensor_names = list(self.params['sensor_names'])
+        self.n_bins = int(self.params['line_sensor_geometry']['pixart_report_num'])
+        self._base_dir = base_dir
+        # name -> LoadedTare, populated by load_tares()
+        self.tares = {}
+        # name -> TareRejected, so a refusal is inspectable rather than a print
+        self.rejected = {}
+
+    # -- paths -------------------------------------------------------------
 
     def get_calibration_base_dir(self):
-        return hu.get_fleet_directory() + 'calibration_line_sensors/'
-
-    def get_sensor_dir(self, sensor_name):
-        return os.path.join(self.get_calibration_base_dir(), sensor_name)
-
-    def create_timestamp_string(self):
-        return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-
-    def record_data(self, itrs=100, sensors=None):
-        """
-        Record 'itrs' samples for specified sensors (or all) to a new timestamped directory.
-        Structure: .../calibration_line_sensors/<sensor_name>/<timestamp>/<timestamp_ms>_j3_ranges.npy
-        """
-        target_sensors = sensors if sensors else self.sensor_names
-        print(f"Recording {itrs} samples for sensors: {target_sensors}...")
-        timestamp = self.create_timestamp_string()
-        
-        # Prepare directories
-        sensor_dirs = {}
-        # Prepare directories
-        sensor_dirs = {}
-        for name in target_sensors:
-            s_dir = os.path.join(self.get_sensor_dir(name), timestamp)
-            if not os.path.exists(s_dir):
-                os.makedirs(s_dir)
-            sensor_dirs[name] = s_dir
-            
-        # Reset local data samples
-        # Reset local data samples for target sensors
-        for name in target_sensors:
-            self.data_samples[name] = []
-        
-        for i in tqdm.tqdm(range(itrs), desc="Recording Data"):
-            self.lsl.pull_status()
-            curr_time = time.time()
-            
-            for name in target_sensors:
-                if name in self.lsl.status:
-                    ranges = np.array(self.lsl.status[name]['ranges'])
-                    
-                    if len(ranges) == 0:
-                        continue
-                        
-                    # Store in memory
-                    self.data_samples[name].append(ranges)
-                    
-                    # Save to disk
-                    filename = os.path.join(sensor_dirs[name], '{:.6f}_j3_ranges.npy'.format(curr_time))
-                    np.save(filename, ranges)
-            
-            time.sleep(0.02) # ~50Hz max poll rate from loop
-            
-        self.session_timestamp = timestamp
-        print(f"Recording complete. Session ID: {timestamp}")
-
-    def load_data(self, timestamp=None, sensors=None):
-        """
-        Load data from a specific timestamp session, or the most recent one if None.
-        """
-        target_sensors = sensors if sensors else self.sensor_names
-        
-        for name in target_sensors:
-            self.data_samples[name] = [] # Clear existing
-            
-            base_dir = self.get_sensor_dir(name)
-            if not os.path.exists(base_dir):
-                print(f"No calibration data found for {name}")
-                continue
-                
-            # Find session dir
-            if timestamp:
-                session_dir = os.path.join(base_dir, timestamp)
-            else:
-                # Find most recent
-                dirs = glob.glob(os.path.join(base_dir, '*'))
-                dirs = [d for d in dirs if os.path.isdir(d)]
-                if not dirs:
-                    print(f"No sessions found for {name}")
-                    continue
-                dirs.sort()
-                session_dir = dirs[-1]
-            
-            if not os.path.exists(session_dir):
-                print(f"Session directory not found: {session_dir}")
-                continue
-                
-            print(f"Loading data for {name} from {session_dir}")
-            files = glob.glob(os.path.join(session_dir, '*_j3_ranges.npy'))
-            files.sort()
-            
-            for f in files:
-                try:
-                    ranges = np.load(f)
-                    self.data_samples[name].append(ranges)
-                except Exception as e:
-                    print(f"Error loading {f}: {e}")
-                    
-            print(f"  Loaded {len(self.data_samples[name])} samples.")
+        if self._base_dir is not None:
+            return self._base_dir
+        return os.path.join(hu.get_fleet_directory(), 'calibration_line_sensors')
 
     def compute_ideal_range(self):
-        # Calculate expected range for a flat floor given sensor geometry
-        geom_params = self.params.get('line_sensor_geometry', {})
-        h_m = geom_params.get('emitter_height_above_floor_mm', 100.67) / 1000.0
-        angle_down_deg = geom_params.get('sensor_angle_down_deg', 26.0)
-        angle_down_rad = np.deg2rad(angle_down_deg)
-        r_ideal = h_m / np.sin(angle_down_rad)
-        return r_ideal
+        """Flat-floor AXIAL DEPTH, constant across the fan."""
+        return calibration.ideal_range_m(self.params)
 
-    def compute_tare(self, sensors=None):
-        """
-        Compute the tare (adjustments) based on loaded data.
-        """
-        r_ideal = self.compute_ideal_range()
-        print(f"Computing tare with Ideal Range: {r_ideal:.4f} m")
-        
-        target_sensors = sensors if sensors else self.sensor_names
-        
-        self.tare_offsets = {}
-        
-        for name in target_sensors:
-            if name not in self.data_samples:
-                continue
-                
-            samples = self.data_samples[name]
-            if not samples:
-                print(f"No data for {name}, skipping model computation.")
-                continue
-                
-            # Filter out inconsistent shapes
-            if len(samples) == 0:
-                print(f"No data for {name}, skipping model computation.")
-                continue
+    # -- recording ---------------------------------------------------------
 
-            # Determine mode shape
-            shapes = [s.shape for s in samples]
-            # Find most common shape
-            from collections import Counter
-            common_shape = Counter(shapes).most_common(1)[0][0]
-            
-            # Filter
-            valid_samples = [s for s in samples if s.shape == common_shape]
-            if len(valid_samples) < len(samples):
-                print(f"Warning: Dropped {len(samples) - len(valid_samples)} samples with inconsistent shapes for {name}")
-            
-            if not valid_samples:
-                print(f"No valid samples for {name} with shape {common_shape}")
-                continue
-
-            samples_np = np.stack(valid_samples)
-            
-            # Error = Measured - Ideal
-            # Adjustment = Measured - Ideal
-            # So Corrected = Measured - Adjustment = Ideal
-            errors = samples_np - r_ideal
-            
-            median_adjustments = np.median(errors, axis=0)
-            self.tare_offsets[name] = median_adjustments
-            
-            avg_adj = np.mean(median_adjustments)
-            print(f"Sensor {name}: Avg Tare = {avg_adj:.4f} m")
-
-    def save_tare(self, timestamp=None, sensors=None):
+    def record_session(self, n_frames=300, sensors=None, timeout_s=None,
+                       poll_period_s=0.002, progress=True):
+        """Capture n_frames DISTINCT frames per sensor.
         """
-        Save the computed tare to the session directory (or most recent).
-        """
-        target_sensors = sensors if sensors else self.sensor_names
-        
-        for name in target_sensors:
-            if name not in self.tare_offsets:
-                continue
-                
-            # Determine save directory
-            base_dir = self.get_sensor_dir(name)
-            if timestamp:
-                session_dir = os.path.join(base_dir, timestamp)
-            elif hasattr(self, 'session_timestamp'):
-                 session_dir = os.path.join(base_dir, self.session_timestamp)
-            else:
-                # Find most recent to save into
-                dirs = glob.glob(os.path.join(base_dir, '*'))
-                dirs = [d for d in dirs if os.path.isdir(d)]
-                if not dirs:
-                    print(f"No directory to save model for {name}")
-                    continue
-                dirs.sort()
-                session_dir = dirs[-1]
-            
-            if not os.path.exists(session_dir):
-                os.makedirs(session_dir)
-                
-            filename = os.path.join(session_dir, 'calibration_tare.yaml')
-            
-            # Prepare data
-            data = {
-                'sensor_name': name,
-                'tare_offsets': self.tare_offsets[name].tolist(),
-                'ideal_range_m': float(self.compute_ideal_range()),
-                'timestamp': datetime.datetime.now().isoformat()
+        targets = list(sensors) if sensors else list(self.sensor_names)
+        unknown = [s for s in targets if s not in self.sensor_names]
+        if unknown:
+            raise ValueError(f'unknown sensors {unknown}; configured: {self.sensor_names}')
+        if timeout_s is None:
+            timeout_s = max(30.0, n_frames / 20.0)   # 20 Hz worst case, floor 30 s
+
+        session = calibration.RecordingSession(
+            session_id=calibration_store.new_session_id(),
+            started_at=datetime.datetime.now().isoformat(),
+            requested_frames=int(n_frames),
+            stretch_body_version=getattr(hu, '__version__', ''),
+            loop_params_snapshot=_plain(self.params))
+
+        buf = {n: {'ranges': [], 'codes': [], 'frame_id': [], 'ts': [],
+                   'missed': []} for n in targets}
+        last_id = {n: None for n in targets}
+        dupes = {n: 0 for n in targets}
+        regressions = {n: 0 for n in targets}
+        ever_dead = {n: False for n in targets}
+        max_missed = {n: 0 for n in targets}
+
+        t0 = time.time()
+        polls = 0
+        bar = tqdm.tqdm(total=n_frames, disable=not progress,
+                        desc='recording', unit='frame')
+        try:
+            while time.time() - t0 < timeout_s:
+                if all(len(buf[n]['ranges']) >= n_frames for n in targets):
+                    break
+                self.lsl.pull_status()
+                polls += 1
+                status = self.lsl.status
+                # Liveness lives in the health block now that status messages
+                dead = set((status.get('health') or {}).get('sensors_dead', ()) or ())
+                now = time.time()
+                for name in targets:
+                    if name in dead:
+                        ever_dead[name] = True
+                        continue
+                    entry = status.get(name) or {}
+                    ranges = entry.get('ranges')
+                    codes = entry.get('codes')
+                    fid = entry.get('frame_id')
+                    if ranges is None or codes is None or fid is None:
+                        continue
+                    if len(ranges) != self.n_bins or len(codes) != self.n_bins:
+                        continue
+                    if last_id[name] is not None:
+                        if fid == last_id[name]:
+                            dupes[name] += 1
+                            continue          # same frame; not a new observation
+                        if fid < last_id[name]:
+                            regressions[name] += 1
+                    last_id[name] = fid
+                    if len(buf[name]['ranges']) >= n_frames:
+                        continue
+                    buf[name]['ranges'].append(np.asarray(ranges, dtype=np.float64))
+                    buf[name]['codes'].append(np.asarray(codes, dtype=np.uint8))
+                    buf[name]['frame_id'].append(int(fid))
+                    buf[name]['ts'].append(now)
+                    m = int(entry.get('missed_frames', 0))
+                    buf[name]['missed'].append(m)
+                    max_missed[name] = max(max_missed[name], m)
+                if progress:
+                    bar.n = min(len(buf[n]['ranges']) for n in targets)
+                    bar.refresh()
+                time.sleep(poll_period_s)
+        finally:
+            bar.close()
+
+        elapsed = time.time() - t0
+        session.ended_at = datetime.datetime.now().isoformat()
+        session.poll_iterations = polls
+
+        for i, name in enumerate(targets):
+            b = buf[name]
+            got = len(b['ranges'])
+            empty2d = np.zeros((0, self.n_bins))
+            rec = calibration.SensorRecording(
+                sensor_name=name, sensor_index=self.sensor_names.index(name),
+                ranges=np.stack(b['ranges']) if got else empty2d,
+                codes=(np.stack(b['codes']) if got
+                       else np.zeros((0, self.n_bins), np.uint8)),
+                frame_id=np.asarray(b['frame_id'], dtype=np.int64),
+                ts=np.asarray(b['ts'], dtype=np.float64),
+                missed_frames=np.asarray(b['missed'], dtype=np.int32))
+            rec.stats = {
+                'requested_frames': int(n_frames),
+                'distinct_frames_captured': int(got),
+                'poll_iterations': int(polls),
+                'duplicate_frames_skipped': int(dupes[name]),
+                'frame_id_min': int(min(b['frame_id'])) if got else None,
+                'frame_id_max': int(max(b['frame_id'])) if got else None,
+                'frame_id_regressions': int(regressions[name]),
+                'achieved_frames_per_s': round(got / elapsed, 2) if elapsed else 0.0,
+                'max_missed_frames': int(max_missed[name]),
+                'ever_in_sensors_dead': bool(ever_dead[name]),
+                'wall_clock_s': round(elapsed, 2),
             }
-            
-            with open(filename, 'w') as f:
-                yaml.dump(data, f)
-            print(f"Saved tare for {name} to {filename}")
+            if got == 0:
+                rec.status = 'DEAD' if ever_dead[name] else 'NO_DATA'
+                rec.notes.append('no frames captured')
+            elif got < n_frames:
+                rec.status = 'TIMEOUT'
+                rec.notes.append(f'captured {got}/{n_frames} frames in {elapsed:.1f}s')
+            if ever_dead[name] and rec.status == 'OK':
+                rec.status = 'DEAD'
+                rec.notes.append('appeared in sensors_dead during the run')
+            session.recordings[name] = rec
 
-    def load_latest_tare(self):
+        return session
+
+    # -- tare loading ------------------------------------------------------
+
+    def load_tares(self, sensors=None, verbose=True):
+        """Load and validate the current tare for each sensor.
+
+        A refusal is recorded in self.rejected and the sensor is left
+        uncalibrated. It is never downgraded to a warning and never falls back
+        to an older file: running uncalibrated is recoverable, running on a
+        tare belonging to a different robot configuration is not.
         """
-        Load the latest tare (adjustment array) for each sensor.
-        If multiple sessions exist, uses the one with the latest timestamp.
-        """
-        print("Loading latest tare...")
-        loaded_count = 0
-        for name in self.sensor_names:
-            base_dir = self.get_sensor_dir(name)
-            if not os.path.exists(base_dir):
-                continue
-                
-            # Find all session dirs containing 'calibration_tare.yaml'
-            session_dirs = glob.glob(os.path.join(base_dir, '*'))
-            session_dirs.sort(reverse=True) # Newest first
-            
-            for s_dir in session_dirs:
-                if not os.path.isdir(s_dir):
-                    continue
-                    
-                model_path = os.path.join(s_dir, 'calibration_tare.yaml')
-                if os.path.exists(model_path):
-                    try:
-                        with open(model_path, 'r') as f:
-                            data = yaml.safe_load(f)
-                        
-                        if 'tare_offsets' in data:
-                            self.tare_offsets[name] = np.array(data['tare_offsets'])
-                            print(f"  Loaded tare for {name} from {s_dir}")
-                            loaded_count += 1
-                            break # Found latest for this sensor
-                    except Exception as e:
-                        print(f"  Error loading tare for {name} from {s_dir}: {e}")
-        
-        if loaded_count == 0:
-            print("  No tare found.")
-            
-    def apply_tare(self, ranges, sensor_name):
-        """
-        Apply tare adjustments to raw ranges.
-        New Range = Raw Range - Tare
-        """
-        if sensor_name not in self.tare_offsets:
-            return ranges
-            
-        adjustment = self.tare_offsets[sensor_name]
-        
-        # Check shape compatibility
-        if ranges.shape != adjustment.shape:
-             # Try capturing shape mismatch only once to avoid spam?
-             # For now, just return raw if mismatch
-             return ranges
-             
-        return ranges - adjustment
+        targets = list(sensors) if sensors else list(self.sensor_names)
+        base = self.get_calibration_base_dir()
+        self.tares, self.rejected = {}, {}
+        flip = bool(self.params['flip_range_ordering'])
+        ideal = calibration.ideal_range_m(self.params)
+        for name in targets:
+            path = calibration_store.tare_path(base, name)
+            try:
+                self.tares[name] = calibration_store.load_validated_tare(
+                    path, self.n_bins, flip, ideal)
+            except calibration_store.TareRejected as exc:
+                self.rejected[name] = exc
+                if verbose:
+                    print(f'  {name}: NO TARE ({exc.reason}) -- {exc.detail}')
+        return self.tares
+
+    def apply_tare(self, ranges, sensor_name, codes=None):
+        """Tare one sensor's ranges. Uncalibrated sensors pass through."""
+        t = self.tares.get(sensor_name)
+        if t is None:
+            return np.asarray(ranges, dtype=np.float64)
+        return calibration.apply_tare_array(ranges, t.offsets, t.valid_mask, codes)
+
+    def bin_reliable(self):
+        """{sensor_name: bool array} -- bins with a trustworthy tare."""
+        return {n: t.valid_mask for n, t in self.tares.items()}
+
+    def bin_null_rate(self):
+        """{sensor_name: float array} -- per-bin no-return rate on clear floor."""
+        return {n: t.null_rate_per_bin for n, t in self.tares.items()}
+
+
+def _plain(obj):
+    """Params snapshots go into YAML and JSON, so strip numpy and tuples."""
+    if isinstance(obj, dict):
+        return {str(k): _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, np.ndarray)):
+        return [_plain(v) for v in list(obj)]
+    if isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
+    if isinstance(obj, (int, np.integer)):
+        return int(obj)
+    if isinstance(obj, (float, np.floating)):
+        return float(obj)
+    return obj
 
 
 
@@ -798,37 +719,3 @@ class LineSensorCostMap:
             
         # Return first collision
         return np.min(valid_t)
-
-
-if __name__ == "__main__":
-    print("Testing Line Sensor Calibration...")
-    
-    # Initialize Loop
-    lsl = LineSensorLoop()
-    if not lsl.startup():
-        print("Failed to start LineSensorLoop")
-        exit(1)
-        
-    try:
-        calib = LineSensorCalibration(lsl)
-        
-        # 1. Record
-        print("\n--- Recording Data ---")
-        calib.record_data(itrs=50) # 50 samples
-        
-        # 2. Load (Verify loading works)
-        print("\n--- Loading Data ---")
-        calib.load_data(calib.session_timestamp)
-        
-        # 3. Compute Model
-        print("\n--- Computing Model ---")
-        calib.compute_tare()
-        
-        # 4. Save Model
-        print("\n--- Saving Model ---")
-        calib.save_tare()
-        
-    except KeyboardInterrupt:
-        print("Interrupted.")
-    finally:
-        lsl.stop()

@@ -1,9 +1,13 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from stretch4_body.subsystem.cameras.enums.distortion_models import DistortionModels
 from stretch4_body.subsystem.cameras.adapters.synced_camera import SyncedCamera
 from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapter
 from enum import Enum
 import queue
 import threading
+import time
 from collections.abc import Generator
 import numpy as np
 from stretch4_body.subsystem.cameras.detectors.detector_ai_models import AIModelWrapper, do_object_detection
@@ -20,9 +24,14 @@ from stretch4_body.subsystem.cameras.cv_utils import (
     get_recify_maps,
     rectify,
 )
+from stretch4_body.subsystem.cameras.enums.recording_file_format import RecordingFileFormat
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
-from stretch4_body.subsystem.cameras.models.image_write_to_disk import RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
+from stretch4_body.subsystem.cameras.models.image_write_to_disk import DEFAULT_RECORDING_CHUNK_SECONDS, RgbImageToWriteToDisk, add_image_to_save_queue, create_directory_if_it_does_not_exist, saver_thread
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
+from stretch4_body.subsystem.cameras.rerun_utils import RerunAsyncLogger
+
+
 
 
 class RecordRgbShowImageIn(Enum):
@@ -45,13 +54,30 @@ class RGBPipelineController:
         is_crop: bool,
         ai_models_to_use: list[AIModelWrapper],
         detect_aruco_marker_size: float|None,
-        is_open_camera: bool = True
+        is_open_camera: bool = True,
+        enable_pointcloud: bool = False,
+        recording_file_format: RecordingFileFormat = RecordingFileFormat.png,
+        recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS,
+        camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None,
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
+
+        `recording_file_format`: The format frames are written to disk in, when `recording_directory` is provided.
+
+        `recording_chunk_seconds`: How long each file of a video recording is, so that an interrupted
+        recording stays playable up to the last completed chunk. 0 or None writes a single file.
+
+        `camera_configs`: Opens some of the cameras with a configuration of your own instead of the
+        one in `CAMERA_CONFIGS`, keyed by the camera it applies to.
         """
         self.recording_directory = recording_directory
+        self.recording_file_format = recording_file_format
+        self.recording_chunk_seconds = recording_chunk_seconds
         self.camera_type = camera_type
+        self.camera_configs = {
+            configured_type.base: config for configured_type, config in (camera_configs or {}).items()
+        }
         self.show_image_in = show_image_in
         self.is_rectify = is_rectify
         self.is_crop = is_crop
@@ -59,6 +85,7 @@ class RGBPipelineController:
         self.detect_aruco_marker_size = detect_aruco_marker_size
         self.detect_aruco_dictionaries_to_detect = ArucoDictionary.all_1000()
         self.is_rotate = is_rotate
+        self.enable_pointcloud = enable_pointcloud
 
         self.ai_models: list[AIModelWrapper] = []
         self.rectify_maps: "RectifyMaps | None" = None
@@ -77,9 +104,35 @@ class RGBPipelineController:
 
         self.stop_event = threading.Event()
 
+        # Set when the user quits again rather than waiting for the queued frames to be written.
+        self.abandon_save_event = threading.Event()
+
+        # Set by the saver thread once every recording file has been closed.
+        self.save_finished_event = threading.Event()
+
+        # Synced camera types have no configuration of their own, but their save threads are never
+        # started either - the per-camera copies made in get_frame_synced() do the writing.
+        video_fps = 30.0 if self.camera_type.is_synced_camera_type() else float(self.camera_config.fps)
+
         self.save_thread = threading.Thread(
-            target=saver_thread, args=(self.stop_event, self.save_rgb_queue), daemon=True
+            target=saver_thread,
+            args=(
+                self.stop_event,
+                self.save_rgb_queue,
+                self.recording_file_format,
+                video_fps,
+                self.abandon_save_event,
+                self.save_finished_event,
+                self.recording_chunk_seconds,
+            ),
+            daemon=True,
         )
+
+        self.rerun_logger: RerunAsyncLogger | None = None
+
+        # get_frame_synced() records through one controller per camera. They are kept here so that
+        # stopping this controller also stops them and waits for their recordings to be written out.
+        self.child_pipeline_controllers: list["RGBPipelineController"] = []
 
         self.save_directory = None
         if self.recording_directory:
@@ -94,11 +147,19 @@ class RGBPipelineController:
         if is_open_camera:
             self.open_camera()
 
+    @property
+    def camera_config(self) -> RGBCameraConfig:
+        """The configuration this controller's camera is opened with, override included.
+
+        Synced camera types have no configuration of their own; ask the cameras they are composed of.
+        """
+        return self.camera_type.config_or(self.camera_configs.get(self.camera_type.base))
+
     def open_camera(self):
         if self.camera_type.is_synced_camera_type():
-            self._camera = self.camera_type.start_synced(stop_event=self.stop_event)
+            self._camera = self.camera_type.start_synced(stop_event=self.stop_event,enable_pointcloud=self.enable_pointcloud, configs=self.camera_configs)
         else:
-            self._camera = self.camera_type.start(stop_event=self.stop_event)
+            self._camera = self.camera_type.start(stop_event=self.stop_event, config=self.camera_configs.get(self.camera_type.base))
 
     @property
     def camera(self):
@@ -107,10 +168,10 @@ class RGBPipelineController:
         return self._camera
 
     def _show_rererun(self, color_image: np.ndarray):
-        rr.log(
-            f"{self.camera_type.name.upper()} Camera",
-            rr.Image(color_image, color_model="BGR").compress(),
-        )
+        if self.rerun_logger is None:
+             self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+        
+        self.rerun_logger.log_image(f"Cameras/{self.camera_type.name}/image", color_image)
 
     def _show_cvimshow(self, color_image: np.ndarray):
         cv2.namedWindow(self.camera_type.name, cv2.WINDOW_NORMAL)
@@ -188,6 +249,7 @@ class RGBPipelineController:
             rgb_timestamp=rgb_timestamp,
             frame_number=self.frame_number,
             save_rgb_queue=self.save_rgb_queue,
+            file_format=self.recording_file_format,
         )
 
     def run_pipeline(self, frame: ImageFrame):
@@ -222,21 +284,38 @@ class RGBPipelineController:
     def _start_rerun(self):
         rr.init(self.camera_type.name, spawn=False)
         rr.spawn(memory_limit="4GB")
-
+        
         import rerun.blueprint as rrb
+        from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
-        if self.camera_type.is_synced_camera_type():
+        if self.camera_type.base == RGBCameras.gripper_rgbd:
+             blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial2DView(name="Gripper Depth", origin="Cameras/gripper_rgbd/depth"),
+                    rrb.Spatial2DView(name="Gripper Right", origin="Cameras/gripper_right/image"),
+                ),
+                collapse_panels=True
+            )
+        elif self.camera_type.base == RGBCameras.head_left_right:
             blueprint = rrb.Blueprint(
                 rrb.Horizontal(
-                    rrb.Spatial2DView(name="Left Camera", origin="HEAD_LEFT Camera"),
-                    rrb.Spatial2DView(name="Center Camera", origin="HEAD_CENTER Camera"),
-                    rrb.Spatial2DView(name="Right Camera", origin="HEAD_RIGHT Camera"),
+                    rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
+                    rrb.Spatial2DView(name="Head Right", origin="Cameras/head_right/image"),
+                ),
+                collapse_panels=True
+            )
+        elif self.camera_type.base == RGBCameras.head_left_right_center:
+            blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial2DView(name="Head Left", origin="Cameras/head_left/image"),
+                    rrb.Spatial2DView(name="Head Center", origin="Cameras/head_center/image"),
+                    rrb.Spatial2DView(name="Head Right", origin="Cameras/head_right/image"),
                 ),
                 collapse_panels=True
             )
         else:
             blueprint = rrb.Blueprint(
-                rrb.Spatial2DView(name=f"{self.camera_type.name} Camera", origin=f"{self.camera_type.name.upper()} Camera"),
+                rrb.Spatial2DView(name=self.camera_type.name.upper(), origin=f"Cameras/{self.camera_type.name}/image"),
                 collapse_panels=True
             )
         rr.send_blueprint(blueprint)
@@ -269,17 +348,23 @@ class RGBPipelineController:
         right = RGBCameras.right()
         center = RGBCameras.center()
 
-        if self.camera_type is RGBCameras.gripper_rgbd:
+        if self.camera_type.base == RGBCameras.gripper_rgbd:
             left = RGBCameras.gripper_left
             right = RGBCameras.gripper_right
 
         left_pipeline_controller = self.copy_for(left, is_open_camera=False)
         right_pipeline_controller = self.copy_for(right, is_open_camera=False)
-        use_center = self.camera_type == RGBCameras.head_left_right_center
+        use_center = self.camera_type.base == RGBCameras.head_left_right_center
         center_pipeline_controller = None
         if use_center:
             center_pipeline_controller = self.copy_for(center, is_open_camera=False)
             center_pipeline_controller.is_crop = False # Hack / baked in logic - we don't normally want to crop center image.
+
+        self.child_pipeline_controllers = [
+            pipeline_controller
+            for pipeline_controller in (left_pipeline_controller, right_pipeline_controller, center_pipeline_controller)
+            if pipeline_controller is not None
+        ]
 
         if self.recording_directory is not None:
             left_pipeline_controller.save_thread.start()
@@ -295,29 +380,30 @@ class RGBPipelineController:
             if is_run_pipeline and frame is not None:
                 left_pipeline_controller.run_pipeline(frame.left)
                 right_pipeline_controller.run_pipeline(frame.right)
-                if frame.center is not None:
+                if frame.center is not None and center_pipeline_controller is not None:
                     center_pipeline_controller.run_pipeline(frame.center)
 
             left_pipeline_controller.show_image(frame.left.image)
             right_pipeline_controller.show_image(frame.right.image)
 
-            if frame.center is not None:
+            if frame.center is not None and center_pipeline_controller is not None:
                 center_pipeline_controller.show_image(frame.center.image)
 
             if frame.depth is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
-                rr.log(
-                    f"{self.camera_type.name}/depth",
+                if self.rerun_logger is None:
+                    self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                self.rerun_logger.log_any(
+                    f"Cameras/{self.camera_type.name}/depth",
                     rr.DepthImage(frame.depth),
                 )
 
             if frame.pointcloud is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
-                rr.log(
-                    f"{self.camera_type.name}/pcl",
-                    rr.Transform3D(
-                        rotation=rr.RotationAxisAngle(axis=[0, 0, 1], angle=rr.Angle(rad=np.pi)),
-                    )
+                if self.rerun_logger is None:
+                    self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                self.rerun_logger.log_any(
+                    f"Pointclouds/{self.camera_type.name}",
+                    rr.Points3D(frame.pointcloud, colors=frame.pointcloud_colors, radii=[0.0025]),
                 )
-                rr.log(f"{self.camera_type.name}/pcl", rr.Points3D(frame.pointcloud, colors=frame.pointcloud_color, radii=[0.002]))
 
             yield frame
 
@@ -372,7 +458,11 @@ class RGBPipelineController:
             is_crop=self.is_crop,
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
-            is_open_camera=is_open_camera
+            is_open_camera=is_open_camera,
+            enable_pointcloud=self.enable_pointcloud,
+            recording_file_format=self.recording_file_format,
+            recording_chunk_seconds=self.recording_chunk_seconds,
+            camera_configs=self.camera_configs,
         )
         return copy
 
@@ -466,19 +556,71 @@ class RGBPipelineController:
         """
         self.camera.set_sharpness(value)
 
+    def wait_for_recording_to_be_written(self, poll_period_s: float = 0.1, abandon_timeout_s: float = 10.0):
+        """Blocks until every captured frame has been written to disk.
+
+        Quitting while frames are still queued kills the saver thread mid-write, which leaves a video
+        file without its index, and therefore unplayable.
+
+        Interrupting the wait drops whatever is still queued, but still gives the saver thread a
+        moment to close its files so that what was captured before the interrupt stays playable.
+
+        The wait polls instead of joining the thread, because a `Thread.join()` that is interrupted by
+        a KeyboardInterrupt leaves the thread's state unreliable to query afterwards.
+        """
+        if not self.save_thread.is_alive():
+            return
+
+        frames_left = self.save_rgb_queue.qsize()
+        if frames_left:
+            logger.info(f"{self.camera_type.name}: finishing writing {frames_left} frames to disk, please wait...")
+
+        time_of_last_log = time.monotonic()
+
+        while not self.save_finished_event.is_set():
+            try:
+                time.sleep(poll_period_s)
+            except KeyboardInterrupt:
+                logger.warning(
+                    f"{self.camera_type.name}: interrupted, dropping {self.save_rgb_queue.qsize()} frames that were not written yet."
+                )
+                self.abandon_save_event.set()
+                self._wait_for_save_to_be_abandoned(poll_period_s, abandon_timeout_s)
+                return
+
+            if time.monotonic() - time_of_last_log >= 1.0:
+                time_of_last_log = time.monotonic()
+                frames_left = self.save_rgb_queue.qsize()
+                if frames_left:
+                    logger.info(f"{self.camera_type.name}: {frames_left} frames left to write...")
+
+    def _wait_for_save_to_be_abandoned(self, poll_period_s: float, timeout_s: float):
+        """Waits for the saver thread to close its files after it was told to drop the queued frames."""
+        deadline = time.monotonic() + timeout_s
+
+        while not self.save_finished_event.is_set() and time.monotonic() < deadline:
+            try:
+                time.sleep(poll_period_s)
+            except KeyboardInterrupt:
+                logger.warning(f"{self.camera_type.name}: the recording may be incomplete or unplayable.")
+                return
+
     def stop(self):
         self.stop_event.set()
         if self._camera is not None:
             self._camera.stop()
-        if self.save_thread.is_alive():
-            self.save_thread.join(timeout=5)
+        for child_pipeline_controller in self.child_pipeline_controllers:
+            child_pipeline_controller.stop()
+        self.wait_for_recording_to_be_written()
+        if self.rerun_logger is not None:
+            self.rerun_logger.stop()
 
 class RGBPipelineControllerROS(RGBPipelineController):
     """
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS, camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -488,15 +630,22 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_crop=is_crop,
             ai_models_to_use=ai_models_to_use,
             detect_aruco_marker_size=detect_aruco_marker_size,
-            is_open_camera=False
+            is_open_camera=False,
+            enable_pointcloud=enable_pointcloud,
+            recording_file_format=recording_file_format,
+            recording_chunk_seconds=recording_chunk_seconds,
+            camera_configs=camera_configs,
         )
         
         try:
             from stretch_python_bridge.stream_manager import StreamManager
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
-            
-        self.stream_manager = StreamManager()
+
+        # Only the controller that actually reads topics needs a StreamManager. The per-camera copies
+        # made by get_frame_synced() just post-process frames, and spinning up a ROS node plus an
+        # executor thread for each of them would compete with this one for the GIL.
+        self.stream_manager = StreamManager() if is_open_camera else None
 
         self.generator = None
 
@@ -510,34 +659,73 @@ class RGBPipelineControllerROS(RGBPipelineController):
             is_crop=self.is_crop,
             ai_models_to_use=self.ai_models_to_use,
             detect_aruco_marker_size=self.detect_aruco_marker_size,
-            is_open_camera=is_open_camera
+            is_open_camera=is_open_camera,
+            enable_pointcloud=self.enable_pointcloud,
+            recording_file_format=self.recording_file_format,
+            recording_chunk_seconds=self.recording_chunk_seconds,
+            camera_configs=self.camera_configs,
         )
         return copy
+
+    def _to_image_frame(self, ros_frame) -> ImageFrame:
+        """Wraps a frame from the bridge, preserving the sensor's sequence number when the publisher sent one.
+
+        ROS 2 has no `header.seq`, so the camera node appends the device sequence number to
+        `CompressedImage.format`. When it is missing (the raw `Image` topics have nowhere to carry it)
+        we fall back to this controller's own frame counter, which cannot detect dropped frames.
+        """
+        frame_number = ros_frame.frame_number if getattr(ros_frame, "frame_number", None) is not None else self.frame_number
+
+        return ImageFrame(
+            timestamp=ros_frame.timestamp,
+            frame_number=frame_number,
+            image=ros_frame.image,
+            compression_format=getattr(ros_frame, "compression_format", ""),
+        )
+
+    def _camera_stream(self, camera_type: "RGBCameras"):
+        """The bridge generator for `camera_type`, subscribing to its compressed topic when it is a compressed variant."""
+        if self.stream_manager is None:
+            raise RuntimeError("This controller was created with is_open_camera=False and cannot read camera topics.")
+
+        try:
+            from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
+            from stretch_python_bridge import stream_camera_left_compressed, stream_camera_right_compressed, stream_camera_center_compressed
+            from stretch_python_bridge import stream_gripper_left, stream_gripper_right, stream_gripper_stereo
+            from stretch_python_bridge import stream_gripper_left_compressed, stream_gripper_right_compressed
+        except ImportError:
+            raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
+
+        is_compressed = camera_type.is_compressed_variant
+        is_gripper = camera_type.base in (RGBCameras.gripper_left, RGBCameras.gripper_right)
+
+        if is_gripper:
+            if camera_type.base == RGBCameras.gripper_left:
+                stream = stream_gripper_left_compressed if is_compressed else stream_gripper_left
+            else:
+                stream = stream_gripper_right_compressed if is_compressed else stream_gripper_right
+        elif camera_type.is_left():
+            stream = stream_camera_left_compressed if is_compressed else stream_camera_left
+        elif camera_type.is_right():
+            stream = stream_camera_right_compressed if is_compressed else stream_camera_right
+        elif camera_type.is_center():
+            stream = stream_camera_center_compressed if is_compressed else stream_camera_center
+        else:
+            raise NotImplementedError(f"Camera {camera_type} is not supported.")
+
+        return stream(stream_manager=self.stream_manager)
 
     def get_frame(self, is_run_pipeline: bool) -> Generator[ImageFrame, None, None]:
         if self.camera_type.is_synced_camera_type():
             raise RuntimeError(f"{self.camera_type} is a synced camera, use get_frame_synced() instead.")
-        
-        try:
-            from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
-        except ImportError:
-            raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
-        
+
         if self.show_image_in is RecordRgbShowImageIn.RERUN:
             self._start_rerun()
 
         if self.recording_directory is not None:
             self.save_thread.start()
 
-        camera_generator = None
-        if self.camera_type.is_left():
-            camera_generator = stream_camera_left(stream_manager=self.stream_manager)
-        elif self.camera_type.is_right():
-            camera_generator = stream_camera_right(stream_manager=self.stream_manager)
-        elif self.camera_type.is_center():
-            camera_generator = stream_camera_center(stream_manager=self.stream_manager)
-        else:
-            raise NotImplementedError(f"Camera {self.camera_type} is not supported.")
+        camera_generator = self._camera_stream(self.camera_type)
 
         self.generator = self.stream_manager.stream()
 
@@ -548,10 +736,10 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 ros_frame = self.stream_manager.get(camera_generator)
                 if ros_frame is None:
-                    print("ros_frame is None in get_frame")
+                    logger.info("ros_frame is None in get_frame")
                     continue
 
-                frame = ImageFrame(timestamp=ros_frame.timestamp, frame_number=self.frame_number, image=ros_frame.image, timestamp_system=ros_frame.timestamp)
+                frame = self._to_image_frame(ros_frame)
 
                 if is_run_pipeline:
                     self.run_pipeline(frame)
@@ -562,44 +750,78 @@ class RGBPipelineControllerROS(RGBPipelineController):
                 self.frame_number += 1
         finally:
             self.stop()
-            if self.save_thread.is_alive():
-                self.save_thread.join(timeout=5)
 
     def get_frame_synced(self, is_run_pipeline: bool) -> Generator[SyncedImageFrame, None, None]:
         if not self.camera_type.is_synced_camera_type():
             raise Exception("get_frame_synced() can only be called for a synced camera type. Use get_frame() instead.")
         
         try:
-            from stretch_python_bridge import stream_camera_left, stream_camera_right, stream_camera_center
+            from stretch_python_bridge import (
+                decode_compressed_depth,
+                is_compressed_depth,
+                stream_gripper_stereo,
+                stream_gripper_stereo_compressed,
+                stream_gripper_stereo_points,
+            )
         except ImportError:
             raise ImportError("stretch_python_bridge not found. Did you colcon build? Please source ROS 2 workspace.")
+
+        import rerun as rr
 
         if self.show_image_in is RecordRgbShowImageIn.RERUN:
             self._start_rerun()
 
-        left_pipeline_controller = self.copy_for(RGBCameras.left(), is_open_camera=False)
-        right_pipeline_controller = self.copy_for(RGBCameras.right(), is_open_camera=False)
-        
-        use_center = self.camera_type == RGBCameras.head_left_right_center
+        is_gripper = self.camera_type.base == RGBCameras.gripper_rgbd
+        if is_gripper:
+            left = self.camera_type.matching_variant_of(RGBCameras.gripper_left)
+            right = self.camera_type.matching_variant_of(RGBCameras.gripper_right)
+        else:
+            left = self.camera_type.matching_variant_of(RGBCameras.left())
+            right = self.camera_type.matching_variant_of(RGBCameras.right())
+
+        left_pipeline_controller = self.copy_for(left, is_open_camera=False)
+        right_pipeline_controller = self.copy_for(right, is_open_camera=False)
+
+        use_center = self.camera_type.base == RGBCameras.head_left_right_center
         center_pipeline_controller = None
+        center = None
         if use_center:
-            center_pipeline_controller = self.copy_for(RGBCameras.center(), is_open_camera=False)
-            center_pipeline_controller.is_crop = False 
+            center = self.camera_type.matching_variant_of(RGBCameras.center())
+            center_pipeline_controller = self.copy_for(center, is_open_camera=False)
+            center_pipeline_controller.is_crop = False
+
+        self.child_pipeline_controllers = [
+            pipeline_controller
+            for pipeline_controller in (left_pipeline_controller, right_pipeline_controller, center_pipeline_controller)
+            if pipeline_controller is not None
+        ]
 
         if self.recording_directory is not None:
             left_pipeline_controller.save_thread.start()
             right_pipeline_controller.save_thread.start()
             if center_pipeline_controller is not None:
                 center_pipeline_controller.save_thread.start()
-        
-        left_generator = None
-        right_generator = None
-        center_generator = None
 
-        left_generator = stream_camera_left(stream_manager=self.stream_manager)
-        right_generator = stream_camera_right(stream_manager=self.stream_manager)
-        if use_center:
-            center_generator = stream_camera_center(stream_manager=self.stream_manager)
+        center_generator = None
+        depth_generator = None
+        pointcloud_generator = None
+
+        left_generator = self._camera_stream(left)
+        right_generator = self._camera_stream(right)
+
+        if is_gripper:
+            # The depth map is 16-bit, so the compressed variant gets a PNG on the compressedDepth
+            # topic rather than the MJPEG the color cameras get. Either way SyncedImageFrame.depth
+            # ends up a decoded 16-bit map, so callers never see which topic it came from.
+            depth_generator = (
+                stream_gripper_stereo_compressed(stream_manager=self.stream_manager)
+                if self.camera_type.is_compressed_variant
+                else stream_gripper_stereo(stream_manager=self.stream_manager)
+            )
+            if self.enable_pointcloud:
+                pointcloud_generator = stream_gripper_stereo_points(stream_manager=self.stream_manager)
+        elif use_center and center is not None:
+            center_generator = self._camera_stream(center)
 
         self.generator = self.stream_manager.stream()
 
@@ -610,22 +832,37 @@ class RGBPipelineControllerROS(RGBPipelineController):
 
                 left_ros_frame = self.stream_manager.get(left_generator)
                 right_ros_frame = self.stream_manager.get(right_generator)
-                center_ros_frame = self.stream_manager.get(center_generator)
+                center_ros_frame = self.stream_manager.get(center_generator) if center_generator is not None else None
+                depth_ros_frame = self.stream_manager.get(depth_generator) if depth_generator is not None else None
+                pointcloud_ros_frame = self.stream_manager.get(pointcloud_generator) if pointcloud_generator is not None else None
 
                 if left_ros_frame is None or right_ros_frame is None:
                     continue
+                if is_gripper and depth_ros_frame is None:
+                    continue
+
+                depth_image = None
+                if depth_ros_frame is not None:
+                    depth_image = (
+                        decode_compressed_depth(depth_ros_frame.image)
+                        if is_compressed_depth(depth_ros_frame.compression_format)
+                        else depth_ros_frame.image
+                    )
 
                 frame = SyncedImageFrame(
-                    timestamp=left_ros_frame.timestamp, 
-                    left=ImageFrame(timestamp=left_ros_frame.timestamp, frame_number=self.frame_number, image=left_ros_frame.image),
-                    right=ImageFrame(timestamp=right_ros_frame.timestamp, frame_number=self.frame_number, image=right_ros_frame.image),
+                    timestamp=left_ros_frame.timestamp,
+                    left=self._to_image_frame(left_ros_frame),
+                    right=self._to_image_frame(right_ros_frame),
+                    depth=depth_image,
+                    pointcloud=pointcloud_ros_frame.points if pointcloud_ros_frame is not None else None,
+                    pointcloud_color=pointcloud_ros_frame.colors if pointcloud_ros_frame is not None else None,
                 )
 
-                if self.camera_type == RGBCameras.head_left_right_center:
-                    if center_ros_frame is not None:
-                        frame.center = ImageFrame(timestamp=center_ros_frame.timestamp, frame_number=self.frame_number, image=center_ros_frame.image)
-                    else:
-                        continue 
+                # The center camera runs at its own (much lower) frame rate, so a synced frame without a
+                # fresh center image is still a good left/right frame. Leave center as None rather than
+                # throttling left/right down to the center camera's rate.
+                if use_center and center_ros_frame is not None:
+                    frame.center = self._to_image_frame(center_ros_frame)
 
                 if is_run_pipeline:
                     left_pipeline_controller.run_pipeline(frame.left)
@@ -639,6 +876,22 @@ class RGBPipelineControllerROS(RGBPipelineController):
                 if frame.center is not None and center_pipeline_controller is not None:
                     center_pipeline_controller.show_image(frame.center.image)
 
+                if frame.depth is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
+                    if self.rerun_logger is None:
+                        self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                    self.rerun_logger.log_any(
+                        f"Cameras/{self.camera_type.name}/depth",
+                        rr.DepthImage(frame.depth),
+                    )
+
+                if frame.pointcloud is not None and self.show_image_in is RecordRgbShowImageIn.RERUN:
+                    if self.rerun_logger is None:
+                        self.rerun_logger = RerunAsyncLogger(camera_name=self.camera_type.name)
+                    self.rerun_logger.log_any(
+                        f"Pointclouds/{self.camera_type.name}",
+                        rr.Points3D(frame.pointcloud, colors=frame.pointcloud_color, radii=[0.0025]),
+                    )
+
                 yield frame
 
                 self.frame_number += 1
@@ -648,17 +901,8 @@ class RGBPipelineControllerROS(RGBPipelineController):
                     center_pipeline_controller.frame_number += 1
 
         finally:
+            # stop() stops the per-camera controllers and waits for their recordings to be written.
             self.stop()
-            left_pipeline_controller.stop()
-            right_pipeline_controller.stop()
-            if center_pipeline_controller is not None:
-                center_pipeline_controller.stop()
-            if left_pipeline_controller.save_thread.is_alive():
-                left_pipeline_controller.save_thread.join(timeout=5)
-            if right_pipeline_controller.save_thread.is_alive():
-                right_pipeline_controller.save_thread.join(timeout=5)
-            if center_pipeline_controller is not None and center_pipeline_controller.save_thread.is_alive():
-                center_pipeline_controller.save_thread.join(timeout=5)
 
     def stop(self):
         super().stop()

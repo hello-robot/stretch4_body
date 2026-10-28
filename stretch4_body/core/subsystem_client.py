@@ -19,10 +19,11 @@ class SubsystemClient(Device):
 
     def __init__(self, name, client_id=None, parent=None, ip_address=None):
         Device.__init__(self,name)
-        self.status = {}
+        self._status = {}
         self.subsystems = {}
         self.is_valid=False
         self.parent = parent
+        self._runstopped = False
         if self.parent == None: #No parent, so this instance owns the client connection
             self.client=StretchBodyClient(name=client_id, ip_address=ip_address)
             self.cmd_dict = ThreadSafeDict()
@@ -36,17 +37,22 @@ class SubsystemClient(Device):
             self.push_lock = self.parent.push_lock
 
     @property
+    def status(self):
+        return self._status
+    
+    @property
     def connected(self):
-        return self.is_valid and self.client.server_connected
+        return self.is_valid and self.client.connected
 
-    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False):
+    def startup(self, *, verbose:bool = True, allow_different_user_connection:bool=False, block_timeout_s:float|None=None):
         """
         `verbose`: Whether to print messages about the server starting up
         `allow_different_user_connection`: Whether to allow connecting to a server running as a different user on the same machine.
+        `block_timeout_s`: How long to wait for the server, retrying every 100ms, if it isn't running yet. None doesn't wait, 0 waits forever, and a positive value waits up to that many seconds before failing.
         """
         Device.startup(self)
         if self.parent is None:
-            if not self.client.startup(verbose=verbose, allow_different_user_connection=allow_different_user_connection):
+            if not self.client.startup(verbose=verbose, allow_different_user_connection=allow_different_user_connection, block_timeout_s=block_timeout_s):
                 return False
         self.is_valid=True
         for k in self.subsystems:
@@ -56,6 +62,7 @@ class SubsystemClient(Device):
         return self.is_valid
 
     def stop(self):
+        """`stop()` disconnects the client from the Stretch Body Server. If you are trying to stop robot motion, use `hard_stop()` or `set_velocity(0)`, instead of `stop()`. """
         if not self.is_valid:
             return
         if self.push_lock.is_locked:
@@ -64,9 +71,16 @@ class SubsystemClient(Device):
         for k in self.subsystems:
             self.subsystems[k].stop()
         if self.parent is None:
-            self.push_command(ignore_control_lock=True) #Push out clean shutdown commands to the subsystems
+            if self.connected:
+                self.push_command(ignore_control_lock=True) #Push out clean shutdown commands to the subsystems
             self.client.stop() #Close the sockets
         Device.stop(self)
+
+    def __del__(self):
+        try:
+            self.stop()
+        except Exception:
+            pass
 
     # ########## Control loop #############3
 
@@ -84,15 +98,12 @@ class SubsystemClient(Device):
             return self.parent.pull_status(blocking=blocking)
 
         status_server = self.client._do_recv_status()
-        # if blocking:
-        #     t_sleep_ms = (1 / self.robot_params['robot']['server']['control_loop_rate_Hz']) * 1000
-        #     while status_server is None:
-        #         status_server = self.client._do_recv_status(timeout_ms=t_sleep_ms/10) #poll 10x faster than control loop
         if blocking:
             while status_server is None:
                 time.sleep(0.005)
                 status_server = self.client._do_recv_status()
         if status_server is not None:
+            self._runstopped = status_server.get('power_periph', {}).get('runstop_event', False)
             #Reformat server dict to be more user friendly
             self.status['server']=status_server['server']
             self.status['routines']=status_server['routines']
@@ -100,6 +111,8 @@ class SubsystemClient(Device):
 
             if self.name in status_server:
                 self.status.update(status_server[self.name]) #eg, robot.status['power_periph']
+            elif hasattr(self, 'joints') and 'end_of_arm' in status_server:
+                self.status.update(status_server['end_of_arm'])
             elif 'end_of_arm' in status_server and self.name in status_server['end_of_arm']:
                 self.status.update(status_server['end_of_arm'][self.name]) #eg, robot.status['end_of_arm']['wrist_yaw']
 
@@ -164,43 +177,43 @@ class SubsystemClient(Device):
     def get_subsystem(self,s):
         return self.subsystems.get(s, None)
 
-    #Default APIs to override
-    def is_homed(self):
-        return True
-
-    def is_moving(self):
-        return False
-
     # ########## Server Admin #############
     def is_server_active(self):
-        return self.client.server_connected
+        return self.client.connected
 
     def ping_server(self):
-        ack = self.client._do_send_recv_admin_str(b"ping")
-        self.client.server_connected = (ack == b"ping")
-        return self.client.server_connected
+        return self.client.check_connection()
 
     @require_connection
     def kill_server(self):
-        ack = self.client._do_send_recv_admin_str(b"kill")
-        self.client.server_connected = False
+        ack = self.client.do_send_recv_admin_str(b"kill")
+        self.client.stop()
 
     # @require_connection
     # def pause_control_loop(self):
-    #     ack = self.client._do_send_recv_admin_str(b"pause")
+    #     ack = self.client.do_send_recv_admin_str(b"pause")
     #     self.client.server_connected = (ack ==b"pause")
     #
     # @require_connection
     # def unpause_control_loop(self):
-    #     ack = self.client._do_send_recv_admin_str(b"unpause")
+    #     ack = self.client.do_send_recv_admin_str(b"unpause")
     #     self.client.server_connected = (ack ==b"unpause")
 
     @require_connection
     def free_up_control(self):
-        ack = self.client._do_send_recv_admin_str(b"free_up_control", timeout=3.0)
-        self.client.server_connected = (ack == b"free_up_control")
+        self.client.free_up_control()
 
     # ########## Utility #############3
+
+    def _refuse_if_runstopped(self, what):
+        """Pull status and, if the robot is runstopped, log that `what` cannot run. Returns True if runstopped."""
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        root.pull_status()
+        if root._runstopped:
+            self.logger.error('Cannot %s: robot is runstopped. Clear the runstop and home again.' % what)
+        return root._runstopped
 
     def _wait_on_routine(self, routine_id, timeout=None, do_pull=True):
         try:

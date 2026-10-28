@@ -140,10 +140,6 @@ def get_device_protocols(device_name):
         import stretch4_body.core.stepper
         dd = stretch4_body.core.stepper.Stepper('/dev/'+device_name, backend=0)
         return list(dd.supported_protocols.keys())
-    elif s == 'hello_pixart_j3':
-        import stretch4_body.subsystem.pixart_j3
-        dd = stretch4_body.subsystem.pixart_j3.PixartJ3()
-        return list(dd.supported_protocols.keys())
     elif s == 'hello_esp':
         import stretch4_body.subsystem.esp
         dd = stretch4_body.subsystem.esp.ESP()

@@ -55,3 +55,6 @@ def test_cross_joint_overwriting(capsys):
     assert len(r.cmd_dict) == 2
     assert f"{joint1}.end_of_arm" in r.cmd_dict
     assert f"{joint2}.end_of_arm" in r.cmd_dict
+
+if __name__ == '__main__':
+    pytest.main([__file__])

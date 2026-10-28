@@ -162,6 +162,66 @@ SE4_stretch_gripper_DW4={
         'enable_torque_after_runstop': 1,
         'enable_runstop':1}
 
+SE4_stretch_gripper_DW4_v2={
+    'gripper_conversion': {
+        'finger_length_m': 0.18205,# Straight length from `gripper_finger_right_link.STL`, ignoring the bend in the metal
+        'aperture_open_m': 0.150,  # Measured by hand, from fingertip to fingertip
+        'aperture_closed_m': 0.0
+    },
+    'eeprom_cfg': {
+        'temperature_limit': 72,
+        'max_voltage_limit': 29,
+        'min_voltage_limit': 11,
+        'pid': [32,32,0],
+        'return_delay_time': 0,
+        'angular_resolution': 1.0,
+        'phase': 61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
+        'min_pos_limit': 0,
+        'max_load_limit_pct': 48.0,
+        'overload_safe': 25.0,
+        'overload_time_ms': 1000,
+        'overload_thresh': 48.0,
+        'overcurrent': 150,
+        'overcurrent_time_ms': 200,
+        'protection_torque': 20,
+        'overload_protection_time': 200,
+        'enable_protection_overload':0,
+        'enable_protection_current':1,
+        'enable_protection_temp':1,
+        'enable_protection_sensor':0,
+        'enable_protection_voltage':0
+    },
+    'motion': {
+        # Predefined motion profiles (vel: rad/s, accel: rad/s^2)
+        'default': {'accel': 6.0, 'vel': 6.0},
+        'fast': {'accel': 6.0, 'vel': 6.0},
+        'max': {'accel': 6.0, 'vel': 6.0},
+        'slow': {'accel': 4.0, 'vel': 1.0},
+        'vel_brakezone_factor': 1,
+        'vel_is_moving_thresh': 0.01
+    },
+        'id': 26,
+        'set_safe_velocity': 1,
+        'req_calibration': 1,
+        'gr': 1.0,
+        'usb_name': '/dev/hello-feetech-wrist',
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'range_pad_deg': [ 0.0, 0.0 ],
+        'range_deg': [-32,338],
+        'homing_offset_bias_t': 0,  
+        'homing_to_neg_limit': 1,
+        'homing_pwm': 150,
+        'flip_encoder_polarity': 0,
+        'stall_backoff': 0.017,
+        'stall_max_effort': 20.0,
+        'stall_max_time': 1.0,
+        'stall_min_vel': 0.1,
+        'disable_torque_on_runstop': 0,
+        'enable_torque_after_runstop': 1,
+        'enable_runstop':1}
+
 SE4_parallel_gripper_DW4={
     'eeprom_cfg': {
         'temperature_limit': 72,
@@ -204,7 +264,7 @@ SE4_parallel_gripper_DW4={
         'retry_on_comm_failure': 1,
         'baud': 1000000,
         'range_pad_deg': [ 0.0, 0.0 ],
-        'range_mm':80.0,
+        'range_mm':77.0,
         'range_deg': [0,116.5],
         'homing_offset_bias_t': 0,      
         'homing_to_neg_limit': 1,
@@ -218,9 +278,77 @@ SE4_parallel_gripper_DW4={
         'stall_max_effort': 20.0,
         'stall_max_time': 1.0,
         'stall_min_vel': 0.1,
+        'contact_guard': {
+            # Detect contact while closing and hold a virtual goal just past it.
+            'enabled': 1,
+            'contact_mA': 200.0,  # Current while closing that means contact
+            'contact_s': 0.06,  # sustained this long
+            'squeeze_rad': 0.1},  # Virtual goal past contact
         'disable_torque_on_runstop': 0,
         'enable_torque_after_runstop': 1,
         'enable_runstop':1}
+
+# Baseline parameters for a user tool's own servo on the wrist bus, referenced by
+# 'device_params' on the devices entry the loader synthesizes for each user tool. Holds the bus
+# and protection settings that do not vary between tools. The keys in
+# SE4_eoa_tool_servo_required_DW4 are deliberately absent: they describe a specific piece of
+# hardware's travel, homing direction and force limits, so a tool states them itself.
+SE4_eoa_tool_servo_DW4={
+    'eeprom_cfg': {
+        'temperature_limit': 72,
+        'max_voltage_limit': 29,
+        'min_voltage_limit': 11,
+        'pid': [32,32,0],
+        'return_delay_time': 0,
+        'angular_resolution': 1.0,
+        'phase': 61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
+        'min_pos_limit': 0,
+        'overload_time_ms': 1000,
+        'overcurrent': 150,
+        'overcurrent_time_ms': 200,
+        'protection_torque': 20,
+        'overload_protection_time': 200,
+        'enable_protection_current':1,
+        'enable_protection_temp':1,
+        'enable_protection_sensor':0,
+        'enable_protection_voltage':0
+    },
+    'motion': {
+        # Predefined motion profiles (vel: rad/s, accel: rad/s^2)
+        'default': {'accel': 6.0, 'vel': 6.0},
+        'fast': {'accel': 6.0, 'vel': 6.0},
+        'max': {'accel': 6.0, 'vel': 6.0},
+        'slow': {'accel': 4.0, 'vel': 1.0},
+        'vel_brakezone_factor': 1,
+        'vel_is_moving_thresh': 0.01
+    },
+        'set_safe_velocity': 1,
+        'req_calibration': 1,
+        'gr': 1.0,
+        'usb_name': '/dev/hello-feetech-wrist',
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'range_pad_deg': [ 0.0, 0.0 ],
+        'homing_offset_bias_t': 0,
+        'stall_backoff': 0.017,
+        'stall_max_effort': 20.0,
+        'stall_max_time': 1.0,
+        'stall_min_vel': 0.1,
+        'disable_torque_on_runstop': 0,
+        'enable_torque_after_runstop': 1,
+        'enable_runstop':1}
+
+# Servo parameters every user tool states in its own tool_params.yaml. Each describes the
+# physical hardware -- its travel, which way it homes, and how hard it may pull -- so a default
+# would be a guess that drives an unfamiliar servo into a hardstop or lets it overload.
+SE4_eoa_tool_servo_required_DW4=(
+    'id',
+    'range_deg',
+    'homing_pwm',
+    'homing_to_neg_limit',
+    'flip_encoder_polarity',
+)
 
 SE4_wrist_pitch_DW4={
     'eeprom_cfg': {
@@ -378,6 +506,19 @@ SE4_eoa_wrist_dw4_tool_nil={
             }
 
 
+# Keys a tool_params.yaml states about the tool itself rather than about its servo. The loader
+# routes every other top-level key into the tool's synthesized 'devices' entry, so a servo
+# parameter the baseline does not mention still reaches the servo.
+SE4_eoa_tool_level_keys=frozenset(SE4_eoa_wrist_dw4_tool_nil) | frozenset({
+    'client_class_name', 'client_module_name',
+    'metadata_class_name', 'metadata_module_name',
+    'driver_class_name', 'driver_module_name',
+    'homing', 'collision_mgmt', 'self_collision_mujoco', 'pose_models',
+    'tool_joints', 'tool_links', 'actuator_command_range', 'aperture_range',
+    'urdf_to_actuator_scale', 'position_tolerance', 'primary_joint',
+    'i_feedforward_payload', 'wrist', 'tool', 'dxl_latency_timer',
+})
+
 SE4_eoa_wrist_dw4_tool_sg4={
         'py_class_name': 'EOA_Wrist_DW4_Tool_SG4',
         'py_module_name': 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools',
@@ -419,13 +560,50 @@ SE4_eoa_wrist_dw4_tool_sg4={
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.stretch_gripper',
                 'device_params': 'SE4_stretch_gripper_DW4'
             }
+            }
+        }
+
+SE4_eoa_wrist_dw4_tool_sg4_v2={
+        'py_class_name': 'EOA_Wrist_DW4_Tool_SG4',
+        'py_module_name': 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools',
+        'use_group_sync_read': 0, #1
+        'use_group_sync_write':0, #1
+        'retry_on_comm_failure': 1,
+        'baud': 1000000,
+        'i_feedforward_payload':0.3,
+        #'dxl_latency_timer': 64,
+        'wrist': 'eoaw_dw4',
+        'tool': 'eoat_sg4',
+        'stow': {
+            'arm': 0.0,
+            'lift': 0.15,
+            'wrist_pitch': 0.0,
+            'wrist_roll': 0.0,
+            'wrist_yaw': 3.14,
+            'stretch_gripper': 0
+        },
+
+        'devices': {
+            'wrist_pitch': {
+                'py_class_name': 'WristPitch',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
+                'device_params': 'SE4_wrist_pitch_DW4'
             },
-        'ros': {
-            'joints': 
-            [{
-                'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'GripperCommandGroup',
-            }]
+            'wrist_roll': {
+                'py_class_name': 'WristRoll',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
+                'device_params': 'SE4_wrist_roll_DW4'
+            },
+            'wrist_yaw': {
+                'py_class_name': 'WristYaw',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
+                'device_params': 'SE4_wrist_yaw_DW4'
+            },
+            'stretch_gripper': {
+                'py_class_name': 'StretchGripper4',
+                'py_module_name': 'stretch4_body.subsystem.end_of_arm.stretch_gripper',
+                'device_params': 'SE4_stretch_gripper_DW4_v2'
+            }
             }
         }
 
@@ -440,6 +618,9 @@ SE4_eoa_wrist_dw4_tool_pg4={
         #'dxl_latency_timer': 64,
         'wrist': 'eoaw_dw4',
         'tool': 'eoat_pg4',
+        'homing': {
+            'parallel_gripper': 0.04, #Aperture (m) the gripper opens to after homing
+        },
         'stow': {
             'arm': 0.0,
             'lift': 0.15,
@@ -477,12 +658,6 @@ SE4_eoa_wrist_dw4_tool_pg4={
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.parallel_gripper',
                 'device_params': 'SE4_parallel_gripper_DW4'
             }
-            },
-        'ros': {'joints': 
-            [{
-                'py_module_name': 'stretch_core.command_groups',
-                'py_class_name': 'ParallelGripperCommandGroup',
-            }]
             }
         }
 
@@ -493,16 +668,20 @@ SE4_eoa_wrist_dw4_tool_tablet={
         'use_group_sync_write':0,
         'retry_on_comm_failure': 1,
         'baud': 1000000,
-        'i_feedforward_payload':0.0,
+        'i_feedforward_payload':0.3,
         #'dxl_latency_timer': 64,
         'wrist': 'eoaw_dw4',
         'tool': 'eoat_tablet',
         'stow': {
-            'arm': 0.0,
-            'lift': 0.30,
-            'wrist_pitch': 0.784,
-            'wrist_roll': 0.0,
-            'wrist_yaw': 3.633,
+            'arm': 0.007,
+            'lift': 0.258,
+            'wrist_pitch': 1.5961,
+            'wrist_roll': 3.9224,
+            'wrist_yaw': 4.2177,
+            'lift_prestow': 0.5,
+        },
+        'homing': {
+            'wrist_roll': -0.4, #Roll held here while pitch homes so the tablet clears the robot
         },
         'devices': {
             'wrist_pitch': {
@@ -571,6 +750,7 @@ nominal_params={
     'supported_eoa': [
         'eoa_wrist_dw4_tool_nil',
         'eoa_wrist_dw4_tool_sg4',
+        'eoa_wrist_dw4_tool_sg4_v2',
         'eoa_wrist_dw4_tool_pg4',
         'eoa_wrist_dw4_tool_tablet',
         'eoa_wrist_dw4_tool_calibration'
@@ -583,6 +763,10 @@ nominal_params={
         'eoa_wrist_dw4_tool_sg4': {
             'name': 'Stretch Gripper',
             'description': 'The standard Stretch 4 compliant gripper.'
+        },
+        'eoa_wrist_dw4_tool_sg4_v2': {
+            'name': 'Stretch Gripper v2',
+            'description': 'Version 2 of the Stretch 4 compliant gripper.'
         },
         'eoa_wrist_dw4_tool_pg4': {
             'name': 'Parallel Jaw Gripper',
@@ -599,20 +783,10 @@ nominal_params={
     },
     'eoa_wrist_dw4_tool_nil': SE4_eoa_wrist_dw4_tool_nil,
     'eoa_wrist_dw4_tool_sg4': SE4_eoa_wrist_dw4_tool_sg4,
+    'eoa_wrist_dw4_tool_sg4_v2': SE4_eoa_wrist_dw4_tool_sg4_v2,
     'eoa_wrist_dw4_tool_pg4': SE4_eoa_wrist_dw4_tool_pg4,
     'eoa_wrist_dw4_tool_tablet': SE4_eoa_wrist_dw4_tool_tablet,
     'eoa_wrist_dw4_tool_calibration': SE4_eoa_wrist_dw4_tool_calibration,
-    # 'line_sensor_vel_limit':{
-    #     'sensor_normals':{ #CCW from robot forward
-    #         'hello-gs2-0':180,
-    #         'hello-gs2-1':120,
-    #         'hello-gs2-2':60,
-    #         'hello-gs2-3':0,
-    #         'hello-gs2-4':300,
-    #         'hello-gs2-5':240},
-    #     'phase_adj':330.0, #adjust to forward
-    #     'dropoff_deg':20.0
-    # },
     'line_sensor_loop':{
         'loop_rate_Hz': 250, #Run fast as polling serial, 6 ch, 30hz
         'cpu_affinity': 16,
@@ -1135,7 +1309,8 @@ nominal_params={
         },
     # ########### ROUTINES ################################
     'routine_manager':{'controllers': ['routine_nop', 'routine_blind_dock', 'routine_lift_home','routine_arm_home',
-                         'routine_wrist_joint_home','routine_end_of_arm_home','routine_robot_home','routine_robot_stow'],},
+                         'routine_wrist_joint_home','routine_end_of_arm_home','routine_robot_home','routine_robot_stow',
+                         'routine_wrist_handedness'],},
     'routine_nop':{
         'py_module_name': 'stretch4_body.behavior.routines.routine',
         'py_class_name': 'RoutineNOP',
@@ -1144,6 +1319,17 @@ nominal_params={
     'routine_robot_stow':{
         'py_module_name': 'stretch4_body.behavior.routines.routine_stow',
         'py_class_name': 'RoutineRobotStow',
+        'exclude_sentry_pause': ['sentry_status_logger','sentry_ubuntu_power_management','sentry_cpu_temp'],
+        'exclude_safe_motion_pause': ['safe_motion_overtilt_avoid'],
+        'enabled': 1
+    },
+    'routine_wrist_handedness':{
+        'py_module_name': 'stretch4_body.behavior.routines.routine_wrist_handedness',
+        'py_class_name': 'RoutineWristHandedness',
+        'lift_min': 0.35, # No handedness change (routine, gamepad or EndOfArmClient) at or below this lift height (m), so the wrist clears the ground and base
+        'pos_tolerance_rad': 0.05,
+        't_motion_start': 0.5,
+        'timeout': 15.0,
         'enabled': 1
     },
     'routine_lift_home': {
@@ -1353,101 +1539,6 @@ nominal_params={
         'n_samples_per_file':100,
         'duration_limit_minutes':10.0
     },
-    'cameras': {
-        'head_left': {
-            "config": {
-                "camera_device": "OAK-FFC-3P",
-                "image_size": (1200, 1920),
-                "fps": 30,
-                "rotate_number_of_times": 1,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
-                "sensor_pixel_size_mm": 3.0/1000.0,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-        'head_right': {
-            "config": {
-                "camera_device": "OAK-FFC-3P",
-                "image_size": (1200, 1920),
-                "fps": 30,
-                "rotate_number_of_times": -1,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": "DistortionModels.equidistant_with_recompute_extrinsics",
-                "sensor_pixel_size_mm": 3.0/1000.0,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-        'head_center': {
-            "config": {
-                "camera_device": "OAK-FFC-3P",
-                # "image_size": (3040, 4056),  # Full 12MP resolution
-                "image_size": (3040, 4032),  # Almost full 12MP resolution, 24 pixels subtracted to be divisible by 16 for compression
-                "fps": 10,
-                "rotate_number_of_times": -1,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": "DistortionModels.wide_angle",
-                "sensor_pixel_size_mm": 1.55/1000.0,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-        'gripper_left': {
-            "config": {
-                "camera_device": "OAK-D-SR",
-                # Options for full FOV: (640x400), (800x500), (960x600), (1024x640), (1280x800)
-                "image_size": (400, 640),
-                # "image_size": (800, 1280),
-                "fps": 30,
-                "rotate_number_of_times": 0,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": None,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-        'gripper_right': {
-            "config": {
-                "camera_device": "OAK-D-SR",
-                # Options for full FOV: (640x400), (800x500), (960x600), (1024x640), (1280x800)
-                "image_size": (400, 640),
-                # "image_size": (800, 1280),
-                "fps": 30,
-                "rotate_number_of_times": 0,
-                "buffer_size": 2,
-                "is_compressed": False,
-                "is_lossless": False, # Only used if is_compressed is true
-                "jpeg_quality": 90, # Only used if is_compressed is true and is_lossless is False
-                "distortion_model": None,
-                "use_auto_exposure": True,
-                "limit_max": None, # Only used if use_auto_exposure is True
-                "exposure_time": None, # Only used if use_auto_exposure is False
-                "iso": None # Only used if use_auto_exposure is False
-            }
-        },
-    },
     'self_collision_mujoco':{
         'SE4':{'k_brake_distance': {'lift': 1.1, 'arm': 1.1,'wrist_pitch':1.1,'wrist_yaw':1.1,'wrist_roll':1.1},
                # 'ignore_links': ['wheel_0_link','wheel_1_link', 'wheel_2_link', 'wrist_link','gripper_camera_link','tool_attachment_site_link','camera_right_link',
@@ -1498,6 +1589,21 @@ nominal_params={
 
                     ]},
         'eoa_wrist_dw4_tool_sg4':{'k_brake_distance': {},
+               'exclusions':[
+                   ["gripper_finger_left_link", "wrist_pitch_link"],
+                   ["gripper_finger_left_link", "gripper_finger_right_link"],
+                   ["gripper_finger_left_link", "gripper_fingertip_right_link"],
+                   ["gripper_finger_right_link", "wrist_pitch_link"],
+                   ["gripper_finger_right_link","gripper_fingertip_left_link"],
+                   ["gripper_fingertip_left_link","gripper_fingertip_right_link"],
+                   ["aruco_fingertip_left_link","aruco_fingertip_right_link"],
+                   ["aruco_fingertip_left_link","gripper_finger_right_link"],
+                   ["aruco_fingertip_left_link","gripper_fingertip_right_link"],
+                   ["aruco_fingertip_right_link","gripper_finger_left_link"],
+                   ["aruco_fingertip_right_link","gripper_fingertip_left_link"],
+
+               ]},
+        'eoa_wrist_dw4_tool_sg4_v2':{'k_brake_distance': {},
                'exclusions':[
                    ["gripper_finger_left_link", "wrist_pitch_link"],
                    ["gripper_finger_left_link", "gripper_finger_right_link"],
@@ -1563,4 +1669,88 @@ nominal_params={
         }],
     }
     }
+
+
+# #################################################################################
+# Dynamic User Tools Loading
+# Automatically check ~/stretch_user/user_tools for user-added tools
+# #################################################################################
+try:
+    import os
+    import copy
+    import yaml
+
+    from stretch4_body.core.user_tool_paths import user_tool_dirs
+
+    def _merge_dicts(d1, d2):
+        """Recursively deep-merges d2 into d1."""
+        for k, v in d2.items():
+            if isinstance(v, dict) and k in d1 and isinstance(d1[k], dict):
+                _merge_dicts(d1[k], v)
+            else:
+                d1[k] = copy.deepcopy(v)
+
+    _user_tools_dirs = user_tool_dirs()
+    for _user_tools_dir in _user_tools_dirs:
+        if os.path.exists(_user_tools_dir):
+            _subdirs = [d for d in os.listdir(_user_tools_dir) if os.path.isdir(os.path.join(_user_tools_dir, d))]
+            for _tool_name in _subdirs:
+                if _tool_name not in nominal_params['supported_eoa']:
+                    nominal_params['supported_eoa'].append(_tool_name)
+
+                    # Format a user-friendly name, e.g., "user_eoa_mytool" -> "User Eoa Mytool"
+                    _display_name = _tool_name.replace('_', ' ').title()
+                    nominal_params['supported_eoa_metadata'][_tool_name] = {
+                        'name': _display_name,
+                        'description': f'User-defined custom end-of-arm tool located in {_user_tools_dir}/{_tool_name}.'
+                    }
+
+                    # Default configuration inherits from NIL/passive tool
+                    _default_tool_params = copy.deepcopy(SE4_eoa_wrist_dw4_tool_nil)
+                    _default_tool_params['py_class_name'] = 'EOA_Wrist_DW4_Tool_NIL'
+                    _default_tool_params['py_module_name'] = 'stretch4_body.subsystem.end_of_arm.end_of_arm_tools'
+
+                    _tool_dir_path = os.path.join(_user_tools_dir, _tool_name)
+
+                    _tool_custom_params = {}
+                    _params_file = os.path.join(_tool_dir_path, "tool_params.yaml")
+                    if os.path.exists(_params_file):
+                        try:
+                            with open(_params_file, 'r') as _f:
+                                _tool_custom_params = yaml.safe_load(_f) or {}
+                            _merge_dicts(_default_tool_params, _tool_custom_params)
+                        except Exception as _pe:
+                            print(f"Warning: Failed to load tool_params.yaml for {_tool_name}: {_pe}")
+
+                    # Synthesize the tool's own entry in 'devices' from the shared servo
+                    # baseline, so tool_params.yaml states only what differs. Its key is the
+                    # tool name, which is what ToolMetadata.tool_name returns.
+                    _servo = copy.deepcopy(SE4_eoa_tool_servo_DW4)
+                    _merge_dicts(_servo, {_k: _v for _k, _v in _tool_custom_params.items()
+                                          if _k not in SE4_eoa_tool_level_keys})
+                    _driver_module = _tool_custom_params.get('driver_module_name')
+                    _driver_class = _tool_custom_params.get('driver_class_name')
+                    if _driver_module and _driver_class:
+                        _servo['py_module_name'] = _driver_module
+                        _servo['py_class_name'] = _driver_class
+                        _missing = [_k for _k in SE4_eoa_tool_servo_required_DW4 if _k not in _servo]
+                        if _missing:
+                            print(f"Warning: tool_params.yaml for {_tool_name} is missing required "
+                                  f"servo parameters {_missing}; its servo will not be loaded.")
+                        else:
+                            _default_tool_params.setdefault('devices', {})[_tool_name] = _servo
+
+                    nominal_params[_tool_name] = _default_tool_params
+
+                    # Also populate under self_collision_mujoco
+                    if 'self_collision_mujoco' in nominal_params:
+                        nominal_params['self_collision_mujoco'][_tool_name] = _default_tool_params.get(
+                            'self_collision_mujoco', {
+                                'k_brake_distance': {},
+                                'exclusions': []
+                            }
+                        )
+except Exception as _e:
+    print(f"Warning: Failed to dynamically load user tools in robot_params_SE4: {_e}")
+
 

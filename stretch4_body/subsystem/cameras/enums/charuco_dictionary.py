@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from stretch4_body.subsystem.cameras.enums.aruco_dictionary import ArucoDictionary
 import cv2
 import cv2.aruco
@@ -158,13 +161,13 @@ class CharucoBoards(Enum):
         board_img_width = int(cols * square_length_mm * pixels_per_mm)
         board_img_height = int(rows * square_length_mm * pixels_per_mm)
         
-        print(f"Board Physical Size: {square_length_mm*cols:.1f}mm x {square_length_mm*rows:.1f}mm")
-        print(f"                    ({square_length_mm*cols/mm_to_inch:.2f}in x {square_length_mm*rows/mm_to_inch:.2f}in)")
-        print(f"Board Pixel Size: {board_img_width}px x {board_img_height}px")
+        logger.info(f"""Board Physical Size: {square_length_mm*cols:.1f}mm x {square_length_mm*rows:.1f}mm
+{square_length_mm*cols/mm_to_inch:.2f}in x {square_length_mm*rows/mm_to_inch:.2f}in
+Board Pixel Size: {board_img_width}px x {board_img_height}px""")
 
         # Handle None values safely together, falling back to a tight-fit board layout
         if page_width_mm is None or page_height_mm is None:
-            print(f"Warning: page_width_mm or page_height_mm is None, defaulting to US letter paper tight-fit layout")
+            logger.warning(f"page_width_mm or page_height_mm is None, defaulting to US letter paper tight-fit layout")
             page_width_mm = cols * square_length_mm
             page_height_mm = rows * square_length_mm
 
@@ -191,4 +194,4 @@ class CharucoBoards(Enum):
         # Convert to Pillow Image and save
         pil_img = Image.fromarray(page_img)
         pil_img.save(filename, "PDF", resolution=dpi)
-        print(f"Generated {filename} formatted for {page_width_mm:.1f}x{page_height_mm:.1f}mm paper.")
+        logger.info(f"Generated {filename} formatted for {page_width_mm:.1f}x{page_height_mm:.1f}mm paper.")

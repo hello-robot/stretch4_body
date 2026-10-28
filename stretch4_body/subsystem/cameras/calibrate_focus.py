@@ -25,6 +25,9 @@ Do not use a blank white wall, or a sparse scene, because this script uses chang
 5. Press 'q' to quit.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
 import argparse
 import cv2
 import numpy as np
@@ -105,7 +108,7 @@ def focus_assistant(frame:ImageFrame|None):
         exit(0)
     elif key == ord('r'):
         max_score = 0
-        print("Peak score reset.")
+        logger.info("Peak score reset.")
     
 def calibrate_focus():
     global frame_settled_detector
@@ -138,7 +141,7 @@ def calibrate_focus():
         raise Exception(
             "You must specify one of --left, --right to specify the rgb camera to use."
         )
-    print("""
+    logger.info("""
 You are about to focus a camera lens. 
           
 Please follow these instructions for the best results:
@@ -157,7 +160,7 @@ It is recommended to put a ChArUco board with marker size 27mm at 20in away from
         if robot.params.get('tool') == 'eoa_wrist_dw4_tool_calibration':
             ans = input(f"You are using the calibration board tool. Do you want to move arm to calibration pose? {Fore.RED} WARNING: the robot arm and wrist will move. {Style.RESET_ALL} [y/N]: ")
             if ans.lower() == 'y':
-                print("Moving to calibration pose...")
+                logger.info("Moving to calibration pose...")
                 robot.lift.move_to(0.7)
                 robot.arm.move_to(0.25)
                 robot.end_of_arm.move_to('wrist_pitch', -0.49)
@@ -177,7 +180,7 @@ It is recommended to put a ChArUco board with marker size 27mm at 20in away from
         detect_aruco_marker_size=detect_aruco_marker_size
     )
     
-    print("""
+    logger.info("""
     These exposure settings work best for 450-650 lux ambient lighting.
     This was tested by using the max brightness and the white light setting on the 
     2800-6500K Dimmable Photography Light Panels set 2ft horizontally from the mast on either side of the robot.
@@ -193,6 +196,7 @@ It is recommended to put a ChArUco board with marker size 27mm at 20in away from
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     calibrate_focus()
 
     

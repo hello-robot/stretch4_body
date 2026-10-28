@@ -29,6 +29,18 @@ def stretch_line_sensor_viz_3d():
     sys.argv[0] = "stretch_line_sensor_viz_3d"
     runpy.run_module("stretch4_body.tools.stretch_line_sensor_viz_3d", run_name="__main__")
 
+def stretch_line_sensor_ranges():
+    sys.argv[0] = "stretch_line_sensor_ranges"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_ranges", run_name="__main__")
+
+def stretch_line_sensor_z_band():
+    sys.argv[0] = "stretch_line_sensor_z_band"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_z_band", run_name="__main__")
+
+def stretch_line_sensor_hz_check():
+    sys.argv[0] = "stretch_line_sensor_hz_check"
+    runpy.run_module("stretch4_body.tools.stretch_line_sensor_hz_check", run_name="__main__")
+
 def stretch_power_periph_scope():
     sys.argv[0] = "stretch_power_periph_scope"
     runpy.run_module("stretch4_body.tools.stretch_power_periph_scope", run_name="__main__")
@@ -149,6 +161,10 @@ def REx_joint_sweep():
     sys.argv[0] = "REx_joint_sweep"
     runpy.run_module("stretch4_body.tools.factory.REx_joint_sweep", run_name="__main__")
 
+def REx_lidar():
+    sys.argv[0] = "REx_lidar"
+    runpy.run_module("stretch4_body.tools.factory.REx_lidar", run_name="__main__")
+
 def REx_imu_viz():
     sys.argv[0] = "REx_imu_viz"
     runpy.run_module("stretch4_body.tools.factory.REx_imu_viz", run_name="__main__")
@@ -201,10 +217,6 @@ def REx_stepper_gains_YAML_to_flash():
     sys.argv[0] = "REx_stepper_gains_YAML_to_flash"
     runpy.run_module("stretch4_body.tools.factory.REx_stepper_gains_YAML_to_flash", run_name="__main__")
 
-def REx_line_sensor_display():
-    sys.argv[0] = "REx_line_sensor_display"
-    runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_display", run_name="__main__")
-
 def REx_omnibase_calibrate_imu_collect():
     sys.argv[0] = "REx_omnibase_calibrate_imu_collect"
     runpy.run_module("stretch4_body.tools.factory.REx_omnibase_calibrate_imu_collect", run_name="__main__")
@@ -241,6 +253,10 @@ def REx_line_sensor_calibrate():
     sys.argv[0] = "REx_line_sensor_calibrate"
     runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_calibrate", run_name="__main__")
 
+def REx_line_sensor_migrate_tares():
+    sys.argv[0] = "REx_line_sensor_migrate_tares"
+    runpy.run_module("stretch4_body.tools.factory.REx_line_sensor_migrate_tares", run_name="__main__")
+
 def test_firmware_available():
     sys.argv[0] = "test_firmware_available"
     runpy.run_module("stretch4_body.tools.factory.test_firmware_available", run_name="__main__")
@@ -269,6 +285,10 @@ def stretch_configure_tool():
     sys.argv[0] = "stretch_configure_tool"
     runpy.run_module("stretch4_body.tools.stretch_configure_tool", run_name="__main__")
 
+def stretch_check_user_tool():
+    sys.argv[0] = "stretch_check_user_tool"
+    runpy.run_module("stretch4_body.tools.stretch_check_user_tool", run_name="__main__")
+
 def REx_camera_focus():
     sys.argv[0] = "REx_camera_focus"
     runpy.run_module("stretch4_body.tools.factory.REx_camera_focus", run_name="__main__")
@@ -280,6 +300,14 @@ def REx_camera_calibrate():
 def REx_camera_list():
     sys.argv[0] = "REx_camera_list"
     runpy.run_module("stretch4_body.tools.factory.REx_camera_list", run_name="__main__")
+
+def REx_discover_hello_devices():
+    sys.argv[0] = "REx_discover_hello_devices"
+    runpy.run_module("stretch4_body.tools.factory.REx_discover_hello_devices", run_name="__main__")
+
+def REx_camera_check_fov():
+    sys.argv[0] = "REx_camera_check_fov"
+    runpy.run_module("stretch4_body.tools.factory.REx_camera_check_fov", run_name="__main__")
 
 def stretch_runstop():
     sys.argv[0] = "stretch_runstop"
@@ -308,4 +336,12 @@ def stretch_pose_edit():
 def stretch_pose_record():
     sys.argv[0] = "stretch_pose_record"
     runpy.run_module("stretch4_body.tools.stretch_pose_record", run_name="__main__")
+
+def stretch_monitor_devices():
+    sys.argv[0] = "stretch_monitor_devices"
+    runpy.run_module("stretch4_body.tools.stretch_monitor_devices", run_name="__main__")
+
+def stretch_jetson_connect():
+    sys.argv[0] = "stretch_jetson_connect"
+    runpy.run_module("stretch4_body.tools.stretch_jetson_connect", run_name="__main__")
 

@@ -171,7 +171,7 @@ class OmniBase(Device):
             w.set_guarded_contact_sensitivity(c_sens_p, c_sens_n)
 
     def set_velocity(self, translational_velocity_x, translational_velocity_y, angular_velocity_z, a_m=None,
-                     a_r=None, contact_sensitivity_pos=None, contact_sensitivity_neg=None):
+                     a_r=None, contact_sensitivity_pos=None, contact_sensitivity_neg=None, stiffness=1.0):
         """
         Velocity control of the base.
         translational_velocity_x: desired vel (m/s) along x-axis (forward axis)
@@ -229,17 +229,17 @@ class OmniBase(Device):
         # push commands to the steppers
         ctrl_mode = Stepper.MODE_VEL_TRAJ if self.params['use_vel_traj'] else Stepper.MODE_VEL_PID
         if int(str(self.wheels[0].board_info['protocol_version'])[1:]) < 8:
-            self.wheels[0].set_command(mode=ctrl_mode, v_des=u[0], a_des=abs(aa[0]))
+            self.wheels[0].set_command(mode=ctrl_mode, v_des=u[0], a_des=abs(aa[0]), stiffness=stiffness)
         else:
-            self.wheels[0].set_command(mode=ctrl_mode, v_des=u[0], a_des=abs(aa[0]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg)
+            self.wheels[0].set_command(mode=ctrl_mode, v_des=u[0], a_des=abs(aa[0]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg, stiffness=stiffness)
         if int(str(self.wheels[1].board_info['protocol_version'])[1:]) < 8:
-            self.wheels[1].set_command(mode=ctrl_mode, v_des=u[1], a_des=abs(aa[1]))
+            self.wheels[1].set_command(mode=ctrl_mode, v_des=u[1], a_des=abs(aa[1]), stiffness=stiffness)
         else:
-            self.wheels[1].set_command(mode=ctrl_mode, v_des=u[1], a_des=abs(aa[1]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg)            
+            self.wheels[1].set_command(mode=ctrl_mode, v_des=u[1], a_des=abs(aa[1]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg, stiffness=stiffness)
         if int(str(self.wheels[2].board_info['protocol_version'])[1:]) < 8:
-            self.wheels[2].set_command(mode=ctrl_mode, v_des=u[2], a_des=abs(aa[2]))
+            self.wheels[2].set_command(mode=ctrl_mode, v_des=u[2], a_des=abs(aa[2]), stiffness=stiffness)
         else:
-            self.wheels[2].set_command(mode=ctrl_mode, v_des=u[2], a_des=abs(aa[2]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg)
+            self.wheels[2].set_command(mode=ctrl_mode, v_des=u[2], a_des=abs(aa[2]), coeff_sensitivity_pos=contact_sensitivity_pos, coeff_sensitivity_neg=contact_sensitivity_neg, stiffness=stiffness)
 
     def translate_by(self,x_m,y_m,v_m=None,a_m=None, contact_sensitivity_pos=None, contact_sensitivity_neg=None):
         """

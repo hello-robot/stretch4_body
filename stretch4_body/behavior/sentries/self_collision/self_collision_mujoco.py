@@ -25,8 +25,10 @@ class SelfCollisionMujoco(Device):
             self._load_model()
             self.valid=True
             return True
-        except:
-            self.logger.error('SelfCollisionMujoco failed to load model')
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.logger.error(f'SelfCollisionMujoco failed to load model: {e}')
             return False
 
     def _load_model(self) -> None:

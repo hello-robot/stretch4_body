@@ -116,6 +116,7 @@ class StepperDefn():
     TRACE_TYPE_DEBUG = 1
     TRACE_TYPE_PRINT = 2
     def __init__(self):
+        self.logger = logging.getLogger(name='stepper.py')
         pass
 class StepperMotion(StepperDefn):
     def __init__(self):
@@ -296,7 +297,7 @@ class StepperMotion(StepperDefn):
 
     def _rpc_motion_limits_reply(self, reply):
         if reply[0] != self.RPC_REPLY_MOTION_LIMITS:
-            print('Error RPC_REPLY_MOTION_LIMITS', reply[0])
+            self.logger.error(f'Error RPC_REPLY_MOTION_LIMITS {reply[0]}')
 
 class StepperCalibration(StepperDefn):
     def __init__(self):
@@ -323,7 +324,7 @@ class StepperCalibration(StepperDefn):
         if filename is None:
             sn = self.robot_params[device_name]['serial_no']
             filename = 'calibration_steppers/' + device_name + '_' + sn + '.yaml'
-        print('Writing encoder calibration: %s' % filename)
+        self.logger.info(f'Writing encoder calibration: {filename}')
         write_fleet_yaml(filename, data, fleet_dir=fleet_dir)
 
     def read_encoder_calibration_from_flash(self):
@@ -332,7 +333,7 @@ class StepperCalibration(StepperDefn):
         time.sleep(0.5)
         self.logger.info('Reading encoder calibration...')
         e = self.menu_transaction(b'q', do_print=False)[19]
-        print(e)
+        self.logger.info(e)
         self.turn_rpc_interface_on()
         self.push_command()
         self.logger.info('Reseting board')
@@ -413,9 +414,9 @@ class StepperCalibration(StepperDefn):
             r = self.transport.ser.readline()
             if do_print:
                 if type(r) == bytes:
-                    print(r.decode('UTF-8'), end=' ')
+                    self.logger.info(r.decode('UTF-8').strip())
                 else:
-                    print(r, end=' ')
+                    self.logger.info(str(r).strip())
             reply.append(r)
         return reply
 
@@ -481,9 +482,9 @@ class StepperTrace(StepperDefn):
             elif reply[2]==self.TRACE_TYPE_PRINT:
                 self._unpack_print_trace(reply[3:],unpack_to=self.trace_buf[-1]['print'])
             else:
-                print('Unrecognized trace type %d'%reply[2])
+                self.logger.error('Unrecognized trace type %d'%reply[2])
         else:
-            print('Error RPC_REPLY_READ_TRACE')
+            self.logger.error('Error RPC_REPLY_READ_TRACE')
             self.n_trace_read=0
             self.trace_buf = []
 
@@ -523,18 +524,18 @@ class StepperAux(StepperDefn):
 
     def _rpc_load_test_push_reply(self, reply):
         if reply[0] != self.RPC_REPLY_LOAD_TEST_PUSH:
-            print('Error RPC_REPLY_LOAD_TEST_PUSH', reply[0])
+            self.logger.error(f'Error RPC_REPLY_LOAD_TEST_PUSH {reply[0]}')
 
     def _rpc_load_test_pull_reply(self, reply):
         if reply[0] == self.RPC_REPLY_LOAD_TEST_PULL:
             d = reply[1:]
             for i in range(1024):
                 if d[i] != self._load_test_payload[(i + 1) % 1024]:
-                    print('Load test pull bad data', d[i], self._load_test_payload[(i + 1) % 1024])
+                    self.logger.error(f'Load test pull bad data {d[i]} {self._load_test_payload[(i + 1) % 1024]}')
             self._load_test_payload = d
-            print('Successful load test pull')
+            self.logger.info('Successful load test pull')
         else:
-            print('Error RPC_REPLY_LOAD_TEST_PULL', reply[0])
+            self.logger.error(f'Error RPC_REPLY_LOAD_TEST_PULL {reply[0]}')
 
 
     def __unpack_status_aux(self,s):
@@ -555,7 +556,7 @@ class StepperAux(StepperDefn):
         if reply[0] == self.RPC_REPLY_STATUS_AUX:
             nr = self.__unpack_status_aux(reply[1:])
         else:
-            print('Error RPC_REPLY_STATUS', reply[0])
+            self.logger.error(f'Error RPC_REPLY_STATUS {reply[0]}')
 
 
 class StepperHelpers(StepperDefn):
@@ -654,7 +655,7 @@ class StepperHelpers(StepperDefn):
                 motor_type = i
                 break
         if not isinstance(motor_type, int) or (motor_type < 0 or motor_type > 5):
-            print("Error Unrecoginzed Stepper Motor Type")
+            self.logger.error("Error Unrecognized Stepper Motor Type")
             return
         payload = arr.array('B', [self.RPC_SET_STEPPER_TYPE,motor_type])
         self.transport.do_rpc(blocking=True, is_push=True, payload=payload,
@@ -669,14 +670,14 @@ class StepperHelpers(StepperDefn):
 
     def _rpc_write_stepper_type_to_flash_reply(self, reply):
         if reply[0] != self.RPC_REPLY_SET_STEPPER_TYPE:
-            print('Error RPC_REPLY_SET_STEPPER_TYPE', reply[0])
+            self.logger.error(f'Error RPC_REPLY_SET_STEPPER_TYPE {reply[0]}')
 
     def _rpc_read_stepper_type_from_flash_reply(self, reply):
         if reply[0] == self.RPC_REPLY_READ_STEPPER_TYPE_FROM_FLASH:
             sidx = 0
             self.board_info['stepper_type'] = self.get_stepper_type(unpack_uint8_t(reply[1:][sidx:]))
         else:
-            print('Error RPC_REPLY_READ_STEPPER_TYPE_FROM_FLASH', reply[0])
+            self.logger.error(f'Error RPC_REPLY_READ_STEPPER_TYPE_FROM_FLASH {reply[0]}')
 
 class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelpers,Device):
     """
@@ -930,7 +931,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         if reply[0] == self.RPC_REPLY_COMMAND:
             nr = self._un_pack_command_reply(reply[1:])
         else:
-            print('Error RPC_REPLY_COMMAND', reply[0])
+            self.logger.error(f'Error RPC_REPLY_COMMAND {reply[0]}')
 
     def _un_pack_gains(self,s): #Base
         sidx=0
@@ -1112,32 +1113,32 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         if reply[0] == self.RPC_REPLY_STEPPER_BOARD_INFO:
             self._unpack_board_info(reply[1:])
         else:
-            print('Error RPC_REPLY_STEPPER_BOARD_INFO', reply[0])
+            self.logger.error(f'Error RPC_REPLY_STEPPER_BOARD_INFO {reply[0]}')
 
     def _rpc_gains_reply(self, reply):
         if reply[0] != self.RPC_REPLY_GAINS:
-            print('Error RPC_REPLY_GAINS', reply[0])
+            self.logger.error(f'Error RPC_REPLY_GAINS {reply[0]}')
 
     def _rpc_trigger_reply(self, reply):
         if reply[0] != self.RPC_REPLY_SET_TRIGGER:
-            print('Error RPC_REPLY_SET_TRIGGER', reply[0])
+            self.logger.error(f'Error RPC_REPLY_SET_TRIGGER {reply[0]}')
 
     def _rpc_command_reply(self, reply):
         if reply[0] != self.RPC_REPLY_COMMAND:
-            print('Error RPC_REPLY_COMMAND', reply[0])
+            self.logger.error(f'Error RPC_REPLY_COMMAND {reply[0]}')
 
 
     def _rpc_status_reply(self, reply):
         if reply[0] == self.RPC_REPLY_STATUS:
             nr = self._unpack_status(reply[1:])
         else:
-            print('Error RPC_REPLY_STATUS', reply[0])
+            self.logger.error(f'Error RPC_REPLY_STATUS {reply[0]}')
 
     def _rpc_read_gains_from_flash_reply(self, reply):
         if reply[0] == self.RPC_REPLY_READ_GAINS_FROM_FLASH:
             nr = self._un_pack_gains(reply[1:])
         else:
-            print('Error RPC_REPLY_READ_GAINS_FROM_FLASH', reply[0])
+            self.logger.error(f'Error RPC_REPLY_READ_GAINS_FROM_FLASH {reply[0]}')
     
     def enable_rate_logging(self,max_samples=1000):
         self.transport.n_rate_log=max_samples

@@ -8,15 +8,32 @@ from dataclasses import dataclass
 from evdev import InputDevice, ecodes, list_devices
 from select import select
 import glob
+from stretch4_body.utils.file_access_utils import is_locked, setup_shared_directory, acquire_lock_if_available
+from pathlib import Path
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.hello_utils import qprint
+import stretch4_body.core.hello_utils as hello_utils
 
 """
 The GamePadController is a threading class that polls for the gamepad events by listening
 to the gamepad's USB dongle plugged into the robot. It processes these events and makes
 an easy to gamepad state available as a dictionary - GamePadController.get_state()
 """
+
+def check_gamepad_teleop_singleton(acquire:bool=True):
+   """Returns True if lock is available and, if acquire is True, has been acquired. Otherwise returns False."""
+   tmp_file = "/tmp/stretch_gamepad_teleop/gamepad_teleop_singleton.lock"
+
+   setup_shared_directory(Path(tmp_file).parent)
+
+   if not acquire:
+       return not is_locked(tmp_file)
+   
+   if not acquire_lock_if_available(tmp_file, remove_if_exists_and_unused=True):
+      return False
+   return True
+
 
 # --- Utilities to discover a joystick device --------------------------------
 WANTED_KEY_CODES = {
@@ -119,11 +136,10 @@ class GamePadController(Device):
         +/- VOYEE Wired Xbox 360 Controller mostly worked, but it had various issues including false middle LED button presses, phantom shoulder button presses, and low joystick sensitivity that made small motions more difficult to execute.
     '''
 
-    def __init__(self, print_events=False, print_dongle_status=True, is_xbox_one=False):
+    def __init__(self, print_events=False, is_xbox_one=False):
         super().__init__(name='gamepad_controller', req_params=False)
 
         self.print_events = print_events
-        self.print_dongle_status = print_dongle_status
 
         self.rumble_effect_id = -1
 
@@ -159,7 +175,14 @@ class GamePadController(Device):
         self.device_path = None
         self.dev: InputDevice | None = None
         self.is_gamepad_active = False
-        
+
+        # Scanning for a dongle involves opening every /dev/input device to check
+        # its capabilities, which is too slow to run inline in the 25Hz poll loop
+        # (was blowing its timing budget while unplugged). Runs in its own thread
+        # instead, decoupled from the loop that LoopStats tracks.
+        self.DONGLE_POLL_INTERVAL_S = 0.5
+        self.dongle_scan_thread = None
+
         self._last_vibrated_tags = {}
 
         # Filtering parameters
@@ -174,17 +197,28 @@ class GamePadController(Device):
         self.thread = None
         self.thread_shutdown_flag = threading.Event()
 
-    def startup(self):
+    def startup(self, ignore_singleton_check:bool=False):
         super().startup()
         if self.thread is not None:
             self.thread_shutdown_flag.set()
             self.thread.join(1)
-        import stretch4_body.core.hello_utils as hello_utils
+            self.dongle_scan_thread.join(1)
         self.thread_stats = hello_utils.LoopStats(loop_name='{0}_thread'.format(self.name), target_loop_rate=self.thread_rate_hz)
+        self.thread_shutdown_flag.clear()
+
         self.thread = threading.Thread(target=self._thread_target)
         self.thread.daemon = True
-        self.thread_shutdown_flag.clear()
         self.thread.start()
+
+        self.dongle_scan_thread = threading.Thread(target=self._dongle_scan_target)
+        self.dongle_scan_thread.daemon = True
+        self.dongle_scan_thread.start()
+
+        if not ignore_singleton_check and not check_gamepad_teleop_singleton():
+            raise RuntimeError("Gamepad teleop is already running!")
+
+        self.logger.warning("Waiting for Gamepad Dongle...")
+
         return True
 
     def _thread_target(self):
@@ -197,10 +231,21 @@ class GamePadController(Device):
                 time.sleep(self.thread_stats.get_loop_sleep_time())
         self.logger.info('Shutting down {0}'.format(self.thread_stats.loop_name))
 
+    def _dongle_scan_target(self):
+        # Runs on its own thread/cadence so the expensive device-enumeration work
+        # in poll_till_gamepad_dongle_present() never counts against the 25Hz
+        # loop's timing budget in _thread_target.
+        while not self.thread_shutdown_flag.is_set():
+            if not self.is_gamepad_active:
+                self.poll_till_gamepad_dongle_present()
+            self.thread_shutdown_flag.wait(self.DONGLE_POLL_INTERVAL_S)
+
     def stop(self):
         self.thread_shutdown_flag.set()
         if self.thread is not None:
             self.thread.join(1)
+        if self.dongle_scan_thread is not None:
+            self.dongle_scan_thread.join(1)
         super().stop()
         try:
             self.dev.close()
@@ -210,15 +255,13 @@ class GamePadController(Device):
     def poll_till_gamepad_dongle_present(self):
         with self.lock:
             self.is_gamepad_active = False
-        if self.print_dongle_status:
-            qprint("Waiting for Gamepad Dongle...", fg="yellow")
         try:
             self.device_path = find_first_gamepad()
             if self.device_path:
                 # Open non-blocking; do NOT grab to allow other readers if needed
                 self.dev = InputDevice(self.device_path)
                 self.rumble_effect_id = -1
-                click.secho(f"Gamepad Dongle FOUND! ({self.dev.name})", fg="green", bold=True)
+                self.logger.info(f"Gamepad Dongle FOUND! ({self.dev.name})")
                 with self.lock:
                     self.is_gamepad_active = True
         except Exception:
@@ -250,7 +293,6 @@ class GamePadController(Device):
 
     def update(self):
         if not self.is_gamepad_active:
-            self.poll_till_gamepad_dongle_present()
             return
 
         try:
@@ -259,7 +301,7 @@ class GamePadController(Device):
                 self.last_event_ts = time.monotonic()
             self.update_button_encodings(events)
         except (UnpluggedError, OSError):
-            click.secho("Gamepad Dongle DISCONNECTED...", fg="red", bold=True)
+            self.logger.error("Gamepad Dongle DISCONNECTED...")
             try:
                 self.dev.close()
             except Exception:

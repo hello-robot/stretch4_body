@@ -11,6 +11,9 @@ See `MoveRobotMode` for more information about the available --move_robot_mode f
 
 `REx_camera_calibrate -lrc --replay` can be used to do automatic calibration with pre-recorded arm poses previously saved in calibration_poses_intrinsics.json.
 """
+import logging
+
+logger = logging.getLogger(__name__)
 from enum import Enum, auto
 from pathlib import Path
 import time
@@ -91,7 +94,7 @@ class RobotMovementController:
         """Initializes the gamepad and begins the background movement/teleop threads."""
         self.gamepad_teleop = GamePadTeleop(use_server=True, cb_loop=None)
         self.gamepad_teleop.sleep = 0
-        self.gamepad_teleop.startup()
+        self.gamepad_teleop.startup(ignore_singleton_check=True)
 
         self.teleop_thread.start()
         self.movement_thread.start()
@@ -100,7 +103,7 @@ class RobotMovementController:
         """Safely shuts down the background loops and robot base."""
         if self._stop_event.is_set():
             return
-        print("Stopping Robot Movement Controller")
+        logger.info("Stopping Robot Movement Controller")
         self._stop_event.set()
         if self.movement_thread.is_alive() and self.movement_thread != threading.current_thread():
             self.movement_thread.join(timeout=10)
@@ -116,10 +119,10 @@ class RobotMovementController:
             # Polling delay roughly equivalent to standard camera framerates (e.g., 30fps)
             time.sleep(1 / 30)
 
-    def _wait_camera_to_stabilize(self):
+    def _wait_image_to_settle(self):
         self.calibration.reset_stability()
         self.calibration.log_message(
-            "Waiting for the camera to stabilize.", LogLevels.INFO
+            "Waiting for the camera image to settle. Please make sure there is no movement around the robot.", LogLevels.INFO
         )
         while not self.calibration.has_frame_been_stable() and not self._stop_event.is_set():
             time.sleep(0.1)
@@ -128,7 +131,7 @@ class RobotMovementController:
         """Background thread sequence containing the grid mapping logic."""
         self.left_button_counter = ButtonPressCounter("left_button_pressed")
 
-        self._wait_camera_to_stabilize()
+        self._wait_image_to_settle()
 
         if self.move_robot_mode == MoveRobotMode.GAMEPAD_MODE:
             self._movement_gamepad()
@@ -166,12 +169,13 @@ class RobotMovementController:
         import select
         import sys
         def keyboard_poller():
-            print("\n" + "="*50)
-            print("Keyboard commands enabled:")
-            print("  Press 'x' + Enter to capture a frame and pose")
-            print("  Press 's' + Enter to save calibration and exit")
-            print("  Press 'q' + Enter to quit")
-            print("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to capture a frame and pose")
+  Press 's' + Enter to save calibration and exit")
+  Press 'q' + Enter to quit")
+{'='*50}\n""")
             while not self._stop_event.is_set():
                 try:
                     rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -183,11 +187,11 @@ class RobotMovementController:
                             if char.lower() == 'x':
                                 request_capture()
                             elif char.lower() == 's':
-                                print("Keyboard 's': saving calibration...")
+                                logger.info("Keyboard 's': saving calibration...")
                                 save_calibration()
                                 self._stop_event.set()
                             elif char.lower() == 'q':
-                                print("Keyboard 'q': quitting...")
+                                logger.info("Keyboard 'q': quitting...")
                                 self._stop_event.set()
                 except Exception:
                     time.sleep(0.1)
@@ -253,11 +257,12 @@ class RobotMovementController:
         import select
         import sys
         def keyboard_poller():
-            print("\n" + "="*50)
-            print("Keyboard commands enabled:")
-            print("  Press 'x' + Enter to unpause/proceed to next pose")
-            print("  Press 'q' + Enter to quit")
-            print("="*50 + "\n")
+            logger.info(f"""
+{'='*50}
+Keyboard commands enabled:")
+  Press 'x' + Enter to unpause/proceed to next pose")
+  Press 'q' + Enter to quit")
+{'='*50}\n""")
             while not self._stop_event.is_set():
                 try:
                     rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -270,7 +275,7 @@ class RobotMovementController:
                                 if is_paused.is_set():
                                     trigger_pause(is_paused)
                             elif char.lower() == 'q':
-                                print("Keyboard 'q': quitting...")
+                                logger.info("Keyboard 'q': quitting...")
                                 self._stop_event.set()
                 except Exception:
                     time.sleep(0.1)
@@ -295,7 +300,7 @@ class RobotMovementController:
                 time.sleep(1 / 10)
                 continue
                 
-            if self.robot.power_periph.status['runstop_event']:
+            if self.robot.is_runstopped():
                 self.calibration.log_message(
                     f"Runstop event triggered, pausing automatic movement.", LogLevels.INFO
                 )
@@ -317,7 +322,7 @@ class RobotMovementController:
             self.robot.wait_command(timeout=60)
             time.sleep(self.delay)
 
-            self._wait_camera_to_stabilize()
+            self._wait_image_to_settle()
 
             self.calibration.request_capture()
 
@@ -447,18 +452,18 @@ You can rerun the calibration on those images by using the --not_interactive fla
                     use_stable_frames_only=True
                 )
     except KeyboardInterrupt:
-        print("\nProcess interrupted by user. Stopping robot.")
+        logger.info("\nProcess interrupted by user. Stopping robot.")
         raise
     finally:
-        print("Stopping robot and camera pipeline...")
+        logger.info("Stopping robot and camera pipeline...")
         try:
             robot_controller.stop()
         except Exception as e:
-            print(f"Error stopping robot controller: {e}")
+            logger.info(f"Error stopping robot controller: {e}")
         try:
             rgb_pipeline_controller.stop()
         except Exception as e:
-            print(f"Error stopping camera pipeline: {e}")
+            logger.info(f"Error stopping camera pipeline: {e}")
 
 
 class MoveRobotMode(Enum):
@@ -600,7 +605,7 @@ def _parse_args() -> tuple[MoveRobotMode, str, bool, list[str], RGBCameras, bool
     elif args.left_right_center:
         camera_type = RGBCameras.synced_left_right_center()
     else:
-        print("No camera type specified. Defaulting to synced_left_right_center.")
+        logger.info("No camera type specified. Defaulting to synced_left_right_center.")
         camera_type = RGBCameras.synced_left_right_center()
 
     if args.gamepad:
@@ -641,5 +646,6 @@ def REx_calibrate_intrinsics_robot_move(interactive: bool):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     params = _parse_args()
     _calibrate_intrinsics_robot_move(*params)

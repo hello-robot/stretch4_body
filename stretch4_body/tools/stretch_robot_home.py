@@ -20,7 +20,7 @@ def main():
         r = Robot()
         if r.startup():
             r.pull_status()
-            if not r.power_periph.status['runstop_event']:
+            if not r.is_runstopped():
                 r.home()
             else:
                 r.logger.error('Cannot home while run-stopped')

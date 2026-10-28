@@ -1,6 +1,181 @@
 import threading
+from enum import Enum
+import time
+
+import numpy as np
+
 from stretch4_body.core.feetech.feetech_SM_chain import FeetechSMChain
+from stretch4_body.core.hello_utils import get_sounds_dir, play_sound
 from stretch4_body.core.robot_params import RobotParams
+
+
+# Half-width of the band around the robot's x-z plane where the tool is reported as facing 'center'
+TOOL_FACING_CENTER_BAND_DEG = 10.0
+# Half-width of the band around the arm's centre line where the tool mount is reported as being on the 'center'
+TOOL_SIDE_CENTER_BAND_M = 0.01
+
+
+def should_invert_pitch(roll_rad):
+    """
+    Returns True when teleop must invert wrist pitch so that pitching up still moves the gripper camera image up.
+
+    A +pitch motion moves the tool along -(0, sin(roll), cos(roll)) in wrist_roll_link, whose +z is the
+    camera's image-up axis. So seen through the camera, +pitch moves the image down when cos(roll) > 0 and
+    up when cos(roll) < 0, regardless of yaw and pitch. Pitch must be inverted once roll crosses +/-pi/2:
+        roll in [-pi/2, pi/2]: not inverted
+        roll beyond pi/2:      inverted
+    """
+    return bool(np.cos(roll_rad) < 0)
+
+
+def is_camera_upright(pitch_rad, roll_rad):
+    """
+    Returns True when the gripper camera is upright in the world (image-up points above the horizon).
+
+    The camera's image-up axis (wrist_roll_link +z) has a world-up component of cos(pitch)*cos(roll);
+    yaw spins about world-up, so it does not contribute:
+        pitch    roll    camera
+          0        0     upright
+          0       pi     upside down
+         pi        0     upside down
+         pi       pi     upright
+    """
+    return bool(np.cos(pitch_rad) * np.cos(roll_rad) > 0)
+
+
+def get_tool_facing(yaw_rad, pitch_rad):
+    """
+    Returns which side of the robot the tool points toward: 'left' | 'right' | 'center'.
+
+    The lift and arm are prismatic and all fixed mounts down to the wrist are unrotated, so the tool
+    approach axis (wrist_roll_link +x) in the robot base frame depends only on wrist yaw and pitch:
+        approach = Rz(yaw) * Ry(pitch) * x = (cos(yaw)cos(pitch), sin(yaw)cos(pitch), -sin(pitch))
+    Base frame +y is the robot's left. Roll spins about the approach axis, so it does not change facing.
+    'center' covers pointing forward, backward, up or down, within TOOL_FACING_CENTER_BAND_DEG.
+    """
+    lateral = np.sin(yaw_rad) * np.cos(pitch_rad)
+    band = np.sin(np.deg2rad(TOOL_FACING_CENTER_BAND_DEG))
+    if lateral > band:
+        return 'left'
+    if lateral < -band:
+        return 'right'
+    return 'center'
+
+
+def is_tool_right_handed(pitch_rad):
+    """
+    Returns True when the tool is right handed: the wrist is not folded over, so the tool can reach
+    under the arm on the robot's left side. False (left handed) is the folded wrist, which mirrors this.
+
+    The yaw-pitch-roll wrist reaches every tool orientation with two joint solutions:
+    (yaw, pitch, roll) and (yaw + pi, pi - pitch, roll + pi), separated by the wrist singularity at
+    pitch = +/-pi/2, so handedness is set by the pitch joint alone (the middle of its [-65, 245] deg range):
+        right handed: cos(pitch) >= 0  (pitch in [-pi/2, pi/2]), e.g. home yaw, pitch, roll == 0,0,0
+        left handed:  cos(pitch) <  0  (pitch beyond pi/2),      e.g. home yaw, pitch, roll == pi,pi,pi
+    Pitch inversion for teleop depends on roll instead, see should_invert_pitch().
+    """
+    return bool(np.cos(pitch_rad) >= 0)
+
+
+def get_tool_side(yaw_rad, pitch_rad, tool_reach_m, wrist_offset_m):
+    """
+    Returns which side of the arm the tool is mounted on: 'left' | 'right' | 'center'.
+    (Which way the tool points is get_tool_facing(); e.g. a tool mounted on the left can point right.)
+
+    The wrist yaw axis lies on the arm's centre line, and the pitch and roll housings hold the tool
+    wrist_offset_m to the right (-y) of it. The tool mount lies on the roll axis, tool_reach_m from the
+    pitch axis, so its lateral position from the arm's centre line depends only on yaw and pitch:
+        lateral = tool_reach_m * cos(pitch) * sin(yaw) - wrist_offset_m * cos(yaw)
+    Base frame +y is the robot's left. 'center' is within TOOL_SIDE_CENTER_BAND_M of the centre line.
+    See get_wrist_tool_geometry() for the two lengths.
+    """
+    lateral = tool_reach_m * np.cos(pitch_rad) * np.sin(yaw_rad) - wrist_offset_m * np.cos(yaw_rad)
+    if lateral > TOOL_SIDE_CENTER_BAND_M:
+        return 'left'
+    if lateral < -TOOL_SIDE_CENTER_BAND_M:
+        return 'right'
+    return 'center'
+
+
+def get_wrist_tool_geometry():
+    """
+    Returns (tool_reach_m, wrist_offset_m) for get_tool_side(), read from the robot's URDF:
+        tool_reach_m:   pitch axis to the tool mount (tool_attachment_site_link) along the roll axis
+        wrist_offset_m: lateral offset of the roll axis from the yaw axis
+    """
+    from stretch4_urdf import get_transform, get_urdf
+    robot = RobotParams.get_params()[1]['robot']
+    urdf = get_urdf(robot['model_name'], robot['batch_name'], robot['tool'], do_add_file_prefix_to_absolute_paths=False)
+    pitch_origin = get_transform(urdf, 'wrist_pitch_link', 'wrist_yaw_link')[:3, 3]
+    roll_origin = get_transform(urdf, 'wrist_roll_link', 'wrist_pitch_link')[:3, 3]
+    mount_x = get_transform(urdf, 'tool_attachment_site_link', 'wrist_roll_link')[0, 3]
+    return roll_origin[0] + mount_x, -(pitch_origin[1] + roll_origin[1])
+
+
+def get_handedness_lift_min():
+    """
+    Lift height (m) at or below which a handedness change is refused, so the wrist does not swing
+    into the ground or base. Shared by routine_wrist_handedness, EndOfArmClient and gamepad teleop.
+    """
+    return RobotParams.get_params()[1].get('routine_wrist_handedness', {}).get('lift_min', 0.35)
+
+
+class GripperHandedness(Enum):
+    """
+    Teleop handedness of the gripper, set by whether the wrist is folded over (see is_tool_right_handed):
+        RIGHT: yaw, pitch, roll == 0,0,0. Wrist not folded, tool can reach under the arm on the robot's left.
+        LEFT:  yaw, pitch, roll == pi,pi,pi. Wrist folded, mirrors RIGHT.
+    Both home configurations keep the camera upright.
+    """
+    LEFT = 0
+    RIGHT = 1
+
+    @classmethod
+    def from_right_handed(cls, right_handed):
+        return cls.RIGHT if right_handed else cls.LEFT
+
+    @classmethod
+    def from_status(cls, status):
+        """Returns the handedness implied by an end_of_arm status dict's 'tool_right_handed', or None if unknown"""
+        right_handed = status.get('tool_right_handed')
+        return None if right_handed is None else cls.from_right_handed(right_handed)
+
+    def get_name(self):
+        return self.name.lower()
+
+    def opposite(self):
+        return GripperHandedness.LEFT if self is GripperHandedness.RIGHT else GripperHandedness.RIGHT
+
+    def play_sound_file(self):
+        file_name:str
+        if self is GripperHandedness.LEFT:
+            file_name = "left_handed_mode.wav"
+        elif self is GripperHandedness.RIGHT:
+            file_name = "right_handed_mode.wav"
+        else:
+            raise NotImplementedError(f"No sound file for {self}")
+
+        play_sound(get_sounds_dir()+f'/{file_name}')
+
+    def get_joint_targets(self):
+        """Wrist joint positions (rad) of this handedness's home configuration"""
+        if self is GripperHandedness.RIGHT:
+            return {'wrist_yaw': 0.0, 'wrist_pitch': 0.0, 'wrist_roll': 0.0}
+        if self is GripperHandedness.LEFT:
+            return {'wrist_yaw': np.pi, 'wrist_pitch': np.pi, 'wrist_roll': np.pi}
+        raise NotImplementedError(f"No joint targets defined for {self}")
+
+    def move_to(self, end_of_arm):
+        """
+        Queues the wrist motion to this handedness's home configuration.
+        end_of_arm: EndOfArm or EndOfArmClient. Caller is responsible for pushing the command.
+        """
+        print(f"Moving wrist to {self}")
+        params = RobotParams().get_params()[1]
+        for joint, x_r in self.get_joint_targets().items():
+            slow = params[joint]['motion']['slow']
+            end_of_arm.move_to(joint, x_r, slow['vel'], slow['accel'])
+
 
 
 class EndOfArm(FeetechSMChain):
@@ -17,6 +192,10 @@ class EndOfArm(FeetechSMChain):
         FeetechSMChain.__init__(self, usb=usb, name=name)
         self.status['is_homing']=False
         self.status['is_homed']=False
+        self.status['tool_right_handed']=None #True | False | None if no calibrated wrist_pitch. See is_tool_right_handed()
+        self.status['camera_upright']=None #True | False | None if no calibrated wrist_pitch/roll. See is_camera_upright()
+        self.status['tool_facing']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch. See get_tool_facing()
+        self.status['tool_side']=None #'left' | 'right' | 'center' | None if no calibrated wrist_yaw/pitch or no URDF. See get_tool_side()
         #NOTE: This may be a general bug. Fix. We make motors before port handler is set.
         #self.joints = self.params.get('devices', {}).keys()
         # for j in self.joints:
@@ -26,6 +205,8 @@ class EndOfArm(FeetechSMChain):
         #     self.add_motor(servo_device)
         self.urdf_map={} #Override
         self.status_aux = {}
+        self._wrist_tool_geometry = None # (tool_reach_m, wrist_offset_m), loaded from the URDF on first use
+        self._wrist_tool_geometry_failed = False
 
     def startup(self):
         if FeetechSMChain.startup(self):
@@ -41,6 +222,48 @@ class EndOfArm(FeetechSMChain):
     def pull_status(self,blocking=True):
         FeetechSMChain.pull_status(self)
         self.status['is_homed']=self.is_homed()
+        self._update_wrist_orientation_status()
+
+    def _update_wrist_orientation_status(self):
+        def calibrated_pos(joint):
+            m = self.motors.get(joint)
+            if m is None or not m.status.get('pos_calibrated', False):
+                return None
+            return m.status['pos']
+        yaw = calibrated_pos('wrist_yaw')
+        pitch = calibrated_pos('wrist_pitch')
+        roll = calibrated_pos('wrist_roll')
+        geometry = None if yaw is None or pitch is None else self._get_wrist_tool_geometry()
+        self.status['tool_right_handed'] = None if pitch is None else is_tool_right_handed(pitch)
+        self.status['camera_upright'] = None if pitch is None or roll is None else is_camera_upright(pitch, roll)
+        self.status['tool_facing'] = None if yaw is None or pitch is None else get_tool_facing(yaw, pitch)
+        self.status['tool_side'] = None if geometry is None else get_tool_side(yaw, pitch, *geometry)
+
+    def _get_wrist_tool_geometry(self):
+        if self._wrist_tool_geometry is None and not self._wrist_tool_geometry_failed:
+            try:
+                self._wrist_tool_geometry = get_wrist_tool_geometry()
+            except Exception as e:
+                self._wrist_tool_geometry_failed = True
+                self.logger.warning(f"EndOfArm: tool_side unavailable, could not read wrist geometry from URDF: {e}")
+        return self._wrist_tool_geometry
+
+    def change_handedness(self):
+        """
+        Moves the wrist to the opposite handedness of status['tool_right_handed'].
+        Returns the target GripperHandedness, or None if the current handedness is unknown.
+
+        The end of arm cannot see the lift, so callers must first check that the lift is above
+        get_handedness_lift_min() so the wrist does not swing into the ground or base
+        (as routine_wrist_handedness does).
+        """
+        current = GripperHandedness.from_status(self.status)
+        if current is None:
+            print("EndOfArm: Ignoring change_handedness, handedness unknown (wrist_pitch absent or not homed)")
+            return None
+        target = current.opposite()
+        target.move_to(self)
+        return target
 
     def get_joint(self, joint_name):
         """Retrieves joint by name.
@@ -66,6 +289,24 @@ class EndOfArm(FeetechSMChain):
             return
         with  self.pt_lock:
             self.motors[joint].quick_stop()
+
+    def hold_position(self, joint: str) -> bool:
+        """
+        Stop and hold the current position of the specified joint with torque maintained.
+
+        Args:
+            joint: Name of the joint.
+
+        Returns:
+            True if hold command was executed, False otherwise.
+        """
+        if joint not in self.motors:
+            self.logger.warning(
+                f"EndOfArm: Ignoring hold_position command for inactive or non-existent joint '{joint}'"
+            )
+            return False
+        with self.pt_lock:
+            return self.motors[joint].hold_position()
 
     def disable_torque(self, joint):
         """
@@ -141,12 +382,31 @@ class EndOfArm(FeetechSMChain):
             return
         with self.pt_lock:
             self.motors[joint].pose(p, v_r, a_r)
+    
+    def stow(self) -> bool|None:
+        
+        """
+        Stowing folds in the gripper and wrist within the base's footprint.
+        """
+        self.logger.info(f'--------- Stowing {self.name} ----')
+        
+        # self.home()
+        
+        joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
 
-    def stow(self):
-        pass #Override by specific tool
+        joints += [name for name in self.motors if name not in joints]
 
-    def pre_stow(self,robot=None):
-        pass #Override by specific tool
+        for joint_name in joints:
+            stow_position = self.params['stow'].get(joint_name, None)
+            
+            if stow_position is None:
+                self.logger.warning(f"Skipping {joint_name} stow, since there is no stow position.")
+                continue
+            
+            self.move_to(joint_name, stow_position)
+
+        return True
+
 
     def is_homed(self):
         #Return true if calibration is  required
@@ -160,25 +420,77 @@ class EndOfArm(FeetechSMChain):
         self.cancel_homing_event.set()
         self.logger.warning(f"Feetech homing cancelled for: {self.name}")
 
-    def home(self):
-        """
-        Home to hardstops
-        """
-        #Naive version. Should override with tool specific safe motions.
-        raise NotImplementedError('EndOfArm Homing not implemented at this level.')
-
-    def home_joint(self, joint_name=None,end_pos=0,wait_on_completion:bool=True):
-        """
-        Home to hardstops
-        """
-        self.logger.info(f'--------- Homing {joint_name} ----')
+    def _home_all_joints(self):
+        self.logger.info(f'Homing {self.name}')
         self.status['is_homing'] = True
-        if wait_on_completion:
-            self.motors[joint_name].home(end_pos=end_pos)
-        else:
-            thread = threading.Thread(target=self.motors[joint_name].home, args=(end_pos,))
-            thread.start()
+
+        if 'wrist_pitch' in self.motors:
+            success = self.motors['wrist_pitch'].pre_home(pwm_val=175,negative_vel=-0.66,positive_vel=0.7)
+
+            if not success or self.cancel_homing_event.is_set():
+                self.logger.error("Wrist pitch pre-homing failed")
+                self.status['is_homing'] = False
+                return False
+
+            time.sleep(0.5)
+
+            self.motors['wrist_pitch'].motor.set_overcurrent(self.motors['wrist_pitch'].params['eeprom_cfg']['overcurrent'])
+
+        joints = ['wrist_yaw', 'wrist_roll', 'wrist_pitch']
+
+        joints = [name for name in joints if name in self.motors] # Remove yaw/roll/pitch if they aren't in self.motors.
+        joints += [name for name in self.motors if name not in joints]
+
+        self.logger.info(f"Homing joints: {joints}")
+        for joint_name in joints:
+            success = self.home_joint(joint_name, set_homing_status=False)
+            if not success:
+                self.logger.error(f"{joint_name} homing failed")
+                break
+            if self.cancel_homing_event.is_set():
+                self.logger.error(f"Homing canceled during {joint_name} homing.")
+            
         self.status['is_homing'] = False
+
+        return success
+
+    def home(self, wait_on_completion:bool=True) -> bool|None:
+        """
+        Homes the wrist joints. Warning: self-collision detection is usually disabled during homing! If you are implementing a new tool, be sure to update the homing parameters for the joints, so that your tool does not collide with the robot.
+        """
+        if wait_on_completion:
+            return self._home_all_joints()
+        
+        thread = threading.Thread(target=self._home_all_joints)
+
+        thread.start()
+
+        return None
+
+    def home_joint(self, joint_name:str,end_pos:float|None=None, set_homing_status:bool=True, wait_on_completion:bool=True) -> bool|None:
+        """
+        Home to hardstops
+        end_pos: final position after homing. Defaults to the tool's `homing.<joint_name>` param, else 0.
+        wait_on_completion: if False, home in a background thread and return None.
+        """
+        if not wait_on_completion:
+            threading.Thread(target=self.home_joint, args=(joint_name, end_pos, set_homing_status)).start()
+            return None
+
+        self.logger.info(f'--------- Homing {joint_name} ----')
+
+        if end_pos is None:
+            end_pos = self.params.get('homing', {}).get(joint_name, 0)
+
+        if set_homing_status:
+            self.status['is_homing'] = True
+
+        success = self.motors[joint_name].home(end_pos=end_pos)
+
+        if set_homing_status:
+            self.status['is_homing'] = False
+
+        return success
 
 
     def is_tool_present(self,class_name):
@@ -229,8 +541,4 @@ class EndOfArm(FeetechSMChain):
     #
     #     return ret
     
-    def pre_stow(self,robot=None):
-        pass
-
-
 

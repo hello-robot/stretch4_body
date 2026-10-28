@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import time
+import math
 from stretch4_body.core.device import Device
 import stretch4_body.subsystem.omnibase as omnibase
 import stretch4_body.subsystem.arm as arm
@@ -110,11 +111,47 @@ class RobotCore(Device):
                 ready = ready and s.is_homed()  
         return ready
 
+    def trigger_runstop(self):
+        return self.power_periph.trigger_runstop()
+    
+    def clear_runstop(self):
+        return self.power_periph.clear_runstop()
+    
+    def is_runstopped(self):
+        return self.power_periph.is_runstopped()
+
     def wait_command(self, timeout=15.0, use_motion_generator=True):
         raise NotImplementedError('RobotCore::wait_command method not implemented')
 
     def stow(self):
         raise NotImplementedError('RobotCore::stow method not implemented')
+
+    def is_stowed(self, lift_tol=0.01, arm_tol=0.025, eoa_tol=0.1):
+        """
+        Returns True if every joint in the tool's stow config (lift, arm, wrist and tool joints)
+        is at its stow position. Does not move anything.
+        Joints whose subsystem isn't present are ignored. Tolerances are m for lift/arm, rad for end_of_arm.
+        """
+        cfg = self.robot_params[self.params['tool']]['stow']
+        checked = False
+        for joint, stow_pos in cfg.items():
+            if joint in ('lift', 'arm'):
+                if joint not in self.subsystems:
+                    continue
+                pos = self.status[joint]['pos']
+                tol = lift_tol if joint == 'lift' else arm_tol
+                err = pos - stow_pos
+            else:
+                eoa_status = self.status.get('end_of_arm', {})
+                if joint not in eoa_status:
+                    continue
+                tol = eoa_tol
+                # Wrap, since wrist angles may be reported as +/-pi
+                err = math.remainder(eoa_status[joint]['pos'] - stow_pos, 2 * math.pi)
+            checked = True
+            if abs(err) > tol:
+                return False
+        return checked
 
     def home(self):
         raise NotImplementedError('RobotCore::home method not implemented')

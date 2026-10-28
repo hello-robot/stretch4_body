@@ -6,8 +6,34 @@ import argparse
 import sys
 import rerun as rr
 from colorama import Fore, Back, Style, init
+from collections import defaultdict
+from datetime import datetime
 
 init(autoreset=True)
+
+def is_field_selected(path, selected_fields):
+    if not selected_fields or 'all' in selected_fields:
+        return True
+    for sf in selected_fields:
+        if sf == 'all':
+            return True
+        if path == sf or path.startswith(sf + '.'):
+            return True
+    return False
+
+def get_file_timestamp(filepath):
+    """
+    Get the timestamp of a log file.
+    Attempts to parse the timestamp from the filename (e.g., status_YYYYMMDD_HHMMSS.json)
+    to handle files copied/transferred across systems where mtime is overwritten.
+    Falls back to os.path.getmtime if parsing fails.
+    """
+    basename = os.path.basename(filepath)
+    try:
+        dt = datetime.strptime(basename, "status_%Y%m%d_%H%M%S.json")
+        return dt.timestamp()
+    except Exception:
+        return os.path.getmtime(filepath)
 
 from stretch4_body.robot.robot_client import RobotClient
 
@@ -100,7 +126,7 @@ def log_selected_fields(flat_status, selected_fields):
             if isinstance(value, bool):
                 val = 1 if value else 0
                 rr.log(rr_path, rr.Scalars(val))
-            else:
+            elif isinstance(value, (int, float)):
                 rr.log(rr_path, rr.Scalars(value))
 
 def extract_all_groups(d, current_path="robot"):
@@ -137,8 +163,10 @@ def get_default_fields(sample_status):
     flat = flatten_status(sample_status, parent_key='robot')
     paths = sorted(list(flat.keys()))
     
-    # Defaults: server, base x/y/theta, and non-motor joint positions
+    # Defaults: server, base x/y/theta, wrist orientation, and non-motor joint positions
     defaults = ['robot.server', 'robot.base.x', 'robot.base.y', 'robot.base.theta']
+    if 'end_of_arm' in sample_status: # These are None until the wrist is homed, so not in flat
+        defaults += ['robot.end_of_arm.tool_right_handed', 'robot.end_of_arm.camera_upright', 'robot.end_of_arm.tool_facing', 'robot.end_of_arm.tool_side']
     joint_positions = [
         k for k in paths 
         if (k.endswith('.pos') or k.endswith('.pos_pct')) 
@@ -325,45 +353,53 @@ def build_recursive_menu(sample_status):
             print(f"{Fore.RED}Invalid input{Style.RESET_ALL}")
             time.sleep(1)
 
-def setup_rerun_blueprint(rs, selected_fields):
+def setup_rerun_blueprint(rs, selected_fields, fields_x=None, fields_y=None):
     """
     Sets up a Rerun blueprint so that graphs are organized into fewer 
     TimeSeries views instead of spanning hundreds of default views.
+    Also handles Spatial2DViews for custom X-Y plots.
     """
     try:
         import rerun.blueprint as rrb
         
+        ts_views = []
         if not selected_fields or 'all' in selected_fields:
-            views = []
             for k in rs.keys():
                 if k == "timestamp":
                     continue
-                views.append(rrb.TimeSeriesView(origin=f"robot/{k}", name=k, visible=False))
+                ts_views.append(rrb.TimeSeriesView(origin=f"robot/{k}", name=k, visible=False))
             
-            views.append(rrb.TimeSeriesView(
+            ts_views.append(rrb.TimeSeriesView(
                 origin="robot/server/control_loop/avg_rate_hz",
                 name="server.control_loop.avg_rate_hz",
                 visible=True
             ))
-            
-            if views:
-                blueprint = rrb.Blueprint(rrb.Tabs(*views))
-                rr.send_blueprint(blueprint)
+        else:
+            for sf in selected_fields:
+                if sf == 'all':
+                    ts_views.append(rrb.TimeSeriesView(origin="/", name="Data"))
+                else:
+                    ts_views.append(rrb.TimeSeriesView(origin=sf.replace('.', '/'), name=sf))
+                    
+        xy_views = []
+        if fields_x and fields_y:
+            for x_f, y_f in zip(fields_x, fields_y):
+                path = f"xy_plot/{x_f}_vs_{y_f}"
+                name_x = x_f[6:] if x_f.startswith("robot.") else x_f
+                name_y = y_f[6:] if y_f.startswith("robot.") else y_f
+                display_name = f"{name_y} vs {name_x}"
+                xy_views.append(rrb.Spatial2DView(origin=path, name=display_name))
+                
+        all_views = ts_views + xy_views
+        if not all_views:
             return
 
-        views = []
-        for sf in selected_fields:
-            if sf == 'all':
-                views.append(rrb.TimeSeriesView(origin="/", name="Data"))
-            else:
-                views.append(rrb.TimeSeriesView(origin=sf.replace('.', '/'), name=sf))
-                
-        if len(views) == 1:
-            layout = views[0]
-        elif len(views) <= 4:
-            layout = rrb.Grid(*views)
+        if len(all_views) == 1:
+            layout = all_views[0]
+        elif len(all_views) <= 4:
+            layout = rrb.Grid(*all_views)
         else:
-            layout = rrb.Tabs(*views)
+            layout = rrb.Tabs(*all_views)
             
         blueprint = rrb.Blueprint(layout)
         rr.send_blueprint(blueprint)
@@ -393,8 +429,113 @@ def validate_selected_fields_or_exit(rs, selected_fields):
         sys.exit(1)
 
 
+def validate_xy_fields_or_exit(rs, fields_x, fields_y):
+    if not fields_x or not fields_y:
+        return
+    
+    flat = flatten_status(rs, parent_key='robot')
+    paths = flat.keys()
+    
+    invalid_parts = []
+    non_numeric_parts = []
+    for part in fields_x + fields_y:
+        if part not in paths:
+            invalid_parts.append(part)
+        elif isinstance(flat[part], str):
+            non_numeric_parts.append(f"{part}={flat[part]}")
+            
+    if invalid_parts:
+        print(f"\n[!] Error: The following fields provided via --fields_x or --fields_y do not exist: {', '.join(invalid_parts)}")
+        sys.exit(1)
+    if non_numeric_parts:
+        print(f"\n[!] Error: The following fields provided via --fields_x or --fields_y are not numeric and cannot be plotted: {', '.join(non_numeric_parts)}")
+        sys.exit(1)
+
+
+def log_xy_fields(flat_status, fields_x, fields_y):
+    if not fields_x or not fields_y:
+        return
+        
+    if not hasattr(log_xy_fields, "histories"):
+        log_xy_fields.histories = {}
+        
+    for x_field, y_field in zip(fields_x, fields_y):
+        if x_field in flat_status and y_field in flat_status:
+            x_val = flat_status[x_field]
+            y_val = flat_status[y_field]
+            if isinstance(x_val, bool):
+                x_val = 1 if x_val else 0
+            if isinstance(y_val, bool):
+                y_val = 1 if y_val else 0
+            
+            if isinstance(x_val, (int, float)) and isinstance(y_val, (int, float)):
+                key = f"{x_field}_vs_{y_field}"
+                if key not in log_xy_fields.histories:
+                    log_xy_fields.histories[key] = {'x': [], 'y': []}
+                
+                hist = log_xy_fields.histories[key]
+                hist['x'].append(x_val)
+                hist['y'].append(y_val)
+                # Cap the history at 2000 points to keep plotting extremely fast and memory-bounded
+                if len(hist['x']) > 2000:
+                    hist['x'].pop(0)
+                    hist['y'].pop(0)
+                
+                try:
+                    import numpy as np
+                    from matplotlib.figure import Figure
+                    from matplotlib.backends.backend_agg import FigureCanvasAgg
+                    
+                    fig = Figure(figsize=(7, 6), dpi=100)
+                    canvas = FigureCanvasAgg(fig)
+                    ax = fig.add_subplot(111)
+                    
+                    # Create scatter plot with semi-transparent points to visualize density
+                    ax.scatter(hist['x'], hist['y'], color='blue', alpha=0.6, s=15)
+                    
+                    # Label axes clearly with units/names
+                    name_x = x_field[6:] if x_field.startswith("robot.") else x_field
+                    name_y = y_field[6:] if y_field.startswith("robot.") else y_field
+                    ax.set_title(f"{name_y} vs {name_x}")
+                    ax.set_xlabel(name_x.split('.')[-1])
+                    ax.set_ylabel(name_y.split('.')[-1])
+                    ax.grid(True, linestyle='--', alpha=0.5)
+                    
+                    fig.tight_layout()
+                    canvas.draw()
+                    rgba = np.asarray(canvas.buffer_rgba())
+                    rgb = rgba[:, :, :3]
+                    
+                    path = f"xy_plot/{x_field}_vs_{y_field}"
+                    rr.log(path, rr.Image(rgb))
+                except Exception as e:
+                    # Fail silently to avoid breaking the telemetry loop if matplotlib errors out
+                    pass
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Visualize Stretch status.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Visualize Stretch status.\n\n"
+            "This tool allows you to visualize, replay, and export robot telemetry data.\n"
+            "To replay saved telemetry runs, use --import <zip_file>. You can also filter the replay window\n"
+            "from the start and end of the import using --start_seconds_offset and --end_seconds_offset.\n"
+            "If --rerun is specified with --import, the whole file is imported and dumped into Rerun."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Plot omnibase velocities as time-series in Rerun
+  stretch_status --fields robot.omnibase.x_vel robot.omnibase.y_vel robot.omnibase.theta_vel --rerun
+
+  # Plot current (y-axis) vs velocity (x-axis) for the omnibase wheels
+  stretch_status \\
+    --fields robot.omnibase.x_vel robot.omnibase.y_vel robot.omnibase.theta_vel \\
+    --fields_y robot.omnibase.wheel_0.current robot.omnibase.wheel_1.current robot.omnibase.wheel_2.current \\
+    --fields_x robot.omnibase.wheel_0.vel robot.omnibase.wheel_1.vel robot.omnibase.wheel_2.vel \\
+    --rate 1 --rerun
+"""
+    )
     parser.add_argument(
         "--history",
         type=float,
@@ -427,7 +568,7 @@ def main():
         "--export",
         type=str,
         default=None,
-        help="Export history to a zip file in the specified directory. Requires --history.",
+        help="Export all available telemetry history to a zip file in the specified directory.",
     )
     parser.add_argument(
         "--import",
@@ -436,8 +577,82 @@ def main():
         default=None,
         help="Import and replay a zip file of exported history.",
     )
+    parser.add_argument(
+        "--start_seconds_offset",
+        type=float,
+        default=None,
+        help="Start offset in seconds relative to the beginning of the imported file (only works with --import).",
+    )
+    parser.add_argument(
+        "--end_seconds_offset",
+        type=float,
+        default=None,
+        help="End offset in seconds relative to the end of the imported file (only works with --import).",
+    )
+
+    parser.add_argument(
+        "--fields_x",
+        nargs="+",
+        default=None,
+        help="List of field prefixes/paths for the X-axis of 2D plots",
+    )
+    parser.add_argument(
+        "--fields_y",
+        nargs="+",
+        default=None,
+        help="List of field prefixes/paths for the Y-axis of 2D plots",
+    )
     args = parser.parse_args()
 
+    fields_x = args.fields_x
+    fields_y = args.fields_y
+
+    if (fields_x and not fields_y) or (fields_y and not fields_x):
+        parser.error("Both --fields_x and --fields_y must be provided together.")
+
+    if fields_x and fields_y:
+        if len(fields_x) != len(fields_y):
+            parser.error("The number of fields in --fields_x and --fields_y must match.")
+
+    if (args.start_seconds_offset is not None or args.end_seconds_offset is not None) and args.import_file is None:
+        parser.error("The --start_seconds_offset and --end_seconds_offset flags can only be used when --import is specified.")
+
+    if args.export is not None and args.import_file is None:
+        fleet_path = os.getenv("HELLO_FLEET_PATH", os.path.expanduser("~"))
+        log_dir = os.path.join(fleet_path, "log", "stretch_status")
+        if not os.path.exists(log_dir):
+            print(f"Log directory {log_dir} does not exist.")
+            return
+
+        files = [
+            os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".json")
+        ]
+        files.sort(key=get_file_timestamp)
+
+        if not files:
+            print(f"No status log files found in {log_dir} to export.")
+            return
+
+        import zipfile
+        from datetime import datetime
+        export_dir = os.path.expanduser(args.export)
+        if not os.path.isdir(export_dir):
+            print(f"Error: Export directory {export_dir} does not exist.")
+            return
+        
+        iso_time = datetime.now().isoformat().replace(':', '-')
+        zip_filename = f"stretch_status_{iso_time}.zip"
+        zip_path = os.path.join(export_dir, zip_filename)
+        
+        print(f"Exporting data to {zip_path}...")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                zf.write(f, os.path.basename(f))
+        
+        size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+        print(f"Export complete: {zip_path} ({size_mb:.2f} MB)")
+        return
+    
     def _start_rerun():
         rr.init("stretch_status", spawn=False)
         rr.spawn(memory_limit="5GB")
@@ -452,123 +667,151 @@ def main():
             print(f"Error: Import file {zip_path} does not exist.")
             return
 
-        print(f"Importing history from {zip_path}...")
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            class tqdm:
+                def __init__(self, iterable=None, total=None, desc="", unit="", **kwargs):
+                    self.iterable = iterable
+                    self.total = total or (len(iterable) if iterable else None)
+                    self.desc = desc
+                    self.n = 0
+
+                def __iter__(self):
+                    if self.iterable is not None:
+                        for item in self.iterable:
+                            yield item
+                            self.n += 1
+                    print()
+
         with zipfile.ZipFile(zip_path, 'r') as zf:
             file_names = sorted([n for n in zf.namelist() if n.endswith('.json')])
+            if not file_names:
+                print("Error: No status log files found in the import archive.")
+                return
+
+            min_ts = None
+            max_ts = None
+
+            # Find min_ts from the first file with data
             for f_name in file_names:
+                try:
+                    with zf.open(f_name) as file:
+                        batch = json.loads(file.read().decode('utf-8'))
+                        if batch and isinstance(batch, list):
+                            for rs in batch:
+                                min_ts = rs.get("timestamp")
+                                if min_ts is not None:
+                                    break
+                            if min_ts is not None:
+                                break
+                except Exception:
+                    pass
+
+            # Find max_ts from the last file with data
+            for f_name in reversed(file_names):
+                try:
+                    with zf.open(f_name) as file:
+                        batch = json.loads(file.read().decode('utf-8'))
+                        if batch and isinstance(batch, list):
+                            for rs in reversed(batch):
+                                max_ts = rs.get("timestamp")
+                                if max_ts is not None:
+                                    break
+                            if max_ts is not None:
+                                break
+                except Exception:
+                    pass
+
+            start_time_ts = None
+            end_time_ts = None
+            if min_ts is not None and args.start_seconds_offset is not None:
+                start_time_ts = min_ts + args.start_seconds_offset
+            if max_ts is not None and args.end_seconds_offset is not None:
+                end_time_ts = max_ts - args.end_seconds_offset
+
+            if args.rerun:
+                print("Warning: Rerun has a memory cap of 5GB. For very large imported logs, older frames may be evicted by Rerun's memory manager.")
+
+            print(f"Importing history from {zip_path}...")
+
+            times_by_field = defaultdict(list)
+            values_by_field = defaultdict(list)
+
+            imported_count = 0
+            for f_name in tqdm(file_names, desc="Importing status files", unit="file"):
                 with zf.open(f_name) as file:
                     try:
                         batch = json.loads(file.read().decode('utf-8'))
                         for rs in batch:
+                            t = rs.get("timestamp", 0.0)
+                            if start_time_ts is not None and t < start_time_ts:
+                                continue
+                            if end_time_ts is not None and t > end_time_ts:
+                                continue
+
                             if not menu_shown:
                                 if selected_fields:
                                     validate_selected_fields_or_exit(rs, selected_fields)
                                 elif args.interactive:
                                     selected_fields = build_recursive_menu(rs)
+                                elif args.rerun:
+                                    selected_fields = ['all']
                                 else:
                                     selected_fields = get_default_fields(rs)
 
+                                if fields_x and fields_y:
+                                    validate_xy_fields_or_exit(rs, fields_x, fields_y)
+
                                 if args.rerun:
                                     _start_rerun()
-                                    setup_rerun_blueprint(rs, selected_fields)
+                                    setup_rerun_blueprint(rs, selected_fields, fields_x, fields_y)
 
                                 menu_shown = True
                                 
-                            print("\n=== Status ===")
-                            filtered_rs = filter_dict_by_fields(rs, selected_fields)
-                            print_status_pretty(filtered_rs)
-
                             if args.rerun:
                                 t = rs.get("timestamp", time.time())
-                                rr.set_time("log_time", timestamp=t)
                                 flat_status = flatten_status(rs)
-                                log_selected_fields(flat_status, selected_fields)
+                                for path, value in flat_status.items():
+                                    if is_field_selected(path, selected_fields):
+                                        if isinstance(value, bool):
+                                            val = 1.0 if value else 0.0
+                                        elif isinstance(value, (int, float)):
+                                            val = float(value)
+                                        else:
+                                            continue
+                                        times_by_field[path].append(t)
+                                        values_by_field[path].append(val)
+
+                                # TODO: add ability to log xy_fields when importing a file
+                                # log_selected_fields(flat_status, selected_fields)
+                                # if fields_x and fields_y:
+                                #     log_xy_fields(flat_status, fields_x, fields_y)
+
+                            else:
+                                print("\n=== Status ===")
+                                filtered_rs = filter_dict_by_fields(rs, selected_fields)
+                                print_status_pretty(filtered_rs)
+
+                            imported_count += 1
                     except Exception as e:
                         print(f"Error reading {f_name} from zip: {e}")
+
+        if args.rerun and times_by_field:
+            print(f"\nBulk-sending {len(times_by_field)} signals across {imported_count} frames to Rerun...")
+            import numpy as np
+            for path, vals in values_by_field.items():
+                if not vals:
+                    continue
+                rr_path = path.replace('.', '/')
+                ts = np.array(times_by_field[path], dtype=np.float64)
+                vs = np.array(vals, dtype=np.float64)
+                time_col = rr.TimeColumn('log_time', timestamp=ts)
+                scalars_col = rr.Scalars.columns(scalars=vs)
+                rr.send_columns(rr_path, indexes=[time_col], columns=scalars_col)
+            print(f"Successfully bulk-logged {imported_count} status frames to Rerun.")
+
         print("Finished reading imported history.")
-    elif args.history is not None:
-        fleet_path = os.getenv("HELLO_FLEET_PATH", os.path.expanduser("~"))
-        log_dir = os.path.join(fleet_path, "log", "stretch_status")
-
-        if not os.path.exists(log_dir):
-            print(f"Log directory {log_dir} does not exist.")
-            return
-
-        start_time = time.time() - (args.history * 60)
-
-        files = [
-            os.path.join(log_dir, f) for f in os.listdir(log_dir) if f.endswith(".json")
-        ]
-        files.sort(key=os.path.getmtime)
-
-        if files:
-            oldest_file_mtime = os.path.getmtime(files[0])
-            available_minutes = max(0.0, (time.time() - oldest_file_mtime) / 60.0)
-            print(f"Maximum available history: {available_minutes:.1f} minutes.")
-            if args.history > available_minutes:
-                print(f"[!] Warning: You requested {args.history} minutes of history, but only {available_minutes:.1f} minutes are available.")
-
-        if args.export:
-            import zipfile
-            from datetime import datetime
-            export_dir = os.path.expanduser(args.export)
-            if not os.path.isdir(export_dir):
-                print(f"Error: Export directory {export_dir} does not exist.")
-                return
-            
-            iso_time = datetime.now().isoformat().replace(':', '-')
-            zip_filename = f"stretch_status_{iso_time}.zip"
-            zip_path = os.path.join(export_dir, zip_filename)
-            
-            print(f"Exporting data to {zip_path}...")
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for f in files:
-                    mtime = os.path.getmtime(f)
-                    if mtime < start_time - 60:
-                        continue
-                    zf.write(f, os.path.basename(f))
-            
-            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-            print(f"Export complete: {zip_path} ({size_mb:.2f} MB)")
-            return
-
-        for f in files:
-            mtime = os.path.getmtime(f)
-            if mtime < start_time - 60:
-                continue
-
-            with open(f, "r") as file:
-                try:
-                    batch = json.load(file)
-                    for rs in batch:
-                        if rs.get("timestamp", 0) >= start_time:
-                            if not menu_shown:
-                                if selected_fields:
-                                    validate_selected_fields_or_exit(rs, selected_fields)
-                                elif args.interactive:
-                                    selected_fields = build_recursive_menu(rs)
-                                else:
-                                    selected_fields = get_default_fields(rs)
-
-                                if args.rerun:
-                                    _start_rerun()
-                                    setup_rerun_blueprint(rs, selected_fields)
-
-                                menu_shown = True
-                                
-                            print("\n=== Status ===")
-                            filtered_rs = filter_dict_by_fields(rs, selected_fields)
-                            print_status_pretty(filtered_rs)
-
-                            if args.rerun:
-                                t = rs.get("timestamp", time.time())
-                                rr.set_time("log_time", timestamp=t)
-                                flat_status = flatten_status(rs)
-                                log_selected_fields(flat_status, selected_fields)
-                except Exception as e:
-                    print(f"Error reading {f}: {e}")
-
-        print("Finished reading history.")
     else:
         # Live mode
         print("Starting live mode...")
@@ -596,9 +839,12 @@ def main():
                     else:
                         selected_fields = get_default_fields(rs)
                     
+                    if fields_x and fields_y:
+                        validate_xy_fields_or_exit(rs, fields_x, fields_y)
+
                     if args.rerun:
                         _start_rerun()
-                        setup_rerun_blueprint(rs, selected_fields)
+                        setup_rerun_blueprint(rs, selected_fields, fields_x, fields_y)
                         
                     menu_shown = True
 
@@ -611,6 +857,8 @@ def main():
                     rr.set_time("log_time", timestamp=t)
                     flat_status = flatten_status(rs)
                     log_selected_fields(flat_status, selected_fields)
+                    if fields_x and fields_y:
+                        log_xy_fields(flat_status, fields_x, fields_y)
                 
                 time.sleep(sleep_time)
         except KeyboardInterrupt:

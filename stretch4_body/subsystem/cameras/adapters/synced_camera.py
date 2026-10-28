@@ -1,12 +1,16 @@
 import time
 import cv2
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 import threading
 from stretch4_body.core.hello_utils import LoopTimer
 from stretch4_body.subsystem.cameras.cv_utils import get_recify_maps
 from stretch4_body.subsystem.cameras.cv_utils import RectifyMaps
-from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
+from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, SyncedImageFrame
 from stretch4_body.subsystem.cameras.adapters.camera_controls_mixin import CameraControlsMixin
 
@@ -127,7 +131,7 @@ def main():
         # synced_image, timestamp = camera.camera.get_next()
 
         if synced_image is None:
-            print("synced_image is None")
+            logger.warning("synced_image is None")
             time.sleep(0.5)
             continue
         def log_to_rerun(synced_image: SyncedImageFrame):
@@ -152,4 +156,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     main()

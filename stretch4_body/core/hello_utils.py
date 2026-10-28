@@ -4,6 +4,7 @@ import os
 import pwd
 import time
 import logging
+import logging.handlers
 import numpy as np
 import sys
 import signal
@@ -20,7 +21,7 @@ from colorama import Fore, Back, Style, init
 import psutil
 import click
 
-from stretch4_body.utils.file_access_utils import acquire_lock_if_available, release_lock, setup_shared_directory
+from stretch4_body.utils.file_access_utils import acquire_lock, acquire_lock_if_available, release_lock, setup_shared_directory
 
 def print_stretch_re_use():
     print("For use with S T R E T C H (R) from Hello Robot Inc.")
@@ -810,16 +811,40 @@ def rotation_3x3_matrix(theta):
                      [0            , 0,              1]])
 
 
+
 def get_sounds_dir():
     return str(pathlib.Path(__file__).parent.parent.absolute() / 'media')
 
 
-def play_sound(filename,player='aplay'):
+_sounds_playing = {}
+
+def play_sound(filename, player='aplay', stop_current_playing: bool = True):
     if not os.path.exists(filename):
         print(f"Failed to play sound {filename}: File not found")
         return
+
+    # Clean up sounds that have finished playing
+    for f, proc in list(_sounds_playing.items()):
+        if proc.poll() is not None:
+            del _sounds_playing[f]
+
+    sound_key = os.path.abspath(filename)
+    if (sound_key in _sounds_playing and _sounds_playing[sound_key].poll() is None) or \
+       (filename in _sounds_playing and _sounds_playing[filename].poll() is None):
+        return
+
+    if stop_current_playing:
+        for f, proc in list(_sounds_playing.items()):
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            del _sounds_playing[f]
+
     try:
-        subprocess.Popen([player, filename], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        proc = subprocess.Popen([player, filename], stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        _sounds_playing[sound_key] = proc
     except Exception as e:
         print(f"Failed to play sound {filename}: {e}")
 
@@ -907,6 +932,64 @@ class HelloLoggerFile(logging.Formatter):
             except TypeError:
                 formatter = logging.Formatter(self.base_fmt, self.datefmt, self.style_char)
         return formatter.format(record)
+
+class MultiProcessRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """
+    A RotatingFileHandler that the server's processes can share. A lock file serializes writes and rollovers across processes, the size is read from
+    the file rather than this process's stream position, and a process reopens the log when it
+    finds that another process has rotated it.
+    """
+    def __init__(self, filename, *args, **kwargs):
+        super().__init__(filename, *args, **kwargs)
+        # Hidden, so it doesn't match the 'stretch_body_server.log*' globs that collect the logs
+        self._lock_path = os.path.join(os.path.dirname(self.baseFilename),
+                                       '.' + os.path.basename(self.baseFilename) + '.lock')
+        self._emitting = False
+
+    def emit(self, record):
+        if self._emitting:
+            # Re-entered while holding the lock, e.g. handleError() writing to a stderr that is
+            # routed back into logging. Locking again would wait on our own lock forever.
+            super().emit(record)
+            return
+
+        # acquire_lock() opens the lock file afresh each time (so forked processes never share
+        # it) and makes it 0o666, so every user's processes can take it
+        try:
+            locked = acquire_lock(self._lock_path, blocking=True)
+        except OSError:
+            locked = False # Can't open the lock file: log anyway, without serializing
+        self._emitting = True
+        try:
+            self._reopen_if_rotated()
+            super().emit(record)
+        except Exception:
+            self.handleError(record)
+        finally:
+            self._emitting = False
+            if locked:
+                release_lock(self._lock_path)
+
+    def _reopen_if_rotated(self):
+        if self.stream is None:
+            return
+        try:
+            current = os.stat(self.baseFilename)
+            ours = os.fstat(self.stream.fileno())
+            rotated = (current.st_dev, current.st_ino) != (ours.st_dev, ours.st_ino)
+        except FileNotFoundError:
+            rotated = True # Rotated away, or archived: start the file again
+        if rotated:
+            self.stream.close()
+            self.stream = self._open()
+
+    def shouldRollover(self, record):
+        if self.stream is None:
+            self.stream = self._open()
+        if self.maxBytes <= 0:
+            return False
+        size = os.fstat(self.stream.fileno()).st_size
+        return size > 0 and size + len(self.format(record)) + 1 >= self.maxBytes
 
 class LoggerThrottleFilter(logging.Filter):
     """

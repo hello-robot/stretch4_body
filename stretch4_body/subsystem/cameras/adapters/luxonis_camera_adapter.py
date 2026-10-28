@@ -8,7 +8,10 @@ import numpy as np
 import depthai as dai
 import logging
 
-from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameraConfig, RGBCameras
+logger = logging.getLogger(__name__)
+
+from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
+from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.adapters.camera_adapter import CameraAdapter
 from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame
 
@@ -26,7 +29,7 @@ def _load_cache():
             with open(CACHE_FILE_PATH, 'r') as f:
                 return json.load(f)
     except Exception as e:
-        print(f"Warning: Failed to load device cache: {e}")
+        logger.warning(f"Failed to load device cache: {e}")
     return {}
 
 def _save_cache(cache_data):
@@ -34,15 +37,15 @@ def _save_cache(cache_data):
         with open(CACHE_FILE_PATH, 'w') as f:
             json.dump(cache_data, f)
     except Exception as e:
-        print(f"Warning: Failed to save device cache: {e}")
+        logger.warning(f"Failed to save device cache: {e}")
 
 def clear_device_cache():
     try:
         if os.path.exists(CACHE_FILE_PATH):
             os.remove(CACHE_FILE_PATH)
-            print(f"Cleared cache at {CACHE_FILE_PATH}")
+            logger.info(f"Cleared cache at {CACHE_FILE_PATH}")
     except Exception as e:
-        print(f"Warning: Failed to clear device cache: {e}")
+        logger.warning(f"Failed to clear device cache: {e}")
 
 def get_device_port_by_product_name(product_name:str):
     """When multiple Luxonis cameras are connected, we should query their serial number to use them."""
@@ -59,7 +62,7 @@ def get_device_port_by_product_name(product_name:str):
             # Check expiry
             if current_time - cached_device.get("timestamp", 0) <= CACHE_EXPIRY_SECONDS:
                 if cached_device.get("product_name") == product_name:
-                    print(f"Found cached device for {product_name=}")
+                    logger.info(f"Found cached device for {product_name=}")
                     return info.name
 
     # If not found in cache, fallback and update cache
@@ -71,7 +74,7 @@ def get_device_port_by_product_name(product_name:str):
 
         with dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=info.deviceId) as device:
             actual_product_name = device.getProductName()
-            print(f"Found device {actual_product_name}. Looking for {product_name=}")
+            logger.info(f"Found device {actual_product_name}. Looking for {product_name=}")
             
             cache_data[info.deviceId] = {
                 "product_name": actual_product_name,
@@ -95,6 +98,8 @@ class LuxonisCameraAdapter(CameraAdapter):
 
     @staticmethod
     def get_depthai_camera_socket(camera_type: RGBCameras):
+        # A compressed variant is the same physical sensor on the same socket.
+        camera_type = camera_type.base
         if camera_type == RGBCameras.head_left:
             return dai.CameraBoardSocket.CAM_C
         if camera_type == RGBCameras.head_right:
@@ -110,7 +115,7 @@ class LuxonisCameraAdapter(CameraAdapter):
         raise Exception(f"{camera_type} is not supported as a Luxonis device.")
 
     @staticmethod
-    def create_camera_node(pipeline: dai.Pipeline, camera_config: RGBCameraConfig) -> tuple[dai.node.Camera, dai.Node.Output]:
+    def create_camera_node(pipeline: dai.Pipeline, camera_config: RGBCameraConfig) -> tuple[dai.node.Camera, dai.Node.Output, dai.Node.Output|None]:
         """
         Takes a dai.Pipeline reference and adds a camera node to it.
         """
@@ -121,7 +126,7 @@ class LuxonisCameraAdapter(CameraAdapter):
         buffer_size = camera_config.buffer_size
         fps = camera_config.fps
         node = pipeline.create(dai.node.Camera)
-        node.setNumFramesPools(isp=buffer_size, raw=buffer_size, imgmanip=buffer_size)
+        # node.setNumFramesPools(isp=buffer_size, raw=buffer_size, imgmanip=buffer_size)
         node.setSensorType(dai.CameraSensorType.COLOR)
         node.build(boardSocket=board_socket, sensorFps=fps)
 
@@ -145,10 +150,11 @@ class LuxonisCameraAdapter(CameraAdapter):
             enableUndistortion=False,
         )
 
-        print("camera_config:", camera_config)
+        logger.info(f"camera_config: {camera_config}")
+        camera_output_compressed = None
         if camera_config.is_compressed:
             videoEncoder = pipeline.create(dai.node.VideoEncoder)
-            videoEncoder.setNumFramesPool(buffer_size)
+            # videoEncoder.setNumFramesPool(buffer_size)
             videoEncoder.build(
                 camera_output, 
                 frameRate=fps, 
@@ -156,9 +162,9 @@ class LuxonisCameraAdapter(CameraAdapter):
                 lossless=camera_config.is_lossless, 
                 quality=camera_config.jpeg_quality
             )
-            camera_output = videoEncoder.bitstream
+            camera_output_compressed = videoEncoder.bitstream
 
-        return node, camera_output
+        return node, camera_output, camera_output_compressed
 
     @staticmethod
     def create_pipeline(luxonis_device_product_name:str) -> tuple[dai.Pipeline, dai.Device]:
@@ -166,32 +172,14 @@ class LuxonisCameraAdapter(CameraAdapter):
         device = dai.Device(maxUsbSpeed=dai.UsbSpeed.SUPER_PLUS, nameOrDeviceId=device_port)
         pipeline = dai.Pipeline(defaultDevice=device)
 
-        print("DeviceID:", device.getDeviceInfo().getDeviceId())
-        print("USB speed:", device.getUsbSpeed())
-        print("Connected cameras:", device.getConnectedCameras())
+        logger.info(f"DeviceID: {device.getDeviceInfo().getDeviceId()}")
+        logger.info(f"USB Port: {device_port}")
+        logger.info(f"USB speed: {device.getUsbSpeed()}")
+        logger.info(f"Connected cameras: {device.getConnectedCameras()}")
 
         pipeline.setXLinkChunkSize(0)
 
         return pipeline, device
-    
-    @staticmethod
-    def create_rgbd_node(pipeline: dai.Pipeline, left_rgb_output: dai.Node.Output, right_rgb_out: dai.Node.Output):
-
-        stereo = pipeline.create(dai.node.StereoDepth).build(left_rgb_output, right_rgb_out)
-        rgbd = pipeline.create(dai.node.RGBD)
-
-        stereo.setRectifyEdgeFillColor(0)
-        stereo.enableDistortionCorrection(True)
-        # https://docs.luxonis.com/software-v3/depthai/depthai-components/nodes/stereo_depth
-        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ROBOTICS)
-        stereo.initialConfig.postProcessing.thresholdFilter.maxRange = 1000 * 5 # in mm
-        rgbd.setDepthUnits(dai.StereoDepthConfig.AlgorithmControl.DepthUnit.METER)
-
-        stereo.syncedLeft.link(rgbd.inColor)
-        stereo.depth.link(rgbd.inDepth)
-        left_rgb_output.link(stereo.inputAlignTo)
-
-        return stereo, rgbd
 
     def is_open(self):
         return self.pipeline is not None and self.device is not None and self.pipeline.isRunning() and not self.device.isClosed()
@@ -200,11 +188,13 @@ class LuxonisCameraAdapter(CameraAdapter):
         self.pipeline, self.device = LuxonisCameraAdapter.create_pipeline(self.camera_config.camera_device)
         self.camera = self.pipeline
 
-        self.camera_node, node_output = LuxonisCameraAdapter.create_camera_node(
+        self.camera_node, node_output, node_output_compressed = LuxonisCameraAdapter.create_camera_node(
             pipeline=self.pipeline, camera_config=self.camera_config
         )
 
-        self.output_queue = node_output.createOutputQueue(maxSize=1)
+        output_node = node_output_compressed if node_output_compressed is not None else node_output
+
+        self.output_queue = output_node.createOutputQueue(maxSize=1, blocking=False)
         self.input_queue = self.camera_node.inputControl.createInputQueue()
 
         try:
@@ -258,38 +248,15 @@ class LuxonisCameraAdapter(CameraAdapter):
 
     @staticmethod
     def get_frame_from_output_queue_no_block(
-        output_queue: dai.MessageQueue,
-        timeout: float = 1/120
+        output_queue: dai.MessageQueue
     ):
         while True:
-            message: dai.ImgFrame | None = output_queue.get(timeout=timeout)
-            if message:
+            message: dai.ImgFrame | None = output_queue.tryGet()
+            if message is not None:
                 yield LuxonisCameraAdapter.dai_message_to_image_frame(message)
             else:
                 yield None
 
-
-    @staticmethod
-    def get_pointcloud_from_output_queue(
-        output_queue: dai.MessageQueue
-    ):
-        while True:
-            message = output_queue.get()
-            if message:
-                # time_stamp = time.monotonic()
-                # https://docs.luxonis.com/hardware/platform/deploy/frame-sync/
-                # time_stamp = message.getTimestamp().total_seconds() # Timestamp synced with the host computer clock
-                sequence_number = message.getSequenceNum()
-                points, colors = message.getPointsRGB()
-
-                # latencyMs = (dai.Clock.now() - message.getTimestamp()).total_seconds() * 1000
-                # diffs = np.append(diffs, latencyMs)
-                # print(f"Latency: {latencyMs} ms")
-
-                # yield color_image, time_stamp
-                yield points, colors, sequence_number
-
-            # print(f"Dropped frame {output_queue.getName()}")
 
     def get_frames(self):
         if not self.is_open():
@@ -306,7 +273,7 @@ class LuxonisCameraAdapter(CameraAdapter):
     def focus_roi(self, roi: list[int], camera_type: RGBCameras | None = None):
         if not hasattr(self, 'input_queue'):
             return
-        print(f"Setting roi {roi} for {camera_type.name}")
+        logger.info(f"Setting roi {roi} for {camera_type.name}")
         ctrl = dai.CameraControl()
         ctrl.setAutoExposureRegion(*roi)
         ctrl.setAutoFocusRegion(*roi)

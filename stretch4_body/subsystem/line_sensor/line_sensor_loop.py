@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
+import os
 import time
+import uuid
 from typing import TypedDict
+import numpy as np
 from stretch4_body.core.device import Device
 from multiprocessing import Process, Event
 from stretch4_body.core.worker_loop import *
+import stretch4_body.core.hello_utils as hu
+from stretch4_body.subsystem.line_sensor import calibration, calibration_store
 from stretch4_body.subsystem.line_sensor.pixart_j3_reader import PixartJ3Reader
 
 # ###########################################################################################
@@ -18,20 +23,38 @@ def _cb_line_sensor_unpause(lsa):
     return True
 
 def _cb_line_sensor_loop_step(pjr, q_cmd_in, status_out):
+    """Publish the reader status, every time anything moved.
+
+    """
+    while q_cmd_in.qsize():
+        try:
+            cmd = q_cmd_in.get_nowait()
+            subsystem, method, cmd_id, args, kwargs = cmd
+            getattr(pjr, method)(*args, **kwargs)
+        except queue.Empty:
+            break
+        except AttributeError:
+            print(f'LineSensorLoop: no such reader command: {cmd}')
+        except Exception as e:
+            # A bad command must not take the reader down with it.
+            print(f'LineSensorLoop: command {cmd} failed: {e}')
     if pjr.step():
         status_out.update(pjr.status)
-    # status_aux_out.update(lsa.status_aux)
+    status_out['health'] = pjr.health()
     return True
 
 # ###########################################################################################
 
-def line_sensor_loop(do_exit, rate_hz, q_admin, q_cmd, q_status,bus_sensor_map):
+def line_sensor_loop(do_exit, rate_hz, q_admin, q_cmd, q_status, bus_sensor_map,
+                     flip_range_ordering, report_num):
     """
     Do line sensor DAQ and model updates in its own process as can take 100% CPU
     Run at a high rate (100hz assuming that every 2 or 3 cycles all sensor models will be updated,
     as the sensor DAQ is asynchronous, at 30hz, to this loop..
     """
-    pjr = PixartJ3Reader(verbose=False,bus_sensor_map=bus_sensor_map)
+    pjr = PixartJ3Reader(verbose=False, bus_sensor_map=bus_sensor_map,
+                         flip_range_ordering=flip_range_ordering,
+                         report_num=report_num)
     if pjr.startup():
         worker_loop(
             loop_name='line_sensor_loop',
@@ -60,11 +83,24 @@ class LineSensorLoop(Device):
     def __init__(self):
         Device.__init__(self, 'line_sensor_loop')
         self.pjr_process = None
-        self.q_cmd = hello_utils.CircularMultiprocessingQueue(3)
+        # Commands get room (matching end_of_arm), status does not.
+        self.q_cmd = hello_utils.CircularMultiprocessingQueue(100)
         self.q_status = hello_utils.CircularMultiprocessingQueue(3)
         self.q_admin = hello_utils.CircularMultiprocessingQueue(3)
-        self.status: "LineSensorLoopStatus" = {'last_frame_time':0, 'rate_hz': 0}
+        self.n_bins = int(self.params['line_sensor_geometry']['pixart_report_num'])
+        self.status: "LineSensorLoopStatus" = {
+            'last_frame_time': 0, 'rate_hz': 0,
+            'health': {'streaming': False, 'port_open': False, 'rate_hz': 0,
+                       'last_frame_time': 0, 'disabled_sensors': [],
+                       'sensors_dead': list(self.params['sensor_names']),
+                       'decode_errors': 0, 'frame_advance_err': 0,
+                       'frame_not_full_err': 0, 'not_six_sensors_err': 0,
+                       'reader_restarts': 0},
+            'calibration': {'loaded': [], 'rejected': {}, 'id': '',
+                            'n_bins': self.n_bins}}
         self.status_aux = {}
+ 
+        self._tares = {}
         self.do_exit = Event()
         self.n_rate_log = 0
         self.rate_log={}
@@ -72,7 +108,12 @@ class LineSensorLoop(Device):
         for sn in self.params['sensor_names']:
             self.rate_log[sn] = []
             self.frame_id_last[sn]=0
-            self.status[sn]={'frame_id':0}
+            self.status[sn] = {
+                'ts_last_read': 0, 'frame_id': 0, 'rate_hz': 0,
+                'ranges': np.zeros(0, dtype=np.float64),
+                'codes': np.zeros(0, dtype=np.uint8),
+                'n_no_return': 0, 'n_beyond_limit': 0, 'enabled': True,
+                'missed_frames': PixartJ3Reader.DEAD_AFTER_MISSED_FRAMES}
 
     def startup(self):
         """
@@ -83,40 +124,175 @@ class LineSensorLoop(Device):
         if self.pjr_process is None:
             self.pjr_process = Process(
                 target=line_sensor_loop,
-                args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin, self.q_cmd, self.q_status,self.params['bus_sensor_map'],)
+                args=(self.do_exit, self.params['loop_rate_Hz'], self.q_admin,
+                      self.q_cmd, self.q_status, self.params['bus_sensor_map'],
+                      self.params['flip_range_ordering'],
+                      self.params['line_sensor_geometry']['pixart_report_num'],)
             )
             self.pjr_process.start()
             #os.system("taskset -p -c %d %d" % (self.params['cpu_affinity'], self.pjr_process.pid)) #Assign process to core
             
-            # Wait for system to start posting status
+            # Wait for system to start posting status.
             ts=time.time()
             while self.status['last_frame_time']==0 and not timeout:
-                self.status.update(self.q_status.get(block=True, timeout=0.1))
+                try:
+                    self.status.update(self.q_status.get(block=True, timeout=0.1))
+                except queue.Empty:
+                    pass
                 if time.time()-ts>2.0:
                     timeout=True
 
 
         if timeout:
             self.logger.error('Timed out waiting for LineSensorLoop')
+            self._terminate_process()
+        self.load_calibration()
         return not timeout
+
+    # -- calibration -------------------------------------------------------
+
+    def calibration_base_dir(self):
+        return os.path.join(hu.get_fleet_directory(), 'calibration_line_sensors')
+
+    def load_calibration(self, verbose=True):
+        """Load, validate and publish the tares.
+
+        A refusal leaves that sensor uncalibrated and says why. It is never
+        downgraded to a warning: running uncalibrated is recoverable, running
+        on a tare from a different configuration is not.
+        """
+        base = self.calibration_base_dir()
+        block = {'loaded': [], 'rejected': {}, 'n_bins': self.n_bins,
+                 'base_dir': base}
+        self._tares = {}
+        flip = bool(self.params['flip_range_ordering'])
+        ideal = calibration.ideal_range_m(self.params)
+        for name in self.params['sensor_names']:
+            path = calibration_store.tare_path(base, name)
+            try:
+                tare = calibration_store.load_validated_tare(
+                    path, self.n_bins, flip, ideal)
+
+                self._tares[name] = (tare.offsets, tare.valid_mask,
+                                     tare.null_rate_per_bin)
+                entry = calibration.pack_tare(tare.offsets, tare.valid_mask,
+                                              tare.null_rate_per_bin)
+                entry.update({
+                    'timestamp': tare.timestamp,
+                    'session_id': tare.session_id,
+                    'ideal_range_m': float(np.mean(tare.ideal_range)),
+                    'n_valid_bins': int(tare.valid_mask.sum()),
+                })
+                block[name] = entry
+                block['loaded'].append(name)
+            except Exception as exc:
+                reason = getattr(exc, 'reason', exc.__class__.__name__)
+                block['rejected'][name] = f'{reason}: {getattr(exc, "detail", exc)}'
+                if verbose:
+                    self.logger.warning('%s: NO TARE (%s)', name, reason)
+        # An id over what was actually loaded, so a client can cache the
+        # unpacked arrays and notice a recalibration without diffing 320-point
+        # arrays on every status message.
+        block['id'] = ';'.join(f'{n}@{block[n]["timestamp"]}'
+                               for n in block['loaded'])
+        self.status['calibration'] = block
+        if verbose:
+            self.logger.info('Line sensor calibration: %d/%d sensors loaded',
+                             len(block['loaded']), len(self.params['sensor_names']))
+        return block
+
+    # -- tare accessors ----------------------------------------------------
+    #
+    # Uses the same five names LineSensorLoopClient exposes for a tool
+    # driving this object directly ( with no body server) 
+
+    def calibrated_sensors(self):
+        """Names with a tare this loop accepted."""
+        return sorted(self._tares)
+
+    def uncalibrated_sensors(self):
+        """{name: why its tare was refused}."""
+        return dict((self.status.get('calibration') or {}).get('rejected', {}))
+
+    def bin_reliable(self):
+        """{name: bool array} -- bins whose tare is trustworthy."""
+        return {n: v[1] for n, v in self._tares.items()}
+
+    def bin_null_rate(self):
+        """{name: float array} -- per-bin no-return rate seen on clear floor."""
+        return {n: v[2] for n, v in self._tares.items()}
+
+    def apply_tare(self, ranges, sensor_name, codes=None):
+        """Tare one sensor's ranges. An uncalibrated sensor passes through."""
+        entry = self._tares.get(sensor_name)
+        if entry is None:
+            return np.asarray(ranges, dtype=np.float64)
+        offsets, valid_mask, _ = entry
+        return calibration.apply_tare_array(ranges, offsets, valid_mask, codes)
 
     def _manage_ctrlC(self, *args):
         # If you have multiple event processing processes, set each Event.
         self.do_exit.set()
 
+    JOIN_TIMEOUT_S = 2.0
+
+    def _terminate_process(self, timeout_s=None):
+
+        p = self.pjr_process
+        if p is None:
+            return
+        if timeout_s is None:
+            timeout_s = self.JOIN_TIMEOUT_S
+        p.join(timeout=timeout_s)
+        if p.is_alive():
+            self.logger.warning('LineSensorLoop did not exit on request -- terminating')
+            p.terminate()
+            p.join(timeout=1.0)
+        if p.is_alive():
+            self.logger.error('LineSensorLoop ignored SIGTERM -- killing')
+            p.kill()
+            p.join(timeout=1.0)
+        self.pjr_process = None
+
     def stop(self):
         original_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, self._manage_ctrlC)
         self.q_admin.put('exit')
-        if self.pjr_process is not None:
-            self.pjr_process.join()
-            self.pjr_process = None
-            
-
-            
+        self._terminate_process()
         signal.signal(signal.SIGINT, original_sigint)
 
+    # -- runtime control ---------------------------------------------------
+    #
+    # The server's generic dispatch calls these directly on this object (the
+    # parent process). The reader lives in the child, so each one forwards
+    # onto q_cmd, which the step callback drains. 
+
+    def _queue_reader_command(self, method, *args, **kwargs):
+        self.q_cmd.put(['line_sensor_loop', method, uuid.uuid1(), args, kwargs])
+
+    def set_streaming(self, on):
+        """Pause or resume decoding without restarting anything.
+
+        Turning this off removes cliff detection. It is reported in
+        status['health']['streaming'] so a consumer can refuse to drive, and
+        it is deliberately not persisted -- a restart always comes up
+        streaming.
+        """
+        self.logger.warning('Line sensors streaming -> %s',
+                            'ON' if on else 'OFF (cliff detection is off)')
+        self._queue_reader_command('set_streaming', bool(on))
+
+    def set_sensor_enabled(self, sensor_name, on):
+        """Turn one sensor's decoding on or off. Not persisted."""
+        if sensor_name not in self.params['sensor_names']:
+            raise ValueError(f'unknown sensor: {sensor_name!r}')
+        self.logger.warning('%s -> %s', sensor_name,
+                            'ENABLED' if on else 'DISABLED')
+        self._queue_reader_command('set_sensor_enabled', sensor_name, bool(on))
+
     def push_command(self, blocking=False):
+        """No-op: commands reach the reader through q_cmd as they are
+        dispatched, so there is nothing to flush at the end of a cycle."""
         pass
 
 
@@ -143,12 +319,9 @@ class LineSensorLoop(Device):
 
         while self.q_status.qsize():
             try:
+                # flip_range_ordering is applied at decode in PixartJ3Reader;
+                # messages arrive here in final bin order.
                 um_status=self.q_status.get(block=False)
-                #print(um_status.keys())
-                if self.params['flip_range_ordering']:
-                    for sn in self.params['sensor_names']:
-                        if sn in um_status:
-                            um_status[sn]['ranges']=um_status[sn]['ranges'][::-1]
                 self.status.update(um_status)
                 if self.n_rate_log:
                     for sn in self.params['sensor_names']:

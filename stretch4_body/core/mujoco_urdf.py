@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import mujoco
 import mujoco.viewer
 from stretch4_urdf import get_urdf
 
 from stretch4_body.core.device import Device
-from stretch4_body.subsystem.end_of_arm.gripper_conversion import *
 from stretch4_body.core.robot_params import RobotParams
 
 @dataclass
@@ -31,9 +30,15 @@ class MujocoJointStates:
     finger_left_joint: float = 0.0
     finger_right_joint: float = 0.0
 
+    # User-tool joints the fixed fields don't cover; consumers skip names
+    # absent from the loaded model
+    custom_joints: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, float]:
-        return asdict(self)
+        d = asdict(self)
+        d.pop('custom_joints', None)
+        d.update(self.custom_joints)
+        return d
 
     def __repr__(self) -> str:
         fields = []
@@ -47,7 +52,8 @@ class MujocoJointStates:
     @staticmethod
     def from_urdf_joint_state(state: dict, robot_params=None):
         """
-        Take in urdf joint state and convert to mujoco joint state convention
+        Take in urdf joint state and convert to mujoco joint state convention.
+        robot_params is accepted for backwards compatibility and unused.
         eg state =
         {'lift_joint': 0.11316090153133451, 'arm_l1_joint': 0.0014814796174020114,
         'arm_l2_joint': 0.0014814796174020114, 'arm_l3_joint': 0.0014814796174020114,
@@ -55,23 +61,17 @@ class MujocoJointStates:
         'wrist_pitch_joint': 0.12425244381873693, 'wrist_roll_joint': 0.07363107781851078}
 
         """
-        if robot_params is None:
-            _, robot_params = RobotParams.get_params()
+        # A tool's joints arrive here already in urdf convention, mapped from raw
+        # robot status by get_urdf_joint_configuration
+        jgfl = state.get("gripper_finger_left_joint")
+        jgfr = state.get("gripper_finger_right_joint")
+        jfl = state.get("finger_left_joint")
+        jfr = state.get("finger_right_joint")
 
-        jgfl = 0.0
-        jgfr = 0.0
-        jfl = 0.0
-        jfr = 0.0
-        if robot_params['robot']['tool']=='eoa_wrist_dw4_tool_sg4':
-            jgfl = state.get("gripper_finger_left_joint")
-            jgfr = state.get("gripper_finger_right_joint")
-            if jgfl is None: jgfl = 0.0
-            if jgfr is None: jgfr = 0.0
-        elif robot_params['robot']['tool']=='eoa_wrist_dw4_tool_pg4':
-            jfl = state.get("finger_left_joint")
-            jfr = state.get("finger_right_joint")
-            if jfl is None: jfl = 0.0
-            if jfr is None: jfr = 0.0
+        if jgfl is None: jgfl = 0.0
+        if jgfr is None: jgfr = 0.0
+        if jfl is None: jfl = 0.0
+        if jfr is None: jfr = 0.0
 
         mujoco_state = MujocoJointStates(
             lift_joint=state.get("lift_joint", 0.0),
@@ -88,6 +88,11 @@ class MujocoJointStates:
             finger_left_joint=jfl,
             finger_right_joint=jfr,
         )
+
+        known_fields = MujocoJointStates.__dataclass_fields__.keys()
+        for k, v in state.items():
+            if k not in known_fields and isinstance(v, (int, float)):
+                mujoco_state.custom_joints[k] = v
         return mujoco_state
 
 

@@ -42,7 +42,7 @@ stretch_status [OPTIONS]
 ```
 
 * **Live Mode**: Continuously pulls current robot status and streams it. Defaults to printing to console.
-* **History Mode (`--history <minutes>`)**: Reads saved telemetry JSON files and replays them.
+* **Replay Saved Runs (`--import <zip_file>`)**: Reads saved telemetry ZIP files and replays them.
 * **Visualization Mode (`--rerun`)**: Opens Rerun to plot telemetry dynamically while also printing to console.
 * **Field Filtering (`--fields <prefixes>`)**: Limits the displayed or plotted telemetry to specific joints or components (e.g., `robot.lift` or `robot.power_periph.voltage`).
 * **Interactive Menu**: If `--fields` is omitted, the tool opens an interactive console menu allowing you to choose joints or subsystems to visualize. Pressing Enter with no selection defaults to `robot.server`, `robot.routines`, and all joint positions.
@@ -65,25 +65,42 @@ stretch_status --rate 30 --rerun
 ```
 This will open the Rerun UI interface, showing active time-series graphs of scalar and boolean data.
 
-### 3. Replaying Offline Telemetry History
-To graph the last 15 minutes of status history in Rerun:
+### 3. Replaying Saved Telemetry Runs
+To replay a saved telemetry ZIP archive and graph it in Rerun:
 ```bash
-stretch_status --history 15 --rerun
+stretch_status --import ~/Desktop/stretch_status_2026-05-31.zip --rerun
 ```
 
-### 4. Interactive Console Inspection (No GUI)
-To interactively view specific subsystem values directly in the console:
+### 4. Advanced Field Filtering and Exporting
+To export all active telemetry logs to a ZIP archive:
 ```bash
-stretch_status --history 10
-```
-*Select a subsystem number from the menu (e.g., `robot.lift` or `robot.power_periph`), and the terminal will print out all key-value states.*
-
-### 5. Advanced Field Filtering and Exporting
-To export the last 30 minutes of telemetry to a ZIP archive:
-```bash
-stretch_status --history 30 --export ~/Desktop/
+stretch_status --export ~/Desktop/
 ```
 To import and view a saved ZIP run, showing only the lift and base joints:
 ```bash
 stretch_status --import ~/Desktop/stretch_status_2026-05-31.zip --fields robot.lift robot.omnibase
 ```
+
+### 5. Importing to Rerun and Filtering by Seconds Offset
+If you want to import the **entire** log file (all telemetry fields) and visualize it in **Rerun**, specify the `--rerun` option along with `--import`:
+```bash
+stretch_status --import ~/Desktop/stretch_status_2026-05-31.zip --rerun
+```
+*Note: Rerun operates with a default memory cap of 5GB. For very large imported logs, older frames may be evicted to stay within the limit.*
+
+You can also restrict the import range using `--start_seconds_offset` and/or `--end_seconds_offset`. These offset arguments specify the number of seconds relative to the beginning and end of the import data stream:
+```bash
+# Skip the first 10 seconds and stop 20 seconds before the end of the imported log
+stretch_status --import ~/Desktop/stretch_status_2026-05-31.zip --rerun --start_seconds_offset 10 --end_seconds_offset 20
+```
+
+### 6. Custom 2D X-Y Scatter Plots in Rerun
+To plot custom coordinates (such as motor current on the Y-axis against velocity on the X-axis) as a 2D scatter plot in Rerun, use `--fields_x` and `--fields_y`:
+```bash
+stretch_status \
+  --fields robot.omnibase.x_vel robot.omnibase.y_vel robot.omnibase.theta_vel \
+  --fields_y robot.omnibase.wheel_0.current robot.omnibase.wheel_1.current robot.omnibase.wheel_2.current \
+  --fields_x robot.omnibase.wheel_0.vel robot.omnibase.wheel_1.vel robot.omnibase.wheel_2.vel \
+  --rate 1 --rerun
+```
+*(Both `--fields_x` and `--fields_y` must be of matching length, and refer to valid scalar leaf fields).*
