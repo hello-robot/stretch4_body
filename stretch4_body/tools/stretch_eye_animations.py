@@ -3,7 +3,6 @@ from __future__ import print_function
 import sys
 import argparse
 import time
-import select
 import stretch4_body.core.hello_utils as hu
 from stretch4_body.subsystem.power_periph import PowerPeriphDefn
 
