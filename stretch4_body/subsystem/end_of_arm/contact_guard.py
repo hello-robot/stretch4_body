@@ -98,7 +98,9 @@ class ContactGuard:
         if not self._armed or not hi:
             self._t_hi = None
             return None
-        if self._t_hi is None:  # Mark where the current first rose: that is the contact position
+        if self._t_hi is None or (d > 0 and pos - self._pos_hi > self.MOTION_MARGIN_RAD):
+            # Mark where the current first rose: that is the contact position. While opening, high current
+            # only counts once the gripper stops advancing, so free motion can't trip the lower threshold.
             self._t_hi = now
             self._pos_hi = pos
         if now - self._t_hi < contact_s:
