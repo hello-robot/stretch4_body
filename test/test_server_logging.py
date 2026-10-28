@@ -3,7 +3,7 @@ import os
 import tempfile
 import logging
 from logging.handlers import RotatingFileHandler
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 # Important: these must be imported after HELLO_FLEET_PATH is set
 from stretch4_body.tools import stretch_body_server as sbs
@@ -131,6 +131,20 @@ class TestServerLogging(unittest.TestCase):
             sbs.tail_log_file(self.log_file)
 
         self.assertIn("line A", read_lines)
+
+    def test_launch_crash_exits_nonzero(self):
+        """
+        A crash in the server exits non-zero so systemd restarts it, and the
+        session logs are still archived.
+        """
+        args = Mock(profile=False)
+        with patch.object(sbs, "is_server_active", return_value=False), \
+             patch.object(sbs.robot_server, "run_server", side_effect=IndexError("array index out of range")), \
+             patch.object(sbs, "archive_session_logs") as archive:
+            with self.assertRaises(SystemExit) as cm:
+                sbs._launch(None, args)
+        self.assertEqual(cm.exception.code, 1)
+        archive.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

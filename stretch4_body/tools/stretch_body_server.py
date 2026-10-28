@@ -584,7 +584,8 @@ StretchBodyClient: You can run `stretch_body_server --kill` to forcefully end th
             os.environ['STRETCH_PROFILE'] = '1'
         robot_server.run_server()
     except Exception as e: 
-        logger.error(f"Unexpected error while running stretch body server: {e}")
+        logger.exception(f"Unexpected error while running stretch body server: {e}")
+        sys.exit(1)
     finally:
         archive_session_logs()
 
