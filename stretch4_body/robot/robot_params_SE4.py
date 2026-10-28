@@ -285,8 +285,8 @@ SE4_parallel_gripper_DW4={
             'contact_s': 0.06,  # sustained this long
             'squeeze_rad': 0.1,  # Virtual goal past contact
             # Detect stalling while opening (eg against the open hardstop) and hold just short of it.
-            'open_contact_mA': 100.0,  # Current while opening that means contact
-            'open_contact_s': 0.5,  # sustained this long
+            'open_contact_mA': 60.0,  # Current while opening that means contact
+            'open_contact_s': 0.15,  # sustained this long without the gripper advancing
             'open_backoff_rad': 0.02},  # Virtual goal short of contact
         'disable_torque_on_runstop': 0,
         'enable_torque_after_runstop': 1,

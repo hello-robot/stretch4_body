@@ -3,7 +3,7 @@ import pytest
 from stretch4_body.subsystem.end_of_arm.contact_guard import ContactGuard
 
 PARAMS = {'enabled': 1, 'contact_mA': 200.0, 'contact_s': 0.06, 'squeeze_rad': 0.1}
-OPEN_PARAMS = dict(PARAMS, open_contact_mA=100.0, open_contact_s=0.5, open_backoff_rad=0.02)
+OPEN_PARAMS = dict(PARAMS, open_contact_mA=60.0, open_contact_s=0.15, open_backoff_rad=0.02)
 
 
 def make_contact(cg, pos=1.0, t0=0.0):
@@ -127,9 +127,9 @@ def test_contact_after_open_hardstop_still_detected():
 def make_open_contact(cg, pos=1.98, t0=0.0):
     """Open toward a goal past an open hardstop at pos and stall there. Returns the virtual goal."""
     assert cg.filter_goal(2.03) == 2.03
-    for i in range(5):
-        assert cg.step(pos, 150.0, t0 + i * 0.1) is None
-    return cg.step(pos, 150.0, t0 + 0.55)
+    assert cg.step(pos, 150.0, t0) is None
+    assert cg.step(pos, 150.0, t0 + 0.1) is None
+    return cg.step(pos, 150.0, t0 + 0.16)
 
 
 def test_open_stall_holds_short_of_contact():
@@ -221,3 +221,23 @@ def test_close_contact_after_open_contact_still_detected():
     cg.step(1.5, 50.0, 0.8)  # Closing freely
     assert make_contact(cg, pos=1.0, t0=1.0) == pytest.approx(0.9)
     assert cg.contact_dir == -1
+
+
+def test_high_current_while_still_advancing_open_is_not_contact():
+    """Opening with high current (eg a fast move) is not contact while the gripper keeps advancing."""
+    cg = ContactGuard(OPEN_PARAMS)
+    cg.filter_goal(2.0)
+    for i in range(30):
+        assert cg.step(0.5 + i * 0.03, 150.0, i * 0.02) is None
+    assert not cg.in_contact
+
+
+def test_open_stall_detected_after_free_motion_with_high_current():
+    cg = ContactGuard(OPEN_PARAMS)
+    cg.filter_goal(2.0)
+    for i in range(10):  # Opening with high current
+        cg.step(0.5 + i * 0.03, 150.0, i * 0.02)
+    assert cg.step(1.0, 150.0, 0.2) is None  # Blocked here
+    assert cg.step(1.005, 150.0, 0.3) is None  # Creeping, but less than the motion margin
+    assert cg.step(1.01, 150.0, 0.36) == pytest.approx(0.98)
+    assert cg.contact_pos == pytest.approx(1.0)
