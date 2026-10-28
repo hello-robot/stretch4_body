@@ -28,11 +28,28 @@ class RoutineRobotStow(routine.Routine):
 
         return success
 
+    def _is_stowed(self, cfg, lift_tol=0.01, arm_tol=0.025):
+        """
+        True if the lift and arm are already at their stow positions.
+        """
+        checked = False
+        for name, tol in (('lift', lift_tol), ('arm', arm_tol)):
+            if name in self.robot.subsystems:
+                checked = True
+                pos = getattr(self.robot, name).status['pos']
+                if abs(pos - cfg[name]) > tol:
+                    return False
+        return checked
+
     def _run_stow(self,cmd_id,*args, **kwargs):
-        
+
         tool=self.robot_params['robot']['tool']
         cfg=self.robot_params[tool]['stow']
         self.logger.info(f'Stowing robot for tool {tool}')
+
+        if self._is_stowed(cfg):
+            self.logger.info('Robot is already stowed, nothing to do')
+            return True
 
         if 'lift' in self.robot.subsystems:
             pos_lift = cfg.get('lift_prestow', 0.35) # Enough to clear the tool from hitting the base
