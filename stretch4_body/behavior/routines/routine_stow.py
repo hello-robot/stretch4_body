@@ -28,26 +28,13 @@ class RoutineRobotStow(routine.Routine):
 
         return success
 
-    def _is_stowed(self, cfg, lift_tol=0.01, arm_tol=0.025):
-        """
-        True if the lift and arm are already at their stow positions.
-        """
-        checked = False
-        for name, tol in (('lift', lift_tol), ('arm', arm_tol)):
-            if name in self.robot.subsystems:
-                checked = True
-                pos = getattr(self.robot, name).status['pos']
-                if abs(pos - cfg[name]) > tol:
-                    return False
-        return checked
-
     def _run_stow(self,cmd_id,*args, **kwargs):
 
         tool=self.robot_params['robot']['tool']
         cfg=self.robot_params[tool]['stow']
         self.logger.info(f'Stowing robot for tool {tool}')
 
-        if self._is_stowed(cfg):
+        if self.robot.is_stowed():
             self.logger.info('Robot is already stowed, nothing to do')
             return True
 
@@ -95,7 +82,10 @@ class RoutineRobotStow(routine.Routine):
         #     while self.end_of_arm.motors['wrist_yaw'].motor.is_moving():
         #         time.sleep(0.1)
 
-        return True
+        stowed = self.robot.is_stowed()
+        if not stowed:
+            self.logger.warning('Stow finished but the robot is not at its stow positions')
+        return stowed
 
 
 

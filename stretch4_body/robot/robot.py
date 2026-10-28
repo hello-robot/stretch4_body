@@ -151,12 +151,18 @@ class Robot(RobotCore):
         """
         Cause the robot to move to its stow position
         Blocking.
+        Returns True if the robot ends up stowed.
         """
 
 
         tool = self.params['tool']
         cfg = self.robot_params[tool]['stow']
         self.logger.info(f'Stowing robot for tool {tool}')
+
+        self.pull_status()
+        if self.is_stowed():
+            self.logger.info('Robot is already stowed, nothing to do')
+            return True
         pos_lift = cfg['lift']
         arm_pos = cfg['arm']
 
@@ -170,10 +176,6 @@ class Robot(RobotCore):
             while not self.lift.motor.status['near_pos_setpoint'] and time.time() - ts < 4.0:
                 time.sleep(0.1)
 
-
-        if self.get_subsystem('end_of_arm') is not None:
-            # Run pre stow specific to each end of arm
-            self.end_of_arm.pre_stow(self)
 
         if self.get_subsystem('arm') is not None:
             # Bring in arm before bring down
@@ -200,6 +202,11 @@ class Robot(RobotCore):
                 while not self.lift.motor.status['near_pos_setpoint'] and time.time() - ts < 12.0:
                     time.sleep(0.1)
 
+        self.pull_status()
+        stowed = self.is_stowed()
+        if not stowed:
+            self.logger.warning('Stow finished but the robot is not at its stow positions')
+        return stowed
 
 
     def home(self):
