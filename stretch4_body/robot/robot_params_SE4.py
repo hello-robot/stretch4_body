@@ -230,8 +230,8 @@ SE4_parallel_gripper_DW4={
         'pid': [32,32,0],
         'return_delay_time': 0,
         'angular_resolution': 1.0,
-        'phase': 45,#61, #61 for multi-turn, 45 for normal
-        'max_pos_limit': 4095,#0 for multi-turn, 4095 for normal
+        'phase': 61,#61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
         'min_pos_limit': 0,
         'max_load_limit_pct': 48.0,
         'overload_safe': 25.0,
