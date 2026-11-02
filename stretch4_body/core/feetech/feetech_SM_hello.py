@@ -372,11 +372,13 @@ class FeetechSMHello(Device):
             # Always write: a cached/compare-before-write can go stale vs. the servo's SRAM
             v_des = abs(v_des) if v_des is not None else self.params['motion']['default']['vel']
             v_des = min(self.params['motion']['max']['vel'], v_des)
-            self.motor.set_profile_velocity(abs(self.world_rad_to_ticks_per_sec(v_des)))
+            # If 0 is sent to the servo, it requests max or unlimited velocity. Here we clamp to the slowest value the servo can represent instead of sending 0.
+            # If the user intentionally sent 0, this is altered to mean "hold position" in move_to(). If it gets sent to this method though, 0 will default to the servo's "unlimited" vel profile.
+            self.motor.set_profile_velocity(max(1, abs(self.world_rad_to_ticks_per_sec(v_des))))
 
             a_des = abs(a_des) if a_des is not None else self.params['motion']['default']['accel']
             a_des = min(self.params['motion']['max']['accel'], a_des)
-            self.motor.set_profile_acceleration(abs(self.world_rad_to_ticks_per_sec_sec(a_des)))
+            self.motor.set_profile_acceleration(max(1, abs(self.world_rad_to_ticks_per_sec_sec(a_des))))
         except (termios.error, FeetechCommError):
             self.logger.warning('FeetechSMHello communication error during set_motion_params on: %s' % self.name)
             self.comm_errors.add_error(rx=False, gsr=False)
@@ -778,7 +780,7 @@ class FeetechSMHello(Device):
 
         Args:
             x_des: Target joint position in radians.
-            v_des: Optional target joint velocity in radians per second.
+            v_des: Optional target joint velocity in radians per second. A value of 0 holds the current position.
             a_des: Optional target joint acceleration in radians per second squared.
 
         Returns:
@@ -789,6 +791,9 @@ class FeetechSMHello(Device):
             return
         if self.was_runstopped:
             return
+        if v_des is not None and v_des == 0:
+            # Zero velocity means no motion: hold the current position
+            x_des = self.status['pos']
         nretry = 2
         if not self.hw_valid:
             return
