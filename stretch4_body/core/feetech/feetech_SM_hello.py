@@ -792,8 +792,10 @@ class FeetechSMHello(Device):
         if self.was_runstopped:
             return
         if v_des is not None and v_des == 0:
-            # Zero velocity means no motion: hold the current position
-            x_des = self.status['pos']
+            # Zero velocity means no motion: hold the current position. Going through hold_position()
+            # leaves the servo's profile untouched, so no slow residual move is left running
+            self.hold_position()
+            return
         nretry = 2
         if not self.hw_valid:
             return
