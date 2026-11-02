@@ -240,6 +240,7 @@ class RGBCameras(Enum):
                 config_for(RGBCameras.gripper_left),
                 config_for(RGBCameras.gripper_right),
                 enable_pointcloud=enable_pointcloud,
+                stop_event=stop_event,
             )
 
         raise NotImplementedError(f"{self}'s start_synced() method is not implemented.")
