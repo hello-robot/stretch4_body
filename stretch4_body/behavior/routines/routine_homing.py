@@ -213,8 +213,9 @@ class RoutinePrismaticJointHome(RoutineHome):
         self.joint.motor.set_gains()
         self.update_controller()
         if success:
-            self.joint.move_to(x_m=end_pos, req_calibration=False)
-            if not self.wait_until_at_setpoint(self.joint.motor, timeout=10.0, t_ignore=0.5):
+            self.joint.move_to(x_m=end_pos, v_m=v_m, a_m=a_m, req_calibration=False)
+            if not self.wait_until_at_setpoint(self.joint.motor, timeout=10.0, t_ignore=0.5) or \
+                    not self.wait_on_cb(lambda: not self.joint.motor.status['is_mg_moving'], timeout=10.0):
                 self.logger.warning('%s failed to reach final position' % self.joint.name.capitalize())
                 success = False
 
