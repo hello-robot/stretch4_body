@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import logging
 import time
 import psutil
 from stretch4_body.behavior.sentries.sentry import Sentry
@@ -31,7 +32,7 @@ def _cb_temp_loop_step(worker_inst, q_cmd_in, status_out):
 def temp_worker_loop(do_exit, rate_hz, q_admin, q_cmd, q_status):
     # Dummy worker instance as we don't have a complex object
     class CPUTempWorker:
-        pass
+        logger = logging.getLogger('sentry_cpu_temp')
     worker_inst = CPUTempWorker()
     worker_loop(
         loop_name='cpu_temp_loop',
