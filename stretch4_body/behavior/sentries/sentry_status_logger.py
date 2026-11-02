@@ -56,6 +56,9 @@ def writer_daemon(log_dir: str, check_rate: float, do_exit: multiprocessing.Even
 
             # Drop line sensor data entirely for now
             rs.pop('line_sensor_loop', None)
+            # Health is ~a quarter of a status; keep the summary (transitions are in the server log)
+            if 'health' in rs:
+                rs['health'] = {k: rs['health'].get(k) for k in ('level', 'issues', 'notices')}
 
             batch.append(rs)
 
