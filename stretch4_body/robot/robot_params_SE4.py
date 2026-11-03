@@ -1466,6 +1466,9 @@ nominal_params={
         'enabled': 1,
         'check_rate_Hz': 2.0,
         'host_check_period_s': 10.0,
+        'update_check_enabled': 1,
+        'update_check_initial_delay_s': 7200.0,
+        'update_check_period_s': 21600.0,
     },
     ############## SAFE MOTIONS #############################
     'safe_motion_manager': {'controllers': ['safe_motion_overtilt_avoid']},

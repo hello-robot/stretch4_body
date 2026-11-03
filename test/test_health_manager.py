@@ -193,7 +193,7 @@ def test_subsystems_not_on_the_robot_are_not_checked():
     params['robot']['subsystems'] = ['power_periph']
     params['robot']['server']['subsystems'] = []
     groups = {r['group'] for r in hc.run_status_checks(healthy_status(), params, params=PARAMS)}
-    assert groups == {hc.GROUP_POWER, hc.GROUP_ESP32, hc.GROUP_IMU, hc.GROUP_SERVER}
+    assert groups == {hc.GROUP_POWER, hc.GROUP_IMU, hc.GROUP_SERVER}
 
 
 def test_usb_devices(tmp_path):
@@ -321,7 +321,8 @@ def test_manager_summary_is_readable(manager, caplog):
     assert manager.summary().startswith('FAIL: Board Temp')
     assert 'Battery SOC = 15%' in manager.summary()
     assert manager.summary().endswith('; also Not homed: Arm, Lift')
-    assert manager.summary(max_items=1).count('+1 more') == 1  # Issues; the notices are one item
+    assert manager.summary(max_items=1) == ('FAIL: Board Temp (°C) = 200.000 (range [0.00, 80.00]); +1 more; '
+                                          'also Not homed: Arm +1 more')
 
 
 def test_short_text_names_host_results():
@@ -362,3 +363,32 @@ def test_summary_combines_unhomed_joints(manager):
     manager.step(force=True)
     assert manager.status['level'] == hc.OK
     assert manager.summary() == 'OK (Not homed: Arm, ' + ', '.join(st['end_of_arm']) + ')'
+
+
+def test_esp32_is_a_host_check(tmp_path):
+    assert hc.check_esp32(dev_dir=str(tmp_path))[0]['level'] == hc.FAIL
+    (tmp_path / 'hello-esp32').touch()
+    assert hc.check_esp32(dev_dir=str(tmp_path))[0]['level'] == hc.OK
+    assert hc.GROUP_ESP32 in hc.HOST_GROUPS
+
+
+def test_summary_combines_updates(manager):
+    from stretch4_body.behavior.health import software_updates as su
+    ev = {'pip': {'hello-robot-stretch4-body': ('2026.9.11', '2026.11.1')}, 'pypi_reachable': True,
+          'repos': [{'name': 'stretch_ros2', 'status': su.GIT_BEHIND, 'detail': '3 commit(s) behind origin/main',
+                     'command': 'git pull'}],
+          'firmware': {}, 'firmware_reachable': False, 'firmware_command': None}
+    manager._update_results = su.update_results(ev)
+    manager.step(force=True)
+    assert manager.status['level'] == hc.OK
+    assert manager.summary() == 'OK (Updates available: hello-robot-stretch4-body, stretch_ros2)'
+
+
+def test_summary_caps_a_long_group(manager):
+    st = manager.robot.status
+    st['arm']['motor']['pos_calibrated'] = False
+    st['lift']['motor']['pos_calibrated'] = False
+    for js in st['end_of_arm'].values():
+        js['pos_calibrated'] = 0
+    manager.step(force=True)
+    assert manager.summary() == 'OK (Not homed: Arm, Lift, wrist_yaw +1 more)'

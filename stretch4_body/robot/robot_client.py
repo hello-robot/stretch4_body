@@ -566,6 +566,16 @@ class HealthClient(SubsystemClient):
         """States worth knowing that aren't problems, e.g. 'Arm not homed', 'Runstop is active'."""
         return [c for c in self.checks() if c['level'] == 'INFO']
 
+    def updates(self):
+        """
+        The server's last software update check (PyPI, ROS2 workspace remotes, firmware),
+        or {} if it hasn't made one: ts_check, ts_next, online, pypi_latest, repo_remotes,
+        firmware ({device: {installed, recommended, action}}) and firmware_command.
+        Available updates are also in notices(), as INFO results in the 'updates' group.
+        """
+        updates = self.status.get('updates') or {}
+        return updates if updates.get('ts_check') else {}
+
     def get_check(self, check_id):
         """One result by id, e.g. 'power_periph.battery_soc'. None if not present."""
         return (self.status.get('checks') or {}).get(check_id)

@@ -20,8 +20,6 @@ Every check returns a list of result dicts:
 Status checks take the robot status dict (the same one the server publishes) and are
 cheap enough to run in the control loop. Host checks touch the filesystem and run in
 a background process on the server.
-
-Health only reports. Nothing here gates commands.
 """
 import os
 import time
@@ -48,7 +46,7 @@ GROUP_END_OF_ARM = 'end_of_arm'
 GROUP_IMU = 'imu'
 GROUP_SERVER = 'server'
 
-HOST_GROUPS = (GROUP_USB, GROUP_CALIBRATION)
+HOST_GROUPS = (GROUP_USB, GROUP_ESP32, GROUP_CALIBRATION)
 
 # Defaults for the 'health_manager' params. Robot or user params override any of these.
 DEFAULT_PARAMS = {
@@ -74,6 +72,13 @@ DEFAULT_PARAMS = {
     'loop_rate_min_fraction': 0.9,
     'counter_window_s': 30.0,       # climbing counters are judged over this window
     'missed_loops_warn': 10,        # control loop overruns per window before warning
+    # Software update checks (software_updates.py): PyPI, ROS 2 workspace remotes, firmware releases
+    'update_check_enabled': 1,
+    'update_check_initial_delay_s': 7200.0,   # never check sooner than this after the server starts
+    'update_check_period_s': 21600.0,         # then this long after the last successful check
+    'update_check_retry_s': 1800.0,           # or this long after an attempt that found no internet
+    'update_local_delay_s': 600.0,            # judge the cached check against what's installed, this long after start
+    'update_local_recheck_s': 1800.0,         # and again this often, so installed updates stop being reported
 }
 
 # USB devices, in display order, with the subsystem that needs each one.
@@ -108,6 +113,8 @@ def merged_params(robot_params):
 
 
 def result(group, id, level, message, value=None, detail=None, subgroup=None):
+    """A check result. Optional keys a check may add afterwards: 'summary_group' and
+    'summary_item' let the status line combine related notices, e.g. 'Not homed: Arm, Lift'."""
     r = {'id': f'{group}.{id}', 'group': group, 'level': level, 'message': message, 'value': value}
     if detail:
         r['detail'] = list(detail)
@@ -200,16 +207,9 @@ def check_power_periph(status, params):
         f'Adapter present  : {ps.get("adapter_voltage_present", False)}',
         f'Adapter fault    : {ps.get("adapter_fault", False)}',
         f'Charging         : {ps.get("charger_is_charging", False)}',
+        f'Aux CPU on       : {ps.get("cpu_on_sts", False)}',
     ]
     return out
-
-
-def check_esp32(status, params):
-    g = GROUP_ESP32
-    present = os.path.exists('/dev/hello-esp32')
-    ps = status.get('power_periph') or {}
-    return [result(g, 'present', OK if present else FAIL, '/dev/hello-esp32 present', present,
-                   detail=[f'Aux CPU on  : {ps.get("cpu_on_sts", False)}'] if present else None)]
 
 
 def check_omnibase(status, params):
@@ -232,12 +232,11 @@ def check_omnibase(status, params):
 
 
 def homed_result(group, id, name, homed):
-    """Not homed is a state, not a problem: INFO. 'joint' lets summaries combine them."""
+    """Not homed is a state, not a problem: INFO."""
     if homed:
-        r = result(group, id, OK, f'{name} is homed', True)
-    else:
-        r = result(group, id, INFO, f'{name} not homed', False)
-    r['joint'] = name
+        return result(group, id, OK, f'{name} is homed', True)
+    r = result(group, id, INFO, f'{name} not homed', False)
+    r['summary_group'], r['summary_item'] = 'Not homed', name
     return r
 
 
@@ -472,7 +471,6 @@ def run_status_checks(status, robot_params, params=None, eoa_joints=None,
             status['line_sensor_loop'], sensor_names, line_sensor_rates, params, line_sensor_prev)))
     if 'power_periph' in subsystems:
         checks.append((GROUP_POWER, lambda: check_power_periph(status, params)))
-        checks.append((GROUP_ESP32, lambda: check_esp32(status, params)))
     if 'omnibase' in subsystems:
         checks.append((GROUP_OMNIBASE, lambda: check_omnibase(status, params)))
     if 'arm' in subsystems:
@@ -516,6 +514,12 @@ def check_usb_devices(robot_params, dev_dir='/dev'):
         ok = dev in present
         out.append(result(g, dev, OK if ok else FAIL, f'/dev/{dev}', ok))
     return out
+
+
+def check_esp32(dev_dir='/dev'):
+    """Host check: the ESP32 has no status of its own, only its device link."""
+    present = os.path.exists(os.path.join(dev_dir, 'hello-esp32'))
+    return [result(GROUP_ESP32, 'present', OK if present else FAIL, '/dev/hello-esp32 present', present)]
 
 
 def calibration_root(robot_params):
@@ -590,5 +594,6 @@ def _check_camera_intrinsics():
 def run_host_checks(robot_params, check_camera_intrinsics=True):
     return _run_isolated([
         (GROUP_USB, lambda: check_usb_devices(robot_params)),
+        (GROUP_ESP32, lambda: check_esp32()),
         (GROUP_CALIBRATION, lambda: check_calibrations(robot_params, check_camera_intrinsics=check_camera_intrinsics)),
     ])
