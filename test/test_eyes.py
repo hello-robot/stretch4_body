@@ -362,6 +362,7 @@ def make_power_periph(protocol='p13'):
     pp.imu = SimpleNamespace(_dirty_config=False)
     pp._dirty_config = pp._dirty_trigger = pp._dirty_eye_animation = pp._dirty_eoa_restore = False
     pp._eye_frame, pp._eye_frame_sequence = None, 0
+    pp.eye_animation_count = 0
     pp.board_info = {'protocol_version': protocol}
     pp.logger = MagicMock()
     pp.transport = MagicMock()
