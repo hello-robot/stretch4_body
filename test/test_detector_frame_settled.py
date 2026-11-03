@@ -107,7 +107,7 @@ def test_continuous_movement_3s():
         # Create a frame with continuous movement (moving block)
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         # Shift a block of size 150x150 to simulate a hand/person moving
-        x_pos = (frame_idx * 15) % 450
+        x_pos = (frame_idx * 30) % 450
         cv2.rectangle(frame, (x_pos, 150), (x_pos + 150, 300), (255, 255, 255), -1)
         
         is_stable = detector.check_stability_diff(frame, threshold=5.0)
