@@ -82,6 +82,7 @@ class RobotServer(RobotCore):
             'safe_motion_manager':self.safe_motion_manager.status,'sentry_manager':self.sentry_manager.status}
 
         self.cmd_results={}
+        self.ts_power_diagnostics = 0.0
         
         # CPU Monitoring
         self.status['server']['cpu'] = {}
@@ -391,6 +392,9 @@ Use `stretch_status --rate 10` to view the status of the robot.
 
         # 3
         self.pull_status(blocking=False)
+        if self.get_subsystem('power_periph') is not None and time.time() - self.ts_power_diagnostics > 1.0:
+            self.power_periph.pull_power_diagnostics(blocking=False)
+            self.ts_power_diagnostics = time.time()
 
         # 4 Step sentries
         self.sentry_manager.step()

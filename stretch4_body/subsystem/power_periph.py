@@ -4,6 +4,7 @@ from typing import Any, TypedDict
 
 from stretch4_body.core.transport.transport import *
 from stretch4_body.core.device import Device
+from stretch4_body.core.factory.firmware_version import FirmwareVersion
 from stretch4_body.core.hello_utils import *
 import textwrap
 import psutil
@@ -249,6 +250,8 @@ class PowerPeriphDefn():
 
     RPC_SET_EYE_ANIMATION = 29
     RPC_REPLY_SET_EYE_ANIMATION = 30
+    RPC_GET_POWER_DIAGNOSTICS = 31
+    RPC_REPLY_POWER_DIAGNOSTICS = 32
 
     EYE_ANIM_NOP = 0
     EYE_ANIM_OFF = 1
@@ -681,6 +684,7 @@ class PowerPeriphTrace(PowerPeriphDefn):
 class PowerPeriphAux(PowerPeriphDefn):
     def __init__(self):
         self.status_aux = {'foo': 0}
+        self.power_diagnostics = {'_valid': False}
         self._load_test_payload = arr.array('B', range(256)) * 4
 
     def pull_status_aux(self, blocking=True):
@@ -689,6 +693,17 @@ class PowerPeriphAux(PowerPeriphDefn):
         payload = arr.array('B', [self.RPC_GET_POWER_PERIPH_STATUS_AUX])
         return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
                                      rpc_callback=self._rpc_status_aux_reply) is not None
+
+    def pull_power_diagnostics(self, blocking=True):
+        """
+        Pull the PIMU power diagnostics snapshot (RPC 31, schema 1, no event-log entries)
+        into power_diagnostics. Firmware before hello-pimu2.v0.1.18p13 is not asked.
+        """
+        if not self.hw_valid or not FirmwareVersion(self.board_info['firmware_version']) > FirmwareVersion('hello-pimu2.v0.1.17p13'):
+            return False
+        payload = arr.array('B', [self.RPC_GET_POWER_DIAGNOSTICS, 1, 0, 0, 0, 0, 0, 0, 0])
+        return self.transport.do_rpc(blocking=blocking, is_push=False, payload=payload,
+                                     rpc_callback=self._rpc_power_diagnostics_reply) is not None
 
     def push_load_test(self, blocking=True):
         if not self.hw_valid:
@@ -712,6 +727,174 @@ class PowerPeriphAux(PowerPeriphDefn):
             self._unpack_status_aux(reply[1:])
         else:
             self.logger.warning('Error RPC_REPLY_POWER_PERIPH_AUX_STATUS', reply[0])
+
+    def _rpc_power_diagnostics_reply(self, reply):
+        # Reply id, 24-byte header, 190-byte schema 1 snapshot. Error replies stop after the header.
+        if len(reply) == 1 + 24 + 190 and reply[0] == self.RPC_REPLY_POWER_DIAGNOSTICS:
+            self._unpack_power_diagnostics(reply[25:])
+        else:
+            self.power_diagnostics.clear()
+            self.power_diagnostics['_valid'] = False
+            self.logger.warning('Error RPC_REPLY_POWER_DIAGNOSTICS')
+
+    def _unpack_power_diagnostics(self, s):
+        sidx = 0
+
+        def u8():
+            nonlocal sidx
+            value = unpack_uint8_t(s[sidx:])
+            sidx += 1
+            return value
+
+        def i8():
+            value = u8()
+            return value - 256 if value > 127 else value
+
+        def u16():
+            nonlocal sidx
+            value = unpack_uint16_t(s[sidx:])
+            sidx += 2
+            return value
+
+        def i16():
+            nonlocal sidx
+            value = unpack_int16_t(s[sidx:])
+            sidx += 2
+            return value
+
+        def u32():
+            nonlocal sidx
+            value = unpack_uint32_t(s[sidx:])
+            sidx += 4
+            return value
+
+        def u64():
+            nonlocal sidx
+            value = unpack_uint64_t(s[sidx:])
+            sidx += 8
+            return value
+
+        def i32():
+            nonlocal sidx
+            value = unpack_int32_t(s[sidx:])
+            sidx += 4
+            return value
+
+        d = {}
+        d['schema_version'] = u8()
+        d['reset_cause_raw'] = u8()
+        d['struct_size'] = u16()
+        d['uptime_ms'] = u64()
+        d['sample_sequence'] = u32()
+        d['capability_flags_raw'] = u32()
+        d['validity_flags_raw'] = u32()
+        d['power_transition_sequence'] = u32()
+        d['power_transition_timestamp_ms'] = u32()
+        d['power_state'] = u8()
+        d['runstop_cause_raw'] = u8()
+        d['periph_power_state_raw'] = u8()
+        d['cpu_on_status'] = bool(u8())
+        d['power_transition_reason_raw'] = u16()
+        d['power_button_high_count'] = u16()
+        d['power_button_raw'] = bool(u8())
+        d['power_button_debounced'] = bool(u8())
+        d['adapter_voltage_present'] = bool(u8())
+        d['charger_enable_command'] = bool(u8())
+        d['charger_expected_active'] = bool(u8())
+        d['user_charger_control'] = bool(u8())
+        d['wait_wake_ack'] = bool(u8())
+        d['wait_sleep_ack'] = bool(u8())
+        d['esp_adapter_connected'] = bool(u8())
+        d['esp_adapter_fault'] = bool(u8())
+        d['esp_network_connected'] = bool(u8())
+        d['esp_firebase_configured'] = bool(u8())
+
+        d['bms_sample_sequence'] = u32()
+        d['bms_last_valid_ms'] = u32()
+        d['bms_sample_age_ms'] = u32()
+        d['bms_valid_replies'] = u32()
+        d['bms_crc_errors'] = u32()
+        d['bms_timeouts'] = u32()
+        d['bms_rx_overflows'] = u32()
+        d['bms_protocol_errors'] = u32()
+        d['bms_consecutive_failures'] = u32()
+        d['battery_voltage_mv'] = i32()
+        d['battery_current_ma'] = i32()
+        d['charger_current_ma'] = i32()
+        d['battery_soc'] = u8()
+        d['battery_soh'] = u8()
+        d['battery_cycles'] = u16()
+        d['battery_cell_temp_1_c'] = i8()
+        d['battery_cell_temp_2_c'] = i8()
+        d['battery_cell_temp_3_c'] = i8()
+        d['battery_ambient_temp_c'] = i8()
+        d['battery_mosfet_temp_c'] = i8()
+        d['bms_alarm_mask_raw'] = u8()
+        d['bms_mos_mask_raw'] = u8()
+        d['reserved0'] = u8()
+        d['bms_last_failure_rx_len'] = u16()
+        d['bms_last_failure_event'] = u16()
+        d['bms_last_failure_function'] = u8()
+        d['bms_last_failure_exception_code'] = u8()
+        d['bms_last_failure_address'] = u8()
+        d['reserved1'] = u8()
+
+        d['esp_status_age_ms'] = u32()
+        d['esp_rx_packets'] = u32()
+        d['esp_crc_errors'] = u32()
+        d['esp_rx_overflows'] = u32()
+        d['esp_requests_sent'] = u32()
+        d['esp_tx_queue_drops'] = u32()
+
+        d['voltage_cpu_mv'] = i32()
+        d['voltage_5v0_mv'] = i32()
+        d['voltage_36v0_mv'] = i32()
+        d['voltage_12v0_mv'] = i32()
+        d['voltage_20v0_aux_mv'] = i32()
+        d['current_cpu_ma'] = i32()
+        d['pimu_temp_centi_c'] = i16()
+        d['motor_sync_cnt'] = u16()
+        d['loop_time_us'] = u16()
+        d['loop_time_max_us'] = u16()
+        d['loop_overrun_count'] = u32()
+        d['diagnostics_rpc_count'] = u32()
+        d['diagnostics_reply_bytes'] = u16()
+        d['diagnostics_lock_time_us'] = u16()
+        d['diagnostics_lock_time_max_us'] = u16()
+
+        caps = d['capability_flags_raw']
+        validity = d['validity_flags_raw']
+        d['capabilities'] = {
+            'bms_pack': bool(caps & (1 << 0)),
+            'bms_temperatures': bool(caps & (1 << 1)),
+            'bms_alarms': bool(caps & (1 << 2)),
+            'bms_mos_states': bool(caps & (1 << 3)),
+            'event_log': bool(caps & (1 << 4)),
+            'esp_status': bool(caps & (1 << 5)),
+        }
+        d['validity'] = {
+            'bms_sample': bool(validity & (1 << 0)),
+            'esp_status': bool(validity & (1 << 1)),
+            'analog_rails': bool(validity & (1 << 2)),
+            'bms_extended_sample': bool(validity & (1 << 3)),
+        }
+        d['bms_alarms'] = {
+            'total_voltage_high': bool(d['bms_alarm_mask_raw'] & (1 << 0)),
+            'cell_voltage_high': bool(d['bms_alarm_mask_raw'] & (1 << 1)),
+            'cell_voltage_difference_high': bool(d['bms_alarm_mask_raw'] & (1 << 2)),
+        }
+        d['bms_mos_states'] = {
+            'charge_current_limit': bool(d['bms_mos_mask_raw'] & (1 << 0)),
+            'pre_discharge': bool(d['bms_mos_mask_raw'] & (1 << 1)),
+            'discharging': bool(d['bms_mos_mask_raw'] & (1 << 2)),
+            'charging': bool(d['bms_mos_mask_raw'] & (1 << 3)),
+        }
+        d['bms_sample_age_s'] = None if d['bms_sample_age_ms'] == 0xFFFFFFFF else d['bms_sample_age_ms'] / 1000.0
+        d['esp_status_age_s'] = None if d['esp_status_age_ms'] == 0xFFFFFFFF else d['esp_status_age_ms'] / 1000.0
+        d['_valid'] = d['schema_version'] == 1 and d['struct_size'] == sidx
+        self.power_diagnostics.clear()
+        self.power_diagnostics.update(d)
+        return sidx
 
     def _unpack_status_aux(self, s):
         # take in an array of bytes
@@ -784,7 +967,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'battery_chrg_dischrg_cycles': 0, 'voltage_cpu':0, 'voltage_5v0':0, 'voltage_36v0':0,
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
-                       'us_loop_time':0}
+                       'us_loop_time':0, 'power_diagnostics': self.power_diagnostics}
 
         self.status_zero = self.status.copy()
         self._trigger = 0
@@ -1424,4 +1607,5 @@ class PowerPeriphStatus(TypedDict):
     connected_to_firebase: bool
     adapter_fault: bool
     adapter_connected: bool
+    power_diagnostics: dict
     us_loop_time: float

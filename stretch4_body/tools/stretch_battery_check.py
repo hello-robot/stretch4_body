@@ -9,6 +9,7 @@ import sys
 
 parser=argparse.ArgumentParser(description='Check the battery status')
 parser.add_argument("-d", "--direct", help="Use direct API (no server)", action="store_true")
+parser.add_argument("-v", "--verbose", help="Also print the PIMU power diagnostics (BMS alarms, MOS, temperatures, link)", action="store_true")
 args=parser.parse_args()
 
 if not args.direct:
@@ -74,7 +75,25 @@ def battery_check():
     if battery_is_charging:
         click.secho(f'Battery Charger: Charging', fg='green')
         click.secho(f'Battery Charger Current: {current_charge:.2f} A', fg='green')
-    
+
+    if args.verbose:
+        if args.direct:
+            p.pull_power_diagnostics()
+        d = p.status['power_diagnostics']
+        click.secho('######## Power Diagnostics ##########', fg='cyan')
+        if not d['_valid']:
+            click.secho('Not available (needs PIMU firmware hello-pimu2.v0.1.18p13 or later)', fg='yellow')
+        else:
+            click.secho(f"BMS sample age: {d['bms_sample_age_s']} s, valid replies {d['bms_valid_replies']}, "
+                        f"CRC errors {d['bms_crc_errors']}, timeouts {d['bms_timeouts']}, RX overflows {d['bms_rx_overflows']}")
+            click.secho(f"BMS alarms: {d['bms_alarms']}")
+            click.secho(f"BMS MOS: {d['bms_mos_states']}")
+            click.secho(f"BMS temperatures (C): cells {d['battery_cell_temp_1_c']} {d['battery_cell_temp_2_c']} "
+                        f"{d['battery_cell_temp_3_c']}, ambient {d['battery_ambient_temp_c']}, MOSFET {d['battery_mosfet_temp_c']}")
+            click.secho(f"Charger enable command: {d['charger_enable_command']}, expected active: {d['charger_expected_active']}, "
+                        f"charger current {d['charger_current_ma']} mA")
+            click.secho(f"ESP status age: {d['esp_status_age_s']} s, packets {d['esp_rx_packets']}, CRC errors {d['esp_crc_errors']}")
+
     print("")
 
 
