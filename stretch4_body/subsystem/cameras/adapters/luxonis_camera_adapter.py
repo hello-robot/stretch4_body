@@ -237,12 +237,17 @@ class LuxonisCameraAdapter(CameraAdapter):
     ):
         while True:
             if stop_event is not None and stop_event.is_set():
-                raise RuntimeError("Stop requested while waiting for Luxonis camera frame")
+                # A requested stop ends the stream, it is not an error.
+                return
             try:
                 message: dai.ImgFrame = output_queue.get(timeout=0.1)
                 if message is None:
                     continue
                 yield LuxonisCameraAdapter.dai_message_to_image_frame(message)
+            except dai.MessageQueue.QueueException:
+                # The queue was closed because the camera was stopped. Without this, the loop
+                # below would log the same error forever.
+                return
             except Exception as e:
                 logging.error(f"Error getting frame from output queue: {e}")
 

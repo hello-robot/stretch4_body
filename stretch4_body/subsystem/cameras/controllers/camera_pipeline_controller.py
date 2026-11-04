@@ -59,6 +59,7 @@ class RGBPipelineController:
         recording_file_format: RecordingFileFormat = RecordingFileFormat.png,
         recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS,
         camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None,
+        stop_event: threading.Event | None = None,
     ):
         """
         `detect_aruco_marker_size`: Runs ArUco detection if a float >= 0.0 is provided. If length is 0.0, the ArUco markers will be detected, but distance will not be printed. If length > 0.0 and calibration is available, ArUco pose and L2 distance to the marker will be displayed.
@@ -70,6 +71,9 @@ class RGBPipelineController:
 
         `camera_configs`: Opens some of the cameras with a configuration of your own instead of the
         one in `CAMERA_CONFIGS`, keyed by the camera it applies to.
+
+        `stop_event`: Setting this event, from any thread, stops the capture loop. A new event is
+        created if none is given.
         """
         self.recording_directory = recording_directory
         self.recording_file_format = recording_file_format
@@ -102,7 +106,7 @@ class RGBPipelineController:
 
         self.save_rgb_queue: queue.Queue[RgbImageToWriteToDisk] = queue.Queue(maxsize=500)
 
-        self.stop_event = threading.Event()
+        self.stop_event = stop_event if stop_event is not None else threading.Event()
 
         # Set when the user quits again rather than waiting for the queued frames to be written.
         self.abandon_save_event = threading.Event()
@@ -620,7 +624,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
     A specialized controller that leverages stretch_python_bridge's StreamManager for camera streams.
     This adapter allows using camera tools with ROS2 camera nodes.
     """
-    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS, camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None):
+    def __init__(self, camera_type: "RGBCameras", recording_directory: str | None, show_image_in: "RecordRgbShowImageIn | None", is_rotate: bool, is_rectify: bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper], detect_aruco_marker_size: float|None, is_open_camera: bool = True, enable_pointcloud: bool = False, recording_file_format: RecordingFileFormat = RecordingFileFormat.png, recording_chunk_seconds: float | None = DEFAULT_RECORDING_CHUNK_SECONDS, camera_configs: "dict[RGBCameras, RGBCameraConfig] | None" = None, stop_event: threading.Event | None = None):
         super().__init__(
             camera_type=camera_type,
             recording_directory=recording_directory,
@@ -635,6 +639,7 @@ class RGBPipelineControllerROS(RGBPipelineController):
             recording_file_format=recording_file_format,
             recording_chunk_seconds=recording_chunk_seconds,
             camera_configs=camera_configs,
+            stop_event=stop_event,
         )
         
         try:
@@ -907,7 +912,9 @@ class RGBPipelineControllerROS(RGBPipelineController):
     def stop(self):
         super().stop()
         if self.stream_manager is not None:
-            self.stream_manager.close()
+            # Cleared so that a second stop() (e.g. from stream_cameras) doesn't close it twice.
+            stream_manager, self.stream_manager = self.stream_manager, None
+            stream_manager.close()
         if self.generator is not None:
             try:
                 self.generator.close()
