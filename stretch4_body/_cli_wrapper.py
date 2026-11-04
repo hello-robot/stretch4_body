@@ -345,3 +345,7 @@ def stretch_jetson_connect():
     sys.argv[0] = "stretch_jetson_connect"
     runpy.run_module("stretch4_body.tools.stretch_jetson_connect", run_name="__main__")
 
+
+def stretch_update():
+    sys.argv[0] = "stretch_update"
+    runpy.run_module("stretch4_body.tools.stretch_update", run_name="__main__")
