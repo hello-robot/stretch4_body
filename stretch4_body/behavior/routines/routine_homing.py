@@ -16,36 +16,19 @@ class RoutineHome(routine.Routine):
     def __init__(self, name, robot):
         routine.Routine.__init__(self, name=name, robot=robot)
 
-    def _pause_behaviors(self):
-        """Pause sentries and safe_motion controllers (subject to exclusion lists).
-        Returns (sm_to_pause, sentry_to_pause) so they can be unpaused later."""
-        exclude_sentry_pause = self.params.get('exclude_sentry_pause', [])
-        exclude_safe_m_pause = self.params.get('exclude_safe_motion_pause', [])
-
-        sm_to_pause = [k for k in self.robot.safe_motion_manager.controllers.keys() if k not in exclude_safe_m_pause]
-        sentry_to_pause = [k for k in self.robot.sentry_manager.sentries.keys() if k not in exclude_sentry_pause]
-
-        self.robot.safe_motion_manager.pause(sm_to_pause)
-        self.robot.sentry_manager.pause(sentry_to_pause)
-        return sm_to_pause, sentry_to_pause
-
-    def _unpause_behaviors(self, sm_to_pause, sentry_to_pause):
-        """Unpause previously paused sentries and safe_motion controllers."""
-        self.robot.safe_motion_manager.unpause(sm_to_pause)
-        self.robot.sentry_manager.unpause(sentry_to_pause)
 
     def run(self, cmd_id, *args, **kwargs):
-        if hasattr(self.robot, 'power_periph') and self.robot.is_runstopped():
-            self.logger.warning('Not able to home %s. Robot is runstopped' % self.name.capitalize())
-            return False
 
         super().run(cmd_id, *args, **kwargs)
 
-        sm_paused, sentry_paused = self._pause_behaviors()
+        sm_paused, sentry_paused = self.pause_behaviors()
         try:
             success = self._run_homing(cmd_id, *args, **kwargs)
+        except:
+            self.cancel()
+            success = False
         finally:
-            self._unpause_behaviors(sm_paused, sentry_paused)
+            self.unpause_behaviors(sm_paused, sentry_paused)
 
         return success
 

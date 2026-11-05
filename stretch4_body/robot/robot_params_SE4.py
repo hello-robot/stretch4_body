@@ -230,8 +230,8 @@ SE4_parallel_gripper_DW4={
         'pid': [32,32,0],
         'return_delay_time': 0,
         'angular_resolution': 1.0,
-        'phase': 45,#61, #61 for multi-turn, 45 for normal
-        'max_pos_limit': 4095,#0 for multi-turn, 4095 for normal
+        'phase': 61,#61, #61 for multi-turn, 45 for normal
+        'max_pos_limit': 0,#0 for multi-turn, 4095 for normal
         'min_pos_limit': 0,
         'max_load_limit_pct': 48.0,
         'overload_safe': 25.0,
@@ -618,6 +618,9 @@ SE4_eoa_wrist_dw4_tool_pg4={
         #'dxl_latency_timer': 64,
         'wrist': 'eoaw_dw4',
         'tool': 'eoat_pg4',
+        'homing': {
+            'parallel_gripper': 0.04, #Aperture (m) the gripper opens to after homing
+        },
         'stow': {
             'arm': 0.0,
             'lift': 0.15,
@@ -672,9 +675,10 @@ SE4_eoa_wrist_dw4_tool_tablet={
         'stow': {
             'arm': 0.007,
             'lift': 0.258,
-            'wrist_pitch': -0.446,
-            'wrist_roll': 0.051,
-            'wrist_yaw': -0.710,
+            'wrist_pitch': 1.5961,
+            'wrist_roll': 3.9224,
+            'wrist_yaw': 4.2177,
+            'lift_prestow': 0.5,
         },
         'homing': {
             'wrist_roll': -0.4, #Roll held here while pitch homes so the tablet clears the robot
@@ -1314,6 +1318,8 @@ nominal_params={
     'routine_robot_stow':{
         'py_module_name': 'stretch4_body.behavior.routines.routine_stow',
         'py_class_name': 'RoutineRobotStow',
+        'exclude_sentry_pause': ['sentry_status_logger','sentry_ubuntu_power_management','sentry_cpu_temp'],
+        'exclude_safe_motion_pause': ['safe_motion_overtilt_avoid'],
         'enabled': 1
     },
     'routine_wrist_handedness':{

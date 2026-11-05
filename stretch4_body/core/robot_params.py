@@ -24,7 +24,7 @@ nominal_system_params={
                     "formatter": "default_console_formatter",
                 },
                 "file_handler": {
-                    "class": "logging.handlers.RotatingFileHandler",
+                    "class": "stretch4_body.core.hello_utils.MultiProcessRotatingFileHandler",
                     "level": "INFO",
                     "formatter": "default_file_formatter",
                     "filename": hello_utils.get_stretch_directory('log/stretch_body_logger/') + 'stretch_body_server.log',

@@ -30,7 +30,7 @@ class ParallelGripper(FeetechSMHello):
         return FeetechSMHello.startup(self)
 
     def home(self, end_pos=hu.deg_to_rad(45.0),delay_at_stop=1.0):
-        FeetechSMHello.home(self, end_pos=end_pos,delay_at_stop=delay_at_stop)
+        return FeetechSMHello.home(self, end_pos=end_pos,delay_at_stop=delay_at_stop)
 
     def pretty_print(self):
         print('--- ParallelGripper ----')
