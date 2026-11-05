@@ -1458,6 +1458,18 @@ nominal_params={
         'base_fan_off': 50.0,
         'fan_control': 1
     },
+    ############## HEALTH #############################
+    # Continuous health reporting in stretch_body_server (report only, never gates commands).
+    # Thresholds default to stretch4_body.behavior.health.health_checks.DEFAULT_PARAMS;
+    # any key from there can be overridden here or in stretch_user_params.yaml.
+    'health_manager': {
+        'enabled': 1,
+        'check_rate_Hz': 2.0,
+        'host_check_period_s': 10.0,
+        'update_check_enabled': 1,
+        'update_check_initial_delay_s': 7200.0,
+        'update_check_period_s': 21600.0,
+    },
     ############## SAFE MOTIONS #############################
     'safe_motion_manager': {'controllers': ['safe_motion_overtilt_avoid']},
     'safe_motion_line_sensor_vel_limit': {

@@ -25,7 +25,7 @@ def worker_loop(loop_name,rate_hz,worker_instance,
         except ImportError:
             profile_enabled = False
 
-    logger = worker_instance.logger if hasattr(worker_instance, 'logger') else logging.getLogger()
+    logger = worker_instance.logger if hasattr(worker_instance, 'logger') else logging.getLogger(loop_name)
     logger.info('-------- Starting %s with PID %d --------'%(loop_name.capitalize(),os.getpid()))
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     loop_mgmt=hello_utils.LoopStats(loop_name,rate_hz)

@@ -91,6 +91,7 @@ class RobotClient(SubsystemClient):
                 self.subsystems[k] = self.line_sensor_loop
 
         self.subsystems['routines']=self.routines=RoutinesClient(parent=self)
+        self.subsystems['health']=self.health=HealthClient(parent=self)
 
         # Note, self.status isn't a deepcopy, so it will automaticaly
         # update on pull_status of the subsystems
@@ -516,6 +517,79 @@ class RoutinesClient(SubsystemClient):
             If wait_on_completion, whether to call pull_status() within this method.
         """
         return self.run('routine_blind_dock', do_push, wait_on_completion, timeout, do_pull)
+
+# #####################################################################
+class HealthClient(SubsystemClient):
+    """
+    Client view of the server's continuous health checks.
+
+    The server evaluates the checks in stretch4_body.behavior.health.health_checks
+    and publishes them in status['health']. Health only reports: the server still
+    accepts and attempts every command whatever the level is.
+
+    Usage:
+    ```
+    robot.pull_status()
+    if not robot.health.is_healthy():
+        for issue in robot.health.issues():
+            print(issue['level'], issue['message'])
+    ```
+    """
+    LEVEL_RANK = {'OK': 0, 'INFO': 0, 'WARN': 1, 'STALE': 2, 'FAIL': 3}
+
+    def __init__(self, parent=None):
+        # Named after its params block; status arrives under status['health']
+        SubsystemClient.__init__(self, name='health_manager', parent=parent)
+
+    def is_available(self):
+        """False when the server doesn't publish health (an older server, or health disabled)."""
+        return bool(self.status.get('enabled', False)) and 'checks' in self.status
+
+    def level(self):
+        """Overall level: 'OK', 'WARN', 'STALE' or 'FAIL'. None if health isn't available."""
+        return self.status.get('level') if self.is_available() else None
+
+    def is_healthy(self):
+        """True if no check is failing or stale. WARNs (e.g. low battery) and INFOs (not homed) don't count."""
+        return self.is_available() and self.LEVEL_RANK.get(self.level(), 0) < self.LEVEL_RANK['STALE']
+
+    def checks(self, group=None):
+        """Every check result, in the order the server runs them, optionally for one group."""
+        return [c for c in (self.status.get('checks') or {}).values() if group is None or c['group'] == group]
+
+    def issues(self, min_level='WARN'):
+        """Problems: check results at min_level ('WARN', 'STALE' or 'FAIL') or worse."""
+        floor = max(self.LEVEL_RANK[min_level], 1)
+        return [c for c in self.checks() if self.LEVEL_RANK.get(c['level'], 0) >= floor]
+
+    def notices(self):
+        """States worth knowing that aren't problems, e.g. 'Arm not homed', 'Runstop is active'."""
+        return [c for c in self.checks() if c['level'] == 'INFO']
+
+    def updates(self):
+        """
+        The server's last software update check (PyPI, ROS2 workspace remotes, firmware),
+        or {} if it hasn't made one: ts_check, ts_next, online, pypi_latest, repo_remotes,
+        firmware ({device: {installed, recommended, action}}) and firmware_command.
+        Available updates are also in notices(), as INFO results in the 'updates' group.
+        """
+        updates = self.status.get('updates') or {}
+        return updates if updates.get('ts_check') else {}
+
+    def get_check(self, check_id):
+        """One result by id, e.g. 'power_periph.battery_soc'. None if not present."""
+        return (self.status.get('checks') or {}).get(check_id)
+
+    def age_s(self):
+        """Seconds since the server last evaluated the status checks."""
+        ts = self.status.get('ts_update', 0)
+        return time.time() - ts if ts else None
+
+    def host_age_s(self):
+        """Seconds since the USB / calibration checks last ran. None if they haven't yet."""
+        ts = self.status.get('ts_host_update', 0)
+        return time.time() - ts if ts else None
+
 
 # #####################################################################
 class PowerPeriphClient(SubsystemClient):

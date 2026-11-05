@@ -51,7 +51,7 @@ class RobotCore(Device):
     def startup(self):
         if not hello_utils.acquire_transport_filelock(self.name):
             self.logger.error('Unable for RobotCore to aquire transport_filelock, server may already be running.\
-                \nTry running stretch_body_server --status or stretch_free_robot_process. \nExiting loop.')
+                \nTry running stretch_body_server --free_up_control\nExiting loop.')
             return False
 
         self.logger.info(

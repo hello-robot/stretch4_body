@@ -23,6 +23,7 @@ import stretch4_body.core.hello_utils as hu
 hu.print_stretch_re_use()
 
 import sys
+import time
 import io
 import re
 import json
@@ -33,13 +34,9 @@ import fnmatch
 import argparse
 import subprocess
 import logging
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor
-from importlib.metadata import version as pkg_version
 
 import click
 from stretch4_body.core import robot_params as rp
-from stretch4_body.subsystem.line_sensor import calibration_store
 
 
 # ==============================================================================
@@ -196,6 +193,10 @@ def print_result(passed, msg, indent=2):
 def print_warn(msg, indent=2):
     _problem(f'{" " * indent}[WARN] {msg}', fg='yellow')
 
+def print_notice(msg, indent=2):
+    """Not a problem, but worth telling the user even in quiet mode (e.g. 'Arm not homed')."""
+    _problem(f'{" " * indent}[INFO] {msg}', fg='bright_blue')
+
 def print_skip(msg, indent=2, expected=False):
     """A check that didn't run. An expected skip (one that needs a flag to run) is not a problem."""
     line = f'{" " * indent}[SKIP] {msg}'
@@ -239,273 +240,18 @@ def working():
         _animation['thread'].join()
         _animation['stop'] = _animation['thread'] = None
 
-def val_in_range(label, val, vmin, vmax):
-    ok = vmin <= val <= vmax
-    return ok, f'{label} = {val:.3f} (range [{vmin:.2f}, {vmax:.2f}])'
-
-
 # ==============================================================================
-# PyPI update checks
-# ==============================================================================
-
-PYPI_TIMEOUT_S = 3.0
-
-
-def _pypi_latest_version(pkg_name):
-    """Return the latest release version on PyPI, or None if it can't be determined."""
-    url = f'https://pypi.org/pypi/{pkg_name}/json'
-    try:
-        with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_S) as resp:
-            info = json.load(resp).get('info') or {}
-        return info.get('version')
-    except Exception:
-        return None
-
-
-def _is_newer(candidate, installed):
-    """True if candidate is a strictly newer version than installed."""
-    try:
-        from packaging.version import Version
-        return Version(candidate) > Version(installed)
-    except Exception:
-        pass
-    # Fallback: compare numeric components (versions here are date-based, e.g. 2026.6.25)
-    try:
-        to_tuple = lambda v: tuple(int(n) for n in re.findall(r'\d+', v))
-        return to_tuple(candidate) > to_tuple(installed)
-    except Exception:
-        return False
-
-
-CORE_PIP = ('hello-robot-stretch4-body', 'hello-robot-stretch4-urdf')
-
-# Command shown to the user for applying pip updates (matches README)
-PIP_UPDATE_CMD = 'python3 -m pip install -U'
-
-
-def discover_pip_packages():
-    """
-    Return (core, extras): installed versions of the always-shown Stretch packages,
-    and of any other hello/stretch/hesai pip packages found in the environment.
-    """
-    core = {}
-    for name in CORE_PIP:
-        try:
-            core[name] = pkg_version(name)
-        except Exception:
-            core[name] = 'unknown'
-
-    extras = {}
-    try:
-        from importlib.metadata import distributions as _distributions
-        core_lc = {n.lower() for n in CORE_PIP}
-        for dist in _distributions():
-            name = (dist.metadata.get('Name') or '').strip()
-            name_lc = name.lower()
-            if not name or name_lc in core_lc:
-                continue
-            if 'hello' in name_lc or 'stretch' in name_lc or 'hesai' in name_lc:
-                if name not in extras:  # keep first occurrence
-                    extras[name] = (dist.metadata.get('Version') or 'unknown').strip()
-    except Exception:
-        pass
-
-    return core, extras
-
-
-def check_pypi_updates(installed):
-    """
-    Query PyPI for newer releases of the hello-robot-* packages in `installed`
-    ({name: version}). Queries run concurrently and fail silently (offline robot).
-
-    Returns (updates, reachable) where updates is {name: latest_version} for
-    packages with a newer release, and reachable is False if no query succeeded.
-    """
-    names = [n for n in installed if n.lower().startswith('hello-robot-')
-             and installed[n] not in (None, '', 'unknown')]
-    if not names:
-        return {}, True
-
-    try:
-        with ThreadPoolExecutor(max_workers=min(8, len(names))) as pool:
-            latest = dict(zip(names, pool.map(_pypi_latest_version, names)))
-    except Exception:
-        return {}, False
-
-    reachable = any(v is not None for v in latest.values())
-    updates = {n: latest[n] for n in names
-               if latest[n] and _is_newer(latest[n], installed[n])}
-    return updates, reachable
-
-
-# ==============================================================================
-# ROS2 workspace (~/ament_ws/src) git checks
+# Software updates (PyPI, ROS2 workspace repos, firmware)
+#
+# The checks live in stretch4_body.behavior.health.software_updates. stretch_body_server
+# runs the network half every few hours; this tool judges the server's last result
+# against what's installed here, and queries the network itself only without one.
 # ==============================================================================
 
-GIT_TIMEOUT_S = 10.0
-
-# Status codes reported per repo, and how each is rendered
-GIT_OK        = 'up to date'
-GIT_BEHIND    = 'behind'
-GIT_UPDATE    = 'update available'   # remote has commits that aren't in the local object store
-GIT_AHEAD     = 'ahead'
-GIT_DIVERGED  = 'diverged'
-GIT_DETACHED  = 'detached HEAD'
-GIT_NO_UPSTREAM = 'no upstream branch'
-GIT_NO_BRANCH   = 'branch not on remote'
-GIT_UNREACHABLE = 'remote unreachable'
-GIT_NOT_A_REPO  = 'not a git repo'
-
-# Statuses that mean the remote has work the local checkout doesn't
-GIT_NEEDS_PULL = (GIT_BEHIND, GIT_UPDATE)
-
-
-def ament_src_dir():
-    """
-    Path of the ROS2 workspace src directory.
-
-    Honors STRETCH_AMENT_WS, then the sourced workspace (COLCON_PREFIX_PATH),
-    then falls back to ~/ament_ws.
-    """
-    ws = os.environ.get('STRETCH_AMENT_WS', '')
-    if not ws:
-        prefix = os.environ.get('COLCON_PREFIX_PATH', '').split(':')[0]
-        ws = os.path.dirname(prefix) if prefix else ''
-    if not ws:
-        ws = os.path.expanduser('~/ament_ws')
-    return os.path.join(os.path.expanduser(ws), 'src')
-
-
-def _git(repo, *cmd, timeout=GIT_TIMEOUT_S):
-    """
-    Run a git command in `repo`. Returns (ok, stdout-stripped).
-
-    Credential and host-key prompts are disabled so an unauthenticated remote
-    fails immediately instead of blocking the check on stdin.
-    """
-    env = dict(os.environ,
-               GIT_TERMINAL_PROMPT='0',
-               GIT_ASKPASS='',
-               SSH_ASKPASS='',
-               GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new')
-    try:
-        res = subprocess.run(['git', '-C', repo, *cmd],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                             text=True, timeout=timeout, env=env)
-        return res.returncode == 0, res.stdout.strip()
-    except Exception:
-        return False, ''
-
-
-def check_repo_git_status(repo):
-    """
-    Report the git state of a single workspace repo, and whether the remote has
-    a newer commit than the local checkout.
-
-    Read-only: queries the remote with `git ls-remote` rather than fetching, so
-    nothing in the repo is modified.
-
-    Returns a dict with name, branch, sha, dirty, status, detail and command.
-    """
-    out = {'name': os.path.basename(repo.rstrip('/')), 'branch': '', 'sha': '',
-           'dirty': False, 'status': GIT_NOT_A_REPO, 'detail': '', 'command': None}
-
-    ok, _ = _git(repo, 'rev-parse', '--git-dir')
-    if not ok:
-        return out
-
-    ok, out['sha'] = _git(repo, 'rev-parse', '--short', 'HEAD')
-    if not ok:
-        out['detail'] = 'no commits'
-        return out
-
-    _, porcelain = _git(repo, 'status', '--porcelain')
-    out['dirty'] = bool(porcelain)
-
-    _, branch = _git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')
-    out['branch'] = branch
-
-    if branch == 'HEAD':
-        out['status'] = GIT_DETACHED
-        return out
-
-    ok, upstream = _git(repo, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
-    if not ok or '/' not in upstream:
-        out['status'] = GIT_NO_UPSTREAM
-        return out
-
-    remote, remote_branch = upstream.split('/', 1)
-    ok, ls = _git(repo, 'ls-remote', '--heads', remote, remote_branch)
-    if not ok:
-        out['status'] = GIT_UNREACHABLE
-        out['detail'] = f'could not query {remote}'
-        return out
-    if not ls:
-        # The remote answered but has no such branch (deleted upstream, or never pushed)
-        out['status'] = GIT_NO_BRANCH
-        out['detail'] = f'{upstream} no longer exists'
-        return out
-
-    remote_sha = ls.split()[0]
-    _, local_sha = _git(repo, 'rev-parse', 'HEAD')
-
-    if remote_sha == local_sha:
-        out['status'] = GIT_OK
-        return out
-
-    # The remote commit is only comparable if it's already in the local object
-    # store (i.e. someone has fetched since it was pushed). If it isn't, the
-    # remote is simply ahead of anything we know about.
-    have_remote, _ = _git(repo, 'cat-file', '-e', f'{remote_sha}^{{commit}}')
-    if not have_remote:
-        out['status'] = GIT_UPDATE
-        out['detail'] = f'{upstream} at {remote_sha[:7]}'
-        out['command'] = f'git -C {repo} pull'
-        return out
-
-    behind, _ = _git(repo, 'merge-base', '--is-ancestor', local_sha, remote_sha)
-    ahead, _  = _git(repo, 'merge-base', '--is-ancestor', remote_sha, local_sha)
-    if behind:
-        _, n = _git(repo, 'rev-list', '--count', f'{local_sha}..{remote_sha}')
-        out['status'] = GIT_BEHIND
-        out['detail'] = f'{n} commit(s) behind {upstream}'
-        out['command'] = f'git -C {repo} pull'
-    elif ahead:
-        _, n = _git(repo, 'rev-list', '--count', f'{remote_sha}..{local_sha}')
-        out['status'] = GIT_AHEAD
-        out['detail'] = f'{n} unpushed commit(s) vs {upstream}'
-    else:
-        _, n_behind = _git(repo, 'rev-list', '--count', f'{local_sha}..{remote_sha}')
-        _, n_ahead  = _git(repo, 'rev-list', '--count', f'{remote_sha}..{local_sha}')
-        out['status'] = GIT_DIVERGED
-        out['detail'] = f'{n_ahead} ahead / {n_behind} behind {upstream}'
-
-    return out
-
-
-def check_workspace_repos():
-    """
-    Check every repo in the ROS2 workspace src directory, concurrently.
-
-    Returns (src_dir, [status dicts sorted by name]). The list is empty if the
-    workspace directory doesn't exist.
-    """
-    src = ament_src_dir()
-    if not os.path.isdir(src):
-        return src, []
-
-    repos = sorted(os.path.join(src, d) for d in os.listdir(src)
-                   if os.path.isdir(os.path.join(src, d)))
-    if not repos:
-        return src, []
-
-    try:
-        with ThreadPoolExecutor(max_workers=min(8, len(repos))) as pool:
-            results = list(pool.map(check_repo_git_status, repos))
-    except Exception:
-        results = [check_repo_git_status(p) for p in repos]
-
-    return src, sorted(results, key=lambda x: x['name'].lower())
+from stretch4_body.behavior.health import software_updates as su
+from stretch4_body.behavior.health.software_updates import (
+    PIP_UPDATE_CMD, discover_pip_packages, check_pypi_updates,
+    GIT_OK, GIT_UNREACHABLE, GIT_NOT_A_REPO, GIT_NEEDS_PULL, check_workspace_repos)
 
 
 def print_workspace_repos(repos, indent=4):
@@ -574,8 +320,15 @@ def print_software_versions():
     core, pip_extras = discover_pip_packages()
     py_ver = f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'
 
-    # Ask PyPI (once, concurrently) which hello-robot-* packages have newer releases
-    updates, pypi_reachable = check_pypi_updates({**core, **pip_extras})
+    # The server checks PyPI and the git remotes every few hours: judge its last result
+    # against what's installed here. Without one, ask PyPI now (once, concurrently).
+    server = _server_updates()
+    if server is not None:
+        latest = server.get('pypi_latest') or {}
+        updates = su.pip_updates({**core, **pip_extras}, latest)
+        pypi_reachable = any(v is not None for v in latest.values())
+    else:
+        updates, pypi_reachable = check_pypi_updates({**core, **pip_extras})
 
     print_version_info(f'hello-robot-stretch4-body : {core["hello-robot-stretch4-body"]}',
                        updates.get('hello-robot-stretch4-body'))
@@ -623,31 +376,45 @@ def print_software_versions():
         pass
 
     # ROS2 workspace repos — git branch/sha and whether the remote is ahead
-    src, repos = check_workspace_repos()
+    src, repos = check_workspace_repos(remotes=(server.get('repo_remotes') or {}) if server else None)
     if repos:
         print_group(f'\n  ROS2 Workspace ({src}):')
         print_workspace_repos(repos, indent=4)
 
-    return {**core, **pip_extras}, updates, pypi_reachable, repos
+    return {**core, **pip_extras}, updates, pypi_reachable, repos, server
 
 
 UPDATES_SECTION = 'Updates'
 
 
-def check_available_updates(installed, pip_updates, pypi_reachable, repos):
-    """
-    Warn about the updates --check_updates would find without stopping the server:
-    newer hello-robot-* releases on PyPI, and workspace repos behind their remote.
-    Firmware is left out, since querying it needs exclusive access to the USB devices.
+def _server_updates():
+    """The server's last software update check, or None if it hasn't made one."""
+    health = _server_health()
+    updates = (health.status.get('updates') or {}) if health is not None else {}
+    return updates if updates.get('ts_check') else None
 
-    Takes what print_software_versions() already gathered, so nothing is queried twice.
+
+def _age(ts):
+    hours = (time.time() - ts) / 3600.0
+    return f'{hours * 60:.0f} min' if hours < 1 else f'{hours:.1f} h'
+
+
+def check_available_updates(installed, pip_updates, pypi_reachable, repos, server):
+    """
+    Report available updates: newer hello-robot-* releases on PyPI, workspace repos behind
+    their remote, and, from the server's check, firmware. Updates are [INFO]: worth knowing,
+    not a fault. Takes what print_software_versions() already gathered.
     """
     print_section(UPDATES_SECTION)
+    if server is not None:
+        note = '' if server.get('ts_attempt', 0) <= server['ts_check'] else \
+            f'; no internet at the last attempt, {_age(server["ts_attempt"])} ago'
+        print_info(f'From stretch_body_server\'s update check {_age(server["ts_check"])} ago{note}', indent=2)
 
     if not pypi_reachable:
         print_warn('Could not reach PyPI — pip update availability not checked')
     elif pip_updates:
-        print_warn(f'{len(pip_updates)} pip package update(s) available:')
+        print_notice(f'{len(pip_updates)} pip package update(s) available:')
         col = max(len(n) for n in pip_updates)
         for name in sorted(pip_updates):
             print_info(f'{name:<{col}} : {installed[name]} → {pip_updates[name]}')
@@ -658,43 +425,124 @@ def check_available_updates(installed, pip_updates, pypi_reachable, repos):
     behind = [x['name'] for x in repos if x['status'] in GIT_NEEDS_PULL]
     unreachable = [x['name'] for x in repos if x['status'] == GIT_UNREACHABLE]
     if behind:
-        print_warn(f'{len(behind)} ROS2 workspace repo(s) behind their remote: ' + ', '.join(behind))
+        print_notice(f'{len(behind)} ROS2 workspace repo(s) behind their remote: ' + ', '.join(behind))
         print_info('Run with --repos for the git commands to update them')
     elif repos and not unreachable:
         print_result(True, 'ROS2 workspace repos are up to date')
     if unreachable:
         print_warn('Could not reach the remote for: ' + ', '.join(unreachable))
 
-    print_info('Firmware updates are not checked here — run with --check_updates '
-               '(stops the robot server while it queries the boards)', indent=2)
+    firmware = (server or {}).get('firmware') or {}
+    if firmware:
+        upgrades = {d: rec for d, rec in firmware.items() if rec['action'] == su.FW_UPGRADE}
+        for dev in sorted(upgrades):
+            print_notice(f'{dev} firmware {upgrades[dev]["installed"]} → {upgrades[dev]["recommended"]}')
+        if upgrades:
+            print_info(f'Update with: {server["firmware_command"]}')
+        else:
+            print_result(True, 'Firmware is at the recommended versions')
+    else:
+        print_info('Firmware updates not checked yet — run with --check_updates to check now', indent=2)
+
+
+# ==============================================================================
+# Health results
+#
+# The hardware checks themselves live in stretch4_body.behavior.health.health_checks,
+# which stretch_body_server runs continuously. This tool renders the results the
+# server publishes in status['health']. When there's no server health to read
+# (server offline, --direct, an older server) it runs the same functions here.
+# ==============================================================================
+
+from stretch4_body.behavior.health import health_checks as hc
+
+_local_status_results = None
+
+
+def _server_health():
+    """The server's HealthClient, if a connected server publishes health."""
+    health = getattr(r, 'health', None) if r is not None else None
+    if health is not None and health.is_available() and health.status.get('ts_update'):
+        return health
+    return None
+
+
+def health_results(group):
+    """Results for one group: from the server when it has them, otherwise computed here."""
+    global _local_status_results
+    health = _server_health()
+    if group in hc.HOST_GROUPS:
+        if health is not None and health.status.get('ts_host_update'):
+            return health.checks(group)
+        if group == hc.GROUP_USB:
+            return hc.check_usb_devices(rp.RobotParams._robot_params)
+        if group == hc.GROUP_ESP32:
+            return hc.check_esp32()
+        return hc.check_calibrations(rp.RobotParams._robot_params)
+    if health is not None:
+        return health.checks(group)
+    if r is None:
+        return []
+    if _local_status_results is None:
+        r.pull_status()  # Fresh status, so the staleness checks judge it, not this tool's runtime
+        _local_status_results = hc.run_status_checks(r.status, rp.RobotParams._robot_params)
+    return [res for res in _local_status_results if res['group'] == group]
+
+
+def print_health_results(results):
+    """Print health results as [PASS]/[INFO]/[WARN]/[FAIL] lines."""
+    subgroup = None
+    for res in results:
+        if res.get('subgroup') and res['subgroup'] != subgroup:
+            subgroup = res['subgroup']
+            print_group(f'    {subgroup}:')
+        indent = 6 if res.get('subgroup') else 2
+        level, msg = res['level'], res['message']
+        if level == hc.OK:
+            print_result(True, msg, indent=indent)
+        elif level == hc.INFO:
+            print_notice(msg, indent=indent)
+        elif level == hc.WARN:
+            print_warn(msg, indent=indent)
+        else:
+            print_result(False, f'{msg} (stale)' if level == hc.STALE and 'no update' not in msg else msg,
+                         indent=indent)
+        # Details explain a problem, so show them for one; otherwise only with --verbose
+        if args.verbose or level != hc.OK:
+            for line in res.get('detail', []):
+                print_info(line, indent=indent + 2)
+
+
+def print_health_group(group, title):
+    print_section(title)
+    results = health_results(group)
+    print_health_results(results)
+    return hc.group_passed(results)
+
+
+def print_health_source():
+    health = _server_health()
+    if not args.verbose:
+        return
+    if health is not None:
+        age = health.age_s() or 0.0
+        host_age = health.host_age_s()
+        host = f'{host_age:.1f} s' if host_age is not None else 'not run yet, checked here'
+        print_info(f'Hardware checks read from stretch_body_server health '
+                   f'(status checks {age:.1f} s old, USB/calibration checks {host})', indent=2)
+    elif r is not None:
+        print_info('Server does not publish health; ran the health checks here', indent=2)
 
 
 def check_usb_devices():
-    print_section('USB Devices')
-    expected = [
-        'hello-motor-arm',
-        'hello-motor-lift',
-        'hello-motor-omni-0',
-        'hello-motor-omni-1',
-        'hello-motor-omni-2',
-        'hello-power-periph',
-        'hello-feetech-wrist',
-        'hello-esp32',
-        'hello-nav-head-camera-stereo',
-        'hello-pixart-j3',
-    ]
-    dev_list = set(os.listdir('/dev'))
-    all_pass = True
-    for dev in expected:
-        present = dev in dev_list
-        print_result(present, f'/dev/{dev}')
-        if not present:
-            all_pass = False
+    ok = print_health_group(hc.GROUP_USB, 'USB Devices')
     if args.verbose:
+        expected = {dev for dev, _ in hc.USB_DEVICES}
+        dev_list = set(os.listdir('/dev'))
         extras = sorted(e for e in dev_list if fnmatch.fnmatch(e, 'hello-*') and e not in expected)
         for extra in extras:
             print_info(f'(extra) /dev/{extra}')
-    return all_pass
+    return ok
 
 
 DEVICE_LABELS = {
@@ -821,6 +669,43 @@ def check_firmware_versions():
     return all_pass
 
 
+def _running_server_firmware_boards():
+    """The firmware versions a running server read from its boards, or None."""
+    from stretch4_body.robot.robot_client import RobotClient
+    client = RobotClient()
+    _old_stdout, _old_stderr = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = io.StringIO()
+    try:
+        if not client.startup():
+            return None
+        client.pull_status()
+        return (client.health.status.get('updates') or {}).get('firmware_boards') or None
+    except Exception:
+        return None
+    finally:
+        sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        try:
+            client.stop()
+        except Exception:
+            pass
+
+
+def collect_firmware_updates_from(boards):
+    """collect_firmware_updates() for versions already known, so no USB access is needed."""
+    out = {'table': '', 'command': None, 'error': None}
+    available = su.fetch_firmware_available(list(boards))
+    if not any(available.values()):
+        out['error'] = ('Could not fetch the available firmware list — '
+                        'check the robot\'s internet connection')
+        return out
+    recs = su.firmware_recommendations(boards, available)
+    out['table'] = su.firmware_table(recs) + (
+        '\n\nThe ESP32 and line sensor board can\'t report a version; '
+        'flash them with REx_firmware_updater --install --esp32 --pixart if needed.')
+    out['command'] = su.firmware_command(recs)
+    return out
+
+
 def collect_firmware_updates():
     """
     Delegate the firmware check to FirmwareRecommended — the same report and
@@ -931,10 +816,16 @@ def check_updates():
 
     # ---- firmware ----------------------------------------------------------
     print_section('Firmware')
-    click.secho('  Firmware queries need exclusive access to the USB devices.', fg='yellow')
-    _kill_server()
-    fw = collect_firmware_updates()
-    _restart_server()
+    boards = _running_server_firmware_boards()
+    if boards:
+        # The server read every board at startup, so there's no need to stop it
+        print_info('Installed versions as stretch_body_server read them at startup', indent=2)
+        fw = collect_firmware_updates_from(boards)
+    else:
+        click.secho('  Firmware queries need exclusive access to the USB devices.', fg='yellow')
+        _kill_server()
+        fw = collect_firmware_updates()
+        _restart_server()
 
     if fw['error']:
         print_warn(fw['error'])
@@ -977,79 +868,19 @@ def check_updates():
 
 
 def check_power_periph():
-    print_section('Power & Battery')
-    all_pass = True
-    ps = r.power_periph.status
-
-    soc = ps.get('battery_soc', 0)
-    if soc >= 20:
-        print_result(True, f'Battery SOC = {soc:.0f}%')
-    elif soc >= 10:
-        print_warn(f'Battery SOC = {soc:.0f}% (low — consider charging)')
-    else:
-        print_result(False, f'Battery SOC = {soc:.0f}% (critically low!)')
-        all_pass = False
-
-    soh = ps.get('battery_soh', 0)
-    if soh >= 75:
-        print_result(True, f'Battery SOH = {soh:.1f}%')
-    else:
-        print_warn(f'Battery SOH = {soh:.1f}% (degraded battery)')
-
-    for label, key, vmin, vmax in [
-        ('Bus Voltage (V)',  'voltage',     20.0, 30.0),
-        ('CPU Voltage (V)',  'voltage_cpu', 15.0, 30.0),
-        ('12V Rail (V)',     'voltage_12v0', 10.0, 14.0),
-        ('5V Rail (V)',      'voltage_5v0',   4.5,  5.5),
-    ]:
-        val = ps.get(key, 0)
-        if val > 0:
-            p, msg = val_in_range(label, val, vmin, vmax)
-            print_result(p, msg)
-            if not p:
-                all_pass = False
-
-    runstop = ps.get('runstop_event', False)
-    print_warn('Runstop is active') if runstop else print_result(True, 'Runstop not active')
-
-    temp = ps.get('temp', 0)
-    p, msg = val_in_range('Board Temp (°C)', temp, 0, 80)
-    print_result(p, msg)
-    if not p:
-        all_pass = False
-
-    if args.verbose:
-        print_info(f'Battery Current  : {ps.get("battery_current", 0):.2f} A')
-        print_info(f'Adapter present  : {ps.get("adapter_voltage_present", False)}')
-        print_info(f'Adapter fault    : {ps.get("adapter_fault", False)}')
-        print_info(f'Charging         : {ps.get("charger_is_charging", False)}')
-
-    return all_pass
+    return print_health_group(hc.GROUP_POWER, 'Power & Battery')
 
 
 def check_esp32():
-    print_section('ESP32 Connectivity')
-    ps = r.power_periph.status
+    return print_health_group(hc.GROUP_ESP32, 'ESP32 Connectivity')
 
-    esp32_present = os.path.exists('/dev/hello-esp32')
-    print_result(esp32_present, '/dev/hello-esp32 present')
-    if not esp32_present:
-        return False
 
-    if args.verbose:
-        print_info(f'Aux CPU on  : {ps.get("cpu_on_sts", False)}')
-
-    return True
-
-LINE_SENSOR_MIN_HZ = 25.0
 LINE_SENSOR_MEASURE_S = 2.0
 LINE_SENSOR_SETTLE_S = 3.0
 
 
 def check_line_sensors():
     print_section('Line Sensors (hello-pixart-j3)')
-
-    from stretch4_body.subsystem.line_sensor import connect
 
     subsystems = list(r.params.get('server', {}).get('subsystems', []) or []) if r is not None else []
     line_sensor = getattr(r, 'line_sensor_loop', None) if r is not None else None
@@ -1058,6 +889,15 @@ def check_line_sensors():
         print_result(False, 'line_sensor_loop is ENABLED in params but the client '
                             'has no handle for it — the subsystem failed to start')
         return False
+
+    # The server measures the line sensors continuously, so read its results
+    if line_sensor is not None and _server_health() is not None:
+        results = health_results(hc.GROUP_LINE_SENSOR)
+        if results:
+            print_health_results(results)
+            return hc.group_passed(results)
+
+    from stretch4_body.subsystem.line_sensor import connect
 
     opened_here = False
     if line_sensor is not None:
@@ -1086,255 +926,54 @@ def check_line_sensors():
 
 
 def _check_line_sensors_on(conn, just_opened):
-    line_sensor = conn.loop
-    conn.pull_status()
-
-    all_pass = True
-    lss = line_sensor.status
-    health = lss.get('health') or {}
-    sensor_names = line_sensor.params.get('sensor_names', [])
-
-    # -- the link ----------------------------------------------------------
-    # frame_id > 0 used to be the whole test. It stays true forever after one
-    # good frame, so this check passed with the board unplugged.
-    port_open = bool(health.get('port_open', False))
-    print_result(port_open, 'Serial port open (/dev/hello-pixart-j3)')
-    all_pass &= port_open
-
-    if not health.get('streaming', False):
-        print_warn('Streaming is OFF — cliff detection is disabled')
-        all_pass = False
-
-    # -- which sensors are actually alive ----------------------------------
-    dead = list(health.get('sensors_dead', []))
-    disabled = list(health.get('disabled_sensors', []))
-    ok = [sn for sn in sensor_names if sn not in dead and sn not in disabled]
-    print_result(not dead, f'{len(ok)}/{len(sensor_names)} sensors reporting'
-                           + (f' — DEAD: {", ".join(dead)}' if dead else ''))
-    all_pass &= not dead
-    if disabled:
-        print_warn(f'DISABLED at runtime (not a fault): {", ".join(disabled)} — '
-                   f'{len(disabled)} of {len(sensor_names)} sensors are not looking')
-    else:
-        print_result(True, f'All {len(sensor_names)} sensors enabled (none disabled)')
-
-  
+    """Measure the frame rate here, then judge it with the same check the server runs."""
     from stretch4_body.tools import stretch_line_sensor_hz_check as hz
 
+    line_sensor = conn.loop
+    conn.pull_status()
+    health = line_sensor.status.get('health') or {}
+    sensor_names = line_sensor.params.get('sensor_names', [])
+    disabled = list(health.get('disabled_sensors', []))
     active = [sn for sn in sensor_names if sn not in disabled]
-    rates, span = {}, 0.0
-    if not active:
-        print_warn('Every sensor is disabled — nothing to time')
-        all_pass = False
-    else:
+
+    rates = {}
+    if active:
         if just_opened:
             hz.settle(conn, active, max_s=LINE_SENSOR_SETTLE_S)
-        rates, span = hz.measure(conn, active, LINE_SENSOR_MEASURE_S)
+        rates, _ = hz.measure(conn, active, LINE_SENSOR_MEASURE_S)
 
-        slowest = min(rates[sn]['advance_hz'] for sn in active)
-        p = slowest >= LINE_SENSOR_MIN_HZ
-        print_result(p, f'Frame rate {slowest:.1f} Hz on the slowest sensor '
-                        f'(need >= {LINE_SENSOR_MIN_HZ:.0f} Hz, measured over {span:.1f} s)')
-        all_pass &= p
-
-    # -- per sensor --------------------------------------------------------
-    for sn in sensor_names:
-        s = lss.get(sn, {})
-        if not isinstance(s, dict):
-            print_result(False, f'{sn}: no status block')
-            all_pass = False
-            continue
-        if sn in disabled:
-            print_info(f'{sn}: disabled')
-            continue
-        m = rates.get(sn, {})
-        s_rate = m.get('advance_hz', 0.0)
-        missed = s.get('missed_frames', 0)
-        good = sn not in dead and s_rate >= LINE_SENSOR_MIN_HZ and not m.get('backwards')
-        watched_every_frame = m.get('fresh_hz', 0.0) >= 0.9 * s_rate
-        print_result(good, f'{sn}: {s_rate:.1f} Hz'
-                           + (f', dropped {m["skips"]}x (longest gap {m["max_gap"]} frames)'
-                              if m.get('skips') and watched_every_frame else '')
-                           + (f', missed {missed} frames' if missed else '')
-                           + (f', frame_id went BACKWARDS {m["backwards"]}x' if m.get('backwards') else ''))
-        all_pass &= good
-
-        fresh = m.get('fresh_hz', 0.0)
-        if s_rate >= LINE_SENSOR_MIN_HZ and fresh < LINE_SENSOR_MIN_HZ:
-            print_warn(f'{sn}: only {fresh:.1f} Hz of that reaches a reader — '
-                       f'status is being delivered slower than the sensor runs')
-        elif args.verbose:
-            print_info(f'{sn}: {fresh:.1f} Hz of new frames reaching a reader')
-
-    # -- a sensor missing from every frame -----------------------------------
-    # These climb together at the frame rate when a sensor is structurally
-    # absent. Rising counters are the signal; a nonzero total may just be
-    # history from an earlier fault, so report rather than fail on it.
-    incomplete = health.get('frame_not_full_err', 0)
-    if incomplete:
-        print_warn(f'{incomplete} incomplete frames since startup — a sensor '
-                   f'dropped out of frames')
-
-    restarts = health.get('reader_restarts', 0)
-    if restarts:
-        print_warn(f'Serial port has self-recovered {restarts} time(s) — '
-                   f'suspect a flaky cable if this keeps climbing')
-
-    decode = health.get('decode_errors', 0)
-    if decode:
-        print_warn(f'{decode} decode errors since startup')
-
-    # -- calibration -------------------------------------------------------
-    cal = lss.get('calibration') or {}
-    loaded, rejected = cal.get('loaded', []), cal.get('rejected', {})
-    print_result(len(loaded) == len(sensor_names),
-                 f'Calibration: {len(loaded)}/{len(sensor_names)} tares loaded')
-    for name, why in sorted(rejected.items()):
-        print_info(f'{name}: NO TARE ({str(why).split(":")[0]})')
-    all_pass &= len(loaded) == len(sensor_names)
-
-    return all_pass
+    params = hc.merged_params(rp.RobotParams._robot_params)
+    results = hc.check_line_sensors(line_sensor.status, sensor_names, rates, params)
+    print_health_results(results)
+    return hc.group_passed(results)
 
 
 def check_omnibase():
-    print_section('OmniBase (3-Wheel Drive)')
-    all_pass = True
-    obs = r.omnibase.status
-
-    for i in range(3):
-        ws = obs.get(f'wheel_{i}', {})
-        pos = ws.get('pos') if ws else None
-        if pos is None:
-            print_result(False, f'omni-{i}: no status data')
-            all_pass = False
-            continue
-        print_result(True, f'omni-{i}: pos = {pos:.3f} rad')
-        if args.verbose:
-            effort = ws.get('effort_pct')
-            vel    = ws.get('vel')
-            if effort is not None:
-                print_info(f'omni-{i} effort = {effort:.1f}%')
-            if vel is not None:
-                print_info(f'omni-{i} vel    = {vel:.3f} rad/s')
-
-    return all_pass
+    return print_health_group(hc.GROUP_OMNIBASE, 'OmniBase (3-Wheel Drive)')
 
 
 def check_arm():
-    print_section('Arm')
-    all_pass = True
-    arm_s   = r.arm.status
-    motor_s = arm_s.get('motor', {})
-
-    if motor_s.get('pos_calibrated', False):
-        print_result(True, 'Arm is homed')
-    else:
-        print_warn('Arm not homed (pos_calibrated = False)')
-
-    pos = arm_s.get('pos')
-    if pos is not None:
-        p, msg = val_in_range('Arm pos (m)', pos, -0.01, 0.56)
-        print_result(p, msg)
-        if not p:
-            all_pass = False
-    else:
-        print_result(False, 'Arm pos not available')
-        all_pass = False
-
-    return all_pass
+    return print_health_group(hc.GROUP_ARM, 'Arm')
 
 
 def check_lift():
-    print_section('Lift')
-    all_pass = True
-    lift_s  = r.lift.status
-    motor_s = lift_s.get('motor', {})
-
-    if motor_s.get('pos_calibrated', False):
-        print_result(True, 'Lift is homed')
-    else:
-        print_warn('Lift not homed (pos_calibrated = False)')
-
-    pos = lift_s.get('pos')
-    if pos is not None:
-        p, msg = val_in_range('Lift pos (m)', pos, -0.01, 1.12)
-        print_result(p, msg)
-        if not p:
-            all_pass = False
-    else:
-        print_result(False, 'Lift pos not available')
-        all_pass = False
-
-    return all_pass
+    return print_health_group(hc.GROUP_LIFT, 'Lift')
 
 
 def check_end_of_arm():
-    print_section(f'End-of-Arm ({TOOL_DISPLAY.get(stretch_tool, stretch_tool)})')
-    all_pass = True
-    eoa    = r.end_of_arm
-    joints = getattr(eoa, 'joints', [])
-
-    if not joints:
-        print_warn('No joints defined in end-of-arm params')
-        return True
-
-    eoa_s = eoa.status
-    for joint_name in joints:
-        js = eoa_s.get(joint_name, {})
-        if not js:
-            print_result(False, f'{joint_name}: no status data')
-            all_pass = False
-            continue
-
-        pos            = js.get('pos')
-        pos_calibrated = js.get('pos_calibrated', False)
-        temp           = js.get('temp')
-        hw_err         = js.get('hardware_error', 0)
-
-        if pos is None:
-            print_result(False, f'{joint_name}: no position data')
-            all_pass = False
-            continue
-
-        joint_ok = (hw_err == 0) and (temp is None or temp < 70)
-        temp_str = f'  temp={temp:.0f}°C' if temp is not None else ''
-        err_str  = f'  hw_error={hw_err}' if hw_err else ''
-        print_result(joint_ok, f'{joint_name}: pos={pos:.3f} rad  homed={int(pos_calibrated)}{temp_str}{err_str}')
-        if not joint_ok:
-            all_pass = False
-
-        if args.verbose:
-            effort  = js.get('effort')
-            curr_mA = js.get('current_mA')
-            if effort is not None:
-                print_info(f'{joint_name} effort = {effort:.1f}%')
-            if curr_mA is not None:
-                print_info(f'{joint_name} current = {curr_mA:.1f} mA')
-
-    return all_pass
+    return print_health_group(hc.GROUP_END_OF_ARM,
+                              f'End-of-Arm ({TOOL_DISPLAY.get(stretch_tool, stretch_tool)})')
 
 
 def check_imu():
-    print_section('IMU (Base)')
-    imu_s = r.power_periph.status.get('imu', {})
-    if not imu_s:
-        print_result(False, 'IMU status not available')
-        return False
+    return print_health_group(hc.GROUP_IMU, 'IMU (Base)')
 
-    all_pass = True
-    az = imu_s.get('az', 0)
-    p, msg = val_in_range('IMU az (m/s²)', az, 7.0, 11.0)
-    print_result(p, msg)
-    if not p:
-        all_pass = False
 
-    if args.verbose:
-        ax, ay = imu_s.get('ax', 0), imu_s.get('ay', 0)
-        print_info(f'ax = {ax:.3f}  ay = {ay:.3f}  az = {az:.3f} m/s²')
-        print_info(f'roll = {imu_s.get("roll", 0):.4f} rad  pitch = {imu_s.get("pitch", 0):.4f} rad')
-        print_info(f'gravity_tilt = {imu_s.get("gravity_tilt", 0):.4f} rad')
-
-    return all_pass
+def check_server_health():
+    """Control loop rate and worker processes. Only the server can report these."""
+    if _server_health() is None:
+        return None
+    return print_health_group(hc.GROUP_SERVER, 'Server')
 
 
 def check_eye_animations():
@@ -1414,84 +1053,7 @@ def check_audio():
 
 
 def check_calibrations():
-    print_section('Calibrations Present')
-    all_pass = True
-
-    fleet_path = os.environ.get('HELLO_FLEET_PATH', os.path.expanduser('~/stretch_user'))
-    fleet_id   = os.environ.get('HELLO_FLEET_ID', stretch_serial_no)
-    cal_root   = os.path.join(fleet_path, fleet_id)
-
-    print_group('    Steppers:')
-    stepper_dir = os.path.join(cal_root, 'calibration_steppers')
-    for m in ['hello-motor-arm', 'hello-motor-lift',
-              'hello-motor-omni-0', 'hello-motor-omni-1', 'hello-motor-omni-2']:
-        files = ([f for f in os.listdir(stepper_dir)
-                  if f.startswith(m + '_') and f.endswith('.yaml')]
-                 if os.path.isdir(stepper_dir) else [])
-        ok = len(files) > 0
-        print_result(ok, m, indent=6)
-        if not ok:
-            all_pass = False
-
-    print_group('    Cameras:')
-    cam_dir = os.path.join(cal_root, 'calibration_cameras')
-    from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
-
-    # Load each camera's calibration the way the rest of the codebase does, rather than looking for
-    # files: it checks that the entry exists, parses, and matches the camera's configured size.
-    for label, camera_type in (
-        ('intrinsics: left',          RGBCameras.left()),
-        ('intrinsics: right',         RGBCameras.right()),
-        ('intrinsics: center',        RGBCameras.center()),
-        ('intrinsics: gripper left',  RGBCameras.gripper_left),
-        ('intrinsics: gripper right', RGBCameras.gripper_right),
-    ):
-        try:
-            calibration = camera_type.load_calibration()
-            print_result(True, f'{label}  ({calibration.width}x{calibration.height})', indent=6)
-        except Exception as e:
-            print_result(False, label, indent=6)
-            print_info(str(e).strip(), indent=8)
-            all_pass = False
-
-    ok = os.path.isfile(os.path.join(cam_dir, 'camera_extrinsics.yaml'))
-    print_result(ok, 'extrinsics', indent=6)
-    if not ok:
-        all_pass = False
-
-    print_group('    Line Sensors:')
-    ls_dir = os.path.join(cal_root, 'calibration_line_sensors')
-
-    ls_names = (rp.RobotParams._robot_params
-                .get('line_sensor_loop', {})
-                .get('sensor_names', [f'sensor_{i}' for i in range(6)]))
-    tare_dir = calibration_store.tare_dir(ls_dir)
-    if os.path.isdir(tare_dir):
-        for name in ls_names:
-            has_cal = os.path.isfile(calibration_store.tare_path(ls_dir, name))
-            print_result(has_cal, name, indent=6)
-            if not has_cal:
-                all_pass = False
-    else:
-        print_result(False, f'tare directory missing: {tare_dir}', indent=6)
-        all_pass = False
-
-    print_group('    Lidars:')
-    hesai_dir = os.path.join(cal_root, 'calibration_hesais')
-    for side in ('left', 'right'):
-        ok = os.path.isfile(os.path.join(hesai_dir, f'{side}_lidar_calibration.dat'))
-        print_result(ok, f'{side} lidar', indent=6)
-        if not ok:
-            all_pass = False
-
-    print_group('    OmniBase:')
-    imu_dir = os.path.join(cal_root, 'calibration_omnibase_imu')
-    has_imu_cal = os.path.isdir(imu_dir) and any(os.listdir(imu_dir))
-    print_result(has_imu_cal, 'IMU calibration', indent=6)
-    if not has_imu_cal:
-        all_pass = False
-
-    return all_pass
+    return print_health_group(hc.GROUP_CALIBRATION, 'Calibrations Present')
 
 
 def _ptc_call(fn, *args, label='', fail_ok=False):
@@ -2482,10 +2044,10 @@ _ALL_CHECKS = [
     'USB Devices', 'Firmware',
     'Power/Battery', 'ESP32', 'Line Sensors',
     'Eye LEDs', 'Calibrations', 'Audio',
-    'OmniBase', 'Arm', 'Lift', 'End-of-Arm', 'IMU',
+    'OmniBase', 'Arm', 'Lift', 'End-of-Arm', 'IMU', 'Server',
 ]
 _REQUIRE_SERVER = {
-    'Power/Battery', 'ESP32', 'OmniBase', 'Arm', 'Lift', 'End-of-Arm', 'IMU'
+    'Power/Battery', 'OmniBase', 'Arm', 'Lift', 'End-of-Arm', 'IMU'
 }
 
 
@@ -2538,11 +2100,7 @@ def main():
 
     # Full system check
     with working():
-        check_available_updates(*print_software_versions())
-        results['USB Devices'] = check_usb_devices()
-        results['Firmware']    = None  # requires --firmware
-        results['Calibrations'] = check_calibrations()
-
+        # Connect first: the update, USB and calibration checks read the server's health results too
         if args.direct:
             from stretch4_body.robot.robot import Robot
             r = Robot()
@@ -2554,6 +2112,18 @@ def main():
         sys.stdout = sys.stderr = io.StringIO()
         server_online = r.startup()
         sys.stdout, sys.stderr = _old_stdout, _old_stderr
+        if not server_online:
+            r = None
+        else:
+            r.pull_status()
+
+        check_available_updates(*print_software_versions())
+        print_health_source()
+
+        results['USB Devices'] = check_usb_devices()
+        results['Firmware']    = None  # requires --firmware
+        results['Calibrations'] = check_calibrations()
+        results['ESP32']        = check_esp32()
 
         if not server_online:
             _echo(
@@ -2561,9 +2131,6 @@ def main():
                 '       Launch the server first:  stretch_body_server --launch\n',
                 fg='yellow'
             )
-            r = None
-        else:
-            r.pull_status()
 
         results['Line Sensors'] = check_line_sensors()
         results['Eye LEDs']     = check_eye_animations()
@@ -2571,12 +2138,14 @@ def main():
 
         if r is not None:
             results['Power/Battery'] = check_power_periph()
-            results['ESP32']         = check_esp32()
             results['OmniBase']      = check_omnibase()
             results['Arm']           = check_arm()
             results['Lift']          = check_lift()
             results['End-of-Arm']    = check_end_of_arm()
             results['IMU']           = check_imu()
+            server_ok = check_server_health()
+            if server_ok is not None:
+                results['Server']    = server_ok
         else:
             for name in _REQUIRE_SERVER:
                 results[name] = None
@@ -2587,9 +2156,11 @@ def main():
         passed = results.get(name)
         if passed is None:
             skip_reason = _SKIP_REASONS.get(name) or (
-                'run with --firmware to check' if name == 'Firmware' else 'server offline')
-            # Firmware is always skipped here, so it is only worth a line in verbose output
-            print_skip(f'{name} ({skip_reason})', expected=name == 'Firmware')
+                'run with --firmware to check' if name == 'Firmware' else
+                'no server health to read' if name == 'Server' and r is not None else 'server offline')
+            # Firmware is always skipped here, and Server whenever there's no server health
+            # (--direct or an older server), so they're only worth a line in verbose output
+            print_skip(f'{name} ({skip_reason})', expected=name in ('Firmware', 'Server'))
         else:
             print_result(passed, name)
             if not passed:
@@ -2614,7 +2185,7 @@ def main():
 # ==============================================================================
 
 _RE_SECTION   = re.compile(r'^-{4}\s(?P<title>.+?)\s-{4}$')
-_RE_RESULT    = re.compile(r'^(?P<indent>\s*)\[(?P<status>PASS|FAIL|WARN|SKIP)\]\s(?P<message>.*)$')
+_RE_RESULT    = re.compile(r'^(?P<indent>\s*)\[(?P<status>PASS|INFO|FAIL|WARN|SKIP)\]\s(?P<message>.*)$')
 _RE_RANGE     = re.compile(r'^(?P<label>.+?)\s=\s(?P<value>-?\d+(?:\.\d+)?)\s'
                            r'\(range\s\[(?P<min>-?\d+(?:\.\d+)?),\s*(?P<max>-?\d+(?:\.\d+)?)\]\)$')
 _RE_TARGET    = re.compile(r'^(?P<label>.+?):\s(?P<value>-?\d+(?:\.\d+)?)\s+\(target\s(?P<target>-?\d+(?:\.\d+)?)\)$')
@@ -2739,7 +2310,7 @@ def _parse_check_output(text):
 def _count_statuses(sections):
     """Totals per status. A recap section contributes only its SKIPs — the tool lists
     skipped checks nowhere else, while its other rows repeat the sections above."""
-    counts = {'PASS': 0, 'FAIL': 0, 'WARN': 0, 'SKIP': 0}
+    counts = {'PASS': 0, 'INFO': 0, 'FAIL': 0, 'WARN': 0, 'SKIP': 0}
     for section in sections:
         for result in section['results']:
             if section.get('rollup') and result['status'] != 'SKIP':
@@ -3033,10 +2604,10 @@ def _build_report(contents, captures):
         ]
         parsed.append(capture)
 
-    totals = {'PASS': 0, 'FAIL': 0, 'WARN': 0, 'SKIP': 0}
+    totals = {'PASS': 0, 'INFO': 0, 'FAIL': 0, 'WARN': 0, 'SKIP': 0}
     for capture in parsed:
         for status, count in capture['counts'].items():
-            totals[status] += count
+            totals[status] = totals.get(status, 0) + count
 
     blind = any(capture['errors'] for capture in parsed)
     verdict = ('critical' if totals['FAIL']
@@ -3077,7 +2648,7 @@ REPORT_STYLE = """
   --grid: #e1e0d9;  --axis: #c3c2b7;   --border: rgba(11,11,11,0.10);
   --good-rgb: 12,163,12;    --warning-rgb: 250,178,25;
   --serious-rgb: 236,131,90; --critical-rgb: 208,59,59;
-  --muted-rgb: 137,135,129;
+  --muted-rgb: 137,135,129; --info-rgb: 59,130,206;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -3207,6 +2778,7 @@ const DATA = /*__REPORT_DATA__*/ null;
 
 const STATUS = {
   PASS: { label: 'Pass',    glyph: '\\u25CF', rgb: 'var(--good-rgb)' },
+  INFO: { label: 'Info',    glyph: 'i',        rgb: 'var(--info-rgb)' },
   FAIL: { label: 'Fail',    glyph: '\\u2715', rgb: 'var(--critical-rgb)' },
   WARN: { label: 'Warning', glyph: '\\u25B2', rgb: 'var(--warning-rgb)' },
   SKIP: { label: 'Skipped', glyph: '\\u2013', rgb: 'var(--muted-rgb)' },
@@ -3216,7 +2788,7 @@ const VERDICT = {
   warning:  { rgb: 'var(--warning-rgb)',  word: 'Needs attention' },
   critical: { rgb: 'var(--critical-rgb)', word: 'Faults found' },
 };
-const ORDER = ['PASS', 'WARN', 'FAIL', 'SKIP'];
+const ORDER = ['PASS', 'INFO', 'WARN', 'FAIL', 'SKIP'];
 const solid = (rgb) => 'rgb(' + rgb + ')';
 const tint  = (rgb, a) => 'rgba(' + rgb + ',' + a + ')';
 
@@ -3542,7 +3114,7 @@ function renderFilters(root, captureRoot) {
       bar.querySelectorAll('button').forEach((b) => (b.style.borderColor = 'var(--border)'));
       button.style.borderColor = solid(STATUS.FAIL.rgb);
       captureRoot.querySelectorAll('.row').forEach((row) => {
-        const hide = mode === 'attention' && (row.dataset.status === 'PASS');
+        const hide = mode === 'attention' && (row.dataset.status === 'PASS' || row.dataset.status === 'INFO');
         row.classList.toggle('hidden', hide);
       });
     });

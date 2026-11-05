@@ -53,10 +53,26 @@ def print_status(robot_client):
     print('Running on user:    ' +f'{StretchBodyServer.get_server_owning_user()}')
     print('Running as a daemon: ' + f'{"Yes" if daemon_is_running() else "No"}')
     print('Daemon is installed: ' + f'{"Yes" if daemon_is_installed() else "No"}')
+    print_health(robot_client)
 
     print("")
     print("Use `stretch_body_server --logs` to view the latest logs.")
     print("")
+
+
+def print_health(robot_client):
+    health = getattr(robot_client, 'health', None)
+    if health is None or not health.is_available():
+        print('Health:             not reported by this server')
+        return
+    colors = {'OK': Fore.GREEN, 'INFO': Fore.CYAN, 'WARN': Fore.YELLOW, 'STALE': Fore.RED, 'FAIL': Fore.RED}
+    level = health.level()
+    print('Health:             ' + colors.get(level, '') + level + Style.RESET_ALL)
+    for issue in health.issues() + health.notices():
+        print(f'  {colors.get(issue["level"], "")}[{issue["level"]}]{Style.RESET_ALL} {issue["message"]}')
+    if health.host_age_s() is None:
+        print('  (USB and calibration checks have not run yet)')
+    print("Use `stretch_system_check` for every check.")
 
 
 def init_logs(log_file:str):
