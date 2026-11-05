@@ -4,10 +4,13 @@ stretch_firmware_versions: the firmware version of every board on the robot.
 
 Boards on a USB port (PIMU, ESP behind it, steppers, end of arm servos, line sensor) come
 from status['firmware_versions'], which stretch_body_server fills from code that already
-owns each port; this command never opens a device. The head lidars are asked over the
-network with one read-only PTC inventory query, unless the lidar rail is off (the query
-counts as a lidar consumer, so it restarts sentry_lidar_idle's idle countdown). Cameras
-come from the versions file each camera writes when it is opened; no camera is opened here.
+owns each port. A line sensor the server does not run is asked here, if no other program
+has its port. The head lidars are asked over the network with a read-only PTC inventory
+query. With the lidar rail off this command holds the right lidar's data port open,
+which sentry_lidar_idle counts as a consumer, and asks until they answer; the rail goes
+off again once the port is closed. Cameras come from the versions file each camera writes
+when it is opened; with no file yet, each camera is opened once for a frame here, unless
+another program has it.
 """
 import argparse
 import glob
@@ -25,6 +28,9 @@ PTC_PORT = 9347
 LIDARS = (('lidar right', '192.168.1.201'), ('lidar left', '192.168.1.202'))
 PTC_GET_INVENTORY_INFO = 0x07
 PTC_MIN_INVENTORY_BYTES = 136
+LIDAR_WAKE_S = 60.0
+LIDAR_DATA_PORT = 2368
+LINE_SENSOR_WAIT_S = 10.0
 CAMERA_VERSIONS_GLOB = os.path.join(tempfile.gettempdir(), 'luxonis_device_versions_*.json')
 
 NO_SERVER = 'stretch_body_server not running'
@@ -117,25 +123,78 @@ def lidar_rows(status, query=None, now=None):
     now = now or time.time
     source = 'PTC inventory query'
     rows = []
-    skip = lidar_rail_off_reason(status)
+    wake_s = LIDAR_WAKE_S if lidar_rail_off_reason(status) else 0.0
+    start = time.monotonic()
+    hold = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if wake_s:
+        try:
+            hold.bind(('', LIDAR_DATA_PORT))
+        except OSError:
+            pass  # another program reads the lidar data, so the rail comes on for it
     for board, ip in LIDARS:
         port = '%s:%d' % (ip, PTC_PORT)
-        if skip:
-            rows.append(row(board, port, None, source, reason=skip))
-            continue
-        try:
-            inv = query(ip)
-        except (OSError, PtcError) as e:
-            rows.append(row(board, port, None, source, reason='no answer (%s)' % (str(e) or type(e).__name__)))
+        while True:
+            try:
+                inv = query(ip)
+                break
+            except (OSError, PtcError) as e:
+                inv = None
+                reason = 'no answer (%s)' % (str(e) or type(e).__name__)
+                if time.monotonic() - start >= wake_s:
+                    break
+                time.sleep(1.0)
+        if inv is None:
+            if wake_s:
+                reason += ' within %d s of asking with the lidar rail off' % wake_s
+            rows.append(row(board, port, None, source, reason=reason))
             continue
         detail = {k: inv[k] for k in ('sensor_version', 'controller_version', 'build_id',
                                       'serial_number', 'model', 'app_version_raw') if inv.get(k)}
         rows.append(row(board, port, inv.get('app_version'), source, now(), detail,
                         'lidar reported no APP version'))
+    hold.close()
     return rows
 
 
+# ------------------------------------------------------------------------ line sensor
+
+def ask_line_sensor(reader=None):
+    """The line sensor row from its own answer to '?', for when the server does not run it.
+    The port is opened exclusively, so a port another program has is left alone."""
+    from stretch4_body.robot.firmware_versions import line_sensor_row
+    if reader is None:
+        from stretch4_body.subsystem.line_sensor.pixart_j3_reader import PixartJ3Reader
+        reader = PixartJ3Reader()
+    if not reader.startup(quiet=True):
+        r = line_sensor_row(None, False)
+        r['reason'] = 'not run by stretch_body_server, and its port is in use or missing'
+        return r
+    try:
+        start = time.monotonic()
+        while (reader.firmware_status().get('state') == 'waiting'
+               and time.monotonic() - start < LINE_SENSOR_WAIT_S):
+            reader.step()
+            time.sleep(0.01)
+        return line_sensor_row({'firmware': reader.firmware_status()}, True)
+    finally:
+        reader.stop()
+
+
 # ------------------------------------------------------------------------ cameras
+
+def open_cameras():
+    """Open each camera for one frame so it writes its versions file. Returns the errors."""
+    from stretch4_body.subsystem.cameras.stream_cameras import stream_left_camera, stream_gripper_camera
+    errors = []
+    for name, stream in (('head', stream_left_camera), ('gripper', stream_gripper_camera)):
+        try:
+            frames = stream(is_run_pipeline=False)
+            next(f for f in frames if f is not None)
+            frames.close()
+        except Exception as e:
+            errors.append('%s: %s' % (name, (str(e) or type(e).__name__).splitlines()[0]))
+    return errors
+
 
 def camera_rows(paths=None):
     source = 'versions written when the camera was last opened'
@@ -202,8 +261,10 @@ def build_parser():
         prog='stretch_firmware_versions',
         description='Firmware version of every board: PIMU, ESP, steppers, end of arm servos and '
                     'line sensor from stretch_body_server, the head lidars over the network, and '
-                    'the cameras from the versions recorded when each was last opened. Never '
-                    'opens a robot device.',
+                    'the cameras from the versions recorded when each was last opened. Asks a '
+                    'line sensor the server does not run, wakes lidars that are powered down, '
+                    'and opens cameras that have not been opened yet, leaving alone any port '
+                    'or camera another program has.',
         epilog='Exit status: 0 every board reported; 1 some board has no version; 2 no server.')
     parser.add_argument('--json', action='store_true', help='print the rows as JSON')
     parser.add_argument('--no-lidar', action='store_true', help='do not ask the lidars')
@@ -245,9 +306,19 @@ def collect(args):
             rows = [row('usb boards', None, None, 'stretch_body_server status',
                         reason='this stretch_body_server does not publish firmware_versions '
                                '(older stretch4_body)')]
+    for i, r in enumerate(rows):
+        if r['board'] == 'line sensor' and r['reason'] == 'line_sensor_loop is not in server.subsystems':
+            rows[i] = ask_line_sensor()
     if not args.no_lidar:
         rows += lidar_rows(status)
-    rows += camera_rows()
+    cameras = camera_rows()
+    if cameras and not cameras[0]['version']:
+        errors = open_cameras()
+        cameras = camera_rows()
+        if errors and not cameras[0]['version']:
+            cameras[0]['reason'] = ('could not open a camera; another program may have it (%s)'
+                                    % '; '.join(errors))
+    rows += cameras
     return rows, status is not None
 
 

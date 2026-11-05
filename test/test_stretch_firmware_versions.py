@@ -91,12 +91,26 @@ def sentry_status(rail_cmd):
     return {'safety_layer': {'sentry_manager': {'sentry_lidar_idle': {'rail_cmd': rail_cmd}}}}
 
 
-def test_lidars_not_asked_when_the_rail_is_off():
+def test_lidars_asked_until_they_wake_when_the_rail_is_off(monkeypatch):
+    asked = []
+
     def query(ip):
-        raise AssertionError('asked a lidar with the rail off')
+        asked.append(ip)
+        if len(asked) < 3:
+            raise ConnectionRefusedError('Connection refused')
+        return cmd.decode_inventory(inventory_payload())
+    monkeypatch.setattr(cmd.time, 'sleep', lambda s: None)
+    rows = cmd.lidar_rows(sentry_status('off'), query=query, now=lambda: T0)
+    assert asked == ['192.168.1.201'] * 3 + ['192.168.1.202']
+    assert [r['version'] for r in rows] == ['15.AF.B0.00.02.Y'] * 2
+
+
+def test_lidars_that_never_wake(monkeypatch):
+    def query(ip):
+        raise socket.timeout('timed out')
+    monkeypatch.setattr(cmd, 'LIDAR_WAKE_S', 0.0)
     rows = cmd.lidar_rows(sentry_status('off'), query=query)
-    assert [r['board'] for r in rows] == ['lidar right', 'lidar left']
-    assert all('lidar rail is off' in r['reason'] for r in rows)
+    assert all(r['version'] is None and r['reason'] == 'no answer (timed out)' for r in rows)
 
 
 def test_lidars_asked_when_rail_on_or_no_server():
@@ -136,6 +150,35 @@ def test_cameras_from_the_versions_files(tmp_path):
     assert r['detail']['bootloader_version'] == '0.0.26'
 
 
+class FakeLineSensor:
+    def __init__(self, opens=True):
+        self.opens, self.steps, self.stopped = opens, 0, False
+        self.firmware = {'state': 'waiting', 'version': None}
+
+    def startup(self, quiet=False):
+        return self.opens
+
+    def step(self):
+        self.steps += 1
+        if self.steps == 3:
+            self.firmware = {'state': 'reported', 'version': 'hello-pixart-j3.v0.1.3p1',
+                             'received_time': T0}
+
+    def firmware_status(self):
+        return dict(self.firmware)
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_line_sensor_asked_when_the_server_does_not_run_it():
+    reader = FakeLineSensor()
+    r = cmd.ask_line_sensor(reader)
+    assert r['version'] == 'hello-pixart-j3.v0.1.3p1' and reader.stopped
+    busy = cmd.ask_line_sensor(FakeLineSensor(opens=False))
+    assert busy['version'] is None and 'in use or missing' in busy['reason']
+
+
 def test_no_camera_opened():
     rows = cmd.camera_rows([])
     assert rows[0]['version'] is None
@@ -157,7 +200,8 @@ def server_status():
 
 def run(argv, status, capsys, monkeypatch):
     def query(ip):
-        raise AssertionError('asked a lidar with the rail off')
+        raise socket.timeout('timed out')
+    monkeypatch.setattr(cmd, 'LIDAR_WAKE_S', 0.0)
     monkeypatch.setattr(cmd, 'read_server_status', lambda: status)
     monkeypatch.setattr(cmd, 'camera_rows', lambda: [])
     monkeypatch.setattr(cmd, 'query_inventory', query)
@@ -180,7 +224,7 @@ def test_command_table(capsys, monkeypatch):
     pimu = next(l for l in lines if l.startswith('pimu'))
     assert 'hello-pimu2.v0.1.53p14' in pimu and '90s' in pimu
     assert any(l.strip().startswith('no version: ESP firmware older') for l in lines)
-    assert any('no version: lidar rail is off' in l for l in lines)
+    assert any('no version: no answer (timed out)' in l for l in lines)
 
 
 def test_command_without_server(capsys, monkeypatch):
