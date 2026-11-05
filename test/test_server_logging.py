@@ -134,16 +134,14 @@ class TestServerLogging(unittest.TestCase):
 
     def test_launch_crash_exits_nonzero(self):
         """
-        A crash in the server exits non-zero so systemd restarts it, and the
+        A crash in the server makes _launch fail (main exits 1, so systemd restarts it), and the
         session logs are still archived.
         """
         args = Mock(profile=False)
         with patch.object(sbs, "is_server_active", return_value=False), \
              patch.object(sbs.robot_server, "run_server", side_effect=IndexError("array index out of range")), \
              patch.object(sbs, "archive_session_logs") as archive:
-            with self.assertRaises(SystemExit) as cm:
-                sbs._launch(None, args)
-        self.assertEqual(cm.exception.code, 1)
+            self.assertFalse(sbs._launch(None, args))
         archive.assert_called_once()
 
 if __name__ == "__main__":
