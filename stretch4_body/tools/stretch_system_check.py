@@ -1371,7 +1371,9 @@ def check_eye_animations():
 
     proto = None
     try:
-        proto_str = r.power_periph.status.get('protocol_version')
+        from stretch4_body.tools.stretch_firmware_versions import read_server_status, server_rows
+        pimu = next((b for b in server_rows(read_server_status()) or [] if b['board'] == 'pimu'), {})
+        proto_str = pimu.get('detail', {}).get('protocol_version')
         if proto_str:
             proto = int(proto_str.lstrip('p'))
     except Exception:
