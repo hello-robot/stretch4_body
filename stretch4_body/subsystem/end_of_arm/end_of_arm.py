@@ -477,6 +477,10 @@ class EndOfArm(FeetechSMChain):
             threading.Thread(target=self.home_joint, args=(joint_name, end_pos, set_homing_status)).start()
             return None
 
+        if joint_name not in self.motors:
+            self.logger.error(f'Cannot home {joint_name}: not a joint of this end of arm')
+            return False
+
         self.logger.info(f'--------- Homing {joint_name} ----')
 
         if end_pos is None:

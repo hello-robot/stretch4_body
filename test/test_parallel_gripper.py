@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 import math
+import os
 import subprocess
 from unittest.mock import PropertyMock, patch
 
+import pytest
+
+from stretch4_body.core.client_server import PORT_STATUS
+
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.robot.robot_params_SE4 import SE4_stretch_gripper_DW4
 from stretch4_body.utils.stretch_pose_models import RobotJoints
 from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
 
@@ -18,6 +24,13 @@ def _patched_parallel_gripper_params(params):
     _user, real_robot_params = RobotParams.get_params()
     patched_robot_params = dict(real_robot_params)
     patched_robot_params['parallel_gripper'] = params
+    return patch.object(RobotParams, 'get_params', return_value=(_user, patched_robot_params))
+
+def _patched_stretch_gripper_params():
+    """Nominal SG4 params under robot_params['stretch_gripper'], so the SG4 checks also run on a robot with another tool."""
+    _user, real_robot_params = RobotParams.get_params()
+    patched_robot_params = dict(real_robot_params)
+    patched_robot_params['stretch_gripper'] = SE4_stretch_gripper_DW4
     return patch.object(RobotParams, 'get_params', return_value=(_user, patched_robot_params))
 
 def test_conversions():
@@ -111,7 +124,8 @@ def test_robot_joints_properties():
 
     # Test stretch_gripper conversion
     from unittest.mock import MagicMock, PropertyMock, patch
-    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'), \
+         _patched_stretch_gripper_params():
         # For stretch_gripper, urdf_to_command converts the URDF finger angle (radians) to
         # percent. A finger angle of 0 rad is the closed end of the servo range, -100%.
         val_pct = RobotJoints.gripper.urdf_to_command(0.0)
@@ -151,6 +165,7 @@ def test_robot_joints_properties():
     
     print("RobotJoints properties test passed!")
 
+@pytest.mark.skipif(os.path.exists(PORT_STATUS), reason="a running stretch_body_server would home the gripper")
 def test_scripts_auto_detect():
     print("Testing auto-detection on scripts...")
     
@@ -165,6 +180,18 @@ def test_scripts_auto_detect():
     assert res_jog.returncode == 0, f"Expected clean exit code 0, got:\n{res_jog.stderr}"
     
     print("Scripts auto-detect checks passed!")
+
+def test_home_joint_unknown_joint_fails():
+    from unittest.mock import MagicMock
+    from stretch4_body.subsystem.end_of_arm.end_of_arm import EndOfArm
+    eoa = EndOfArm.__new__(EndOfArm)
+    eoa.motors = {'parallel_gripper': MagicMock()}
+    eoa.logger = MagicMock()
+    eoa.status = {'is_homing': False}
+    eoa.params = {}
+    assert eoa.home_joint('stretch_gripper') is False
+    assert eoa.status['is_homing'] is False
+    eoa.motors['parallel_gripper'].home.assert_not_called()
 
 def test_parallel_gripper_direct_commands():
     from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
@@ -322,18 +349,19 @@ def test_finger_vel_is_the_derivative_of_finger_rad():
         ParallelGripperMetadata,
         StretchGripperMetadata,
     )
-    for meta in (ParallelGripperMetadata(), StretchGripperMetadata()):
-        low, high = meta.actuator_range
-        for i in range(1, 6):
-            at = low + (high - low) * i / 6
-            position_of = lambda x: meta.status_to_metadata(
-                {"pos": x, "vel": 0.0, "effort": 0.0}
-            )["finger_rad"]
-            expected = _numeric_derivative(position_of, at)
-            reported = meta.status_to_metadata({"pos": at, "vel": 1.0, "effort": 0.0})["finger_vel"]
-            assert math.isclose(reported, expected, rel_tol=1e-5), (
-                f"{type(meta).__name__} at {at}: finger_vel {reported} != d(finger_rad)/dt {expected}"
-            )
+    with _patched_stretch_gripper_params():
+        for meta in (ParallelGripperMetadata(), StretchGripperMetadata()):
+            low, high = meta.actuator_range
+            for i in range(1, 6):
+                at = low + (high - low) * i / 6
+                position_of = lambda x: meta.status_to_metadata(
+                    {"pos": x, "vel": 0.0, "effort": 0.0}
+                )["finger_rad"]
+                expected = _numeric_derivative(position_of, at)
+                reported = meta.status_to_metadata({"pos": at, "vel": 1.0, "effort": 0.0})["finger_vel"]
+                assert math.isclose(reported, expected, rel_tol=1e-5), (
+                    f"{type(meta).__name__} at {at}: finger_vel {reported} != d(finger_rad)/dt {expected}"
+                )
 
 
 def test_same_unit_type_conversions_are_identities():

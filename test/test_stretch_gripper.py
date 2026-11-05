@@ -4,6 +4,10 @@ import subprocess
 import os
 import tempfile
 import yaml
+import pytest
+from stretch4_body.core.client_server import PORT_STATUS
+from stretch4_body.core.robot_params import RobotParams
+from stretch4_body.robot.robot_params_SE4 import SE4_stretch_gripper_DW4
 from stretch4_body.utils.stretch_pose_models import RobotJoints
 from stretch4_body.subsystem.end_of_arm.stretch_gripper import StretchGripper
 from unittest.mock import MagicMock, patch
@@ -45,7 +49,10 @@ def test_stretch_gripper_direct_commands():
 
 def test_robot_joints_properties_stretch():
     from unittest.mock import patch, PropertyMock
-    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'):
+    _user, robot_params = RobotParams.get_params()
+    robot_params = dict(robot_params, stretch_gripper=SE4_stretch_gripper_DW4)
+    with patch.object(RobotJoints, 'gripper_name', new_callable=PropertyMock, return_value='stretch_gripper'), \
+         patch.object(RobotParams, 'get_params', return_value=(_user, robot_params)):
         joints = RobotJoints.gripper.finger_joints
         links = RobotJoints.gripper.finger_links
         print("stretch_gripper finger_joints:", joints)
@@ -63,6 +70,7 @@ def test_robot_joints_properties_stretch():
             RobotJoints.gripper.urdf_to_command(urdf_open), RobotJoints.gripper.command_range[1], abs_tol=0.01
         )
 
+@pytest.mark.skipif(os.path.exists(PORT_STATUS), reason="a running stretch_body_server would home the gripper")
 def test_scripts_auto_detect_stretch():
     print("Testing auto-detection on scripts for stretch_gripper...")
     
