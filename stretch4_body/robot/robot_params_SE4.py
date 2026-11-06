@@ -263,9 +263,9 @@ SE4_parallel_gripper_DW4={
         'usb_name': '/dev/hello-feetech-wrist',
         'retry_on_comm_failure': 1,
         'baud': 1000000,
-        'range_pad_deg': [ 0.0, 0.0 ],
+        'range_pad_deg': [ 0.0, 1.0 ],
         'range_mm':77.0,
-        'range_deg': [0,116.5],
+        'range_deg': [0,112.5], # Open hardstop measured at 112.5 deg
         'homing_offset_bias_t': 0,      
         'homing_to_neg_limit': 1,
         'homing_pwm': -150,

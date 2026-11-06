@@ -391,7 +391,8 @@ class FeetechSMHello(Device):
     def is_homed(self):
         return self.status['pos_calibrated']
 
-    def check_servo_errors(self):
+    def check_servo_errors(self)->bool:
+        """Returns False if there is an error."""
         if self.status['overload_error']:
             msg = 'WARNING: Servo %s in error state: overload_error. Reboot servo with stretch_robot_feetech_reboot' % self.name
             self.logger.warning(msg)
@@ -1258,10 +1259,11 @@ class FeetechSMHello(Device):
         return int(p * 10)
 
     def current_to_effort_pct(self, i_mA):
-        return 100 * max(0.0, min(1.0, i_mA / self.params['eeprom_cfg']['overcurrent']))
+        # eeprom_cfg 'overcurrent' is in register ticks, so convert it to mA
+        return 100 * max(0.0, min(1.0, i_mA / self.ticks_to_current(self.params['eeprom_cfg']['overcurrent'])))
 
     def effort_pct_to_current(self, e_pct):
-        return min(1.0, e_pct / 100.0) * self.params['eeprom_cfg']['overcurrent']
+        return min(1.0, e_pct / 100.0) * self.ticks_to_current(self.params['eeprom_cfg']['overcurrent'])
 
     def world_rad_to_ticks(self, r):
         #Convert from joint frame to servo frame
