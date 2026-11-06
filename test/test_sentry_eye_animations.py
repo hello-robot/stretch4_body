@@ -27,3 +27,12 @@ def test_eye_sentry_yields_to_other_eye_commands():
     sentry.yield_until = time.time()
     sentry.step()
     assert robot.power_periph.pushes == 2
+
+def test_eye_sentry_default_is_a_purple_spin():
+    robot = FakeRobot()
+    sentry = SentryEyeAnimations(robot)
+    sentry.is_valid = True
+    sentry.step()
+    pp = robot.power_periph
+    assert (pp._eye_animation_left, pp._eye_animation_right) == (13, 13)
+    assert (pp._eye_animation_r, pp._eye_animation_g, pp._eye_animation_b) == (140, 0, 255)

@@ -57,10 +57,14 @@ class SentryEyeAnimations(Sentry):
         # Dynamically fetch behavior in case configuration is changed
         self.behavior = self.params.get('behavior', 'curious')
 
-        if self.behavior == 'rainbow':
+        if self.behavior in ('rainbow', 'purple'):
             if not self.rainbow_sent and self.robot.power_periph:
-                self.robot.power_periph.set_eye_animation(
-                    PowerPeriphDefn.EYE_ANIM_RAINBOW_SPIN, PowerPeriphDefn.EYE_ANIM_RAINBOW_SPIN, intensity=255)
+                if self.behavior == 'rainbow':
+                    self.robot.power_periph.set_eye_animation(
+                        PowerPeriphDefn.EYE_ANIM_RAINBOW_SPIN, PowerPeriphDefn.EYE_ANIM_RAINBOW_SPIN, intensity=255)
+                else:
+                    self.robot.power_periph.set_eye_animation(
+                        PowerPeriphDefn.EYE_ANIM_CIRCLE_CW, PowerPeriphDefn.EYE_ANIM_CIRCLE_CW, intensity=255, r=140, g=0, b=255)
                 self.robot.power_periph.push_command()
                 self.last_push_count = self.robot.power_periph.eye_animation_count
                 self.rainbow_sent = True
