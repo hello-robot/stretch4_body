@@ -332,32 +332,45 @@ class ParquetWriter:
 
     def write_chunk(self, directory, t, rows, events):
         stem = f'{hour_of(t)}_{t:.3f}'
-        self._write(self._samples(rows), os.path.join(directory, stem + '.samples.parquet'))
+        samples = self._samples(rows).sort_by([('channel', 'ascending'), ('t', 'ascending')])
+        self._write(samples, os.path.join(directory, stem + '.samples.parquet'))
         self._write(self._events(events), os.path.join(directory, stem + '.events.parquet'))
+
+    def _stream(self, tables, path, schema, metadata=None):
+        """Writes one row group per table, so memory stays at one table, not the whole file."""
+        if metadata:
+            schema = schema.with_metadata(metadata)
+        tmp = os.path.join(os.path.dirname(path), '.' + os.path.basename(path))
+        with self.pq.ParquetWriter(tmp, schema, compression='zstd') as w:
+            for table in tables:
+                w.write_table(table.cast(schema) if table.schema != schema else table)
+        os.replace(tmp, path)
+        self.pa.default_memory_pool().release_unused()
 
     def compact(self, chunks, hours, now):
         current = hour_of(now)
         for kind in ('samples', 'events'):
             by_hour = collections.defaultdict(list)
-            for f in os.listdir(chunks):
+            for f in sorted(os.listdir(chunks)):
                 if f.endswith(f'.{kind}.parquet') and not f.startswith('.') and f[:11] < current:
                     by_hour[f[:11]].append(os.path.join(chunks, f))
             for hour, files in by_hour.items():
                 out = os.path.join(hours, f'{hour}.{kind}.parquet')
-                parts = [self.pq.read_table(f) for f in files]
-                if os.path.exists(out):
-                    parts.insert(0, self.pq.read_table(out))
-                parts = [p.cast(parts[-1].schema) if p.schema != parts[-1].schema else p for p in parts]
-                table = self.pa.concat_tables(parts)
-                if kind == 'samples':
-                    table = table.sort_by([('channel', 'ascending'), ('t', 'ascending')])
-                self._write(table, out)
+                n = 1
+                while os.path.exists(out):
+                    out = os.path.join(hours, f'{hour}_{n}.{kind}.parquet')
+                    n += 1
+                schema = (self._samples([]) if kind == 'samples' else self._events([])).schema
+                self._stream((self.pq.read_table(f) for f in files), out, schema)
                 for f in files:
                     os.remove(f)
 
     def write_capture(self, directory, capture):
-        rows = [(t, ch, v) for t, raw in capture.samples for ch, v in flatten(pickle.loads(raw)).items()]
+        def batches(size=100):
+            for i in range(0, len(capture.samples), size):
+                yield self._samples([(t, ch, v) for t, raw in capture.samples[i:i + size]
+                                     for ch, v in flatten(pickle.loads(raw)).items()])
         kind = capture.triggers[0]['kind']
         name = f"{time.strftime('%Y%m%d_%H%M%S', time.localtime(capture.t0))}_{kind}.parquet"
-        self._write(self._samples(rows), os.path.join(directory, name),
-                    {'triggers': json.dumps(capture.triggers)})
+        self._stream(batches(), os.path.join(directory, name), self._samples([]).schema,
+                     {'triggers': json.dumps(capture.triggers)})

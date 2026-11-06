@@ -157,9 +157,12 @@ def test_parquet_chunks_compact_by_hour_and_capture_carries_triggers(tmp_path):
     hours = sorted(os.listdir(tmp_path / 'hours'))
     assert hours == ['20261105_20.events.parquet', '20261105_20.samples.parquet']
     assert all(f.startswith('20261105_21') for f in os.listdir(tmp_path / 'chunks'))
-    samples = pq.read_table(tmp_path / 'hours' / '20261105_20.samples.parquet')
-    keys = list(zip(samples['channel'].to_pylist(), samples['t'].to_pylist()))
-    assert keys == sorted(keys) and all(t < T0 + 60 for _, t in keys)
+    hour = pq.ParquetFile(tmp_path / 'hours' / '20261105_20.samples.parquet')
+    assert hour.num_row_groups == 5
+    for i in range(hour.num_row_groups):
+        group = hour.read_row_group(i)
+        keys = list(zip(group['channel'].to_pylist(), group['t'].to_pylist()))
+        assert keys == sorted(keys) and all(t < T0 + 60 for _, t in keys)
     cap, = os.listdir(tmp_path / 'captures')
     meta = json.loads(pq.read_schema(tmp_path / 'captures' / cap).metadata[b'triggers'])
     assert meta[0]['kind'] == 'hand_mark'
