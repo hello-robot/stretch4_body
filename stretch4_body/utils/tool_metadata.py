@@ -542,12 +542,13 @@ class ParallelGripperMetadata(ToolMetadata):
         """
         Converts the URDF finger slide-joint value (meters) to fingertip aperture (meters) —
         PG4's command units, matching what this tool's own `move_to()`/`move_by()` take directly.
+        The URDF follows the gripper convention of `lower` = closed, `upper` = open.
         """
         lower, upper = self._finger_joint_limits
         range_m = self._params.get("range_mm", 80.0) / 1000.0
         if lower == upper:
             return 0.0
-        pct = (urdf - upper) / (lower - upper)
+        pct = (urdf - lower) / (upper - lower)
         return pct * range_m
 
     def command_to_urdf(self, command: float) -> float:
@@ -559,9 +560,9 @@ class ParallelGripperMetadata(ToolMetadata):
         lower, upper = self._finger_joint_limits
         range_m = self._params.get("range_mm", 80.0) / 1000.0
         if range_m == 0:
-            return upper
+            return lower
         pct = aperture_m / range_m
-        return upper + pct * (lower - upper)
+        return lower + pct * (upper - lower)
 
     def command_to_actuator(self, command: float) -> float:
         """PG4's command units (aperture, meters) coincide with aperture, so this is aperture_to_actuator."""
@@ -674,7 +675,10 @@ class ParallelGripperMetadata(ToolMetadata):
 
     @cached_property
     def _finger_joint_limits(self) -> tuple[float, float]:
-        """Cached (lower, upper) limits of finger_left_joint, loaded from the URDF."""
+        """
+        (closed, open) limits of finger_left_joint, read from the URDF on first use and cached
+        on this instance.
+        """
         _, robot_params = RobotParams.get_params()
         model_name = robot_params["robot"]["model_name"]
         batch_name = robot_params["robot"]["batch_name"]
@@ -683,7 +687,12 @@ class ParallelGripperMetadata(ToolMetadata):
             model_name, batch_name, eoa_name, do_add_file_prefix_to_absolute_paths=False
         )
         limits = get_joint_limits(urdf_contents)
-        return limits.get("finger_left_joint", (-0.04, 0.0))
+        if "finger_left_joint" not in limits:
+            raise ToolConfigurationError(
+                f"finger_left_joint limits not found in the URDF for {model_name}/{batch_name}/{eoa_name}."
+            )
+        lower, upper = limits["finger_left_joint"]
+        return float(lower), float(upper)
 
     def status_to_metadata(self, status: dict) -> dict:
         pos_mm = status.get("pos_mm")
