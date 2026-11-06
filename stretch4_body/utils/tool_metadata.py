@@ -542,12 +542,13 @@ class ParallelGripperMetadata(ToolMetadata):
         """
         Converts the URDF finger slide-joint value (meters) to fingertip aperture (meters) —
         PG4's command units, matching what this tool's own `move_to()`/`move_by()` take directly.
+        The URDF follows the gripper convention of `lower` = closed, `upper` = open.
         """
         lower, upper = self._finger_joint_limits
         range_m = self._params.get("range_mm", 80.0) / 1000.0
         if lower == upper:
             return 0.0
-        pct = (urdf - upper) / (lower - upper)
+        pct = (urdf - lower) / (upper - lower)
         return pct * range_m
 
     def command_to_urdf(self, command: float) -> float:
@@ -559,9 +560,9 @@ class ParallelGripperMetadata(ToolMetadata):
         lower, upper = self._finger_joint_limits
         range_m = self._params.get("range_mm", 80.0) / 1000.0
         if range_m == 0:
-            return upper
+            return lower
         pct = aperture_m / range_m
-        return upper + pct * (lower - upper)
+        return lower + pct * (upper - lower)
 
     def command_to_actuator(self, command: float) -> float:
         """PG4's command units (aperture, meters) coincide with aperture, so this is aperture_to_actuator."""
@@ -683,7 +684,7 @@ class ParallelGripperMetadata(ToolMetadata):
             model_name, batch_name, eoa_name, do_add_file_prefix_to_absolute_paths=False
         )
         limits = get_joint_limits(urdf_contents)
-        return limits.get("finger_left_joint", (-0.04, 0.0))
+        return limits.get("finger_left_joint", (0.0, 0.04))
 
     def status_to_metadata(self, status: dict) -> dict:
         pos_mm = status.get("pos_mm")
