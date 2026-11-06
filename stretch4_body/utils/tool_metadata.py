@@ -675,7 +675,10 @@ class ParallelGripperMetadata(ToolMetadata):
 
     @cached_property
     def _finger_joint_limits(self) -> tuple[float, float]:
-        """Cached (lower, upper) limits of finger_left_joint, loaded from the URDF."""
+        """
+        (closed, open) limits of finger_left_joint, read from the URDF on first use and cached
+        on this instance.
+        """
         _, robot_params = RobotParams.get_params()
         model_name = robot_params["robot"]["model_name"]
         batch_name = robot_params["robot"]["batch_name"]
@@ -684,7 +687,12 @@ class ParallelGripperMetadata(ToolMetadata):
             model_name, batch_name, eoa_name, do_add_file_prefix_to_absolute_paths=False
         )
         limits = get_joint_limits(urdf_contents)
-        return limits.get("finger_left_joint", (0.0, 0.04))
+        if "finger_left_joint" not in limits:
+            raise ToolConfigurationError(
+                f"finger_left_joint limits not found in the URDF for {model_name}/{batch_name}/{eoa_name}."
+            )
+        lower, upper = limits["finger_left_joint"]
+        return float(lower), float(upper)
 
     def status_to_metadata(self, status: dict) -> dict:
         pos_mm = status.get("pos_mm")

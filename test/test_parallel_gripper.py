@@ -34,11 +34,12 @@ def test_conversions():
         meta = ParallelGripperMetadata()
 
         # Test aperture (meters) to URDF meters
+        _, open_limit = meta._finger_joint_limits  # from the URDF
         val_closed = meta.aperture_to_urdf(0.0)
         val_open = meta.aperture_to_urdf(0.08)
         print(f"aperture to URDF: closed={val_closed}m, open={val_open}m")
         assert math.isclose(val_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_closed}"
-        assert math.isclose(val_open, 0.04, abs_tol=1e-5), f"Expected 0.04, got {val_open}"
+        assert math.isclose(val_open, open_limit, abs_tol=1e-5), f"Expected {open_limit}, got {val_open}"
 
         # Test command (== aperture, in meters) to URDF meters. command_to_urdf shares units
         # with aperture_to_urdf: PG4's command unit type is defined in aperture space so it matches
@@ -47,7 +48,7 @@ def test_conversions():
         val_command_open = meta.command_to_urdf(0.08)
         print(f"command to URDF: closed={val_command_closed}m, open={val_command_open}m")
         assert math.isclose(val_command_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_command_closed}"
-        assert math.isclose(val_command_open, 0.04, abs_tol=1e-5), f"Expected 0.04, got {val_command_open}"
+        assert math.isclose(val_command_open, open_limit, abs_tol=1e-5), f"Expected {open_limit}, got {val_command_open}"
 
         # Test actuator (servo angle, radians) to URDF meters -- a different unit space
         # than command (aperture, meters), unlike SG4 where command and actuator differ only by
