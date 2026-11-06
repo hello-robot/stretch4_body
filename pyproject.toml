@@ -41,6 +41,7 @@ dependencies = [
     "meson",
     "ninja",
     "pyzmq",
+    "pyarrow",
     "hello-robot-stretch4-urdf>=2026.10.20",
     "hello-robot-stretch4-kinematics>=2026.11.2",
     "hello-robot-stretch4-pyhesai-wrapper>=2026.10.20",
@@ -73,6 +74,7 @@ stretch_battery_check = "stretch4_body._cli_wrapper:stretch_battery_check"
 stretch_system_check = "stretch4_body._cli_wrapper:stretch_system_check"
 stretch_power_diagnostics = "stretch4_body._cli_wrapper:stretch_power_diagnostics"
 stretch_esp_recorder = "stretch4_body._cli_wrapper:stretch_esp_recorder"
+stretch_black_box = "stretch4_body._cli_wrapper:stretch_black_box"
 stretch_firmware_versions = "stretch4_body._cli_wrapper:stretch_firmware_versions"
 stretch_about = "stretch4_body._cli_wrapper:stretch_about"
 stretch_wrist_yaw_home = "stretch4_body._cli_wrapper:stretch_wrist_yaw_home"

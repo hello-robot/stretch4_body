@@ -1446,7 +1446,7 @@ nominal_params={
         'required_subsystems': [],
         'enabled': 1,
         'check_rate': 100,
-        'maximum_log_size_mb': 5000 # 5GB folder in ~/stretch_user/logs/status_logs
+        'maximum_log_size_mb': 500 # last minutes at 100 Hz; history is in the black box (stretch_black_box)
     },
     'sentry_cpu_temp': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_cpu_temp',
