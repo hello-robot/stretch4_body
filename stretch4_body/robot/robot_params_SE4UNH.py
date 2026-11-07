@@ -567,6 +567,7 @@ nominal_params={
         'batch_name': 'NA',
         'serial_no': 'NA',
         'model_name': 'SE4UNH',
+        'display_name': '',
         'subsystems': ['lift', 'omnibase', 'power_periph'],
         'tool': 'eoa_wrist_nil_tool_unh',
         'enable_rate_log':1,

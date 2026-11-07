@@ -55,7 +55,7 @@ class RobotCore(Device):
             return False
 
         self.logger.info(
-            'Starting up Robot {0} of batch {1}'.format(self.params['serial_no'], self.params['batch_name']))
+            'Starting up Robot {0} of batch {1}'.format(self.params['display_name'] or hello_utils.get_fleet_id(), self.params['batch_name']))
         ready=True
         for s in self.subsystems:
             ready = ready and self.subsystems[s].startup()

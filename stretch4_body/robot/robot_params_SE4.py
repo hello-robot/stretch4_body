@@ -1500,6 +1500,7 @@ nominal_params={
         'batch_name': 'NA',
         'serial_no': 'NA',
         'model_name': 'SE4',
+        'display_name': '',
         'subsystems': ['lift', 'arm', 'omnibase', 'end_of_arm', 'power_periph'],
         'tool': 'eoa_wrist_dw4_tool_sg4',
         'enable_rate_log':1,
