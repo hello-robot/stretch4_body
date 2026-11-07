@@ -1359,12 +1359,14 @@ def check_eye_animations():
         return True
 
     from stretch4_body.core.device import Device
-    eye_cfg  = Device(req_params=False).robot_params.get('sentry_eye_animations', {})
+    d = Device(req_params=False)
+    eye_cfg  = d.robot_params.get('sentry_eye_animations', {})
     enabled  = bool(eye_cfg.get('enabled', 0))
     behavior = eye_cfg.get('behavior', 'unknown')
 
     if not enabled:
-        print_result(False, 'sentry_eye_animations disabled in robot params')
+        source = 'stretch_user_params.yaml' if 'enabled' in d.user_params.get('sentry_eye_animations', {}) else 'robot params'
+        print_result(False, f'sentry_eye_animations disabled in {source}, eyes stay dark (set enabled: 1 to turn them on)')
         return False
 
     print_result(True, f'sentry_eye_animations enabled  (behavior: {behavior})')

@@ -1384,7 +1384,7 @@ nominal_params={
     'sentry_eye_animations': {
         'py_module_name': 'stretch4_body.behavior.sentries.sentry_eye_animations',
         'py_class_name': 'SentryEyeAnimations',
-        'behavior': 'purple',
+        'behavior': 'rainbow',
         'required_subsystems': ['power_periph'],
         'enabled': 1,
     },
