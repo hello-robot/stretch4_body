@@ -394,6 +394,7 @@ nominal_params={
           },
       'base_fan_off': 70,
       'base_fan_on': 82,
+      'eyes_turned': 0,
       'config':{
         'bump_thresh': 20.0,
         'current_LPF': 10.0,

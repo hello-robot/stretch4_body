@@ -145,3 +145,13 @@ def test_snapshot_field_comes_from_the_schema_2_decoder(pimu):
     struct.pack_into('<BBH', cut, 0, 2, 0, len(cut))
     assert pimu._unpack_power_diagnostics(arr.array('B', cut)) == 0
     assert 'easter_egg_mode' not in pimu.power_diagnostics
+
+
+def test_eyes_turned_goes_out_with_the_first_push(monkeypatch):
+    monkeypatch.setitem(PowerPeriph().params, 'eyes_turned', 1)
+    p = PowerPeriph()
+    p.transport = FakeTransport()
+    p.hw_valid = True
+    p._dirty_config = False
+    p.imu._dirty_config = False
+    assert pushed_word(p) == PowerPeriph.TRIGGER_EYES_TURNED_ON

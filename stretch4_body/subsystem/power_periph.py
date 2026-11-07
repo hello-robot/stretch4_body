@@ -544,6 +544,8 @@ class PowerPeriphDefn():
     TRIGGER_SLEEP = (1 << 23)
     TRIGGER_EASTER_EGG_ON = (1 << 24)
     TRIGGER_EASTER_EGG_OFF = (1 << 25)
+    TRIGGER_EYES_TURNED_ON = (1 << 27)
+    TRIGGER_EYES_TURNED_OFF = (1 << 28)
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -1865,6 +1867,9 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         self._warned_rpc_rejections = set()
         self.status_zero = self.status.copy()
         self._trigger = 0
+        if self.params['eyes_turned']:
+            self._trigger = self.TRIGGER_EYES_TURNED_ON
+            self._dirty_trigger = True
         self.board_info = {'board_variant': None, 'firmware_version': None, 'protocol_version': None, 'hardware_id': 0}
         self.hw_valid = False
         self.ts_last_motor_sync = None

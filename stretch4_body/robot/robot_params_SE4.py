@@ -1279,6 +1279,7 @@ nominal_params={
           },
       'base_fan_off': 70,
       'base_fan_on': 82,
+      'eyes_turned': 0,
 
       'config':{
         # Pitch/Roll derivative threshold to detect a base bump
