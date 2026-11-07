@@ -1063,6 +1063,10 @@ LINE_SENSOR_SETTLE_S = 3.0
 def check_line_sensors():
     print_section('Line Sensors (hello-pixart-j3)')
 
+    if rp.RobotParams._robot_params.get('line_sensor_loop', {}).get('sensor_names') == []:
+        print_skip('No line sensors fitted (line_sensor_loop.sensor_names is empty)', expected=True)
+        return True
+
     from stretch4_body.subsystem.line_sensor import connect
 
     subsystems = list(r.params.get('server', {}).get('subsystems', []) or []) if r is not None else []
@@ -1484,7 +1488,9 @@ def check_calibrations():
                 .get('line_sensor_loop', {})
                 .get('sensor_names', [f'sensor_{i}' for i in range(6)]))
     tare_dir = calibration_store.tare_dir(ls_dir)
-    if os.path.isdir(tare_dir):
+    if not ls_names:
+        print_skip('No line sensors fitted', indent=6, expected=True)
+    elif os.path.isdir(tare_dir):
         for name in ls_names:
             has_cal = os.path.isfile(calibration_store.tare_path(ls_dir, name))
             print_result(has_cal, name, indent=6)
