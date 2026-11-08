@@ -61,6 +61,12 @@ def test_exact_length_status_reply_is_committed():
     assert device.status["rpc_reply_last_error"] is None
 
 
+def test_gravity_tilt_is_a_plain_float():
+    device = make_device()
+    device._rpc_status_reply(reply(device.RPC_REPLY_POWER_PERIPH_STATUS, make_status_payload()))
+    assert type(device.imu.status["gravity_tilt"]) is float
+
+
 def test_short_status_reply_is_rejected_without_partial_update():
     device = make_device()
     device._rpc_status_reply(reply(device.RPC_REPLY_POWER_PERIPH_STATUS, make_status_payload()))

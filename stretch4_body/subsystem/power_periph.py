@@ -195,7 +195,7 @@ class IMUBase(Device):
         # sidx += 4
 
         # Compute IMU fields
-        unpack_to['gravity_tilt']=(
+        unpack_to['gravity_tilt']=float(
             self.calculate_tilt_angle([unpack_to['qw'],unpack_to['qx'],unpack_to['qy'],unpack_to['qz']]))
 
         return sidx
