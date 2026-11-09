@@ -2157,7 +2157,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         return sidx
 
     def get_runstop_cause(self, raw):
-        r_cause = [None, 'RUNSTOP_BUTTON', 'RUNSTOP_PYTHON_CMD', 'RUNSTOP_LOW_SOC', 'RUNSTOP_HIGH_CURRENT', 'RUNSTOP_HIGH_CURRENT_EOA']
+        r_cause = [None, 'RUNSTOP_BUTTON', 'RUNSTOP_PYTHON_CMD', 'RUNSTOP_LOW_SOC', 'RUNSTOP_HIGH_CURRENT', 'RUNSTOP_HIGH_CURRENT_EOA', 'RUNSTOP_BMS_SILENT']
         for i in range(0, len(r_cause)):
             if i == raw:
                 break
