@@ -544,6 +544,8 @@ class PowerPeriphDefn():
     TRIGGER_SLEEP = (1 << 23)
     TRIGGER_EASTER_EGG_ON = (1 << 24)
     TRIGGER_EASTER_EGG_OFF = (1 << 25)
+    TRIGGER_LIGHTBAR_COLORS_ON = (1 << 28)
+    TRIGGER_LIGHTBAR_COLORS_OFF = (1 << 29)
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -711,6 +713,17 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
     def clear_easter_egg_mode(self):
         self.set_easter_egg_mode(False)
+
+    def set_lightbar_colors(self, on=True):
+        """
+        Battery bar in red to green shades (on) or white (off, the PIMU boot default),
+        firmware v0.1.8634p14 and later. Not stored on the board: send again after a PIMU reset.
+        """
+        if on:
+            self._trigger = (self._trigger & ~self.TRIGGER_LIGHTBAR_COLORS_OFF) | self.TRIGGER_LIGHTBAR_COLORS_ON
+        else:
+            self._trigger = (self._trigger & ~self.TRIGGER_LIGHTBAR_COLORS_ON) | self.TRIGGER_LIGHTBAR_COLORS_OFF
+        self._dirty_trigger = True
 
     def set_fan_on(self):
         self._trigger = self._trigger | self.TRIGGER_FAN_ON

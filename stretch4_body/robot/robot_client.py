@@ -564,6 +564,9 @@ class PowerPeriphClient(SubsystemClient):
     def clear_easter_egg_mode(self):
         self._queue_command(subsystem="power_periph", command="clear_easter_egg_mode")
 
+    def set_lightbar_colors(self, on=True):
+        self._queue_command(subsystem="power_periph", command="set_lightbar_colors", on=on)
+
     def set_fan_on(self):
         """
         Turn on the cooling fan.

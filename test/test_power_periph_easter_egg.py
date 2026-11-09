@@ -145,3 +145,10 @@ def test_snapshot_field_comes_from_the_schema_2_decoder(pimu):
     struct.pack_into('<BBH', cut, 0, 2, 0, len(cut))
     assert pimu._unpack_power_diagnostics(arr.array('B', cut)) == 0
     assert 'easter_egg_mode' not in pimu.power_diagnostics
+
+
+def test_lightbar_colors_on_and_off_go_out_as_bits_28_and_29(pimu):
+    pimu.set_lightbar_colors(True)
+    assert pushed_word(pimu) == 1 << 28
+    pimu.set_lightbar_colors(False)
+    assert pushed_word(pimu) == 1 << 29
