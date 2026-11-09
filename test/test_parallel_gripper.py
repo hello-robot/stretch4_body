@@ -193,6 +193,28 @@ def test_home_joint_unknown_joint_fails():
     assert eoa.status['is_homing'] is False
     eoa.motors['parallel_gripper'].home.assert_not_called()
 
+def test_parallel_gripper_runstop_blocks_motion():
+    from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
+    from unittest.mock import MagicMock, patch
+
+    from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
+
+    def mock_feetech_init(self_obj, *args, **kwargs):
+        self_obj.status = {'pos_mm': 0.3, 'is_homing': False}
+        self_obj.params = {'enable_runstop': 1, 'disable_torque_on_runstop': 0}
+        self_obj.hw_valid = True
+        self_obj.was_runstopped = False
+        self_obj.is_direct = False
+        self_obj.motor = MagicMock()
+
+    with patch.object(FeetechSMHello, '__init__', side_effect=mock_feetech_init):
+        gripper = ParallelGripper()
+
+    gripper.step_sentry({'power_periph': {'runstop_event': True}})
+    gripper.move_to(0.05)
+    gripper.move_by(0.01)
+    gripper.motor.go_to_pos.assert_not_called()
+
 def test_parallel_gripper_direct_commands():
     from stretch4_body.subsystem.end_of_arm.parallel_gripper import ParallelGripper
     from unittest.mock import MagicMock, patch
