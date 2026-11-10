@@ -136,3 +136,8 @@ def test_trigger_reply_requires_exactly_four_payload_bytes():
     device._rpc_trigger_reply(reply(device.RPC_REPLY_POWER_PERIPH_TRIGGER, b"\x01\x00"))
     assert device.status["rpc_reply_errors"] == 1
     assert "payload 2 bytes, expected 4" in device.status["rpc_reply_last_error"]
+
+
+def test_bms_silent_runstop_cause_is_named():
+    device = make_device()
+    assert device.get_runstop_cause(6) == "RUNSTOP_BMS_SILENT"

@@ -60,7 +60,7 @@ SCHEMA2_FIELDS = [
     ('adc_stale', 223, 'B'), ('adapter_presence_source', 224, 'B'),
     ('esp_rx_length_errors', 225, 'I'), ('esp_rx_unknown_ids', 229, 'I'),
     ('esp_tx_mark_resets', 233, 'I'), ('esp_shutdown_cmd_sends', 237, 'I'),
-    ('esp_adapter_disagree', 241, 'B'), ('wait_sd_ack', 242, '?'), ('reserved2', 243, 'B'),
+    ('esp_adapter_disagree', 241, 'B'), ('wait_sd_ack', 242, '?'), ('nuc_boot_watch', 243, 'B'),
     ('imu_tap_last', 244, 'B'), ('ina_vbat_mv', 245, 'i'), ('ina_current_ma', 249, 'i'),
     ('ina_flags', 253, 'B'), ('ina_reserved', 254, 'B'),
 ]
@@ -350,3 +350,4 @@ def test_every_firmware_event_id_and_transition_reason_has_a_name():
     assert PowerPeriphAux.POWER_EVENT_NAMES[47] == 'esp_shutdown_cmd_delivered'
     assert PowerPeriphAux.POWER_TRANSITION_REASON_NAMES[11] == 'esp_wake_request'
     assert PowerPeriphAux.POWER_TRANSITION_REASON_NAMES[12] == 'low_battery_recovered'
+    assert PowerPeriphAux.POWER_TRANSITION_REASON_NAMES[14] == 'button_held'

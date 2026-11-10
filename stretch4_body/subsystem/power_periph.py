@@ -428,8 +428,8 @@ class PowerPeriphDefn():
              'ended by leaving ACTIVE (data1 seconds).'),
         55: ('The power button fault mask changed; data0 holds the error bits (steady red), data1 the charging '
              'problem bits (red blink).'),
-        56: ('The firmware raised a runstop; data0 is the cause (3 low SoC, 4 high current), data1 the SoC or '
-             'the system current in tenths of an amp.'),
+        56: ('The firmware raised a runstop; data0 is the cause (3 low SoC, 4 high current, 6 BMS silent), data1 the '
+             'SoC, the system current in tenths of an amp, or the seconds since the last BMS reply.'),
     }
     POWER_TRANSITION_REASON_NAMES = {
         0: 'unknown',
@@ -445,6 +445,8 @@ class PowerPeriphDefn():
         10: 'user_wake',
         11: 'esp_wake_request',
         12: 'low_battery_recovered',
+        13: 'nuc_off',
+        14: 'button_held',
     }
     # Schema 2 enum fields (Common.h, PROTOCOL_P14_POWER_DIAGNOSTICS.md). The decoder
     # publishes '<field>_name' beside each raw value; None on a schema 1 snapshot.
@@ -1275,7 +1277,7 @@ class PowerPeriphAux(PowerPeriphDefn):
         'shutdown_wait_count', 'shutdown_wait_elapsed_ms', 'shutdown_wait_last_duration_ms',
         'shutdown_wait_cap_ms', 'adc_reinit_cnt', 'adc_stale', 'adapter_presence_source',
         'esp_rx_length_errors', 'esp_rx_unknown_ids', 'esp_tx_mark_resets',
-        'esp_shutdown_cmd_sends', 'esp_adapter_disagree', 'wait_sd_ack', 'reserved2',
+        'esp_shutdown_cmd_sends', 'esp_adapter_disagree', 'wait_sd_ack', 'nuc_boot_watch',
         'imu_tap_last', 'ina_vbat_mv', 'ina_current_ma', 'ina_flags', 'ina_reserved',
     )
     # Fields that exist only in schema 3, None in a decoded schema 1 or 2 snapshot.
@@ -1456,7 +1458,7 @@ class PowerPeriphAux(PowerPeriphDefn):
             decoded['esp_shutdown_cmd_sends'] = u32()
             decoded['esp_adapter_disagree'] = u8()
             decoded['wait_sd_ack'] = bool(u8())
-            decoded['reserved2'] = u8()
+            decoded['nuc_boot_watch'] = u8()
             decoded['imu_tap_last'] = u8()
             decoded['ina_vbat_mv'] = i32()
             decoded['ina_current_ma'] = i32()
@@ -2157,7 +2159,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         return sidx
 
     def get_runstop_cause(self, raw):
-        r_cause = [None, 'RUNSTOP_BUTTON', 'RUNSTOP_PYTHON_CMD', 'RUNSTOP_LOW_SOC', 'RUNSTOP_HIGH_CURRENT', 'RUNSTOP_HIGH_CURRENT_EOA']
+        r_cause = [None, 'RUNSTOP_BUTTON', 'RUNSTOP_PYTHON_CMD', 'RUNSTOP_LOW_SOC', 'RUNSTOP_HIGH_CURRENT', 'RUNSTOP_HIGH_CURRENT_EOA', 'RUNSTOP_BMS_SILENT']
         for i in range(0, len(r_cause)):
             if i == raw:
                 break
