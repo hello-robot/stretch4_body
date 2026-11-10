@@ -72,7 +72,12 @@ class CommandBase:
             w (float): Range [-1.0,+1.0], control angular speed
             robot (robot.Robot): Valid robot instance
         """
-        vel_xy, accel_xy, vel_w, accel_w = self._get_motion_params(is_rotating=abs(w)>=0.1)
+        # Limit each axis by its own profile: translation by the selected profile, rotation by the
+        # (one-lower) angular profile. Picking a single profile based on whether we're rotating would
+        # drop translation speed ~3x whenever a little rotation is mixed in, and makes rotation speed
+        # jump at the switch point, so the omnibase could not cleanly translate and rotate together.
+        vel_xy, accel_xy, _, _ = self._get_motion_params(is_rotating=False)
+        _, _, vel_w, accel_w = self._get_motion_params(is_rotating=True)
 
         v_x=vel_xy*(0 if abs(x)<self.dead_zone else x)
         v_y=vel_xy*(0 if abs(y)<self.dead_zone else y)
