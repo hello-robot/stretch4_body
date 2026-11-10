@@ -201,8 +201,8 @@ class RobotServer(RobotCore):
                 cmd_ids_dispatched.append(cmd_id)
                 continue
 
-            if is_routine_active:
-                # Reject non-routine commands while a routine is executing
+            if is_routine_active and not (subsystem == 'power_periph' and method == 'trigger_runstop'):
+                # Reject non-routine commands while a routine is executing, except the runstop
                 continue
 
             # Handle robot commands:
