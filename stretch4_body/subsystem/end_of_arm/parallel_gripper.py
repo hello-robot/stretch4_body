@@ -15,7 +15,8 @@ class ParallelGripper(FeetechSMHello):
     A position of zero is the fingertips  touching
     Units are in meters
     Contact guard (params 'contact_guard'): closing on an object holds a virtual goal just past the contact
-    instead of stalling into the servo overcurrent protection. It runs in pull_status(), so in direct mode
+    instead of stalling into the servo overcurrent protection, and opening against an obstruction holds just
+    short of it instead of stalling there and overheating. It runs in pull_status(), so in direct mode
     it only works if pull_status() is called in a loop while the gripper moves.
     """
     def __init__(self, chain=None, usb=None, name='parallel_gripper',is_direct=False):
@@ -53,7 +54,7 @@ class ParallelGripper(FeetechSMHello):
         x_m = min(max(x_m, low), high)
         x_r = self.tool_metadata.aperture_to_actuator(x_m)
         if self.contact_guard.enabled and not self.status['is_homing']:
-            x_r = self.contact_guard.filter_goal(x_r)  # Clamp closing goals to the virtual goal while in contact
+            x_r = self.contact_guard.filter_goal(x_r)  # Clamp goals toward the contact to the virtual goal while in contact
         FeetechSMHello.move_to(self, x_des=x_r, v_des=v_r, a_des=a_r)
 
     def move_by(self, x_m, v_r=None, a_r=None):
@@ -75,7 +76,7 @@ class ParallelGripper(FeetechSMHello):
         """
         if self.contact_guard.enabled and not self.status['is_homing']:
             hold = self.contact_guard.filter_velocity(v_r)
-            if hold is not None:  # In contact: closing (or zero) velocity holds the virtual goal in position mode
+            if hold is not None:  # In contact: velocity toward the contact (or zero) holds the virtual goal in position mode
                 if self.in_vel_mode:
                     self._contact_guard_hold(hold)
                 return
@@ -114,7 +115,7 @@ class ParallelGripper(FeetechSMHello):
         else:
             goal = cg.step(self.status['pos'], self.status['current_mA'], time.time())
             if goal is not None:
-                self.logger.info(f'{self.name}: contact at {self._actuator_to_mm(cg.contact_pos):.1f} mm '
+                self.logger.info(f'{self.name}: {"closing" if cg.contact_dir < 0 else "opening"} contact at {self._actuator_to_mm(cg.contact_pos):.1f} mm '
                                  f'({self.status["current_mA"]:.0f} mA), holding virtual goal '
                                  f'{self._actuator_to_mm(goal):.1f} mm')
                 self._contact_guard_hold(goal)
