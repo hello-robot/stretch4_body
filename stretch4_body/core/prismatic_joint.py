@@ -603,6 +603,158 @@ class PrismaticJoint(Device):
 
     def home(self):
         """
+        Home the joint using the procedure selected by params['homing']['controller']:
+          'imax': current-limited push into the hardstop with stall detection (see home_imax)
+          'guarded_contact': guarded contact detection at the hardstop (see home_gc)
+        Joints without a 'controller' param use 'guarded_contact'.
+        Return True if successful
+        """
+        controller = self.params['homing'].get('controller', 'guarded_contact')
+        if controller == 'imax':
+            return self.home_imax()
+        if controller == 'gc':
+            return self.home_gc()
+        self.logger.error(f'Unknown homing controller {controller} for {self.name.capitalize()}. '
+                          f'Expected imax or gc')
+        return False
+
+    def home_imax(self):
+        """
+        Home by pushing into the hardstop with limited motor current, detecting the stall via joint velocity.
+          1) Lower the motor current limits to homing.iMaxPos / homing.iMaxNeg and disable guarded contacts
+          2) Command motion well past the hardstop
+          3) Wait t_ignore, then monitor velocity until it is near zero (joint stalled at the hardstop)
+          4) Keep pushing for t_settle, then mark the home position (without leaving the motion mode)
+          5) Restore guarded contacts / current limits and move to homing.end_pos
+        Return True if successful
+        """
+        t_ignore = 1.0        # Time after commanding motion before velocity monitoring starts (s)
+        vel_thresh = 0.005    # |velocity| below which the joint is considered stalled (m/s)
+        stall_samples = 3     # Consecutive samples below vel_thresh required to declare a stall
+        t_settle = 0.5        # Time to keep pushing against the hardstop before marking (s)
+        timeout_stall = 15.0  # Max time to wait for a stall (s)
+        timeout_end = 10.0    # Max time to reach end_pos (s)
+        dt = 0.01             # Status polling period (s)
+
+        if not self.motor.hw_valid:
+            self.logger.warning('Not able to home %s. Hardware not present' % self.name.capitalize())
+            return False
+
+        end_pos = self.params['homing']['end_pos']
+        to_positive_stop = self.params['homing']['to_positive_stop']
+        v_m = self.params['homing']['v_m']
+        a_m = self.params['homing']['a_m']
+        x_mark_m = self.params['range_m'][1] if to_positive_stop else self.params['range_m'][0]
+
+        success = True
+        print('Homing %s...' % self.name.capitalize())
+        self.pull_status()
+
+        # Stash gains to restore afterwards
+        prev_enable_guarded_mode = self.motor.gains['enable_guarded_mode']
+        prev_enable_sync_mode = self.motor.gains['enable_sync_mode']
+        prev_safety_hold = self.motor.gains['safety_hold']
+        prev_safety_stiffness = self.motor.gains['safety_stiffness']
+        prev_iMax_pos = self.motor.gains['iMax_pos']
+        prev_iMax_neg = self.motor.gains['iMax_neg']
+
+        try:
+            # Limit current and disable guarded contacts
+            self.motor.gains['iMax_pos'] = self.params['homing']['iMax_pos']
+            self.motor.gains['iMax_neg'] = self.params['homing']['iMax_neg']
+            self.motor.disable_guarded_mode()
+            self.motor.disable_sync_mode()
+            # self.motor.gains['safety_hold'] = self.params['homing']['safety_hold']
+            # self.motor.gains['safety_stiffness'] = self.params['homing']['safety_stiffness']
+            self.motor.set_gains()
+            self.motor.reset_pos_calibrated()
+            self.push_command()
+            self.pull_status()
+            # Command motion well past the hardstop
+            x_goal = 5.0 if to_positive_stop else -5.0
+            self.move_by(x_m=x_goal, v_m=v_m, a_m=a_m, req_calibration=False)
+            self.push_command()
+
+            # Wait, then monitor velocity until stalled at the hardstop. Then keep pushing to settle.
+            ts = time.time()
+            ts_stall = None
+            n_below = 0
+            while True:
+                self.pull_status()
+                t = time.time() - ts
+                if self.motor.status['runstop_on']:
+                    self.logger.warning('%s homing failed. Runstop active' % self.name.capitalize())
+                    success = False
+                    break
+                if ts_stall is None:
+                    if t > t_ignore:
+                        n_below = n_below + 1 if abs(self.status['vel']) < vel_thresh else 0
+                        if n_below >= stall_samples:
+                            ts_stall = time.time()
+                            self.logger.info(f'Hardstop detected at motor position (rad) {self.motor.status["pos"]}, '
+                                             f'current {self.motor.status["current"]:+.3f} A')
+                        elif t > t_ignore + timeout_stall:
+                            self.logger.warning('%s homing failed. No stall detected' % self.name.capitalize())
+                            success = False
+                            break
+                elif time.time() - ts_stall >= t_settle:
+                    break
+                time.sleep(dt)
+
+            if success:
+                # Mark the home position while still pushing against the hardstop.
+                # Stepper.mark_position() refuses unless in MODE_SAFETY/HOLD, but that check is Python-side only:
+                # the firmware applies TRIGGER_MARK_POS in any mode and resets the motion generator to the marked
+                # position (stretch_firmware_ii hello_stepper2/HelloController.cpp), so set the trigger directly.
+                #
+                # Mark, gain restore and the move to end_pos are sent in ONE push_command(), which always sends
+                # trigger -> gains -> command in that order. So the firmware marks first, then restores gains, then
+                # starts the move in the newly marked frame. This avoids any window where the old incremental
+                # target (in the uncalibrated frame) is still active with full current restored.
+                #
+                # Sync mode is restored only after the final move: with enable_sync_mode=1 the stepper waits for a
+                # sync pulse (sent by the server/pimu, not in direct mode) before executing a new motion command.
+                self.logger.info(f'Marking {self.name.capitalize()} position to {x_mark_m} (m)')
+                self.motor._trigger_data = self.translate_m_to_motor_rad(x_mark_m)
+                self.motor._trigger |= Stepper.TRIGGER_MARK_POS
+                self.motor._dirty_trigger = True
+                self.motor.set_pos_calibrated()
+
+                self.motor.gains['enable_guarded_mode'] = prev_enable_guarded_mode
+                self.motor.gains['safety_hold'] = prev_safety_hold
+                self.motor.gains['safety_stiffness'] = prev_safety_stiffness
+                self.motor.gains['iMax_pos'] = prev_iMax_pos
+                self.motor.gains['iMax_neg'] = prev_iMax_neg
+                self.motor.set_gains()
+
+                self.move_to(x_m=end_pos, req_calibration=False)
+                self.push_command()
+
+                time.sleep(0.5)  # Let motion start before checking near_pos_setpoint
+                if not self.motor.wait_until_at_setpoint(timeout=timeout_end):
+                    self.logger.warning('%s failed to reach final position' % self.name.capitalize())
+                    success = False
+            else:
+                self.motor.enable_safety()
+                self.push_command()
+        finally:
+            # Restore all gains, including sync mode (also covers error / Ctrl-C paths)
+            self.motor.gains['enable_guarded_mode'] = prev_enable_guarded_mode
+            self.motor.gains['enable_sync_mode'] = prev_enable_sync_mode
+            self.motor.gains['safety_hold'] = prev_safety_hold
+            self.motor.gains['safety_stiffness'] = prev_safety_stiffness
+            self.motor.gains['iMax_pos'] = prev_iMax_pos
+            self.motor.gains['iMax_neg'] = prev_iMax_neg
+            self.motor.set_gains()
+            self.push_command()
+
+        if success:
+            self.logger.info(f'{self.name.capitalize()} homing successful')
+        return success
+
+    def home_gc(self):
+        """
+          Home using guarded contact detection at the hardstop.
           end_pos: position to end on
           to_positive_stop:
           -- True: Move to the positive direction stop and mark to range_m[1]
