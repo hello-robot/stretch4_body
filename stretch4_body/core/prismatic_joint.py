@@ -605,11 +605,11 @@ class PrismaticJoint(Device):
         """
         Home the joint using the procedure selected by params['homing']['controller']:
           'imax': current-limited push into the hardstop with stall detection (see home_imax)
-          'guarded_contact': guarded contact detection at the hardstop (see home_gc)
-        Joints without a 'controller' param use 'guarded_contact'.
+          'gc': guarded contact detection at the hardstop (see home_gc)
+        Joints without a 'controller' param use 'gc'.
         Return True if successful
         """
-        controller = self.params['homing'].get('controller', 'guarded_contact')
+        controller = self.params['homing'].get('controller', 'gc')
         if controller == 'imax':
             return self.home_imax()
         if controller == 'gc':
