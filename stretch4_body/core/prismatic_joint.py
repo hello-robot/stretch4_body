@@ -647,7 +647,7 @@ class PrismaticJoint(Device):
         x_mark_m = self.params['range_m'][1] if to_positive_stop else self.params['range_m'][0]
 
         success = True
-        print('Homing %s...' % self.name.capitalize())
+        print('Homing %s with imax controller...' % self.name.capitalize())
         self.pull_status()
 
         # Stash gains to restore afterwards
@@ -774,7 +774,7 @@ class PrismaticJoint(Device):
         a_m = self.params['homing']['a_m']
 
         success = True
-        print('Homing %s...' % self.name.capitalize())
+        print('Homing %s with guarded_contact controller...' % self.name.capitalize())
         self.pull_status()
 
         # Set contact behavior
