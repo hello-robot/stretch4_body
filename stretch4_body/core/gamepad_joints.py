@@ -1,3 +1,5 @@
+from typing import Any
+
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.utils.stretch_pose_models import RobotJoints
@@ -186,61 +188,104 @@ class CommandArm:
         robot.arm.set_velocity(0, a_m=self.params['motion']['max']['accel_m'])
 
 class CommandFeetechJoint:
-    """Abstract motion command class for Feetech joints
+    """
+    Motion command wrapper for Feetech end-of-arm joints.
     """
 
-    def __init__(self, name, dx_deg,vel_type, acc_type):
-        """Initiate a  joint
+    def __init__(self, name: str, dx_deg: float, vel_type: str, acc_type: str) -> None:
+        """
+        Initialize motion command parameters for a Feetech joint.
 
         Args:
-            name (str): Name of the device name
-            max_vel (float, optional): Set a custom max velocity (rad/s)
-            acc_type (str, optional): Set custom acceleration profile (fast,slow,default)
+            name: Joint name in RobotParams (e.g., 'wrist_yaw').
+            dx_deg: Step displacement per command in degrees.
+            vel_type: Velocity profile key (e.g., 'slow', 'default', 'fast', 'max').
+            acc_type: Acceleration profile key (e.g., 'slow', 'default', 'fast', 'max').
+
+        Returns:
+            None.
         """
         self.params = RobotParams().get_params()[1][name]
         self.name = name
         self.dead_zone = 0.001
-        self.dx_deg=dx_deg
+        self.dx_deg = dx_deg
         self.max_vel = self.params['motion'][vel_type]['vel']
         self.acc = self.params['motion'][acc_type]['accel']
         self.precision_mode = 0.0
+        self._in_lookahead_motion = False
 
-    def _move(self, dx_deg, robot, velocity:float|None = None):
+    def _move(
+        self,
+        dx_deg: float,
+        robot: Any,
+        velocity: float | None = None,
+        hold_on_stop: bool = False,
+    ) -> None:
+        """
+        Queue a relative joint move scaled by precision mode.
+
+        Args:
+            dx_deg: Target relative displacement in degrees.
+            robot: Robot or RobotClient instance.
+            velocity: Optional velocity cap in rad/s; defaults to max_vel.
+            hold_on_stop: If True, cancel remaining travel via hold_position when stop_motion is called.
+
+        Returns:
+            None.
+        """
         scale = 1.0 - (0.95 * self.precision_mode)
         dx_deg = dx_deg * scale
 
         capped_velocity = min(self.max_vel, velocity) if velocity is not None else self.max_vel
-        robot.end_of_arm.move_by(self.name, deg_to_rad(dx_deg),capped_velocity, self.acc)
+        robot.end_of_arm.move_by(self.name, deg_to_rad(dx_deg), capped_velocity, self.acc)
+        self._in_lookahead_motion = hold_on_stop
 
-    def command_button_to_motion(self, direction, robot):
-        """Make servo move based on a button state.
+    def command_button_to_motion(self, direction: float, robot: Any) -> None:
+        """
+        Queue a step move in the given button direction.
 
         Args:
-            direction (int): Direction integer -1 or +1
-            robot (robot.Robot): Valid robot instance
+            direction: Signed direction multiplier (-1, 0, or +1).
+            robot: Robot or RobotClient instance.
+
+        Returns:
+            None.
         """
+        if direction == 0:
+            self.stop_motion(robot)
+            return
         self._move(self.dx_deg * direction, robot)
 
-    def command_stick_to_motion(self, x, robot):
-        """Convert a stick axis value to robot arm motion.
+    def command_stick_to_motion(self, x: float, robot: Any) -> None:
+        """
+        Queue a step move proportional to a normalized stick axis value.
 
         Args:
-            x (float): Range [-1.0,+1.0], control lift speed
-            robot (robot.Robot): Valid robot instance
+            x: Stick input in [-1.0, 1.0].
+            robot: Robot or RobotClient instance.
+
+        Returns:
+            None.
         """
         if abs(x) < self.dead_zone:
-            x = 0
+            self.stop_motion(robot)
+            return
 
         self._move(self.dx_deg * x, robot)
-        
-    def stop_motion(self, robot):
-        """Stop the joint motion. To be used when ever the controller is idle/no-inputs
-        to stop unnecessary robot motion.
+
+    def stop_motion(self, robot: Any) -> None:
+        """
+        Cancel remaining travel and hold the current encoder position if in a lookahead move.
 
         Args:
-            robot (robot.Robot): Valid robot instance
+            robot: Robot or RobotClient instance.
+
+        Returns:
+            None.
         """
-        robot.end_of_arm.move_by(self.name, 0)
+        if self._in_lookahead_motion:
+            robot.end_of_arm.hold_position(self.name)
+            self._in_lookahead_motion = False
 
 
 class CommandWristYaw(CommandFeetechJoint):
