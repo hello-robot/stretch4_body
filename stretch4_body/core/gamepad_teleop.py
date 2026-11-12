@@ -583,26 +583,26 @@ class GamePadTeleop(Device):
         if self.fn_button_command:
             execute_command_non_blocking(self.fn_button_command)
 
-    def _safety_stop(self, robot):
+    def _safety_stop(self, robot: Robot | RobotClient) -> None:
         """
-        Stop all robot motions.
-
-        This is called when the gamepad is inactive or no input is detected to ensure
-        the robot doesn't drift or continue moving.
+        Stop all robot motions when the gamepad is inactive.
 
         Args:
-            robot (robot.Robot): Valid robot instance.
+            robot: Robot or RobotClient instance.
+
+        Returns:
+            None.
         """
         if self.use_devices['eoa']:
-            self.wrist_yaw_command.command_button_to_motion(0, robot)
-            self.wrist_pitch_command.command_button_to_motion(0, robot)
-            self.wrist_roll_command.command_button_to_motion(0, robot)
+            self.wrist_yaw_command.stop_motion(robot)
+            self.wrist_pitch_command.stop_motion(robot)
+            self.wrist_roll_command.stop_motion(robot)
         if self.use_devices['arm']:
             self.arm_command.command_stick_to_motion(0, robot)
         if self.use_devices['lift']:
             self.lift_command.command_stick_to_motion(0, robot)
         if self.use_devices['base']:
-            self.base_command.command_stick_to_motion(0,0,0,robot)
+            self.base_command.command_stick_to_motion(0, 0, 0, robot)
 
     def stow_robot(self):
         """
