@@ -174,7 +174,6 @@ def test_admin_unpause_is_ignored_while_running():
     assert server.state == LOOP_STATE_RUNNING
 
 
-@pytest.mark.xfail(strict=True, reason='pause and unpause call self.safe_motion, which RobotServer does not have')
 def test_admin_pause_then_unpause():
     server = make_server()
     server.pause_transport = MagicMock()
@@ -185,11 +184,27 @@ def test_admin_pause_then_unpause():
 
         assert server._cb_admin_dispatch(b'pause') == b'pause'
         assert server.state == LOOP_STATE_PAUSED
+        server.safe_motion_manager.enter_safe_stop.assert_called_once_with()
         server.pause_transport.assert_called_once_with()
 
         assert server._cb_admin_dispatch(b'unpause') == b'unpause'
         assert server.state == LOOP_STATE_RUNNING
+        server.safe_motion_manager.exit_safe_stop.assert_called_once_with()
         server.unpause_transport.assert_called_once_with()
+
+
+def test_admin_unpause_stays_paused_without_the_transport_lock(caplog):
+    server = make_server()
+    server.state = LOOP_STATE_PAUSED
+    server.unpause_transport = MagicMock()
+
+    with patch('stretch4_body.robot.robot_server.hello_utils') as hello_utils:
+        hello_utils.acquire_transport_filelock.return_value = False
+        assert server._cb_admin_dispatch(b'unpause') == b'unpause'
+
+    assert server.state == LOOP_STATE_PAUSED
+    server.unpause_transport.assert_not_called()
+    assert 'Not able to UNPAUSE' in caplog.text
 
 
 def test_admin_free_up_control_releases_the_lease():

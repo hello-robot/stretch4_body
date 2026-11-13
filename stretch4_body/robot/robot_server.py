@@ -141,7 +141,7 @@ class RobotServer(RobotCore):
 
         if message == b"pause" and self.state == LOOP_STATE_RUNNING:
             self.logger.warn('RobotServer PAUSE!')
-            self.safe_motion.enter_safe_stop()
+            self.safe_motion_manager.enter_safe_stop()
             self.pause_transport()
             hello_utils.free_transport_filelock(self.name)
             self.state = LOOP_STATE_PAUSED
@@ -152,7 +152,7 @@ class RobotServer(RobotCore):
                 self.logger.error('Unable for RobotServer to aquire transport_filelock. Not able to UNPAUSE.')
             else:
                 self.logger.warn('RobotServer UNPAUSE!')
-                self.safe_motion.exit_safe_stop()
+                self.safe_motion_manager.exit_safe_stop()
                 self.state = LOOP_STATE_RUNNING
                 self.unpause_transport()
             return message

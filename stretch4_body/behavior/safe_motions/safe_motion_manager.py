@@ -22,7 +22,7 @@ class SafeMotionManager(Device):
         Device.__init__(self,"safe_motion_manager")
         self.robot=robot
         self.controllers = {}
-        self.status={'safe_motions_triggered':[],'active':{}}
+        self.status={'safe_motions_triggered':[],'active':{},'in_safe_stop':False}
         for k in self.params['controllers']:
             s=getattr(importlib.import_module(self.robot_params[k]['py_module_name']),self.robot_params[k]['py_class_name'])(robot)
             if s.params.get('enabled',1):
@@ -89,10 +89,13 @@ class SafeMotionManager(Device):
             self.robot.subsystems['omnibase'].enable_freewheel_mode()
 
         if 'arm' in self.robot.subsystems:
-            self.subsystems['arm'].enable_safety()
+            self.robot.subsystems['arm'].enable_safety()
 
         if 'lift' in self.robot.subsystems:
             self.robot.subsystems['lift'].enable_safety()
 
         # if 'end_of_arm' in self.robot.subsystems:
         #     self.robot.subsystems['end_of_arm'].enable_safety()
+
+    def exit_safe_stop(self):
+        self.status['in_safe_stop']=False
