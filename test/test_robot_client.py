@@ -12,6 +12,8 @@ def test_api(name, func, *args, **kwargs):
     except Exception as e:
         print(f"FAIL (Exception): {e}")
 
+test_api.__test__ = False
+
 def main():
     print("Initializing RobotClient...")
     try:

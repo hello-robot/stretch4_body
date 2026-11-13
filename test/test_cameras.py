@@ -4,6 +4,8 @@ from stretch4_body.subsystem.cameras.stream_cameras import stream_left_camera, s
 from stretch4_body.subsystem.cameras.controllers.camera_pipeline_controller import RGBPipelineController
 from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 
+pytestmark = pytest.mark.robot
+
 def test_stream_camera_left_for_loop():
     count = 0
     for frame in stream_left_camera(is_run_pipeline=False):

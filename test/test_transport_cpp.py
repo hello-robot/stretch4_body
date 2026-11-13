@@ -1,4 +1,5 @@
 import unittest
+import pytest
 from stretch4_body.subsystem.power_periph import PowerPeriph
 import time
 import os
@@ -13,6 +14,7 @@ def get_current_process_memory():
     return mem_info.rss, mem_info.vms
 
 
+@pytest.mark.robot
 class TestTransportCpp(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

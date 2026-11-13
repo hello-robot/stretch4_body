@@ -1,0 +1,4 @@
+robot:
+  batch_name: francis
+  model_name: SE4
+  serial_no: stretch-se4-test

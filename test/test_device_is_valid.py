@@ -20,7 +20,7 @@ def test_subsystem_client_is_valid(mock_client_class):
     # Mock the StretchBodyClient instance
     mock_client = mock_client_class.return_value
     mock_client.startup.return_value = True
-    mock_client.server_connected = True
+    mock_client.connected = True
     
     # Use a name that exists in the nominal params to avoid exit
     sub = SubsystemClient("arm")

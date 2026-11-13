@@ -27,6 +27,7 @@ dependencies = [
     "colorama",
     "open3d",
     "psutil",
+    "tqdm",
     "opencv-contrib-python==4.14.0.94",
     "aioserial",
     "pyserial",

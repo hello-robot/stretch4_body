@@ -3,6 +3,8 @@ import math
 import subprocess
 from unittest.mock import PropertyMock, patch
 
+import pytest
+
 from stretch4_body.core.gamepad_enums import MotionProfile
 from stretch4_body.core.robot_params import RobotParams
 from stretch4_body.utils.stretch_pose_models import RobotJoints
@@ -20,7 +22,13 @@ def _patched_parallel_gripper_params(params):
     patched_robot_params['parallel_gripper'] = params
     return patch.object(RobotParams, 'get_params', return_value=(_user, patched_robot_params))
 
-def test_conversions():
+@pytest.fixture
+def pg4_robot(monkeypatch):
+    """Report PG4 as the installed tool, so the finger joint limits come from the PG4 URDF."""
+    _user, robot_params = RobotParams.get_params()
+    monkeypatch.setitem(robot_params['robot'], 'tool', 'eoa_wrist_dw4_tool_pg4')
+
+def test_conversions(pg4_robot):
     params = {
         'kL': 30.25,
         'kR': 22.0,
@@ -296,7 +304,7 @@ def test_velocity_conversion_drops_the_affine_offset():
                                 meta.urdf_to_command(2.0), rel_tol=1e-6)
 
 
-def test_pg4_urdf_opens_with_aperture():
+def test_pg4_urdf_opens_with_aperture(pg4_robot):
     """PG4's URDF finger joint is 0 when closed and grows as the aperture opens (gain > 0)."""
     from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
     meta = ParallelGripperMetadata()
@@ -317,7 +325,7 @@ def test_convert_delta_is_exact_across_the_linkage():
     assert abs(jacobian - exact) > abs(meta.convert_delta(delta, "aperture", "actuator", at) - exact)
 
 
-def test_finger_vel_is_the_derivative_of_finger_rad():
+def test_finger_vel_is_the_derivative_of_finger_rad(pg4_robot):
     """
     status_to_metadata publishes finger_rad/finger_vel as a ROS JointState position/velocity
     pair, so the velocity must be the time derivative of that exact position expression.
