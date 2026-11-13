@@ -1527,6 +1527,12 @@ nominal_params={
             'control_loop_rate_Hz': 100,
             'max_push_command_rate_Hz':     100,
             'subsystems': [],#'line_sensor_loop'],
+            # Lets RobotClient(ip_address=...) connect from another machine over TCP ports 23114-23116.
+            #   None             -> local IPC only (default)
+            #   '*'              -> listen on all network interfaces
+            #   '192.168.1.20'   -> listen only on the interface with that IP address
+            # Any host that can reach the listening address can command the robot.
+            'enable_network_access': None,
         },
     },
     'robot_monitor':{

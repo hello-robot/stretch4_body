@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 import psutil
+import socket
 import uuid
 import zmq
 import time
@@ -35,7 +36,17 @@ def require_connection(function):
 
 
 class StretchBodyServer:
-    def __init__(self):
+    def __init__(self, enable_network_access=None):
+        """
+        Parameters
+        ----------
+        enable_network_access : str | None, optional
+            The address to also bind the admin/command/status TCP sockets to, so remote
+            clients can connect. None binds only the local IPC sockets. "*" listens on all
+            network interfaces. An IP address (e.g. "192.168.1.20") listens only on the
+            interface that has that address. By default None.
+        """
+        self.enable_network_access = enable_network_access
         self.lease_holder_priority = None
         self.lease_holder_id = None
         self.lease_expiry = 0.0
@@ -52,6 +63,13 @@ class StretchBodyServer:
             self.logger.error("Cannot start Stretch Body Server: User is not a member of the 'users' group. The user should be a member of the 'users' group for locks to work properly.")
             return False
 
+        bind_host = self.enable_network_access
+        if bind_host is not None and (not isinstance(bind_host, str) or not bind_host.strip()):
+            self.logger.error(f"Cannot start Stretch Body Server: robot.server.enable_network_access must be None, '*', or an IP address of this machine, got {bind_host!r}.")
+            return False
+        if bind_host is not None:
+            bind_host = bind_host.strip()
+
         try:
             for file in [PORT_ADMIN, PORT_COMMAND, PORT_STATUS]:
                 file = f"{file}_lock"
@@ -66,15 +84,15 @@ class StretchBodyServer:
             self.socket_status.setsockopt(zmq.SNDHWM, 1)
             self.socket_status.setsockopt(zmq.CONFLATE, 1)
             self.socket_status.bind(f"ipc://{PORT_STATUS}")
-            
-            self.socket_status.bind("tcp://*:23116")
+            if bind_host is not None:
+                self._bind_tcp(self.socket_status, bind_host, 23116)
             self.logger.info(f'Starting Stretch Body Server Status publishing on port: {PORT_STATUS}')
 
             # Setup admin connection
             self.socket_admin = self.context.socket(zmq.REP)
             self.socket_admin.bind(f"ipc://{PORT_ADMIN}")
-
-            self.socket_admin.bind("tcp://*:23114")
+            if bind_host is not None:
+                self._bind_tcp(self.socket_admin, bind_host, 23114)
             self.logger.info(f'Starting Stretch Body Server Admin service on port: {PORT_ADMIN}')
 
             # Setup command subscribing
@@ -82,15 +100,29 @@ class StretchBodyServer:
             self.socket_cmd.setsockopt(zmq.CONFLATE, 1) # Only read latest message
             self.socket_cmd.setsockopt(zmq.SUBSCRIBE, b"") # Subscribe to all topics
             self.socket_cmd.bind(f"ipc://{PORT_COMMAND}")
-            
-            self.socket_cmd.bind("tcp://*:23115")
+            if bind_host is not None:
+                self._bind_tcp(self.socket_cmd, bind_host, 23115)
             self.logger.info(f'Starting Stretch Body Server Command service on port: {PORT_COMMAND}')
+
+            if bind_host is None:
+                self.logger.info("Stretch Body Server network access is disabled (local IPC only). Set robot.server.enable_network_access to '*' or an IP address of this machine to allow remote clients.")
+            elif bind_host == '*':
+                self.logger.warning('Stretch Body Server network access is ENABLED on ALL interfaces (TCP ports 23114-23116). Any host that can reach this machine can command the robot.')
+            else:
+                self.logger.warning(f'Stretch Body Server network access is ENABLED on {bind_host} (TCP ports 23114-23116). Any host that can reach that address can command the robot.')
 
             return True
         except (zmq.ZMQError, RuntimeError) as z:
             self.logger.error('Failed to start Stretch Body Server. It may already be running.')
             self.logger.error(z)
             return False
+
+    def _bind_tcp(self, socket, host, port):
+        try:
+            socket.bind(f"tcp://{host}:{port}")
+        except zmq.ZMQError:
+            self.logger.error(f"Stretch Body Server could not listen on tcp://{host}:{port} (robot.server.enable_network_access={host!r}). Check that it is '*' or an IP address assigned to this machine, and that the port is free.")
+            raise
 
     def stop(self):
         time.sleep(0.1) # Required here for all freewheel, etc. commands to transmit
@@ -228,6 +260,32 @@ class StretchBodyClient:
         pname = psutil.Process(pid).name()
         return f"client_{pname}_{pid}_{str(uuid.uuid4())[:8]}"
 
+    def _targets_this_machine(self):
+        """True if `self.ip_address` resolves to one of this machine's own addresses."""
+        try:
+            targets = {info[4][0] for info in socket.getaddrinfo(self.ip_address, None)}
+        except (socket.gaierror, UnicodeError):
+            return False
+        local = {'::1'}
+        for if_addrs in psutil.net_if_addrs().values():
+            for a in if_addrs:
+                local.add(a.address.split('%')[0]) # drop IPv6 zone index, e.g. fe80::1%eth0
+        return any(t in local or t.startswith('127.') for t in targets)
+
+    def _remote_user_params_location(self):
+        """
+        Where the user should set `enable_network_access`, for the connection-failure message.
+
+        If the server being connected to is this machine and its fleet variables are set, give the
+        expanded path. Otherwise the server is another robot, whose fleet path and ID this machine
+        doesn't know, so leave the variables for the user to fill in on that robot.
+        """
+        fleet_path = os.environ.get('HELLO_FLEET_PATH')
+        fleet_id = os.environ.get('HELLO_FLEET_ID')
+        if fleet_path and fleet_id and self._targets_this_machine():
+            return f"On this robot, in {os.path.join(fleet_path, fleet_id, 'stretch_user_params.yaml')}"
+        return "On the remote robot, in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml"
+
     def _connect_admin_socket(self):
         """
         (Re)create the admin REQ socket and its poller, closing any previous one.
@@ -302,7 +360,25 @@ class StretchBodyClient:
                 self.check_connection()
 
         if not self.connected:
-            if verbose:
+            if verbose and self.ip_address is not None:
+                self.logger.error(f"""
+===============================================
+
+StretchBodyClient: Not able to connect to the Stretch Body Server at {self.ip_address} (TCP ports 23114-23116).
+StretchBodyClient: Check that the server is running on that robot (stretch_body_server --launch).
+StretchBodyClient: Network access is disabled on the server by default.
+StretchBodyClient: {self._remote_user_params_location()}, set:
+
+robot:
+  server:
+    enable_network_access: '*' # or ip address of the remote machine
+
+StretchBodyClient: then restart its server.
+
+===============================================
+
+""")
+            elif verbose:
                 self.logger.error("""
 ===============================================
                   
@@ -315,7 +391,9 @@ StretchBodyClient: Try running the server with stretch_body_server --launch
             self.stop()
             return False
         
-        if not allow_different_user_connection and not StretchBodyServer.is_server_owned_by_current_user():
+        # The ownership check reads the local IPC socket file, so it only applies to a local server.
+        # For a remote server (ip_address set) that file belongs to this machine, not the robot, and may not exist.
+        if self.ip_address is None and not allow_different_user_connection and not StretchBodyServer.is_server_owned_by_current_user():
             if verbose:
                 self.logger.error(f"""
 ===============================================
