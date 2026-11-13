@@ -256,6 +256,33 @@ def test_robot_client_command_queuing(running_robot_server, monkeypatch):
         # Verify the format of sent command dictionary
         cmd_sent = last_cmds[-1]
         assert "omnibase" in cmd_sent or "power_periph" in cmd_sent
+def test_trigger_runstop_also_asks_on_the_admin_socket(monkeypatch):
+    """
+    Verify the run-stop goes out on the admin socket as well as in the command queue,
+    so the command lease and CONFLATE cannot hold it back.
+    """
+    client = RobotClient()
+    admin = []
+    monkeypatch.setattr(client.client, "_server_connected", True)
+    monkeypatch.setattr(client.client, "do_send_recv_admin_str", admin.append)
+
+    client.power_periph.trigger_runstop()
+
+    assert admin == [b"trigger_runstop"]
+    assert client.cmd_dict["power_periph"][1] == "trigger_runstop"
+
+
+def test_trigger_runstop_without_a_server_only_queues():
+    """
+    Verify triggering the run-stop on a client that is not connected does not raise.
+    """
+    client = RobotClient()
+
+    client.power_periph.trigger_runstop()
+
+    assert client.cmd_dict["power_periph"][1] == "trigger_runstop"
+
+
 def test_robot_client_hang_on_server_disconnect(running_robot_server):
     """
     Test that if a RobotClient is running and the server suddenly disappears/stops publishing,

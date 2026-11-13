@@ -549,6 +549,9 @@ class PowerPeriphClient(SubsystemClient):
 
     def trigger_runstop(self):
         self._queue_command(subsystem="power_periph", command="trigger_runstop")
+        # A command can be rejected by another client's lease or conflated away, so also ask on the admin socket
+        if self.client.connected:
+            self.client.do_send_recv_admin_str(b"trigger_runstop")
 
     def is_runstopped(self):
         return self.status['runstop_event']

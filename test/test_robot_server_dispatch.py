@@ -176,7 +176,10 @@ def test_admin_unpause_is_ignored_while_running():
 
 def test_admin_pause_then_unpause():
     server = make_server()
-    server.pause_transport = MagicMock()
+    calls = MagicMock()
+    server.safe_motion_manager = calls.safe_motion_manager
+    server.push_command = calls.push_command
+    server.pause_transport = calls.pause_transport
     server.unpause_transport = MagicMock()
 
     with patch('stretch4_body.robot.robot_server.hello_utils') as hello_utils:
@@ -184,8 +187,9 @@ def test_admin_pause_then_unpause():
 
         assert server._cb_admin_dispatch(b'pause') == b'pause'
         assert server.state == LOOP_STATE_PAUSED
-        server.safe_motion_manager.enter_safe_stop.assert_called_once_with()
-        server.pause_transport.assert_called_once_with()
+        # The safe stop has to reach the motors before the transport goes quiet
+        assert [c[0] for c in calls.mock_calls] == [
+            'safe_motion_manager.enter_safe_stop', 'push_command', 'pause_transport']
 
         assert server._cb_admin_dispatch(b'unpause') == b'unpause'
         assert server.state == LOOP_STATE_RUNNING
@@ -205,6 +209,31 @@ def test_admin_unpause_stays_paused_without_the_transport_lock(caplog):
     assert server.state == LOOP_STATE_PAUSED
     server.unpause_transport.assert_not_called()
     assert 'Not able to UNPAUSE' in caplog.text
+
+
+def test_admin_trigger_runstop_reaches_the_power_board():
+    server = make_server()
+
+    assert server._cb_admin_dispatch(b'trigger_runstop') == b'trigger_runstop'
+
+    server.power_periph.trigger_runstop.assert_called_once_with()
+
+
+def test_admin_trigger_runstop_gets_through_while_a_routine_runs():
+    server = make_server()
+    server.routine_manager.status['active_routine'] = 'routine_robot_home'
+
+    server._cb_admin_dispatch(b'trigger_runstop')
+
+    server.power_periph.trigger_runstop.assert_called_once_with()
+
+
+def test_admin_trigger_runstop_is_ignored_while_paused():
+    server = make_server()
+    server.state = LOOP_STATE_PAUSED
+
+    assert server._cb_admin_dispatch(b'trigger_runstop') is None
+    server.power_periph.trigger_runstop.assert_not_called()
 
 
 def test_admin_free_up_control_releases_the_lease():

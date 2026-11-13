@@ -142,6 +142,7 @@ class RobotServer(RobotCore):
         if message == b"pause" and self.state == LOOP_STATE_RUNNING:
             self.logger.warn('RobotServer PAUSE!')
             self.safe_motion_manager.enter_safe_stop()
+            self.push_command()
             self.pause_transport()
             hello_utils.free_transport_filelock(self.name)
             self.state = LOOP_STATE_PAUSED
@@ -155,6 +156,11 @@ class RobotServer(RobotCore):
                 self.safe_motion_manager.exit_safe_stop()
                 self.state = LOOP_STATE_RUNNING
                 self.unpause_transport()
+            return message
+
+        if message == b"trigger_runstop" and self.state == LOOP_STATE_RUNNING:
+            if self.get_subsystem('power_periph') is not None:
+                self.power_periph.trigger_runstop()
             return message
 
         if message == b"free_up_control":
