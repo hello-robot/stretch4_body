@@ -254,6 +254,84 @@ def test_command_conflation(running_server):
     client.stop()
 
 
+RUNSTOP_CMD = {"power_periph": ["power_periph", "trigger_runstop", "runstop", (), {}]}
+FAN_CMD = {"power_periph": ["power_periph", "set_fan_on", "fan", (), {}]}
+
+
+@pytest.mark.xfail(strict=True, reason="a run-stop from a client that does not hold the lease is rejected")
+def test_runstop_from_a_second_client_is_delivered(running_server):
+    """
+    A client that does not hold the command lease triggers the run-stop while
+    another client is commanding at the same priority.
+    """
+    server, last_cmds, last_admin_msgs = running_server
+
+    holder = StretchBodyClient(name="holder")
+    other = StretchBodyClient(name="other")
+    assert holder.startup(verbose=False) is True
+    assert other.startup(verbose=False) is True
+    time.sleep(0.1)
+
+    holder._do_send_cmd(FAN_CMD)
+    time.sleep(0.05)
+    assert server.lease_holder_id == holder.client_id
+
+    other._do_send_cmd(RUNSTOP_CMD)
+    time.sleep(0.05)
+    delivered = RUNSTOP_CMD in last_cmds
+
+    holder.stop()
+    other.stop()
+    assert delivered
+
+
+@pytest.mark.xfail(strict=True, reason="CONFLATE keeps only the newest command, the run-stop before it is lost")
+def test_runstop_followed_by_another_command_is_delivered():
+    """
+    A client triggers the run-stop and sends its next command before the server
+    has read the first one.
+    """
+    server = StretchBodyServer()
+    assert server.startup() is True
+    received = []
+    reading = threading.Event()
+    reading.set()
+
+    def loop():
+        while reading.is_set():
+            server.dispatch_admin_messages(lambda msg: None)
+            server.dispatch_command_messages(received.append, is_routine_active=False)
+            time.sleep(0.005)
+
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    client = StretchBodyClient()
+    started = client.startup(verbose=False)
+    # Send until one command arrives, so the command path is known to be up
+    deadline = time.time() + 2.0
+    while started and not received and time.time() < deadline:
+        client._do_send_cmd(FAN_CMD)
+        time.sleep(0.05)
+    reading.clear()
+    t.join()
+    connected = bool(received)
+    received.clear()
+
+    if connected:
+        client._do_send_cmd(RUNSTOP_CMD)
+        client._do_send_cmd(FAN_CMD)
+        time.sleep(0.05)
+        for _ in range(3):
+            server.dispatch_command_messages(received.append, is_routine_active=False)
+
+    client.stop()
+    server.stop()
+    if not connected:
+        pytest.skip("client could not reach the server")
+    assert received[-1] == FAN_CMD
+    assert RUNSTOP_CMD in received
+
+
 def test_multiple_servers(tmp_path, monkeypatch):
     """
     Verify that two independent servers can start on completely different paths
