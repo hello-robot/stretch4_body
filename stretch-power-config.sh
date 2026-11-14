@@ -226,6 +226,9 @@ EOF
 # already confirmed), with HELLO_FLEET_PATH and HELLO_FLEET_ID taken from
 # ~/.bashrc or, failing that, from the Stretch Body Server user service.
 export PATH="${HOME}/.local/bin:${PATH}"
+# Under 'sudo -u' (the CLI guard) there is no user session environment, which
+# 'stretch_body_server --kill' needs to stop the server daemon (systemctl --user)
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 if [[ -z "${HELLO_FLEET_ID:-}" || -z "${HELLO_FLEET_PATH:-}" ]]; then
   eval "$(grep -E '^[[:space:]]*export[[:space:]]+HELLO_FLEET_(PATH|ID)=' "${HOME}/.bashrc" 2>/dev/null)"
 fi

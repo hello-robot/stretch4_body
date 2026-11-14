@@ -78,13 +78,16 @@ def step_interaction():
         if x[0]=='o':
             print('Triggering Runstop Event')
             p.trigger_runstop()
-        if x[0]=='s':
+        if x[0] in 'shv' and not args.direct:
+            print('Robot sleep, shutdown and reboot are not sent through the server. '
+                  'Use --direct, or run stretch_shutdown.')
+        elif x[0]=='s':
             if input('Warning: About to sleep robot. Type yes to proceed. ')=='yes':
                 p.trigger_robot_sleep()
-        if x[0]=='h':
+        elif x[0]=='h':
             if input('Warning: About to shut down robot. Type yes to proceed. ')=='yes':
                 p.trigger_robot_shutdown()
-        if x[0]=='v':
+        elif x[0]=='v':
             if input('Warning: About to reboot robot. Type yes to proceed. ')=='yes':
                 p.trigger_robot_reboot()
         if x[0]=='r':

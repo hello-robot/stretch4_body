@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Sleep, reboot or power off the robot, as the power button does.
 
-Goes through the Stretch Body Server when it is running, and talks to the
-power board directly when it is not.
+Stops the Stretch Body Server first, then talks to the power board directly,
+so a server in a bad state can't get in the way.
 """
 import sys
-import time
+import subprocess
 import argparse
 import click
 import stretch4_body.core.hello_utils as hu
-from stretch4_body.utils.server_power import is_server_running
 
 hu.print_stretch_re_use()
 
@@ -28,6 +27,8 @@ ACTIONS = {
                   'charging. Press the power button to turn it on again.'),
 }
 
+KILL_TIMEOUT_S = 30
+
 parser = argparse.ArgumentParser(description='Sleep, reboot or power off the robot')
 action = parser.add_mutually_exclusive_group(required=True)
 action.add_argument('--sleep', action='store_true', help='Shut down this computer and put the robot to sleep')
@@ -40,20 +41,23 @@ name = next(a for a in ACTIONS if getattr(args, a))
 method, description = ACTIONS[name]
 
 
-def send_via_server():
-    from stretch4_body.robot.robot_client import RobotClient
-    r = RobotClient()
-    if not r.startup(verbose=False):
-        return False
+def stop_server():
+    """Stop the Stretch Body Server so the power board's port is free. If a
+    normal stop fails or hangs, force kill its processes."""
+    print('Stopping the Stretch Body Server...')
     try:
-        getattr(r.power_periph, method)()
-        # A power change goes through whichever program is driving the robot,
-        # as the power button does
-        r.push_command(ignore_control_lock=True)
-        time.sleep(0.5)  # Let the server pick the command up before disconnecting
-    finally:
-        r.stop()
-    return True
+        if subprocess.run(['stretch_body_server', '--kill'], timeout=KILL_TIMEOUT_S).returncode == 0:
+            return
+    except subprocess.TimeoutExpired:
+        print('Stopping the Stretch Body Server timed out.')
+    except FileNotFoundError:
+        print('stretch_body_server was not found. Continuing.')
+        return
+    print('Force killing the Stretch Body Server...')
+    try:
+        subprocess.run(['stretch_body_server', '--cleanup'], timeout=KILL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print('Force killing the Stretch Body Server timed out. Trying the power board anyway.')
 
 
 def send_direct():
@@ -70,19 +74,15 @@ def send_direct():
 
 
 print(description)
+print('The Stretch Body Server is stopped first.')
 print('')
 if not args.yes and not click.confirm('%s the robot now?' % name.replace('_', ' ').capitalize(), default=False):
     print('Cancelled. Nothing was changed.')
     sys.exit(1)
 
-if is_server_running():
-    print('Sending through the Stretch Body Server...')
-    ok = send_via_server()
-else:
-    print('Stretch Body Server is not running. Sending directly to the power board...')
-    ok = send_direct()
-
-if not ok:
+stop_server()
+print('Sending to the power board...')
+if not send_direct():
     print('Failed to reach the power board. Please run `stretch_system_check`.')
     sys.exit(1)
 print('Done. This computer will shut down in a few seconds.')
