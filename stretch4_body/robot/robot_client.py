@@ -550,6 +550,28 @@ class PowerPeriphClient(SubsystemClient):
     def trigger_runstop(self):
         self._queue_command(subsystem="power_periph", command="trigger_runstop")
 
+    def trigger_robot_sleep(self):
+        """
+        Put the robot to sleep: the NUC shuts down and the power button pulses
+        red. A tap on the button wakes it.
+        """
+        self._queue_command(subsystem="power_periph", command="trigger_robot_sleep")
+
+    def trigger_robot_shutdown(self):
+        """
+        Shut the robot down fully, the same end as a long press of the power
+        button: the NUC shuts down, then the robot turns off. With the charger
+        connected it stays off and charging until the button is pressed.
+        """
+        self._queue_command(subsystem="power_periph", command="trigger_robot_shutdown")
+
+    def trigger_robot_reboot(self):
+        """
+        Reboot the robot: the NUC shuts down and the robot sleeps, then it wakes
+        by itself and the NUC starts again.
+        """
+        self._queue_command(subsystem="power_periph", command="trigger_robot_reboot")
+
     def is_runstopped(self):
         return self.status['runstop_event']
 

@@ -23,6 +23,10 @@ LOOP_STATE_INVALID = "INVALID"
 LOOP_STATE_RUNNING = "RUNNING"
 LOOP_STATE_PAUSED = "PAUSED"
 
+# power_periph commands dispatched even while a routine runs
+ALWAYS_DISPATCHED_POWER_PERIPH_COMMANDS = ('trigger_runstop', 'trigger_robot_sleep',
+                                           'trigger_robot_shutdown', 'trigger_robot_reboot')
+
 
 class RobotServer(RobotCore):
     """
@@ -201,8 +205,9 @@ class RobotServer(RobotCore):
                 cmd_ids_dispatched.append(cmd_id)
                 continue
 
-            if is_routine_active and not (subsystem == 'power_periph' and method == 'trigger_runstop'):
+            if is_routine_active and not (subsystem == 'power_periph' and method in ALWAYS_DISPATCHED_POWER_PERIPH_COMMANDS):
                 # Reject non-routine commands while a routine is executing, except the runstop
+                # and robot power changes, which the physical buttons can also make at any time
                 continue
 
             # Handle robot commands:
