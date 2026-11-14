@@ -47,11 +47,12 @@ def test_conversions():
         meta = ParallelGripperMetadata()
 
         # Test aperture (meters) to URDF meters
+        _, open_limit = meta._finger_joint_limits  # from the URDF
         val_closed = meta.aperture_to_urdf(0.0)
         val_open = meta.aperture_to_urdf(0.08)
         print(f"aperture to URDF: closed={val_closed}m, open={val_open}m")
         assert math.isclose(val_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_closed}"
-        assert math.isclose(val_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_open}"
+        assert math.isclose(val_open, open_limit, abs_tol=1e-5), f"Expected {open_limit}, got {val_open}"
 
         # Test command (== aperture, in meters) to URDF meters. command_to_urdf shares units
         # with aperture_to_urdf: PG4's command unit type is defined in aperture space so it matches
@@ -60,7 +61,7 @@ def test_conversions():
         val_command_open = meta.command_to_urdf(0.08)
         print(f"command to URDF: closed={val_command_closed}m, open={val_command_open}m")
         assert math.isclose(val_command_closed, 0.0, abs_tol=1e-5), f"Expected 0.0, got {val_command_closed}"
-        assert math.isclose(val_command_open, -0.04, abs_tol=1e-5), f"Expected -0.04, got {val_command_open}"
+        assert math.isclose(val_command_open, open_limit, abs_tol=1e-5), f"Expected {open_limit}, got {val_command_open}"
 
         # Test actuator (servo angle, radians) to URDF meters -- a different unit space
         # than command (aperture, meters), unlike SG4 where command and actuator differ only by
@@ -302,31 +303,34 @@ def test_velocity_conversion_drops_the_affine_offset():
     The bug this API exists to prevent, made visible.
 
     PG4's urdf->command map is affine; its offset is zero only because the shipped
-    finger_left_joint limits happen to have upper == 0. Force a non-zero upper limit and a
+    finger_left_joint limits happen to have lower == 0. Force a non-zero lower limit and a
     position conversion applied to a rate acquires a spurious offset, while the rate conversion
     stays correct.
     """
     from unittest.mock import patch
     from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
     meta = ParallelGripperMetadata()
-    # (lower, upper) with a deliberately non-zero upper limit.
-    with patch.object(ParallelGripperMetadata, "_finger_joint_limits", (-0.05, 0.01)):
+    # (lower, upper) with a deliberately non-zero lower limit.
+    with patch.object(ParallelGripperMetadata, "_finger_joint_limits", (-0.01, 0.05)):
         offset = meta.urdf_to_command(0.0)
         assert not math.isclose(offset, 0.0, abs_tol=1e-9), "test setup failed to create an offset"
         # A zero rate must stay a zero rate, whatever the offset is.
-        assert math.isclose(meta.urdf_to_command_velocity(0.0, -0.02), 0.0, abs_tol=1e-12)
+        assert math.isclose(meta.urdf_to_command_velocity(0.0, 0.02), 0.0, abs_tol=1e-12)
         # And a non-zero rate must be pure gain, with no offset added.
-        gain = meta.conversion_gain("urdf", "command", -0.02)
-        assert math.isclose(meta.urdf_to_command_velocity(2.0, -0.02), 2.0 * gain, rel_tol=1e-12)
-        assert not math.isclose(meta.urdf_to_command_velocity(2.0, -0.02),
+        gain = meta.conversion_gain("urdf", "command", 0.02)
+        assert math.isclose(meta.urdf_to_command_velocity(2.0, 0.02), 2.0 * gain, rel_tol=1e-12)
+        assert not math.isclose(meta.urdf_to_command_velocity(2.0, 0.02),
                                 meta.urdf_to_command(2.0), rel_tol=1e-6)
 
 
-def test_pg4_velocity_sign_flips_urdf_to_command():
-    """PG4's URDF finger joint closes as the aperture opens, so the rate gain is negative."""
+def test_pg4_urdf_opens_with_aperture():
+    """PG4's URDF finger joint is 0 when closed and grows as the aperture opens (gain > 0)."""
     from stretch4_body.utils.tool_metadata import ParallelGripperMetadata
     meta = ParallelGripperMetadata()
-    assert meta.conversion_gain("urdf", "command", -0.02) < 0.0
+    assert meta.conversion_gain("urdf", "command", 0.02) > 0.0
+    closed, opened = meta.urdf_range
+    assert math.isclose(closed, 0.0, abs_tol=1e-4) and opened > closed
+    assert math.isclose(meta.urdf_to_command(0.0), 0.0, abs_tol=1e-9)
 
 
 def test_convert_delta_is_exact_across_the_linkage():
