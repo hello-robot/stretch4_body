@@ -33,6 +33,8 @@ def menu():
     print('x: reset runstop event')
     print('o: trigger runstop event')
     print('s: trigger sleep')
+    print('h: trigger shutdown')
+    print('v: trigger reboot')
     print('a: set lidar off')
     print('b: set lidar on')
     print('c: set aux cpu off')
@@ -76,7 +78,13 @@ def step_interaction():
             p.trigger_runstop()
         if x[0]=='s':
             if input('Warning: About to sleep robot. Type yes to proceed. ')=='yes':
-                p.trigger_sleep()
+                p.trigger_robot_sleep()
+        if x[0]=='h':
+            if input('Warning: About to shut down robot. Type yes to proceed. ')=='yes':
+                p.trigger_robot_shutdown()
+        if x[0]=='v':
+            if input('Warning: About to reboot robot. Type yes to proceed. ')=='yes':
+                p.trigger_robot_reboot()
         if x[0]=='r':
             print('Resetting Board!!!')
             p.board_reset()

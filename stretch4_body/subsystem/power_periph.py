@@ -323,7 +323,10 @@ class PowerPeriphDefn():
     TRIGGER_20V0_AUX_ON = (1 << 20)
     TRIGGER_CPU_PWR_CYCLE = (1 << 21)
     TRIGGER_ESP32_STATUS_PRINT = (1 << 22)
-    TRIGGER_SLEEP = (1 << 23)
+    TRIGGER_ROBOT_SLEEP = (1 << 23)
+    TRIGGER_SLEEP = TRIGGER_ROBOT_SLEEP  # Old name, kept for existing callers
+    TRIGGER_ROBOT_SHUTDOWN = (1 << 24)
+    TRIGGER_ROBOT_REBOOT = (1 << 25)
 
     TRACE_TYPE_STATUS = 0
     TRACE_TYPE_DEBUG = 1
@@ -415,9 +418,36 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._trigger = self._trigger | self.TRIGGER_ESP32_STATUS_PRINT
         self._dirty_trigger = True
 
-    def trigger_sleep(self):
+    def trigger_robot_sleep(self):
+        """
+        Put the robot to sleep: the NUC shuts down and the power button pulses
+        red. A tap on the button wakes it.
+        """
         print('Putting robot to sleep!!')
-        self._trigger = self._trigger | self.TRIGGER_SLEEP
+        self._trigger = self._trigger | self.TRIGGER_ROBOT_SLEEP
+        self._dirty_trigger = True
+
+    def trigger_sleep(self):
+        """Old name for trigger_robot_sleep()"""
+        self.trigger_robot_sleep()
+
+    def trigger_robot_shutdown(self):
+        """
+        Shut the robot down fully, the same end as a long press of the power
+        button: the NUC shuts down, then the robot turns off. With the charger
+        connected it stays off and charging until the button is pressed.
+        """
+        print('Shutting robot down!!')
+        self._trigger = self._trigger | self.TRIGGER_ROBOT_SHUTDOWN
+        self._dirty_trigger = True
+
+    def trigger_robot_reboot(self):
+        """
+        Reboot the robot: the NUC shuts down and the robot sleeps, then it wakes
+        by itself and the NUC starts again.
+        """
+        print('Rebooting robot!!')
+        self._trigger = self._trigger | self.TRIGGER_ROBOT_REBOOT
         self._dirty_trigger = True
 
     def clear_runstop(self):
