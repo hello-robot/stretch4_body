@@ -7,6 +7,7 @@ from stretch4_body.core.client_server import StretchBodyServer
 from stretch4_body.behavior.safe_motions.safe_motion_manager import SafeMotionManager
 from stretch4_body.behavior.sentries.sentry_manager import SentryManager
 from stretch4_body.behavior.routines.routine_manager import RoutineManager
+from stretch4_body.behavior.health.health_manager import HealthManager
 from stretch4_body.subsystem.line_sensor.line_sensor_loop import LineSensorLoop
 from stretch4_body.subsystem.power_periph import PowerPeriphDefn
 from stretch4_body.utils.freeable_file_lock import FreeableFileLock
@@ -71,6 +72,9 @@ class RobotServer(RobotCore):
         # Instantiate routines
         self.routine_manager=RoutineManager(self)
 
+        # Instantiate health reporting (report only, never gates commands)
+        self.health_manager=HealthManager(self)
+
         self.status['server']={'control_loop':self.loop_mgmt.status, 
                                 'state': self.state, 
                                 'lease_holder': self.server.lease_holder_id, 
@@ -80,6 +84,7 @@ class RobotServer(RobotCore):
         self.status['server']['status_id'] =0
         self.status['safety_layer']={
             'safe_motion_manager':self.safe_motion_manager.status,'sentry_manager':self.sentry_manager.status}
+        self.status['health']=self.health_manager.status
 
         self.cmd_results={}
         
@@ -97,6 +102,7 @@ class RobotServer(RobotCore):
             self.safe_motion_manager.startup() and
             self.server.startup()):
             self.logger.info("RobotServer started successfully.")
+            self.health_manager.startup() # Never fails startup; health only reports
             self.state = LOOP_STATE_RUNNING
             self._turn_off_eyes_if_animations_disabled()
             return True
@@ -298,7 +304,7 @@ class RobotServer(RobotCore):
 
     def _print_server_state(self):
         if time.time() - self.t_print_last > 1.0:
-            msg = (f'StretchBodyServer : State: {self.state} | Routine: {self.routine_manager.status['active_routine'].upper()} | Runtime {self.status['server']['control_loop']['execution_time_s']:.8f} (s) | Rate {self.status['server']['control_loop']['avg_rate_hz']:.2f} (Hz)')
+            msg = (f'StretchBodyServer : State: {self.state} | Routine: {self.routine_manager.status['active_routine'].upper()} | Runtime {self.status['server']['control_loop']['execution_time_s']:.8f} (s) | Rate {self.status['server']['control_loop']['avg_rate_hz']:.2f} (Hz) | Health: {self.health_manager.summary()}')
             print(msg)
             self.logger.debug(msg)
             self.t_print_last = time.time()
@@ -392,8 +398,9 @@ Use `stretch_status --rate 10` to view the status of the robot.
         # 3
         self.pull_status(blocking=False)
 
-        # 4 Step sentries
+        # 4 Step sentries, then health (throttled internally)
         self.sentry_manager.step()
+        self.health_manager.step()
 
         # 5 Get new commands from client
         self.server.dispatch_command_messages(self._cb_command_dispatch, self.routine_manager.status['active_routine'] != 'routine_nop')
@@ -405,6 +412,9 @@ Use `stretch_status --rate 10` to view the status of the robot.
         self.sentry_manager.stop()
         self.safe_motion_manager.stop()
         self.routine_manager.stop()
+        # After the sentries: SentryStatusLogger's writer blocks in pull_status() once the loop
+        # stops publishing, so its stop() must run as soon as possible after the last publish
+        self.health_manager.stop()
         RobotCore.stop(self)
         if hasattr(self, 'server') and hasattr(self.server, 'stop'):
             self.server.stop()

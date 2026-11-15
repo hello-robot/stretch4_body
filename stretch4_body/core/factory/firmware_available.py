@@ -8,8 +8,9 @@ class FirmwareAvailable():
     """
     Determine what firmware is available on GitHub
     """
-    def __init__(self, use_device):
+    def __init__(self, use_device, timeout=None):
         self.use_device = use_device #True/False dict for each device name
+        self.timeout = timeout  # Seconds for the GitHub request; None waits as long as it takes
         self.versions = {}
         for d in self.use_device:
             if self.use_device[d]:
@@ -28,7 +29,7 @@ class FirmwareAvailable():
         print('Checking available firmware versions...', end='')
         url = "https://api.github.com/repos/hello-robot/stretch_firmware/releases/tags/All_Release_Binaries"
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=self.timeout)
             if response.status_code != 200:
                 print('Failed to fetch from GitHub: Status %d' % response.status_code)
                 return
