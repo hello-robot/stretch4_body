@@ -220,6 +220,22 @@ stretch_body_server --restart
 
 These commands edit your user params: they set or remove `robot.server.enable_network_access` in `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml`, so the setting persists across reboots. The running server isn't affected until you run `stretch_body_server --restart`.
 
+**Setting it manually:** instead of running the command, you can open `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml` in a text editor and add the following. If the file already has a `robot:` or `server:` section, add `enable_network_access` under the existing section rather than repeating it.
+
+```yaml
+robot:
+  server:
+    enable_network_access: '*'   # or one of the robot's IP addresses, e.g. '192.168.1.105'
+```
+
+| Value | Behavior |
+| :--- | :--- |
+| `'*'` | Listen on all of the robot's network interfaces. |
+| An IP address of the robot | Listen only on the interface that has that IP address. |
+| `null`, or the line removed | Network access disabled. Only clients on the robot can connect (the default). |
+
+Keep the quotes around `'*'`: a bare `*` is not valid YAML. The value must be `'*'`, `null`, or an IP address the robot actually has, or the server won't start. Use `hostname -I` on the robot to list its addresses. Then run `stretch_body_server --restart` to apply it.
+
 The server log confirms the setting with a line like `Stretch Body Server network access is ENABLED on ALL interfaces (TCP ports 23114-23116)`. Remote clients connect over TCP ports **23114**, **23115**, and **23116**, so these must not be blocked by a firewall between the two machines.
 
 > [!WARNING]
