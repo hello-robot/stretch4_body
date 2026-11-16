@@ -46,6 +46,15 @@ class TransportCSerial:
     lib.get_rpc_duration_us.argtype = [ctypes.c_int, ctypes.c_int, ]
     lib.get_rpc_duration_us.restype = ctypes.c_double
 
+    lib.get_crc_errors.argtype = [ctypes.c_int]
+    lib.get_crc_errors.restype = ctypes.c_int
+
+    lib.get_framing_errors.argtype = [ctypes.c_int]
+    lib.get_framing_errors.restype = ctypes.c_int
+
+    lib.get_timeouts.argtype = [ctypes.c_int]
+    lib.get_timeouts.restype = ctypes.c_int
+
 
 
     def __init__(self, port_name, qid, logger=logging.getLogger()):
@@ -112,6 +121,11 @@ class TransportCSerial:
         Return duration of a completed rpc (from queue to acknowledge), in uS
         """
         return self.lib.get_rpc_duration_us(ctypes.c_int(self.qid), ctypes.c_int(rpc_id))
+
+    def get_error_counts(self):
+        return {'crc_errors': self.lib.get_crc_errors(ctypes.c_int(self.qid)),
+                'framing_errors': self.lib.get_framing_errors(ctypes.c_int(self.qid)),
+                'timeouts': self.lib.get_timeouts(ctypes.c_int(self.qid))}
 
 
     def do_rpc(self, blocking, is_push, payload, nb_payload,rpc_callback ):

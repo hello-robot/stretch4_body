@@ -91,6 +91,7 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
             if (nrx>RPC_MAX_FRAME_SIZE)
             {
                 printf("receiveFramedData: Bad NRX: %d \n", nrx);
+                framing_errors++;
                 return false;
             }
             if (nrx <= 0)
@@ -109,6 +110,7 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
                     {
                         crc_ok=false;
                         printf("receiveFramedData: Bad CRC: %d | %d\n", crc1,crc2);
+                        crc_errors++;
                         return false;
                     }
                     nb_frame=nb_frame-2; //drop CRC
@@ -120,6 +122,7 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
                     if (nf>RPC_MAX_FRAME_SIZE)
                     {
                         printf("receiveFramedData: Failed to get COBBS_PACKET_MARKER\n");
+                        framing_errors++;
                         return false;
                     }
                 }
@@ -127,6 +130,7 @@ bool TransportFraming::receiveFramedData(uint8_t * frame_buf, uint16_t & nb_fram
         }
         else
         {
+            timeouts++;
             return false;
         }
     }
@@ -153,6 +157,7 @@ Utility function for code readability
     if (ack_code != RPC_V1_PUSH_ACK)
     {
         printf("Transport RX Error on RPC_V1_PUSH_ACK\n");// {0} {1} {2}'.format(crc, nr, ack_code))
+        framing_errors++;
         return false;
     }
     return true;
@@ -177,6 +182,7 @@ bool TransportFraming::handlePullAckV1(bool crc, uint16_t nr, int ack_code)
         if (ack_code != RPC_V1_PULL_FRAME_ACK_MORE && ack_code != RPC_V1_PULL_FRAME_ACK_LAST)
         {
             printf("Transport RX Error on RPC_V1_PULL_ACK\n");// {0} {1} {2}'.format(crc, nr, ack_code))
+            framing_errors++;
             return false;
         }
         return true;

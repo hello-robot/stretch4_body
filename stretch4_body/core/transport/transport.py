@@ -1,4 +1,5 @@
 import array as arr
+import collections
 from stretch4_body.core.transport.transport_util import *
 from stretch4_body.core.transport.transport_pyserial import TransportPySerial
 from stretch4_body.core.transport.transport_cserial import TransportCSerial
@@ -39,11 +40,14 @@ class Transport(TransportPySerial):
         self.rpc_ids=[]
         self.n_rate_log=0
         self.rate_log=[]
+        self.rpc_durations=collections.deque(maxlen=100)
 
         TransportPySerial.__init__(self, port_name, logger=logger)
         if self.use_c_backend:
             self.transport_c = TransportCSerial(port_name, qid, logger=logger)
             self.status['rpc_duration_us']=0
+            self.status['rpc_duration_max_us']=0
+            self.status.update(self.transport_c.get_error_counts())
         else:
             self.transport_c = None
 
@@ -157,10 +161,13 @@ Try running stretch_body_server --kill""")
         #Handle rate logging
         if res==1:
             self.status['rpc_duration_us']=self.get_rpc_duration_us(rpc_id)
+            self.rpc_durations.append(self.status['rpc_duration_us'])
+            self.status['rpc_duration_max_us']=max(self.rpc_durations)
             if self.n_rate_log>0:
                 self.rate_log.append(self.status['rpc_duration_us'])
                 if len(self.rate_log)>self.n_rate_log: #Store last N rpc durations to get stats
                     self.rate_log.pop(0) 
+        self.status.update(self.transport_c.get_error_counts())
         return res
 
 

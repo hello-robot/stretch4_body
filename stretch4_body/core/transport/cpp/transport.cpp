@@ -331,6 +331,18 @@ bool is_rpc_result_ready(int qid, int rpc_id)
 {
     return TQ[qid].is_rpc_result_ready(rpc_id);
 }
+int get_crc_errors(int qid)
+{
+    return TQ[qid].tframer.crc_errors;
+}
+int get_framing_errors(int qid)
+{
+    return TQ[qid].tframer.framing_errors;
+}
+int get_timeouts(int qid)
+{
+    return TQ[qid].tframer.timeouts;
+}
 
 bool start_serial(int qid, const char * port_name)
 {

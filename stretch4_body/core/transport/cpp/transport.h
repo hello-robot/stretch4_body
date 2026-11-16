@@ -39,6 +39,9 @@ int do_rpc(bool blocking, bool is_push, int qid, uint8_t* payload, uint16_t nb_p
 int load_rpc_result(int qid, int rpc_id);
 bool is_rpc_result_ready(int qid, int rpc_id);
 double get_rpc_duration_us(int qid,int rpc_id);
+int get_crc_errors(int qid);
+int get_framing_errors(int qid);
+int get_timeouts(int qid);
 #ifdef __cplusplus
 }
 #endif

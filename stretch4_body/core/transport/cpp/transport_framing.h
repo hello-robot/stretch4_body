@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cmath>
 #include <cstring>
@@ -45,6 +46,9 @@ class TransportFraming : public SCSerial{
          crc_ok=false;
       }
       bool valid_port;
+      std::atomic<int> crc_errors{0};
+      std::atomic<int> framing_errors{0};
+      std::atomic<int> timeouts{0};
    private:
       bool sendFramedData(uint8_t * frame, uint16_t nb_frame);
       bool receiveFramedData(uint8_t * frame_buf, uint16_t & nb_frame);
