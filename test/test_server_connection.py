@@ -442,7 +442,7 @@ def _client_startup_errors(client):
 
 def test_remote_client_failure_mentions_network_access_flag():
     text = _client_startup_errors(StretchBodyClient(ip_address="127.0.0.1"))
-    assert "stretch_body_server --enable_network_access" in text
+    assert "enable_network_access" in text
     assert "127.0.0.1" in text
 
 
@@ -456,8 +456,7 @@ def test_remote_failure_expands_fleet_path_when_targeting_this_robot(monkeypatch
     monkeypatch.setenv("HELLO_FLEET_PATH", "/home/hello/stretch_user")
     monkeypatch.setenv("HELLO_FLEET_ID", "stretch-se4-1234")
     text = _client_startup_errors(StretchBodyClient(ip_address="127.0.0.1"))
-    assert "run on this robot:" in text
-    assert "in /home/hello/stretch_user/stretch-se4-1234/stretch_user_params.yaml" in text
+    assert "On this robot, in /home/hello/stretch_user/stretch-se4-1234/stretch_user_params.yaml" in text
     assert "${HELLO_FLEET_PATH}" not in text
 
 
@@ -466,8 +465,7 @@ def test_remote_failure_keeps_fleet_variables_for_another_machine(monkeypatch):
     monkeypatch.setenv("HELLO_FLEET_PATH", "/home/hello/stretch_user")
     monkeypatch.setenv("HELLO_FLEET_ID", "stretch-se4-1234")
     text = _client_startup_errors(StretchBodyClient(ip_address="192.0.2.1"))  # TEST-NET, never local
-    assert "run on the remote robot:" in text
-    assert "in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml" in text
+    assert "On the remote robot, in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml" in text
     assert "stretch-se4-1234" not in text
 
 

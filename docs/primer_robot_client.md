@@ -205,22 +205,7 @@ The `RobotClient` sits on top of a network communication layer (ZMQ), and doesn'
 
 ### Enabling Network Access on the Robot
 
-By default, the Stretch Body Server only accepts connections from programs running on the robot itself. To let other machines connect, run the following on the robot, then restart the server so it picks up the change:
-
-```bash
-stretch_body_server --enable_network_access
-stretch_body_server --restart
-```
-
-| Command | Behavior |
-| :--- | :--- |
-| `stretch_body_server --enable_network_access` | Listen on all of the robot's network interfaces (Wi-Fi, Ethernet, VPN, ...). |
-| `stretch_body_server --enable_network_access 192.168.1.105` | Listen only on the interface that has that IP address. The address must belong to the robot; the command lists the robot's addresses if it doesn't. |
-| `stretch_body_server --disable_network_access` | Only accept connections from programs on the robot. This is the default. |
-
-These commands edit your user params: they set or remove `robot.server.enable_network_access` in `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml`, so the setting persists across reboots. The running server isn't affected until you run `stretch_body_server --restart`.
-
-**Setting it manually:** instead of running the command, you can open `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml` in a text editor and add the following. If the file already has a `robot:` or `server:` section, add `enable_network_access` under the existing section rather than repeating it.
+By default, the Stretch Body Server only accepts connections from programs running on the robot itself. To let other machines connect, open `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml` on the robot in a text editor and add the following. If the file already has a `robot:` or `server:` section, add `enable_network_access` under the existing section rather than repeating it.
 
 ```yaml
 robot:
@@ -230,16 +215,22 @@ robot:
 
 | Value | Behavior |
 | :--- | :--- |
-| `'*'` | Listen on all of the robot's network interfaces. |
+| `'*'` | Listen on all of the robot's network interfaces (Wi-Fi, Ethernet, VPN, ...). |
 | An IP address of the robot | Listen only on the interface that has that IP address. |
 | `null`, or the line removed | Network access disabled. Only clients on the robot can connect (the default). |
 
-Keep the quotes around `'*'`: a bare `*` is not valid YAML. The value must be `'*'`, `null`, or an IP address the robot actually has, or the server won't start. Use `hostname -I` on the robot to list its addresses. Then run `stretch_body_server --restart` to apply it.
+Keep the quotes around `'*'`: a bare `*` is not valid YAML. The value must be `'*'`, `null`, or an IP address the robot actually has, or the server won't start. Use `hostname -I` on the robot to list its addresses.
+
+The running server isn't affected until you restart it:
+
+```bash
+stretch_body_server --restart
+```
 
 The server log confirms the setting with a line like `Stretch Body Server network access is ENABLED on ALL interfaces (TCP ports 23114-23116)`. Remote clients connect over TCP ports **23114**, **23115**, and **23116**, so these must not be blocked by a firewall between the two machines.
 
 > [!WARNING]
-> The server does not authenticate clients. Once network access is enabled, any machine that can reach the robot on these ports can command it. Only enable network access on networks you trust, and prefer giving `--enable_network_access` a specific IP address so the robot only listens on the network you intend to use.
+> The server does not authenticate clients. Once network access is enabled, any machine that can reach the robot on these ports can command it. Only enable network access on networks you trust, and prefer setting `enable_network_access` to a specific IP address so the robot only listens on the network you intend to use.
 
 ### Connecting from a Remote Machine
 
@@ -361,22 +352,24 @@ If you created the client with `RobotClient(ip_address=...)`, the error looks li
 ```
 StretchBodyClient: Not able to connect to the Stretch Body Server at 192.168.1.105 (TCP ports 23114-23116).
 StretchBodyClient: Check that the server is running on that robot (stretch_body_server --launch).
-StretchBodyClient: Network access is disabled on the server by default. To enable it, run on the remote robot:
+StretchBodyClient: Network access is disabled on the server by default.
+StretchBodyClient: On the remote robot, in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml, set:
 
-    stretch_body_server --enable_network_access    # or: --enable_network_access <ip address of the remote machine>
-    stretch_body_server --restart
+robot:
+  server:
+    enable_network_access: '*' # or ip address of the remote machine
 
-StretchBodyClient: This saves robot.server.enable_network_access in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml.
+StretchBodyClient: then restart its server.
 ```
 
 Check the following on the robot you are connecting to:
 
 1. **The server is running.** Run `stretch_body_server --print` on the robot.
-2. **Network access is enabled.** Run `stretch_body_server --enable_network_access` on the robot, then `stretch_body_server --restart`. See [Enabling Network Access on the Robot](#enabling-network-access-on-the-robot).
+2. **Network access is enabled.** Set `enable_network_access` in the robot's `stretch_user_params.yaml`, then run `stretch_body_server --restart`. See [Enabling Network Access on the Robot](#enabling-network-access-on-the-robot).
 3. **The IP address is correct and reachable.** Run `hostname -I` on the robot to list its addresses, then `ping <robot_ip>` from your machine. If network access is enabled on a specific IP address, connect to that exact address.
 4. **The ports are open.** TCP ports 23114-23116 must not be blocked by a firewall between the two machines.
 
-If the server fails to start after you enable network access, check its log. This can happen when network access was enabled on an IP address the robot no longer has, for example after its Wi-Fi address changed. Run `stretch_body_server --enable_network_access` again with the robot's current address, or without an address to listen on all interfaces.
+If the server fails to start after you enable network access, check its log. The value must be `null`, `'*'`, or an IP address assigned to the robot. This can also happen when `enable_network_access` is set to an IP address the robot no longer has, for example after its Wi-Fi address changed. Update it to the robot's current address, or to `'*'` to listen on all interfaces, then run `stretch_body_server --restart`.
 
 #### Common Causes of Server Start Failure
 

@@ -60,12 +60,13 @@ hostname -I
 Alternatively, you can use `ip a` or `ifconfig`. Note the IPv4 address (e.g., `192.168.1.15`).
 
 **Step 2: Enable Network Access on the Puppet**
-By default, the Stretch Body Server only accepts connections from programs running on the same robot. The Controller connects to the Puppet over the network, so the Puppet's server must have network access enabled. On the Puppet robot, run:
-```bash
-stretch_body_server --enable_network_access 192.168.1.15   # the Puppet's IP address from Step 1
-stretch_body_server --restart
+By default, the Stretch Body Server only accepts connections from programs running on the same robot. The Controller connects to the Puppet over the network, so the Puppet's server must have network access enabled. On the Puppet robot, add the following to `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml` (if the file already has a `robot:` or `server:` section, add `enable_network_access` under it):
+```yaml
+robot:
+  server:
+    enable_network_access: '192.168.1.15'   # the Puppet's IP address from Step 1, or '*' for all of its networks
 ```
-This edits the Puppet's user params: it sets `robot.server.enable_network_access` in `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml`. Giving the Puppet's own IP address limits the server to the network the Controller uses. Leaving the address out (`stretch_body_server --enable_network_access`) listens on all of the Puppet's networks. The Controller connects to its own server locally, so it doesn't need this setting. To turn network access off again later, run `stretch_body_server --disable_network_access` on the Puppet, then `stretch_body_server --restart`.
+Setting the Puppet's own IP address limits the server to the network the Controller uses. `'*'` listens on all of the Puppet's networks. Keep the quotes: a bare `*` is not valid YAML. The Controller connects to its own server locally, so it doesn't need this setting. To turn network access off again later, remove the line (or set it to `null`) on the Puppet and restart its server.
 
 > [!WARNING]
 > The server does not authenticate clients. With network access enabled, any machine that can reach the Puppet on TCP ports 23114-23116 can command it. Only enable it on a network you trust.

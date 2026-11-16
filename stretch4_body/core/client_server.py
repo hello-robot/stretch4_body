@@ -105,7 +105,7 @@ class StretchBodyServer:
             self.logger.info(f'Starting Stretch Body Server Command service on port: {PORT_COMMAND}')
 
             if bind_host is None:
-                self.logger.info("Stretch Body Server network access is disabled (local IPC only). Run `stretch_body_server --enable_network_access [ADDRESS]` and restart the server to allow remote clients.")
+                self.logger.info("Stretch Body Server network access is disabled (local IPC only). Set robot.server.enable_network_access to '*' or an IP address of this machine to allow remote clients.")
             elif bind_host == '*':
                 self.logger.warning('Stretch Body Server network access is ENABLED on ALL interfaces (TCP ports 23114-23116). Any host that can reach this machine can command the robot.')
             else:
@@ -274,7 +274,7 @@ class StretchBodyClient:
 
     def _remote_user_params_location(self):
         """
-        (which robot, user params path) for the connection-failure message.
+        Where the user should set `enable_network_access`, for the connection-failure message.
 
         If the server being connected to is this machine and its fleet variables are set, give the
         expanded path. Otherwise the server is another robot, whose fleet path and ID this machine
@@ -283,8 +283,8 @@ class StretchBodyClient:
         fleet_path = os.environ.get('HELLO_FLEET_PATH')
         fleet_id = os.environ.get('HELLO_FLEET_ID')
         if fleet_path and fleet_id and self._targets_this_machine():
-            return "this robot", os.path.join(fleet_path, fleet_id, 'stretch_user_params.yaml')
-        return "the remote robot", "${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml"
+            return f"On this robot, in {os.path.join(fleet_path, fleet_id, 'stretch_user_params.yaml')}"
+        return "On the remote robot, in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml"
 
     def _connect_admin_socket(self):
         """
@@ -361,18 +361,19 @@ class StretchBodyClient:
 
         if not self.connected:
             if verbose and self.ip_address is not None:
-                which_robot, params_path = self._remote_user_params_location()
                 self.logger.error(f"""
 ===============================================
 
 StretchBodyClient: Not able to connect to the Stretch Body Server at {self.ip_address} (TCP ports 23114-23116).
 StretchBodyClient: Check that the server is running on that robot (stretch_body_server --launch).
-StretchBodyClient: Network access is disabled on the server by default. To enable it, run on {which_robot}:
+StretchBodyClient: Network access is disabled on the server by default.
+StretchBodyClient: {self._remote_user_params_location()}, set:
 
-    stretch_body_server --enable_network_access    # or: --enable_network_access <ip address of the remote machine>
-    stretch_body_server --restart
+robot:
+  server:
+    enable_network_access: '*' # or ip address of the remote machine
 
-StretchBodyClient: This saves robot.server.enable_network_access in {params_path}.
+StretchBodyClient: then restart its server.
 
 ===============================================
 
