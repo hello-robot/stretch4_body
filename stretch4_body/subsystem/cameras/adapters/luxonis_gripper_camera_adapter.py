@@ -12,6 +12,7 @@ from stretch4_body.subsystem.cameras.enums.rgb_camera import RGBCameras
 from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.adapters.luxonis_camera_adapter import LuxonisCameraAdapter, clear_device_cache
 from stretch4_body.subsystem.cameras.adapters.synced_camera import SyncedCamera
+from stretch4_body.subsystem.cameras.adapters.luxonis_imu import LuxonisImu
 from stretch4_body.subsystem.cameras.models.image_frame import SyncedImageFrame, ImageFrame
 import dataclasses
 import numpy as np
@@ -89,6 +90,14 @@ class GripperCameraLuxonis(SyncedCamera):
 
         self.left_input_queue = self.left_camera_node.inputControl.createInputQueue()
         self.right_input_queue = self.right_camera_node.inputControl.createInputQueue()
+
+        # The wrist IMU is on this device, so it joins this pipeline. None when not asked for or missing.
+        self.imu = LuxonisImu.try_create(
+            self.pipeline,
+            self.device,
+            rate_hz=max(left.imu_rate_hz, right.imu_rate_hz),
+            camera_socket=LuxonisCameraAdapter.get_depthai_camera_socket(right.camera_type),
+        )
 
         try:
             self.pipeline.start()

@@ -32,6 +32,9 @@ class RGBCameraConfig:
     iso: int | None = None
     sync_threshold_ms: int = 15
     stereo_max_range_mm: int = 10000
+    # Report rate for the IMU on this camera's device, 0 for off. Only the gripper camera (OAK-D-SR)
+    # reads it, from either of its cameras' configs; see adapters/luxonis_imu.py.
+    imu_rate_hz: int = 0
 
 
 CAMERA_CONFIGS: dict[str, dict] = {
