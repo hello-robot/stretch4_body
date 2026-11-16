@@ -55,7 +55,8 @@ class RobotServer(RobotCore):
             self.status[k] = self.subsystems[k].status
             self.status_aux[k] = self.subsystems[k].status_aux
 
-        self.server = StretchBodyServer()
+        self.server = StretchBodyServer(
+            enable_network_access=self.params['server'].get('enable_network_access', None))
 
         self.do_exit = False
         self.state = LOOP_STATE_INVALID

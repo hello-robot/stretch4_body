@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import logging
 import os
 import socket
 import threading
@@ -351,3 +352,125 @@ def test_require_connection_decorator():
 
 if __name__ == '__main__':
     pytest.main([__file__])
+
+
+def _bound_addresses(monkeypatch, server):
+    """Start `server` and return the addresses its sockets were bound to."""
+    bound = []
+    current_bind = zmq.Socket.bind
+
+    def recording_bind(self, addr):
+        bound.append(addr)
+        return current_bind(self, addr)
+
+    monkeypatch.setattr(zmq.Socket, "bind", recording_bind)
+    try:
+        assert server.startup() is True
+    finally:
+        server.stop()
+    return bound
+
+
+def test_network_access_disabled_by_default(monkeypatch):
+    bound = _bound_addresses(monkeypatch, StretchBodyServer())
+    assert len(bound) == 3
+    assert all(addr.startswith("ipc://") for addr in bound)
+
+
+@pytest.mark.parametrize("host", ["*", "127.0.0.1"])
+def test_network_access_binds_tcp_to_given_host(monkeypatch, host):
+    bound = _bound_addresses(monkeypatch, StretchBodyServer(enable_network_access=host))
+    tcp = sorted(addr for addr in bound if addr.startswith("tcp://"))
+    assert tcp == [f"tcp://{host}:23114", f"tcp://{host}:23115", f"tcp://{host}:23116"]
+    assert sum(addr.startswith("ipc://") for addr in bound) == 3
+
+
+def test_network_access_to_specific_host_is_reachable(monkeypatch):
+    server = StretchBodyServer(enable_network_access="127.0.0.1")
+    assert server.startup() is True
+    try:
+        client = StretchBodyClient(ip_address="127.0.0.1")
+
+        # A remote client must not check ownership of this machine's local IPC socket file
+        def fail_ownership_check():
+            raise AssertionError("ownership check must be skipped for remote clients")
+        monkeypatch.setattr(StretchBodyServer, "is_server_owned_by_current_user", staticmethod(fail_ownership_check))
+        # Answer one ping on the admin socket from a background thread
+        t = threading.Thread(target=lambda: [server.dispatch_admin_messages(lambda m: None) or time.sleep(0.01) for _ in range(100)], daemon=True)
+        t.start()
+        assert client.startup() is True
+        client.stop()
+        t.join(timeout=2.0)
+    finally:
+        server.stop()
+
+
+@pytest.mark.parametrize("value", [True, 1, "", "   "])
+def test_network_access_rejects_invalid_values(value):
+    server = StretchBodyServer(enable_network_access=value)
+    assert server.startup() is False
+    server.stop()
+
+
+def test_network_access_unassigned_ip_fails_startup():
+    # 192.0.2.0/24 is reserved for documentation, so it is never assigned to this machine
+    server = StretchBodyServer(enable_network_access="192.0.2.1")
+    assert server.startup() is False
+    server.stop()
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
+def _client_startup_errors(client):
+    """Run client.startup() and return the error text it logged."""
+    handler = _ListHandler()
+    logger = logging.getLogger("stretch_body_client")
+    logger.addHandler(handler)
+    try:
+        assert client.startup() is False
+    finally:
+        logger.removeHandler(handler)
+    return "\n".join(handler.messages)
+
+
+def test_remote_client_failure_mentions_network_access_flag():
+    text = _client_startup_errors(StretchBodyClient(ip_address="127.0.0.1"))
+    assert "enable_network_access" in text
+    assert "127.0.0.1" in text
+
+
+def test_local_client_failure_does_not_mention_network_access_flag():
+    text = _client_startup_errors(StretchBodyClient())
+    assert "Not able to connect" in text
+    assert "enable_network_access" not in text
+
+
+def test_remote_failure_expands_fleet_path_when_targeting_this_robot(monkeypatch):
+    monkeypatch.setenv("HELLO_FLEET_PATH", "/home/hello/stretch_user")
+    monkeypatch.setenv("HELLO_FLEET_ID", "stretch-se4-1234")
+    text = _client_startup_errors(StretchBodyClient(ip_address="127.0.0.1"))
+    assert "On this robot, in /home/hello/stretch_user/stretch-se4-1234/stretch_user_params.yaml" in text
+    assert "${HELLO_FLEET_PATH}" not in text
+
+
+def test_remote_failure_keeps_fleet_variables_for_another_machine(monkeypatch):
+    # Even on a robot, another robot's fleet path and ID are unknown here
+    monkeypatch.setenv("HELLO_FLEET_PATH", "/home/hello/stretch_user")
+    monkeypatch.setenv("HELLO_FLEET_ID", "stretch-se4-1234")
+    text = _client_startup_errors(StretchBodyClient(ip_address="192.0.2.1"))  # TEST-NET, never local
+    assert "On the remote robot, in ${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml" in text
+    assert "stretch-se4-1234" not in text
+
+
+def test_remote_failure_keeps_fleet_variables_when_not_on_a_robot(monkeypatch):
+    monkeypatch.delenv("HELLO_FLEET_PATH", raising=False)
+    monkeypatch.delenv("HELLO_FLEET_ID", raising=False)
+    text = _client_startup_errors(StretchBodyClient(ip_address="127.0.0.1"))
+    assert "${HELLO_FLEET_PATH}/${HELLO_FLEET_ID}/stretch_user_params.yaml" in text
