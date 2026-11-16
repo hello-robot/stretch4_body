@@ -14,8 +14,10 @@ import tarfile
 import zipfile
 from datetime import datetime
 import fcntl
+import ipaddress
 import json
 import psutil
+import socket
 import shutil
 import threading
 from importlib.metadata import distribution
@@ -41,6 +43,7 @@ DAEMON_MAX_RESTARTS = 3 # and gives up after this many retries in a row
 DEFAULT_KEPT_SESSIONS = 100
 SERVICE_NAME = 'stretch_body_server.service'
 MAX_ERROR_LINES = 30
+USER_PARAMS_FN = 'stretch_user_params.yaml'
 logger = logging.getLogger('stretch_body_server')
 
 def print_status(robot_client):
@@ -235,6 +238,87 @@ def prune_logs(keep:int=DEFAULT_KEPT_SESSIONS) -> bool:
             failed += 1
     print(f"Deleted {len(doomed) - failed} files.")
     return failed == 0
+
+
+def _local_ipv4_addresses() -> list:
+    """The IPv4 addresses assigned to this machine's network interfaces."""
+    return sorted({a.address for addrs in psutil.net_if_addrs().values()
+                   for a in addrs if a.family == socket.AF_INET})
+
+
+def set_network_access(address:str|None) -> bool:
+    """
+    Writes robot.server.enable_network_access to the user params, so the server lets remote
+    clients connect the next time it starts. `address` is '*' for all network interfaces, one of
+    this machine's IPv4 addresses for only that interface, or None to remove the setting, which
+    disables network access. Returns False if nothing was written.
+    """
+    try:
+        fleet_dir = hu.get_fleet_directory()
+    except KeyError as e:
+        print(f"Error: The environment variable {e} is not set, so the user params file can't be found.")
+        return False
+    params_path = os.path.join(fleet_dir, USER_PARAMS_FN)
+
+    if address is not None and address != '*':
+        try:
+            ipaddress.IPv4Address(address)
+        except ValueError:
+            print(f"Error: '{address}' is not an IPv4 address. Use an IP address of this robot, or leave it out to listen on all interfaces.")
+            return False
+        if address not in _local_ipv4_addresses():
+            print(f"Error: {address} is not an address of this robot, so the server could not listen on it.")
+            print(f"This robot's addresses are: {', '.join(_local_ipv4_addresses())}")
+            return False
+
+    user_params = hu.read_fleet_yaml(USER_PARAMS_FN)
+    robot = user_params.get('robot')
+    server = robot.get('server') if isinstance(robot, dict) else None
+    current = server.get('enable_network_access') if isinstance(server, dict) else None
+
+    if current == address:
+        print(f"Network access is already {_network_access_description(address)} in {params_path}.")
+        print("If you haven't restarted the server since this was set, run `stretch_body_server --restart` to apply it.")
+        return True
+
+    if address is None:
+        server.pop('enable_network_access')
+        # Don't leave empty sections behind
+        if not server:
+            robot.pop('server')
+        if not robot:
+            user_params.pop('robot')
+    else:
+        if not isinstance(robot, dict):
+            robot = user_params['robot'] = {}
+        if not isinstance(server, dict):
+            server = robot['server'] = {}
+        server['enable_network_access'] = address
+
+    try:
+        header = RobotParams.get_user_params_header()
+    except Exception:
+        header = None
+    hu.write_fleet_yaml(USER_PARAMS_FN, user_params, header=header)
+
+    print(f"Network access is now {_network_access_description(address)}. Saved to {params_path}.")
+    if address == '*':
+        print(f"Remote clients can connect with RobotClient(ip_address=...) to any of this robot's addresses: {', '.join(_local_ipv4_addresses())}")
+    elif address is not None:
+        print(f"Remote clients can connect with RobotClient(ip_address='{address}').")
+    if address is not None:
+        print(f"{Fore.YELLOW}Warning: The server does not authenticate clients. Any machine that can reach this robot "
+              f"on TCP ports 23114-23116 can command it. Only enable network access on networks you trust.{Style.RESET_ALL}")
+    print(f"\n{Style.BRIGHT}The running server is not affected yet. Run `stretch_body_server --restart` to apply this change.{Style.RESET_ALL}")
+    return True
+
+
+def _network_access_description(address:str|None) -> str:
+    if address is None:
+        return "disabled (local connections only)"
+    if address == '*':
+        return "enabled on all network interfaces"
+    return f"enabled on {address} only"
 
 
 def _segment_order(name:str) -> int:
@@ -548,6 +632,18 @@ def _parse_args():
                                             "and the stretchbody_*.log files left by older versions",
                        nargs='?', const=DEFAULT_KEPT_SESSIONS, type=int, metavar='KEEP', default=None)
 
+    group.add_argument("--enable_network_access", help="Let other machines connect to the server with RobotClient(ip_address=...): "
+                                                       "listen on all network interfaces, or only on ADDRESS (an IP address of this robot). "
+                                                       "Edits your user params: sets robot.server.enable_network_access in "
+                                                       "$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml. "
+                                                       "Run `stretch_body_server --restart` afterwards to apply it",
+                       nargs='?', const='*', metavar='ADDRESS', default=None)
+    group.add_argument("--disable_network_access", help="Only accept connections from programs on this robot (the default). "
+                                                        "Edits your user params: removes robot.server.enable_network_access from "
+                                                        "$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml. "
+                                                        "Run `stretch_body_server --restart` afterwards to apply it",
+                       action="store_true")
+
     group.add_argument("--kill", "--stop", help="Kill a running server",action="store_true")
     group.add_argument("--restart", help="Restart a running server",action="store_true")
     group.add_argument("--cleanup", help="Force kill zombie server processes",action="store_true")
@@ -615,6 +711,12 @@ def main() -> int:
 
     if args.prune_logs is not None:
         return 0 if prune_logs(args.prune_logs) else 1
+
+    if args.enable_network_access is not None:
+        return 0 if set_network_access(args.enable_network_access) else 1
+
+    if args.disable_network_access:
+        return 0 if set_network_access(None) else 1
 
     hu.print_stretch_re_use()
 

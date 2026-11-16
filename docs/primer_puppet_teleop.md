@@ -59,9 +59,22 @@ hostname -I
 ```
 Alternatively, you can use `ip a` or `ifconfig`. Note the IPv4 address (e.g., `192.168.1.15`).
 
-**Step 2: Start the Robot Servers**
+**Step 2: Enable Network Access on the Puppet**
+By default, the Stretch Body Server only accepts connections from programs running on the same robot. The Controller connects to the Puppet over the network, so the Puppet's server must have network access enabled. On the Puppet robot, run:
+```bash
+stretch_body_server --enable_network_access 192.168.1.15   # the Puppet's IP address from Step 1
+stretch_body_server --restart
+```
+This edits the Puppet's user params: it sets `robot.server.enable_network_access` in `$HELLO_FLEET_PATH/$HELLO_FLEET_ID/stretch_user_params.yaml`. Giving the Puppet's own IP address limits the server to the network the Controller uses. Leaving the address out (`stretch_body_server --enable_network_access`) listens on all of the Puppet's networks. The Controller connects to its own server locally, so it doesn't need this setting. To turn network access off again later, run `stretch_body_server --disable_network_access` on the Puppet, then `stretch_body_server --restart`.
+
+> [!WARNING]
+> The server does not authenticate clients. With network access enabled, any machine that can reach the Puppet on TCP ports 23114-23116 can command it. Only enable it on a network you trust.
+
+See [Enabling Network Access on the Robot](primer_robot_client.md#enabling-network-access-on-the-robot) for details.
+
+**Step 3: Start the Robot Servers**
 Both robots require the Stretch Body Server to be running.
-*   **On the Puppet robot:** Start the server in a terminal:
+*   **On the Puppet robot:** Start the server in a terminal. If the server was already running, restart it with `stretch_body_server --restart` so it picks up the setting from Step 2:
     ```bash
     stretch_body_server
     ```
@@ -70,7 +83,7 @@ Both robots require the Stretch Body Server to be running.
     stretch_body_server
     ```
 
-**Step 3: Run the Teleop Script**
+**Step 4: Run the Teleop Script**
 On the Controller robot, run the teleop script and provide the Puppet's IP address (see Usage Examples below).
 
 ## 3. Command Line Arguments
