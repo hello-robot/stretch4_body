@@ -1314,9 +1314,14 @@ class PowerPeriph(PowerPeriphBase):
 
         PowerPeriphBase.startup(self)
         if self.hw_valid:
-            if self.board_info['protocol_version'] in self._supported_protocols:
-                PowerPeriph.__bases__ = self._supported_protocols[self.board_info['protocol_version']]
-                IMU.__bases__ = self.imu._supported_protocols[self.board_info['protocol_version']]
+            protocol = self.board_info['protocol_version']
+            newest = max(self._supported_protocols, key=lambda p: int(p[1:]))
+            if protocol is not None and int(protocol[1:]) > int(newest[1:]):
+                self.logger.warning('{0} firmware protocol {1} is newer than this Stretch Body supports. Running it as {2}. Please upgrade Stretch Body.'.format(self.name, protocol, newest))
+                protocol = newest
+            if protocol in self._supported_protocols:
+                PowerPeriph.__bases__ = self._supported_protocols[protocol]
+                IMU.__bases__ = self.imu._supported_protocols[protocol]
             else:
                 if self.board_info['protocol_version'] is None:
                     protocol_msg = """
