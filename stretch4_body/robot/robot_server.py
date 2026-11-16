@@ -371,11 +371,10 @@ Use `stretch_status --rate 10` to view the status of the robot.
 
         # 8
         self.push_command(blocking=False)
-        if self.get_subsystem('power_periph') is not None:
-            self.power_periph.trigger_motor_sync(blocking=False)
 
         # 9
         self.load_rpc_results(wait_on_result=True)
+        self.trigger_motor_sync(blocking=False)
         self.publish_status_msg()
 
 

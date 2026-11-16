@@ -349,6 +349,9 @@ class PrismaticJoint(Device):
     def is_sync_required(self,ts_last_motor_sync):
         return self.motor.is_sync_required(ts_last_motor_sync)
 
+    def is_command_ack_missing(self):
+        return self.motor.is_command_ack_missing()
+
     def move_to(self,x_m,v_m=None, a_m=None, stiffness=None,
                 req_calibration=True,contact_sensitivity_pos=None, contact_sensitivity_neg=None):
         """

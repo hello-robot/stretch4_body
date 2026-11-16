@@ -123,6 +123,7 @@ class StepperMotion(StepperDefn):
         self.motion_limits = [0, 0]
         self.is_moving_history = [False] * 10
         self.ts_last_syncd_motion=0
+        self.command_ack_missing=False
     # ###########################################################################
     def enable_safety(self):
         self.set_command(mode=self.MODE_SAFETY)
@@ -165,6 +166,9 @@ class StepperMotion(StepperDefn):
         if ts_last_sync is None:
             return True
         return self.status['in_sync_mode'] and self.ts_last_syncd_motion > ts_last_sync
+
+    def is_command_ack_missing(self):
+        return self.command_ack_missing
 
     def enable_runstop(self):
         self.gains['enable_runstop'] = 1
@@ -770,9 +774,11 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
                                                       rpc_callback=self._rpc_gains_reply) is not None
             self._dirty_gains = False
 
+        self.command_ack_missing = False
         if self._dirty_command:
             if self.status['in_sync_mode']:  # Mark the time of latest new motion command sent
                 self.ts_last_syncd_motion = time.time()
+                self.command_ack_missing = True
             else:
                 self.ts_last_syncd_motion = 0
 
@@ -1126,6 +1132,8 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
     def _rpc_command_reply(self, reply):
         if reply[0] != self.RPC_REPLY_COMMAND:
             self.logger.error(f'Error RPC_REPLY_COMMAND {reply[0]}')
+        else:
+            self.command_ack_missing = False
 
 
     def _rpc_status_reply(self, reply):
