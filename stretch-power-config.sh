@@ -459,13 +459,24 @@ EOF
   echo "==> [3/8] Blocking the power-key inhibitor and non-root power changes over D-Bus..."
   mkdir -p /etc/polkit-1/rules.d
   cat << 'EOF' > "$POLKIT_RULES"
+// polkitd runs with PrivateDevices=yes, so /dev/hello-power-periph is not
+// visible to it. The board's udev symlink is in the udev database under /run.
 function hasPowerBoard() {
     try {
-        polkit.spawn(["/usr/bin/test", "-e", "/dev/hello-power-periph"]);
+        polkit.spawn(["/bin/sh", "-c",
+            "/usr/bin/grep -qsx S:hello-power-periph /run/udev/data/c*"]);
         return true;
     } catch (e) {
         return false;
     }
+}
+
+var POWER_ACTIONS = ["power-off", "reboot", "halt", "suspend", "hibernate"];
+
+function isPowerAction(id) {
+    return POWER_ACTIONS.some(function(a) {
+        return id.indexOf("org.freedesktop.login1." + a) === 0;
+    });
 }
 
 polkit.addRule(function(action, subject) {
@@ -476,12 +487,8 @@ polkit.addRule(function(action, subject) {
     // 2. On a robot (power board present), block non-root power changes through
     //    logind: GNOME's own dialogs, systemctl, busctl/gdbus. Power changes go
     //    through stretch_shutdown instead; root can still use the OS commands.
-    if (subject.user !== "root" && hasPowerBoard() &&
-        (action.id.indexOf("org.freedesktop.login1.power-off") === 0 ||
-         action.id.indexOf("org.freedesktop.login1.reboot") === 0 ||
-         action.id.indexOf("org.freedesktop.login1.halt") === 0 ||
-         action.id.indexOf("org.freedesktop.login1.suspend") === 0 ||
-         action.id.indexOf("org.freedesktop.login1.hibernate") === 0)) {
+    //    Log out and switch user are not power changes and stay allowed.
+    if (subject.user !== "root" && isPowerAction(action.id) && hasPowerBoard()) {
         return polkit.Result.NO;
     }
 });
