@@ -211,7 +211,8 @@ def overwrite_dict(overwritee_dict, overwriter_dict):
                 sub_no_mismatches = overwrite_dict(overwritee_dict[k], overwriter_dict[k])
                 no_mismatches = no_mismatches and sub_no_mismatches
             else:
-                if (type(overwritee_dict[k]) == type(overwriter_dict[k])) or (isinstance(overwritee_dict[k], numbers.Real) and isinstance(overwriter_dict[k], numbers.Real)):
+                if (type(overwritee_dict[k]) == type(overwriter_dict[k])) or (isinstance(overwritee_dict[k], numbers.Real) and isinstance(overwriter_dict[k], numbers.Real)) \
+                        or overwritee_dict[k] is None: # a None default means "unset" and takes a value of any type
                     overwritee_dict[k] = overwriter_dict[k]
                 else:
                     no_mismatches = False
