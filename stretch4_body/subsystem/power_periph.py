@@ -1335,6 +1335,8 @@ class PowerPeriph(PowerPeriphBase):
                     Please upgrade the firmware and/or version of Stretch Body.
                     ----------------
                     """.format(self.name, self.board_info['protocol_version'], self._supported_protocols.keys())
+                    self.status['disabled_reason'] = 'Firmware protocol {0} is not supported by this Stretch Body, valid protocols are {1}'.format(
+                        self.board_info['protocol_version'], ', '.join(self._supported_protocols))
                 self.logger.warning(textwrap.dedent(protocol_msg))
                 self.hw_valid = False
                 self.transport.stop()
