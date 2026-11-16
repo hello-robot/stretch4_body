@@ -8,7 +8,10 @@
 #   1. Disables sleep, suspend and hibernate on the NUC
 #   2. Powers the NUC off at once when the robot pulses its power key
 #   3. Desktop: the GNOME power menu becomes 'Robot Power Off', with
-#      Robot Sleep, Robot Shutdown and Robot Reboot (stretch_shutdown)
+#      Robot Sleep, Robot Shutdown and Robot Reboot (stretch_shutdown) in place
+#      of Suspend, Restart and Power Off. Log Out and Switch User stay: remote
+#      login (RDP) needs the user's local session logged out first, and the
+#      other way round.
 #   4. CLI/SSH: when a person at a terminal runs shutdown, poweroff, halt,
 #      reboot or gnome-session-quit --power-off|--reboot, they are warned that
 #      it changes only this computer, and asked whether to run the recommended
@@ -256,7 +259,7 @@ install_extension() {
 {
   "uuid": "${EXT_UUID}",
   "name": "Stretch Robot Power",
-  "description": "Replaces the Power Off menu with Robot Sleep, Robot Shutdown and Robot Reboot",
+  "description": "Replaces Suspend, Restart and Power Off with Robot Sleep, Robot Shutdown and Robot Reboot",
   "shell-version": ["45", "46", "47", "48"]
 }
 EOF
@@ -269,6 +272,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as Dialog from 'resource:///org/gnome/shell/ui/dialog.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const RUNNER = '/usr/local/lib/stretch-power/run-stretch-shutdown';
 const MENU_TITLE = 'Robot Power Off';
@@ -326,14 +330,23 @@ export default class StretchRobotPowerExtension extends Extension {
         this._item = item;
         const menu = item.menu;
 
-        // Take out Suspend, Restart, Power Off, Log Out and Switch User
-        this._origChildren = menu.box.get_children();
+        // Take out Suspend, Restart and Power Off: the items above the separator.
+        // Log Out and Switch User stay below it, since remote login (RDP) only
+        // starts once the user's local session is logged out, and vice versa.
+        const children = menu.box.get_children();
+        const sep = children.findIndex(c => c instanceof PopupMenu.PopupSeparatorMenuItem);
+        this._origChildren = sep >= 0 ? children.slice(0, sep) : children;
         this._origChildren.forEach(c => menu.box.remove_child(c));
 
         menu.setHeader('system-shutdown-symbolic', MENU_TITLE);
         this._origAccessibleName = item.accessible_name;
         item.accessible_name = `${MENU_TITLE} Menu`;
-        this._ourItems = ACTIONS.map(a => menu.addAction(a.label, () => this._confirm(a)));
+        this._ourItems = ACTIONS.map((a, i) => {
+            const mi = new PopupMenu.PopupMenuItem(a.label);
+            mi.connect('activate', () => this._confirm(a));
+            menu.addMenuItem(mi, i);
+            return mi;
+        });
 
         // GNOME hides the button when it thinks no power action is allowed
         this._visId = item.connect('notify::visible', () => {
@@ -398,7 +411,7 @@ export default class StretchRobotPowerExtension extends Extension {
         const item = this._item;
         item.disconnect(this._visId);
         this._ourItems.forEach(i => i.destroy());
-        this._origChildren.forEach(c => item.menu.box.add_child(c));
+        this._origChildren.forEach((c, i) => item.menu.box.insert_child_at_index(c, i));
         item.menu.setHeader('system-shutdown-symbolic', 'Power Off');
         item.accessible_name = this._origAccessibleName;
         item._sync?.();
@@ -513,9 +526,6 @@ sleep-inactive-battery-type='nothing'
 sleep-inactive-battery-timeout=0
 power-button-action='nothing'
 
-[org/gnome/SessionManager]
-logout-prompt=false
-
 [org/gnome/shell]
 disable-user-extensions=false
 enabled-extensions=['${EXT_UUID}', 'ubuntu-dock@ubuntu.com', 'ubuntu-appindicators@ubuntu.com', 'ding@rastersoft.com', 'tiling-assistant@ubuntu.com']
@@ -524,7 +534,6 @@ EOF
     cat << 'EOF' > "$DCONF_LOCKS"
 /org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-type
 /org/gnome/settings-daemon/plugins/power/power-button-action
-/org/gnome/SessionManager/logout-prompt
 /org/gnome/shell/enabled-extensions
 /org/gnome/shell/disable-user-extensions
 EOF
