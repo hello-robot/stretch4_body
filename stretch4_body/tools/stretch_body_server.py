@@ -643,12 +643,14 @@ def main() -> int:
     if args.launch or args.daemon:
         sys.stderr = LoggerWriter(logging.ERROR, sys.__stderr__)
 
-    robot_client = RobotClient()
-    daemon_started_at = None # Set when this call (re)starts the daemon, so we wait for its server to come up
-
+    # Before RobotClient(), whose imports (e.g. xacro, from ROS) may be missing
+    # in the environment a force kill is run from
     if args.cleanup:
         hu.force_kill_process('stretch_body_server')
         return 0
+
+    robot_client = RobotClient()
+    daemon_started_at = None # Set when this call (re)starts the daemon, so we wait for its server to come up
 
     if args.daemon:
         daemon_started_at = time.time()

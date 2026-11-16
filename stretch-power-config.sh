@@ -226,21 +226,32 @@ EOF
   cat << 'EOF' > "$RUNNER"
 #!/usr/bin/env bash
 # Installed by stretch-power-config.sh. Runs stretch_shutdown -y (the caller has
-# already confirmed), with HELLO_FLEET_PATH and HELLO_FLEET_ID taken from
-# ~/.bashrc or, failing that, from the Stretch Body Server user service.
+# already confirmed) with the environment the Stretch Body Server runs with.
+# The desktop menu and 'sudo -u' (the CLI guard) don't get the ROS/Python setup
+# a terminal gets from ~/.bashrc. Without it 'stretch_body_server --kill' can't
+# import its dependencies (e.g. xacro), so the server keeps the power board.
 export PATH="${HOME}/.local/bin:${PATH}"
-# Under 'sudo -u' (the CLI guard) there is no user session environment, which
+# Under 'sudo -u' there is no user session environment, which
 # 'stretch_body_server --kill' needs to stop the server daemon (systemctl --user)
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+# Keep Python's output in order, so the last lines (which the desktop menu
+# shows when it fails) are the real error
+export PYTHONUNBUFFERED=1
+
+# Take each variable the server's user service sets (HELLO_FLEET_*, PYTHONPATH,
+# LD_LIBRARY_PATH, AMENT_PREFIX_PATH, ...) that this environment lacks
+set -f
+for kv in $(/usr/bin/systemctl --user show -p Environment --value stretch_body_server.service 2>/dev/null); do
+  k=${kv%%=*}
+  if [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && -z "${!k:-}" ]]; then
+    export "$kv"
+  fi
+done
+set +f
+
+# No server service: take the fleet settings from ~/.bashrc
 if [[ -z "${HELLO_FLEET_ID:-}" || -z "${HELLO_FLEET_PATH:-}" ]]; then
   eval "$(grep -E '^[[:space:]]*export[[:space:]]+HELLO_FLEET_(PATH|ID)=' "${HOME}/.bashrc" 2>/dev/null)"
-fi
-if [[ -z "${HELLO_FLEET_ID:-}" || -z "${HELLO_FLEET_PATH:-}" ]]; then
-  sbs_env=$(/usr/bin/systemctl --user show -p Environment stretch_body_server.service 2>/dev/null)
-  for v in HELLO_FLEET_PATH HELLO_FLEET_ID; do
-    val=$(grep -oP "(?<=\b${v}=)[^ \"]+" <<< "$sbs_env" | head -1)
-    if [[ -n "$val" ]]; then export "${v}=${val}"; fi
-  done
 fi
 exec stretch_shutdown -y "$@"
 EOF
