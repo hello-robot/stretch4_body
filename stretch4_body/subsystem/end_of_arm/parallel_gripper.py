@@ -102,9 +102,6 @@ class ParallelGripper(FeetechSMHello):
         """Fingertip aperture (mm) for an actuator position (rad)."""
         return self.tool_metadata.actuator_to_aperture(x_r) * 1000.0
 
-    def step_sentry(self, robot):
-        pass
-
     ############### Contact Guard ###############
 
     def _step_contact_guard(self):
