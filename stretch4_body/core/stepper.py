@@ -756,6 +756,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         """
         Return True if success
         """
+        self.command_ack_missing = False
         if not self.hw_valid:
             return False
         payload = self.transport.get_empty_payload()
@@ -774,7 +775,6 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
                                                       rpc_callback=self._rpc_gains_reply) is not None
             self._dirty_gains = False
 
-        self.command_ack_missing = False
         if self._dirty_command:
             if self.status['in_sync_mode']:  # Mark the time of latest new motion command sent
                 self.ts_last_syncd_motion = time.time()

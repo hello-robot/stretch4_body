@@ -97,3 +97,26 @@ def test_missing_ack_holds_the_sync_for_one_cycle():
 
     run_cycle(server)
     assert events[3:] == ['sync']
+
+
+def test_a_joint_that_never_acks_holds_every_sync():
+    events = []
+    server = make_server(events)
+    server.subsystems['arm'].transport.acks = False
+
+    for _ in range(3):
+        run_cycle(server, 'lift', 'arm')
+
+    assert 'sync' not in events
+
+
+def test_a_board_that_drops_out_stops_holding_the_sync():
+    events = []
+    server = make_server(events)
+    server.subsystems['arm'].transport.acks = False
+    run_cycle(server, 'lift', 'arm')
+    server.subsystems['arm'].hw_valid = False
+
+    run_cycle(server, 'lift', 'arm')
+
+    assert events[-3:] == ['lift command', 'lift ack', 'sync']
