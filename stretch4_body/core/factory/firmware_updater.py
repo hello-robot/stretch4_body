@@ -252,8 +252,12 @@ class FirmwareUpdater():
             click.secho(f'Dummy mode enabled. Bypassing {device_name} firmware version verification.', fg="yellow")
             return True
 
-        if device_name in ['hello-pixart-j3', 'hello-esp32']:
+        if device_name == 'hello-pixart-j3':
             click.secho(f'PASS: Established firmware verficiation with device {device_name.upper()}', fg="green")
+            return True
+        if device_name == 'hello-esp32' and self.target[device_name].protocol < 1:
+            # Firmware before hello-esp.v0.2.0p1 has no RPC to read its version back
+            click.secho(f'PASS: {device_name.upper()} flashed (its firmware cannot report a version)', fg="green")
             return True
 
         fw_installed = FirmwareInstalled({device_name: True})  # Pull the currently installed system from fw
@@ -319,7 +323,19 @@ class FirmwareUpdater():
             click.secho('PASS: Established comms with device %s ' % device_name.upper(),fg="green")
             return True
         elif device_name == 'hello-esp32':
-            return True
+            from stretch4_body.subsystem.esp32 import Esp32
+            if self.target.get(device_name) is not None and self.target[device_name].protocol < 1:
+                return True  # No RPC before hello-esp.v0.2.0p1
+            dd = Esp32()
+            ok = dd.startup()
+            if ok:
+                click.secho('PASS: Established comms with device %s (%s, Wi-Fi %s, Pimu link fresh %s)'
+                            % (device_name.upper(), dd.board_info['firmware_version'],
+                               dd.status['wifi']['state_name'], dd.status['pimu_link']['status_fresh']), fg="green")
+            else:
+                click.secho('FAIL: Unable to establish comms with device %s' % device_name.upper(), fg="red")
+            dd.stop()
+            return ok
         else:
             dd = stretch4_body.core.stepper.Stepper('/dev/' + device_name, backend=0)
         if not dd.startup():
@@ -438,7 +454,7 @@ class FirmwareUpdater():
                     return False
                 self.target[device_name] = target_version
                 path_protocol = 'p' + str(target_version.protocol)
-                if device_name not in ['hello-pixart-j3', 'hello-esp32'] and not self.fw_installed.is_protocol_supported(device_name, path_protocol):
+                if self.fw_installed.is_version_known(device_name) and not self.fw_installed.is_protocol_supported(device_name, path_protocol):
                     click.secho('---------------------------', fg="yellow")
                     click.secho(
                         'Target firmware path of %s is incompatible with installed Stretch Body for device %s' % (

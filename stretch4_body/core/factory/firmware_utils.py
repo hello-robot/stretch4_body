@@ -67,8 +67,9 @@ def get_sketch_name(device_name):
         return 'hello_pimu2'
     if device_name == 'hello-pixart-j3':
         return 'hello_pixart_j3'
-    if device_name in ['hello-esp', 'hello-esp32']:
-        return 'hello_esp'
+    if device_name == 'hello-esp32':
+        from stretch4_body.subsystem.esp32 import ESP32_SKETCH_NAME
+        return ESP32_SKETCH_NAME  # The firmware sketch keeps its name, hello_esp
 
 def exec_process(cmdline, silent, input=None, **kwargs):
     """Execute a subprocess and returns the returncode, stdout buffer and stderr buffer.
@@ -135,15 +136,14 @@ def get_device_protocols(device_name):
     if s == 'hello_pimu2':
         import stretch4_body.subsystem.power_periph
         dd = stretch4_body.subsystem.power_periph.PowerPeriph(backend=0)
-        return list(dd.supported_protocols.keys())
+        return list(dd._supported_protocols.keys())
     elif s == 'hello_stepper2':
         import stretch4_body.core.stepper
         dd = stretch4_body.core.stepper.Stepper('/dev/'+device_name, backend=0)
-        return list(dd.supported_protocols.keys())
-    elif s == 'hello_esp':
-        import stretch4_body.subsystem.esp
-        dd = stretch4_body.subsystem.esp.ESP()
-        return list(dd.supported_protocols.keys())
+        return list(dd._supported_protocols.keys())
+    elif device_name == 'hello-esp32':
+        from stretch4_body.subsystem.esp32 import Esp32Defn
+        return list(Esp32Defn.FIRMWARE_PROTOCOLS)
     return []
 
 def print_tty_mapping():
@@ -237,7 +237,7 @@ def flash_firmware_update(device_name, version_str, port, verbose, dummy=False):
         import stretch4_body.subsystem.power_periph
         dd = stretch4_body.subsystem.power_periph.PowerPeriph(backend=0)
         dd.startup()
-        dd.set_esp_fw_update()
+        dd.set_esp32_fw_update()
         dd.push_command()
         dd.stop()
 
