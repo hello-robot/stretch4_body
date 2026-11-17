@@ -621,7 +621,7 @@ class Esp32Client(SubsystemClient):
       hw_valid, board_info, pwr_state_name, voltage_12v0, voltage_20v0_aux, outputs,
       pimu_link, wifi, firebase, wifi_config, firebase_config, wifi_scan, log
     wifi_config / firebase_config hold the passwords and API key only when the
-    esp32.publish_credentials parameter is 1; stretch_esp32_jog -d reads them directly.
+    esp32.publish_credentials parameter is 1; Esp32 (the direct API) reads them in full.
     """
     def __init__(self, parent=None):
         SubsystemClient.__init__(self, name='esp32', parent=parent)

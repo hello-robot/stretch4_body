@@ -1066,8 +1066,8 @@ def check_esp32():
     if w['state_name'] == 'CONNECTED':
         print_result(True, f'Wi-Fi connected to "{w["ssid"]}" (RSSI {w["rssi"]} dBm, IP {w["ip"]})')
     elif w['state_name'] == 'NOT_CONFIGURED':
-        print_info('Wi-Fi not configured (stretch_esp32_jog to set it up)')
-    elif w['state_name'] in ('DISABLED', 'POWER_OFF'):
+        print_info('Wi-Fi not configured (set it up with stretch_esp32_jog, w)')
+    elif w['state_name'] in ('DISABLED', 'POWER_OFF', 'DISCONNECTED'):
         print_info(f'Wi-Fi {w["state_name"].lower()}')
     else:
         reason = w['last_disconnect_reason_name'] or '-'

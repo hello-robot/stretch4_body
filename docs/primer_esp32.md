@@ -56,10 +56,23 @@ The layouts are in `EspRpc.h` (firmware) and `subsystem/esp32.py` (Stretch Body)
   `Esp32` in its own process at `esp32.loop_rate_Hz` (2 Hz), so ESP32 reads never
   touch the control loop. It copies the ESP32 log into the Stretch Body log.
 * `robot_client.Esp32Client`: `robot.esp32` on a `RobotClient`.
-* `stretch_esp32_jog`: interactive tool for status, Wi-Fi and Firebase. It goes
-  through the server (`Esp32Client`) by default, or uses `Esp32` with `-d` (server
-  stopped). It talks only to the ESP32. `--status`, `--wifi`, `--firebase`,
-  `--config`, `--scan` and `--log` print once and exit.
+* `stretch_esp32_jog`: status and set-up. It goes through the server
+  (`Esp32Client`) by default, or uses `Esp32` with `-d` (server stopped). It talks
+  only to the ESP32. It prints the status, then offers a menu:
+  * `w`, configure Wi-Fi: shows the current connection and the networks the ESP32
+    sees, then connects to the one picked from the list, asking for its password.
+    It can also use the network the robot's computer is on (from NetworkManager),
+    the network saved in the robot configuration, or a hidden network.
+  * `f`, configure Firebase: shows the current Firebase connection, then takes the
+    settings from the robot configuration or as typed.
+  * `s`, print the status: system, power, Pimu link, Wi-Fi and Firebase. Enter, or
+    any other key, does the same.
+  * `q`, quit.
+
+  Both wizards try new settings before saving them. Settings that work are saved
+  to the ESP32's flash and to `esp32.wifi` / `esp32.firebase` in
+  `stretch_configuration_params.yaml`. If they don't work, the wizard offers to go
+  back to the previous ones, and nothing is saved.
 
 Turn the subsystem on by listing it in `robot.server.subsystems`. It is in the
 SE4 defaults, but a `stretch_user_params.yaml` that sets that list (to add
@@ -88,13 +101,13 @@ with RobotClient() as r:
 
 The ESP32 keeps the Wi-Fi and Firebase credentials in its flash. They can be read back:
 
-* directly: `Esp32.get_wifi_config()` / `get_firebase_config()`, or `stretch_esp32_jog -d --show-credentials`;
+* directly: `Esp32.get_wifi_config()` / `get_firebase_config()`;
 * through the server: `status['esp32']['wifi_config']` and `['firebase_config']`.
   These carry the SSID, URL and email, plus `*_set` flags. They carry the passwords
   and API key only if `esp32.publish_credentials` is 1, because server status
   reaches every client, including remote ones when network access is on.
 
-`send_credentials_from_params()` (`P` in `stretch_esp32_jog`) sends the credentials
+`send_credentials_from_params()` sends the credentials
 from the robot parameters: `esp32.wifi` and `esp32.firebase` in
 `stretch_configuration_params.yaml`. When those are `NA`, it falls back to the
 older `power-periph.firebase` block.
