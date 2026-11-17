@@ -417,15 +417,10 @@ nominal_params={
         'network_ssid': 'NA',
         'network_password':'NA'}},
     'esp32':{
-      # ESP32 (hello_esp firmware v0.2.0p1+). A server subsystem: add 'esp32' to robot.server.subsystems
+      # ESP32 (hello_esp firmware v0.2.0p1+). Not part of the robot server: used only through
+      # the direct API (stretch4_body.subsystem.esp32.Esp32) and stretch_esp32_jog
       'usb_name': '/dev/hello-esp32',
-      'loop_rate_Hz': 2.0,          # Server reads of the ESP32 status
-      'reconnect_period_s': 10.0,   # Retry period while the ESP32 is missing or on firmware without RPC
-      'config_read_period_s': 10.0, # Read back of the credentials in use
-      'startup_timeout_s': 5.0,
-      'log_history': 50,            # ESP32 log entries kept in the server status
-      'publish_credentials': 0,     # 1: put the Wi-Fi password and Firebase key/password in the server status
-      'config':{                    # Pushed to the ESP32 at startup
+      'config':{                    # Pushed to the ESP32 when Esp32 starts
         'firebase_publish_period_ms': 5000,
         'wifi_retry_ms': 5000,
         'wifi_enable': 1,
@@ -614,7 +609,7 @@ nominal_params={
         'server': {
             'control_loop_rate_Hz': 100,
             'max_push_command_rate_Hz': 100,
-            'subsystems': ['esp32'],  # Also available: 'line_sensor_loop'
+            'subsystems': [],  # ['line_sensor_loop'],
         }
     },
     'robot_monitor':{

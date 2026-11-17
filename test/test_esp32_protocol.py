@@ -11,7 +11,6 @@ import pytest
 from stretch4_body.core.device import DeviceTimestamp
 from stretch4_body.subsystem.esp32 import (Esp32Defn, Esp32Base, Esp32_Protocol_P1, esp32_status_template,
                                            params_credentials)
-from stretch4_body.subsystem.esp32_loop import sanitize_credentials, ESP32_LOOP_COMMANDS, Esp32Loop
 
 D = Esp32Defn
 
@@ -212,20 +211,3 @@ class TestCredentials:
         wifi, fb = params_credentials({'esp32': {'wifi': {'ssid': 'NA', 'password': 'NA'}}})
         assert wifi == {'ssid': None, 'password': None}
         assert all(v is None for v in fb.values())
-
-    def test_sanitize(self):
-        wifi = {'ssid': 'net', 'password': 'secret123', 'configured': True}
-        fb = {'url': 'u', 'api_key': 'k', 'user_email': 'e', 'user_password': 'p', 'configured': True}
-        w, f = sanitize_credentials(wifi, fb, publish_secrets=False)
-        assert 'password' not in w and w['password_set']
-        assert 'api_key' not in f and 'user_password' not in f and f['user_password_set']
-        w, f = sanitize_credentials(wifi, fb, publish_secrets=True)
-        assert w['password'] == 'secret123' and f['user_password'] == 'p'
-        assert sanitize_credentials(None, None, True) == (None, None)
-
-
-class TestLoopCommands:
-    def test_commands_exist_on_both_sides(self):
-        for name in ESP32_LOOP_COMMANDS:
-            assert hasattr(Esp32Base, name), name
-            assert hasattr(Esp32Loop, name), name

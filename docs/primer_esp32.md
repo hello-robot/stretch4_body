@@ -51,14 +51,12 @@ The layouts are in `EspRpc.h` (firmware) and `subsystem/esp32.py` (Stretch Body)
 
 ## Stretch Body
 
-* `subsystem/esp32.py`, class `Esp32`: the direct API, for use with the server stopped.
-* `subsystem/esp32_loop.py`, class `Esp32Loop`: the server subsystem. It runs
-  `Esp32` in its own process at `esp32.loop_rate_Hz` (2 Hz), so ESP32 reads never
-  touch the control loop. It copies the ESP32 log into the Stretch Body log.
-* `robot_client.Esp32Client`: `robot.esp32` on a `RobotClient`.
-* `stretch_esp32_jog`: status and set-up. It goes through the server
-  (`Esp32Client`) by default, or uses `Esp32` with `-d` (server stopped). It talks
-  only to the ESP32. It prints the status, then offers a menu:
+The ESP32 is not part of the robot server. Stretch Body talks to it only directly,
+over `/dev/hello-esp32`, and one process at a time can have the port.
+
+* `subsystem/esp32.py`, class `Esp32`: the direct API.
+* `stretch_esp32_jog`: status and set-up, using `Esp32`. It talks only to the ESP32.
+  It prints the status, then offers a menu:
   * `w`, configure Wi-Fi: shows the current connection and the networks the ESP32
     sees, then connects to the one picked from the list, asking for its password.
     It can also use the network the robot's computer is on (from NetworkManager),
@@ -71,46 +69,47 @@ The layouts are in `EspRpc.h` (firmware) and `subsystem/esp32.py` (Stretch Body)
 
   Both wizards try new settings before saving them. Settings that work are saved
   to the ESP32's flash and to `esp32.wifi` / `esp32.firebase` in
-  `stretch_configuration_params.yaml`. If they don't work, the wizard offers to go
-  back to the previous ones, and nothing is saved.
-
-Turn the subsystem on by listing it in `robot.server.subsystems`. It is in the
-SE4 defaults, but a `stretch_user_params.yaml` that sets that list (to add
-`line_sensor_loop`, for example) replaces it, so add `esp32` there too:
-
-```yaml
-robot:
-  server:
-    subsystems: ['esp32', 'line_sensor_loop']
-```
-
-The server starts without an ESP32, and with one on firmware that has no RPC.
-`status['esp32']['hw_valid']` is then False, and the loop retries every
-`esp32.reconnect_period_s`.
+  `stretch_configuration_params.yaml`. If they don't work, the wizard puts the
+  ESP32 back as it was, and nothing is saved.
+* `stretch_system_check` opens the ESP32 for a moment to check the Pimu link,
+  Wi-Fi and Firebase.
 
 ```python
-from stretch4_body.robot.robot_client import RobotClient
-with RobotClient() as r:
-    s = r.esp32.status
+from stretch4_body.subsystem.esp32 import Esp32
+e = Esp32()
+if e.startup():
+    s = e.status
     print(s['wifi']['state_name'], s['wifi']['ip'], s['firebase']['state_name'])
-    r.esp32.set_wifi_config('MyNetwork', 'my password')
-    r.push_command()
+    e.set_wifi_config('MyNetwork', 'my password')
+    e.push_command()
+    for entry in e.read_log() or []:
+        print(entry['level_name'], entry['text'])
+    e.stop()
 ```
+
+`python3 -m stretch4_body.subsystem.esp32` prints the status and the ESP32 log.
+
+### What the robot server still sees
+
+The ESP32 also reports to the Pimu over their UART link, as before. The Pimu puts
+that into its own status, so `PowerPeriph` (and `RobotClient.power_periph`) still
+has, with no ESP32 code in the server:
+
+| `PowerPeriph.status` | from the ESP32 |
+|---|---|
+| `voltage_12v0`, `voltage_aux_cpu` | 12V and aux 20V rail voltages |
+| `adapter_connected`, `adapter_fault` | charger adapter inputs |
+| `connected_to_network` | Wi-Fi connected |
+| `connected_to_firebase` | Firebase ready |
 
 ### Credentials
 
-The ESP32 keeps the Wi-Fi and Firebase credentials in its flash. They can be read back:
+The ESP32 keeps the Wi-Fi and Firebase credentials in its flash. `Esp32.get_wifi_config()`
+and `get_firebase_config()` read them back, passwords included.
 
-* directly: `Esp32.get_wifi_config()` / `get_firebase_config()`;
-* through the server: `status['esp32']['wifi_config']` and `['firebase_config']`.
-  These carry the SSID, URL and email, plus `*_set` flags. They carry the passwords
-  and API key only if `esp32.publish_credentials` is 1, because server status
-  reaches every client, including remote ones when network access is on.
-
-`send_credentials_from_params()` sends the credentials
-from the robot parameters: `esp32.wifi` and `esp32.firebase` in
-`stretch_configuration_params.yaml`. When those are `NA`, it falls back to the
-older `power-periph.firebase` block.
+`send_credentials_from_params()` sends the credentials from the robot parameters:
+`esp32.wifi` and `esp32.firebase` in `stretch_configuration_params.yaml`. When those
+are `NA`, it falls back to the older `power-periph.firebase` block.
 
 For firmware older than `hello-esp.v0.2.0p1`, the only route is through the Pimu:
 `PowerPeriph.send_network_info()` / `send_firebase_info()`. ESP32 reset and

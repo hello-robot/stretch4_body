@@ -8,9 +8,8 @@ Prints the status, then offers a menu:
   s  print the status
   q  quit
 
-By default this goes through the robot server (its 'esp32' subsystem). With -d it
-opens /dev/hello-esp32 itself, which needs the server stopped. It talks only to
-the ESP32.
+It opens /dev/hello-esp32 directly; the ESP32 is not part of the robot server.
+It talks only to the ESP32.
 
 Settings that work are saved to the ESP32's flash and to the robot's
 stretch_configuration_params.yaml (esp32.wifi, esp32.firebase).
@@ -31,8 +30,8 @@ from stretch4_body.subsystem.esp32 import Esp32Base
 hu.print_stretch_re_use()
 
 parser = argparse.ArgumentParser(description='ESP32 status, and set-up of its Wi-Fi and Firebase')
-parser.add_argument('-d', '--direct', help='Use the direct API on /dev/hello-esp32 (server must be stopped)',
-                    action='store_true')
+# The tool is always direct now; -d is still accepted so existing habits and scripts work
+parser.add_argument('-d', '--direct', help=argparse.SUPPRESS, action='store_true')
 args = parser.parse_args()
 
 LABEL_WIDTH = 24
@@ -40,22 +39,22 @@ WIFI_CONNECT_TIMEOUT_S = 30.0
 FIREBASE_READY_TIMEOUT_S = 45.0
 
 
-# ############################# Backends #############################
+# ############################# ESP32 access #############################
 
-class DirectBackend:
+class Esp32Backend:
     """The ESP32 through the direct API (stretch4_body.subsystem.esp32.Esp32)."""
-    name = 'direct'
 
     def __init__(self):
         from stretch4_body.subsystem.esp32 import Esp32
         self.esp = Esp32()
         self.device = self.esp
+        self.name = self.esp.transport.port_name
 
     def startup(self):
         if self.esp.startup():
             return True
         click.secho('Unable to talk to the ESP32 on %s.' % self.esp.transport.port_name, fg='red')
-        click.secho('  Is the server running? Stop it (stretch_body_server --kill), or drop -d to go through it.\n'
+        click.secho('  Is another program using it (another stretch_esp32_jog, or the firmware updater)?\n'
                     '  Is the ESP32 firmware older than hello-esp.v0.2.0p1? It has no RPC: update it with\n'
                     '  REx_firmware_updater --install --esp32', fg='yellow')
         return False
@@ -93,56 +92,6 @@ class DirectBackend:
                 if scan is not None and scan['state_name'] in ('DONE', 'FAILED'):
                     return scan
             time.sleep(0.5)
-        return None
-
-
-class ServerBackend:
-    """The ESP32 through the robot server's esp32 subsystem (Esp32Client)."""
-    name = 'server'
-
-    def __init__(self):
-        from stretch4_body.robot.robot_client import Esp32Client
-        self.esp = Esp32Client()
-        self.device = self.esp
-
-    def startup(self):
-        if not self.esp.startup():
-            click.secho('Unable to connect to the robot server. Start it (stretch_body_server --launch), '
-                        'or use -d with the server stopped.', fg='red')
-            return False
-        if 'hw_valid' not in self.esp.status:
-            click.secho("The server has no esp32 subsystem. Add 'esp32' to robot.server.subsystems in "
-                        "stretch_user_params.yaml and restart it, or use -d with the server stopped.", fg='red')
-            self.esp.stop()
-            return False
-        return True
-
-    def stop(self):
-        self.esp.stop()
-
-    def pull(self):
-        self.esp.pull_status()
-
-    def snapshot(self):
-        return self.esp.status
-
-    def credentials(self):
-        """(wifi, firebase) as the server publishes them: secrets only if esp32.publish_credentials is 1."""
-        return self.esp.status.get('wifi_config'), self.esp.status.get('firebase_config')
-
-    def command(self, method, *a, **kw):
-        getattr(self.esp, method)(*a, **kw)
-        # ESP32 settings don't move the robot: don't take control from whoever has it
-        return self.esp.push_command(ignore_control_lock=True)
-
-    def scan(self, timeout=25.0):
-        ts = time.time()
-        self.command('start_wifi_scan')
-        while time.time() - ts < timeout:
-            time.sleep(0.5)
-            self.pull()
-            if self.esp.status.get('wifi_scan_ts', 0) > ts:
-                return self.esp.status['wifi_scan']
         return None
 
 
@@ -801,7 +750,7 @@ def config_firebase():
 
 # ############################# Main #############################
 
-backend = DirectBackend() if args.direct else ServerBackend()
+backend = Esp32Backend()
 if not backend.startup():
     sys.exit(1)
 

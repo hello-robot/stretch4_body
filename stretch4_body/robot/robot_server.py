@@ -52,9 +52,6 @@ class RobotServer(RobotCore):
                 self.line_sensor_loop = self.subsystems[k] = LineSensorLoop()
                 if self.robot_params['robot']['enable_rate_log']:
                     self.line_sensor_loop.enable_rate_logging(self.robot_params['robot']['max_rate_log_samples'])
-            if k == 'esp32':
-                from stretch4_body.subsystem.esp32_loop import Esp32Loop
-                self.esp32 = self.subsystems[k] = Esp32Loop()
             self.status[k] = self.subsystems[k].status
             self.status_aux[k] = self.subsystems[k].status_aux
 
@@ -280,15 +277,8 @@ class RobotServer(RobotCore):
                 except psutil.NoSuchProcess:
                     pass
 
-            # ESP32
-            if hasattr(self, 'esp32') and self.esp32.esp32_process:
-                try:
-                    self.psutil_processes['esp32'] = psutil.Process(self.esp32.esp32_process.pid)
-                except psutil.NoSuchProcess:
-                    pass
-
             # Self Collision Loop
-
+   
             # Located in sentry_manager -> sentries['self_collision_loop']
             if 'sentry_self_collision' in self.sentry_manager.sentries:
                  scl = self.sentry_manager.sentries['sentry_self_collision'].self_collision_loop
