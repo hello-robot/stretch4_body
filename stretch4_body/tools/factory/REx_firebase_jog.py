@@ -93,7 +93,7 @@ def step_interaction():
             p.push_command()
             print_esp_output(1.0)
         if x[0]=='f':
-            url=get_val_default('Enter URL ',p.params['firebase']['network_ssid'])
+            url=get_val_default('Enter URL ',p.params['firebase']['url'])
             api_key=get_val_default('Enter API Key ',p.params['firebase']['api_key'])
             user_email = get_val_default('Enter User Email ', p.params['firebase']['user_email'])
             user_password = get_val_default('Enter User Password ', p.params['firebase']['user_password'])
