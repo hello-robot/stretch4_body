@@ -315,14 +315,14 @@ class PowerPeriphDefn():
     TRIGGER_DISABLE_TRACE = 4096
     TRIGGER_CHARGER_ON = 8192
     TRIGGER_CHARGER_OFF = 16384
-    TRIGGER_ESP_FW_UPDATE = 32768
-    TRIGGER_ESP_RESET = 65536
+    TRIGGER_ESP32_FW_UPDATE = 32768
+    TRIGGER_ESP32_RESET = 65536
     TRIGGER_LIDAR_OFF = (1 << 17)
     TRIGGER_LIDAR_ON = (1 << 18)
     TRIGGER_20V0_AUX_OFF = (1 << 19)
     TRIGGER_20V0_AUX_ON = (1 << 20)
     TRIGGER_CPU_PWR_CYCLE = (1 << 21)
-    TRIGGER_ESP32_STATUS_PRINT = (1 << 22)
+    TRIGGER_ESP32_STATUS_PRINT = (1 << 22)  # Unused: the Pimu firmware ignores it. Read the ESP32 with Esp32.
     TRIGGER_SLEEP = (1 << 23)
 
     TRACE_TYPE_STATUS = 0
@@ -403,17 +403,25 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._trigger = self._trigger | self.TRIGGER_IMU_RESET
         self._dirty_trigger = True
 
-    def set_esp_fw_update(self):
-        self._trigger = self._trigger | self.TRIGGER_ESP_FW_UPDATE
+    def set_esp32_fw_update(self):
+        """Hold the ESP32 in its bootloader, ready to flash (Pimu drives its BOOT and RESET lines)."""
+        self._trigger = self._trigger | self.TRIGGER_ESP32_FW_UPDATE
         self._dirty_trigger = True
+
+    def set_esp32_reset(self):
+        """Reset the ESP32 (Pimu drives its RESET line). Works whatever the ESP32 firmware is doing."""
+        self._trigger = self._trigger | self.TRIGGER_ESP32_RESET
+        self._dirty_trigger = True
+
+    def set_esp_fw_update(self):
+        """Deprecated: use set_esp32_fw_update."""
+        self.logger.warning('PowerPeriph.set_esp_fw_update is deprecated, use set_esp32_fw_update')
+        self.set_esp32_fw_update()
 
     def set_esp_reset(self):
-        self._trigger = self._trigger | self.TRIGGER_ESP_RESET
-        self._dirty_trigger = True
-
-    def set_esp_status_print(self):
-        self._trigger = self._trigger | self.TRIGGER_ESP32_STATUS_PRINT
-        self._dirty_trigger = True
+        """Deprecated: use set_esp32_reset."""
+        self.logger.warning('PowerPeriph.set_esp_reset is deprecated, use set_esp32_reset')
+        self.set_esp32_reset()
 
     def trigger_sleep(self):
         print('Putting robot to sleep!!')
@@ -525,7 +533,14 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
 
 
-    # ###################### Firebase Methods ###########################3
+    # ###################### ESP32 Wi-Fi / Firebase (legacy) ###########################
+    # These send the credentials to the Pimu, which forwards them to the ESP32 over UART.
+    # They are the only way to configure ESP32 firmware older than hello-esp.v0.2.0p1.
+    # With v0.2.0p1 and later use Esp32 (stretch4_body.subsystem.esp32), which talks to the
+    # ESP32 directly and also reads the credentials and connection state back.
+    # Defaults come from the robot parameters, as for Esp32 (esp32.wifi, esp32.firebase,
+    # then power-periph.firebase).
+
     def connect_to_firebase(self,timeout=10.0):
         #This likely will need some work to be robust to initial conditions, drop-outs, etc.
         #Nominal example for now
@@ -554,16 +569,14 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         return True
 
     def send_firebase_info(self, fb_host_url=None, fb_api_key=None, fb_user_email=None, fb_user_password=None):
-        if fb_host_url is None:
-            fb_host_url=self.params['firebase']['url']
-        if fb_api_key is None:
-            fb_api_key=self.params['firebase']['api_key']
-        if fb_user_email is None:
-            fb_user_email=self.params['firebase']['user_email']
-        if fb_user_password is None:
-            fb_user_password=self.params['firebase']['user_password']
-        if fb_host_url=='NA' or fb_api_key=='NA' or fb_user_email=='NA' or fb_user_password=='NA':
-            print('Invalid credentials for Firebase connection',fb_host_url,fb_api_key,fb_user_email,fb_user_password)
+        from stretch4_body.subsystem.esp32 import params_credentials
+        _, fb = params_credentials(self.robot_params)
+        fb_host_url = fb['url'] if fb_host_url is None else fb_host_url
+        fb_api_key = fb['api_key'] if fb_api_key is None else fb_api_key
+        fb_user_email = fb['user_email'] if fb_user_email is None else fb_user_email
+        fb_user_password = fb['user_password'] if fb_user_password is None else fb_user_password
+        if any(v in (None, '', 'NA') for v in (fb_host_url, fb_api_key, fb_user_email, fb_user_password)):
+            print('Missing Firebase credentials: url, api_key, user_email and user_password are all needed')
             return
 
         fb_host_url = fb_host_url.encode('utf-8').ljust(250, b'\x00')
@@ -582,13 +595,13 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self.transport.do_push_rpc_sync(payload[:sidx], self.rpc_firebase_info_reply)
 
     def send_network_info(self, ssid=None, password=None):
-        if ssid is None:
-            ssid=self.params['firebase']['network_ssid']
-        if password is None:
-            password=self.params['firebase']['network_password']
+        from stretch4_body.subsystem.esp32 import params_credentials
+        wifi, _ = params_credentials(self.robot_params)
+        ssid = wifi['ssid'] if ssid is None else ssid
+        password = wifi['password'] if password is None else password
 
-        if ssid=='NA' or password=='NA':
-            print('Invalid SSID/Password for ESP32 Wifi',ssid,password)
+        if ssid in (None, '', 'NA') or password in (None, '', 'NA'):
+            print('Missing Wi-Fi SSID or password for the ESP32')
             return
 
         ssid = ssid.encode('utf-8').ljust(32, b'\x00')

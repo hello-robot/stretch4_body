@@ -149,6 +149,10 @@ def stretch_power_periph_jog():
     sys.argv[0] = "stretch_power_periph_jog"
     runpy.run_module("stretch4_body.tools.stretch_power_periph_jog", run_name="__main__")
 
+def stretch_esp32_jog():
+    sys.argv[0] = "stretch_esp32_jog"
+    runpy.run_module("stretch4_body.tools.stretch_esp32_jog", run_name="__main__")
+
 def re1_disable_audio_suspension():
     sys.argv[0] = "re1_disable_audio_suspension"
     runpy.run_module("stretch4_body.tools.re1_disable_audio_suspension", run_name="__main__")
@@ -244,10 +248,6 @@ def REx_stepper_calibration_run():
 def REx_stepper_jog():
     sys.argv[0] = "REx_stepper_jog"
     runpy.run_module("stretch4_body.tools.factory.REx_stepper_jog", run_name="__main__")
-
-def REx_firebase_jog():
-    sys.argv[0] = "REx_firebase_jog"
-    runpy.run_module("stretch4_body.tools.factory.REx_firebase_jog", run_name="__main__")
 
 def REx_line_sensor_calibrate():
     sys.argv[0] = "REx_line_sensor_calibrate"

@@ -20,14 +20,15 @@ configuration_params_template={
     'hello-motor-omni-0':{'serial_no': 'NA'},
     'hello-motor-omni-1':{'serial_no': 'NA'},
     'hello-motor-omni-2': {'serial_no': 'NA'},
-    'power-periph':{
-        'firebase': {
-            'url': 'NA',
-            'api_key': 'NA',
-            'user_email': 'NA',
-            'user_password': 'NA',
-            'network_ssid': 'NA',
-            'network_password': 'NA'}},
+    'esp32':{
+         'wifi':{
+           'ssid': "NA",
+           'password': "NA"},
+         'firebase':{
+           'url': "NA",
+           'api_key': "NA",
+           'user_email': "NA",
+           'user_password': "NA"}},
     'robot':{
         'batch_name': 'NA',
         'serial_no': 'NA',
@@ -415,6 +416,31 @@ nominal_params={
         'user_password': 'NA',
         'network_ssid': 'NA',
         'network_password':'NA'}},
+    'esp32':{
+      # ESP32 (hello_esp firmware v0.2.0p1+). A server subsystem: add 'esp32' to robot.server.subsystems
+      'usb_name': '/dev/hello-esp32',
+      'loop_rate_Hz': 2.0,          # Server reads of the ESP32 status
+      'reconnect_period_s': 10.0,   # Retry period while the ESP32 is missing or on firmware without RPC
+      'config_read_period_s': 10.0, # Read back of the credentials in use
+      'startup_timeout_s': 5.0,
+      'log_history': 50,            # ESP32 log entries kept in the server status
+      'publish_credentials': 0,     # 1: put the Wi-Fi password and Firebase key/password in the server status
+      'config':{                    # Pushed to the ESP32 at startup
+        'firebase_publish_period_ms': 5000,
+        'wifi_retry_ms': 5000,
+        'wifi_enable': 1,
+        'firebase_enable': 1,
+        'log_level': 1},            # 0 DEBUG, 1 INFO, 2 WARN, 3 ERROR
+      # Credentials sent by stretch_esp32_jog / send_credentials_from_params. Usually set per robot in
+      # stretch_configuration_params.yaml. 'NA' falls back to power-periph.firebase there.
+      'wifi':{
+        'ssid': 'NA',
+        'password': 'NA'},
+      'firebase':{
+        'url': 'NA',
+        'api_key': 'NA',
+        'user_email': 'NA',
+        'user_password': 'NA'}},
     'robot_server':{
         # 'control_loop_rate_Hz': 100,
         # 'network_loop_rate_Hz':50,
@@ -588,7 +614,7 @@ nominal_params={
         'server': {
             'control_loop_rate_Hz': 100,
             'max_push_command_rate_Hz': 100,
-            'subsystems': [],  # ['line_sensor_loop'],
+            'subsystems': ['esp32'],  # Also available: 'line_sensor_loop'
         }
     },
     'robot_monitor':{

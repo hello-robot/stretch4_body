@@ -708,8 +708,8 @@ DEVICE_LABELS = {
     'hello-esp32':        'ESP32',
 }
 
-# Firmware version can't be read back from these boards
-UNQUERYABLE_FIRMWARE = ('hello-pixart-j3', 'hello-esp32')
+# Firmware version can't be read back from the PixArt J3, nor from ESP32 firmware
+# before hello-esp.v0.2.0p1 (FirmwareInstalled.is_version_known says which)
 
 
 def firmware_use_device():
@@ -780,11 +780,13 @@ def check_firmware_versions():
             all_pass = False
             continue
 
-        # ESP32 and PixArt J3 don't expose queryable firmware versions
-        if dev_name in UNQUERYABLE_FIRMWARE:
+        if not fw_installed.is_version_known(dev_name):
             dev_present = os.path.exists(f'/dev/{dev_name}')
             status = 'present' if dev_present else 'not present'
             print_result(dev_present, f'{label}: {status} (firmware version not queryable)')
+            if dev_name == 'hello-esp32' and dev_present:
+                print_warn(f'{label}: firmware older than hello-esp.v0.2.0p1 has no RPC. Update it: '
+                           'REx_firmware_updater --install --esp32')
             if not dev_present:
                 all_pass = False
             continue
@@ -1028,18 +1030,68 @@ def check_power_periph():
 
 
 def check_esp32():
-    print_section('ESP32 Connectivity')
-    ps = r.power_periph.status
-
+    print_section('ESP32')
     esp32_present = os.path.exists('/dev/hello-esp32')
     print_result(esp32_present, '/dev/hello-esp32 present')
     if not esp32_present:
         return False
 
-    if args.verbose:
-        print_info(f'Aux CPU on  : {ps.get("cpu_on_sts", False)}')
+    esp = getattr(r, 'esp32', None)
+    if esp is None:
+        print_warn("The esp32 server subsystem is off, so the ESP32 isn't read. "
+                   "Add 'esp32' to robot.server.subsystems in stretch_user_params.yaml.")
+        return True
+    es = esp.status
+    if not es.get('hw_valid', False):
+        print_warn('ESP32 not answering RPC: firmware older than hello-esp.v0.2.0p1, or the port is busy. '
+                   'Update with REx_firmware_updater --install --esp32')
+        return True
 
-    return True
+    all_pass = True
+    print_result(True, f'ESP32 comms ({es["board_info"].get("firmware_version")})')
+
+    link = es['pimu_link']
+    if link['status_fresh']:
+        print_result(True, 'Pimu UART link (power sequencing) is live')
+    else:
+        age = 'never' if link['status_age_ms'] is None else f'{link["status_age_ms"]} ms ago'
+        print_result(False, f'Pimu UART link is stale: last Pimu status {age}')
+        all_pass = False
+    if link['uart_crc_errors'] or link['uart_rx_overflows']:
+        print_warn(f'Pimu UART link: {link["uart_crc_errors"]} CRC errors, {link["uart_rx_overflows"]} overflows '
+                   f'in {link["uart_rx_packets"]} packets')
+
+    w = es['wifi']
+    wifi_cfg = es.get('wifi_config') or {}
+    if w['state_name'] == 'CONNECTED':
+        print_result(True, f'Wi-Fi connected to "{w["ssid"]}" (RSSI {w["rssi"]} dBm, IP {w["ip"]})')
+    elif w['state_name'] == 'NOT_CONFIGURED':
+        print_info('Wi-Fi not configured (stretch_esp32_jog to set it up)')
+    elif w['state_name'] in ('DISABLED', 'POWER_OFF'):
+        print_info(f'Wi-Fi {w["state_name"].lower()}')
+    else:
+        reason = w['last_disconnect_reason_name'] or '-'
+        print_warn(f'Wi-Fi {w["state_name"].lower()}: SSID "{wifi_cfg.get("ssid", "?")}", '
+                   f'{w["connect_attempts"]} attempts, last reason {reason}')
+
+    f = es['firebase']
+    if f['state_name'] == 'READY':
+        print_result(True, f'Firebase ready ({f["publish_ok"]} publishes, {f["publish_errors"]} errors)')
+    elif f['state_name'] == 'NOT_CONFIGURED':
+        print_info('Firebase not configured')
+    elif f['state_name'] in ('DISABLED', 'WAITING_FOR_WIFI'):
+        print_info(f'Firebase {f["state_name"].lower().replace("_", " ")}')
+    else:
+        print_warn(f'Firebase {f["state_name"].lower()}: last error {f["last_error_code"]} {f["last_error"]}')
+
+    if args.verbose:
+        print_info(f'Power state  : {es["pwr_state_name"]}  (reset reason {es["reset_reason_name"]})')
+        print_info(f'12V0 rail    : {es["voltage_12v0"]:.2f} V   Aux 20V0: {es["voltage_20v0_aux"]:.2f} V')
+        print_info(f'Outputs      : {es["outputs"]}')
+        print_info(f'Free heap    : {es["free_heap"]} (min {es["min_free_heap"]})')
+        print_info(f'Loop max     : {es["loop_time_us"]} us   Power task max: {es["power_task_time_us"]} us')
+
+    return all_pass
 
 LINE_SENSOR_MIN_HZ = 25.0
 LINE_SENSOR_MEASURE_S = 2.0

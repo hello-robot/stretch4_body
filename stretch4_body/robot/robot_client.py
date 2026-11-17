@@ -89,6 +89,9 @@ class RobotClient(SubsystemClient):
             if k == 'line_sensor_loop':
                 self.line_sensor_loop = LineSensorLoopClient(parent=self)
                 self.subsystems[k] = self.line_sensor_loop
+            if k == 'esp32':
+                self.esp32 = Esp32Client(parent=self)
+                self.subsystems[k] = self.esp32
 
         self.subsystems['routines']=self.routines=RoutinesClient(parent=self)
 
@@ -605,6 +608,84 @@ class PowerPeriphClient(SubsystemClient):
             'Actuator power cannot be changed through the stretch_body_server. '
             'Use REx_actuator_control (it stops the server, changes power directly, '
             'then restarts it).')
+
+
+# #####################################################################
+class Esp32Client(SubsystemClient):
+    """
+    Client interface for the ESP32: power sequencing status, Wi-Fi and Firebase.
+
+    Needs 'esp32' in robot.server.subsystems. Commands are queued and sent on
+    push_command(); their effect shows up in status a second or so later (the
+    server reads the ESP32 at esp32.loop_rate_Hz). Status keys:
+      hw_valid, board_info, pwr_state_name, voltage_12v0, voltage_20v0_aux, outputs,
+      pimu_link, wifi, firebase, wifi_config, firebase_config, wifi_scan, log
+    wifi_config / firebase_config hold the passwords and API key only when the
+    esp32.publish_credentials parameter is 1; stretch_esp32_jog -d reads them directly.
+    """
+    def __init__(self, parent=None):
+        SubsystemClient.__init__(self, name='esp32', parent=parent)
+
+    def is_connected(self):
+        """True if the server is talking to the ESP32."""
+        return bool(self.status.get('hw_valid', False))
+
+    def get_wifi_config(self):
+        return self.status.get('wifi_config')
+
+    def get_firebase_config(self):
+        return self.status.get('firebase_config')
+
+    def get_wifi_scan(self):
+        return self.status.get('wifi_scan')
+
+    def get_log(self):
+        return self.status.get('log', [])
+
+    def set_wifi_config(self, ssid, password, persist=True, apply_now=True):
+        """Set the Wi-Fi network. An empty password is an open network. persist saves it on the ESP32."""
+        self._queue_command('esp32', 'set_wifi_config', ssid, password, persist=persist, apply_now=apply_now)
+
+    def set_firebase_config(self, url, api_key, user_email, user_password, persist=True, apply_now=True):
+        """Set the Firebase project and user: all four, or all empty to clear Firebase."""
+        self._queue_command('esp32', 'set_firebase_config', url, api_key, user_email, user_password,
+                            persist=persist, apply_now=apply_now)
+
+    def set_config(self, **kwargs):
+        """Runtime settings: firebase_publish_period_ms, wifi_retry_ms, wifi_enable, firebase_enable, log_level."""
+        self._queue_command('esp32', 'set_config', **kwargs)
+
+    def send_credentials_from_params(self):
+        """Send the Wi-Fi and Firebase credentials in the robot parameters (esp32.wifi, esp32.firebase)."""
+        self._queue_command('esp32', 'send_credentials_from_params')
+
+    def trigger_wifi_reconnect(self):
+        self._queue_command('esp32', 'trigger_wifi_reconnect')
+
+    def trigger_wifi_disconnect(self):
+        self._queue_command('esp32', 'trigger_wifi_disconnect')
+
+    def forget_wifi(self):
+        """Erase the Wi-Fi credentials saved on the ESP32 and disconnect."""
+        self._queue_command('esp32', 'forget_wifi')
+
+    def trigger_firebase_restart(self):
+        self._queue_command('esp32', 'trigger_firebase_restart')
+
+    def forget_firebase(self):
+        """Erase the Firebase credentials saved on the ESP32 and stop Firebase."""
+        self._queue_command('esp32', 'forget_firebase')
+
+    def start_wifi_scan(self):
+        """Start a Wi-Fi scan. The result appears in status['wifi_scan'] a few seconds later."""
+        self._queue_command('esp32', 'start_wifi_scan')
+
+    def reboot(self):
+        """Restart the ESP32. Its power outputs reset while it boots."""
+        self._queue_command('esp32', 'reboot')
+
+    def clear_log(self):
+        self._queue_command('esp32', 'clear_log')
 
 
 # #####################################################################

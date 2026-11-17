@@ -863,7 +863,7 @@ class TransportPySerial():
         if len(xl) != 4:
             raise Exception('Invalid firmware version len')
         device = xl[0]
-        if not (device == 'Stepper2' or device == 'Stepper' or device == 'Wacc' or device == 'Pimu' or device == 'PowerPeriph' or device == 'Pimu2' or device == 'hello-stepper2' or device == 'hello-pimu2' or device == 'hello_stepper2' or device == 'hello_pimu2'):
+        if not (device == 'Stepper2' or device == 'Stepper' or device == 'Wacc' or device == 'Pimu' or device == 'PowerPeriph' or device == 'Pimu2' or device == 'hello-stepper2' or device == 'hello-pimu2' or device == 'hello_stepper2' or device == 'hello_pimu2' or device == 'hello-esp' or device == 'hello_esp'):
             raise Exception('Invalid device name ' + device)
         major = int(xl[1][1:])
         minor = int(xl[2])

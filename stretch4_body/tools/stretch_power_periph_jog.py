@@ -38,11 +38,10 @@ def menu():
     print('c: set aux cpu off')
     print('d: set aux cpu on')
 
-    print('--- ESP32 ---')
+    print('--- ESP32 (--direct only) ---')
     print('e: place esp32 into bootloader')
     print('g: reset esp32')
-    print('n: set network info')
-    print('u: set firebase info')
+    print('Wi-Fi / Firebase: use stretch_esp32_jog')
     print('----------')
     print('q: quit')
     print('-------------------')
@@ -85,22 +84,12 @@ def step_interaction():
             exit(0)
         if x[0]=='i':
             p.imu_reset()
-        if x[0]=='e':
-            p.set_esp_fw_update()
-        if x[0]=='g':
-            p.set_esp_reset()
-        if x[0]=='n':
-            ssid=get_val_default('Enter Wifi SSID ',p.params['firebase']['network_ssid'])
-            password=get_val_default('Enter Wifi Password ',p.params['firebase']['network_password'])
-            p.send_network_info(ssid,password)
-
-
-        if x[0]=='u':
-            url=get_val_default('Enter URL ',p.params['firebase']['url'])
-            api_key=get_val_default('Enter API Key ',p.params['firebase']['api_key'])
-            user_email = get_val_default('Enter User Email ', p.params['firebase']['user_email'])
-            user_password = get_val_default('Enter User Password ', p.params['firebase']['user_password'])
-            p.send_firebase_info(url,api_key,user_email,user_password)
+        if x[0] in 'eg' and not args.direct:
+            print('ESP32 reset / bootloader need --direct')
+        elif x[0]=='e':
+            p.set_esp32_fw_update()
+        elif x[0]=='g':
+            p.set_esp32_reset()
         if x[0]=='f':
             if p.status['fan_on']:
                 p.set_fan_off()
