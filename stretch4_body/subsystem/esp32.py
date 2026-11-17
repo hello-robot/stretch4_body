@@ -7,8 +7,10 @@ over the Hello Robot RPC transport. Needs hello-esp firmware v0.2.0p1 or later;
 older firmware has no RPC (configure it through PowerPeriph.send_network_info /
 send_firebase_info, which go through the Pimu).
 
-The robot server runs this class in its own process (Esp32Loop). Use it directly
-only with the server stopped, as stretch_esp32_jog -d does.
+The ESP32 is not part of the robot server: this direct API (and stretch_esp32_jog,
+which uses it) is the only way in. One process at a time can have the port.
+The robot server still sees the ESP32's rails, adapter and connection flags through
+PowerPeriph, which the Pimu fills from its UART link to the ESP32.
 
 The packed layouts below must match stretch_firmware_ii/arduino/hello_esp/EspRpc.h.
 """
@@ -222,7 +224,6 @@ class Esp32Base(Esp32Defn, Device):
         self._pending_firebase_config = None
         self._rpc_ok = False
         self._last_set_result = None
-        self.status_aux = {}
         self.status = esp32_status_template()
         self.status['transport'] = self.transport.status
 
@@ -266,17 +267,8 @@ class Esp32Base(Esp32Defn, Device):
         self.transport.stop()
         self.hw_valid = False
 
-    def pause_transport(self):
-        self.transport.pause()
-
-    def unpause_transport(self):
-        self.transport.unpause()
-
-    def pull_status(self, blocking=True):
-        """
-        Read the system, Wi-Fi and Firebase status. The ESP32 is always read
-        synchronously, whatever `blocking` says. Returns True if all three were read.
-        """
+    def pull_status(self):
+        """Read the system, Wi-Fi and Firebase status. Returns True if all three were read."""
         if not self.hw_valid:
             return False
         ok = self._rpc_pull(self.RPC_GET_STATUS, self.RPC_REPLY_STATUS, self._unpack_status)
@@ -285,10 +277,7 @@ class Esp32Base(Esp32Defn, Device):
                             self._unpack_firebase_status) and ok
         return ok
 
-    def pull_status_aux(self, blocking=True):
-        return True
-
-    def push_command(self, blocking=True):
+    def push_command(self):
         """Send what has been set since the last push: config, credentials, triggers. Returns True on success."""
         if not self.hw_valid:
             return False
@@ -310,9 +299,6 @@ class Esp32Base(Esp32Defn, Device):
             self._trigger = 0
             ok = self._rpc_push(payload, self.RPC_REPLY_SET_TRIGGER) and ok
         return ok
-
-    def load_rpc_results(self, wait_on_result=True):
-        return []
 
     # ###########  Configuration #############
 

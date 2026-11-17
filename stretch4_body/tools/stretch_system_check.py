@@ -1041,16 +1041,19 @@ def check_esp32():
     if not esp32_present:
         return False
 
-    esp = getattr(r, 'esp32', None)
-    if esp is None:
-        print_warn("The esp32 server subsystem is off, so the ESP32 isn't read. "
-                   "Add 'esp32' to robot.server.subsystems in stretch_user_params.yaml.")
-        return True
-    es = esp.status
-    if not es.get('hw_valid', False):
-        print_warn('ESP32 not answering RPC: firmware older than hello-esp.v0.2.0p1, or the port is busy. '
-                   'Update with REx_firmware_updater --install --esp32')
-        return True
+    # The ESP32 isn't part of the robot server: read it directly, briefly
+    from stretch4_body.subsystem.esp32 import Esp32
+    esp = Esp32()
+    try:
+        if not esp.startup(quiet=True):
+            print_warn('ESP32 not answering RPC: firmware older than hello-esp.v0.2.0p1, or the port is in use '
+                       '(stretch_esp32_jog?). Update with REx_firmware_updater --install --esp32')
+            return True
+        es = dict(esp.status)
+        es['board_info'] = dict(esp.board_info)
+        wifi_cfg = esp.get_wifi_config() or {}
+    finally:
+        esp.stop()
 
     all_pass = True
     print_result(True, f'ESP32 comms ({es["board_info"].get("firmware_version")})')
@@ -1067,7 +1070,6 @@ def check_esp32():
                    f'in {link["uart_rx_packets"]} packets')
 
     w = es['wifi']
-    wifi_cfg = es.get('wifi_config') or {}
     if w['state_name'] == 'CONNECTED':
         print_result(True, f'Wi-Fi connected to "{w["ssid"]}" (RSSI {w["rssi"]} dBm, IP {w["ip"]})')
     elif w['state_name'] == 'NOT_CONFIGURED':
