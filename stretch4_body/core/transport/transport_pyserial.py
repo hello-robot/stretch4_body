@@ -794,6 +794,7 @@ class TransportPySerial():
     def __init__(self, usb, logger=logging.getLogger()):
         self.port_name = usb
         self.logger = logger
+        self.ser = None  # Opened by startup(). Set here so stop() is safe after a failed startup
         self.lock = threading.Lock()
         self.status = {}
         self.empty_payload = arr.array('B', [0] * (RPC_DATA_MAX_BYTES_SAMD51 + 1))  # RPC ID + 1024 bytes of data

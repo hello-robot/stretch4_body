@@ -155,7 +155,7 @@ class Esp32Defn:
                           6: 'TASK_WDT', 7: 'WDT', 8: 'DEEPSLEEP', 9: 'BROWNOUT', 10: 'SDIO',
                           11: 'USB', 12: 'JTAG', 13: 'EFUSE', 14: 'PWR_GLITCH', 15: 'CPU_LOCKUP'}
     WIFI_STATE_NAMES = {0: 'NOT_CONFIGURED', 1: 'DISABLED', 2: 'CONNECTING', 3: 'CONNECTED',
-                        4: 'SCANNING', 5: 'POWER_OFF'}
+                        4: 'SCANNING', 5: 'POWER_OFF', 6: 'DISCONNECTED'}
     WL_STATUS_NAMES = {0: 'IDLE', 1: 'NO_SSID_AVAIL', 2: 'SCAN_COMPLETED', 3: 'CONNECTED',
                        4: 'CONNECT_FAILED', 5: 'CONNECTION_LOST', 6: 'DISCONNECTED', 255: 'NO_SHIELD'}
     WIFI_DISCONNECT_REASON_NAMES = {0: '', 1: 'UNSPECIFIED', 2: 'AUTH_EXPIRE', 3: 'AUTH_LEAVE',

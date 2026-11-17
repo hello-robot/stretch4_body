@@ -1318,7 +1318,7 @@ nominal_params={
         'wifi_enable': 1,
         'firebase_enable': 1,
         'log_level': 1},            # 0 DEBUG, 1 INFO, 2 WARN, 3 ERROR
-      # Credentials sent by stretch_esp32_jog / send_credentials_from_params. Usually set per robot in
+      # Credentials saved by stretch_esp32_jog (w / f). Usually set per robot in
       # stretch_configuration_params.yaml. 'NA' falls back to power-periph.firebase there.
       'wifi':{
         'ssid': 'NA',

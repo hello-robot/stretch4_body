@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """
-Status, Wi-Fi and Firebase of the ESP32.
+ESP32 status, and set-up of its Wi-Fi and Firebase.
 
-By default this goes through the robot server (its 'esp32' subsystem), with the
-RobotClient interface (Esp32Client). With -d/--direct it opens /dev/hello-esp32
-itself, which needs the server stopped. It talks only to the ESP32.
+Prints the status, then offers a menu:
+  w  configure Wi-Fi: pick a network and connect, as in a desktop Wi-Fi menu
+  f  configure Firebase
+  s  print the status
+  q  quit
+
+By default this goes through the robot server (its 'esp32' subsystem). With -d it
+opens /dev/hello-esp32 itself, which needs the server stopped. It talks only to
+the ESP32.
+
+Settings that work are saved to the ESP32's flash and to the robot's
+stretch_configuration_params.yaml (esp32.wifi, esp32.firebase).
 
 Needs ESP32 firmware hello-esp.v0.2.0p1 or later (earlier firmware has no RPC).
 """
 import argparse
 import getpass
+import subprocess
 import sys
 import time
 
@@ -20,20 +30,14 @@ from stretch4_body.subsystem.esp32 import Esp32Base
 
 hu.print_stretch_re_use()
 
-parser = argparse.ArgumentParser(description='Status, Wi-Fi and Firebase of the ESP32')
+parser = argparse.ArgumentParser(description='ESP32 status, and set-up of its Wi-Fi and Firebase')
 parser.add_argument('-d', '--direct', help='Use the direct API on /dev/hello-esp32 (server must be stopped)',
                     action='store_true')
-parser.add_argument('--status', help='Print the full status and exit', action='store_true')
-parser.add_argument('--wifi', help='Print the Wi-Fi status and exit', action='store_true')
-parser.add_argument('--firebase', help='Print the Firebase status and exit', action='store_true')
-parser.add_argument('--config', help='Print the credentials in use, secrets masked, and exit', action='store_true')
-parser.add_argument('--show-credentials', help='Print the credentials in use, unmasked, and exit',
-                    action='store_true')
-parser.add_argument('--scan', help='Scan for Wi-Fi networks and exit', action='store_true')
-parser.add_argument('--log', help='Print the ESP32 log and exit', action='store_true')
 args = parser.parse_args()
 
 LABEL_WIDTH = 24
+WIFI_CONNECT_TIMEOUT_S = 30.0
+FIREBASE_READY_TIMEOUT_S = 45.0
 
 
 # ############################# Backends #############################
@@ -41,11 +45,11 @@ LABEL_WIDTH = 24
 class DirectBackend:
     """The ESP32 through the direct API (stretch4_body.subsystem.esp32.Esp32)."""
     name = 'direct'
-    settle_s = 0.3
 
     def __init__(self):
         from stretch4_body.subsystem.esp32 import Esp32
         self.esp = Esp32()
+        self.device = self.esp
 
     def startup(self):
         if self.esp.startup():
@@ -69,14 +73,16 @@ class DirectBackend:
         return s
 
     def credentials(self):
-        """(wifi, firebase) with every field, or None where unreadable."""
+        """(wifi, firebase) as the ESP32 has them, secrets included. None where unreadable."""
         return self.esp.get_wifi_config(), self.esp.get_firebase_config()
 
     def command(self, method, *a, **kw):
         getattr(self.esp, method)(*a, **kw)
-        return self.esp.push_command()
+        ok = self.esp.push_command()
+        time.sleep(0.3)  # Let the ESP32 act on it before the next status read
+        return ok
 
-    def start_scan_and_wait(self, timeout=20.0):
+    def scan(self, timeout=20.0):
         self.command('start_wifi_scan')
         ts = time.time()
         time.sleep(1.5)  # Let the ESP32 start it, so the previous result isn't taken for this one
@@ -89,22 +95,15 @@ class DirectBackend:
             time.sleep(0.5)
         return None
 
-    def log(self):
-        return self.esp.read_log() or []
-
-    def params_credentials(self):
-        return self.esp.get_params_credentials()
-
 
 class ServerBackend:
     """The ESP32 through the robot server's esp32 subsystem (Esp32Client)."""
     name = 'server'
-    settle_s = 1.5  # The server reads the ESP32 at esp32.loop_rate_Hz
 
     def __init__(self):
         from stretch4_body.robot.robot_client import Esp32Client
         self.esp = Esp32Client()
-        self._last_log_ms = None
+        self.device = self.esp
 
     def startup(self):
         if not self.esp.startup():
@@ -116,9 +115,6 @@ class ServerBackend:
                         "stretch_user_params.yaml and restart it, or use -d with the server stopped.", fg='red')
             self.esp.stop()
             return False
-        if not self.esp.status['hw_valid']:
-            click.secho('The server is not talking to the ESP32 (firmware older than hello-esp.v0.2.0p1?).',
-                        fg='yellow')
         return True
 
     def stop(self):
@@ -131,6 +127,7 @@ class ServerBackend:
         return self.esp.status
 
     def credentials(self):
+        """(wifi, firebase) as the server publishes them: secrets only if esp32.publish_credentials is 1."""
         return self.esp.status.get('wifi_config'), self.esp.status.get('firebase_config')
 
     def command(self, method, *a, **kw):
@@ -138,7 +135,7 @@ class ServerBackend:
         # ESP32 settings don't move the robot: don't take control from whoever has it
         return self.esp.push_command(ignore_control_lock=True)
 
-    def start_scan_and_wait(self, timeout=25.0):
+    def scan(self, timeout=25.0):
         ts = time.time()
         self.command('start_wifi_scan')
         while time.time() - ts < timeout:
@@ -148,19 +145,52 @@ class ServerBackend:
                 return self.esp.status['wifi_scan']
         return None
 
-    def log(self):
-        # The server keeps the recent entries: show the ones not shown yet
-        entries = self.esp.status.get('log', [])
-        if self._last_log_ms is not None:
-            entries = [e for e in entries if e['ms'] is None or e['ms'] > self._last_log_ms]
-        ms = [e['ms'] for e in entries if e['ms'] is not None]
-        if ms:
-            self._last_log_ms = max(ms)
-        return entries
 
-    def params_credentials(self):
-        from stretch4_body.subsystem.esp32 import params_credentials
-        return params_credentials(self.esp.robot_params)
+# ############################# Robot configuration #############################
+
+def saved_credentials():
+    """(wifi, firebase) saved in the robot configuration (esp32.*, or the older power-periph.firebase)."""
+    from stretch4_body.subsystem.esp32 import params_credentials
+    return params_credentials(backend.device.robot_params)
+
+
+def save_to_robot_config(section, values):
+    """Write esp32.<section>.<key> to stretch_configuration_params.yaml."""
+    try:
+        for k, v in values.items():
+            backend.device.write_configuration_param_to_YAML('esp32.%s.%s' % (section, k), v, force_creation=True)
+        # And in memory, so this session sees it as saved
+        backend.device.robot_params.setdefault('esp32', {}).setdefault(section, {}).update(values)
+        click.secho('  Saved to stretch_configuration_params.yaml (esp32.%s)' % section, fg='green')
+    except Exception as e:
+        click.secho('  Could not save to stretch_configuration_params.yaml: %s' % e, fg='red')
+
+
+def robot_computer_wifi():
+    """
+    The Wi-Fi network the robot's computer is on, from NetworkManager:
+    {'ssid', 'password' (None if unreadable), 'key_mgmt'}, or None if it isn't on Wi-Fi.
+    """
+    def nmcli(*a):
+        r = subprocess.run(['nmcli'] + list(a), capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ''
+
+    def unescape(s):
+        return s.replace('\\:', ':').replace('\\\\', '\\')
+
+    try:
+        for line in nmcli('-t', '-f', 'NAME,TYPE', 'connection', 'show', '--active').splitlines():
+            name, _, ctype = line.rpartition(':')
+            if ctype != '802-11-wireless':
+                continue
+            name = unescape(name)
+            ssid = unescape(nmcli('-g', '802-11-wireless.ssid', 'connection', 'show', name))
+            key_mgmt = nmcli('-g', '802-11-wireless-security.key-mgmt', 'connection', 'show', name)
+            password = unescape(nmcli('-s', '-g', '802-11-wireless-security.psk', 'connection', 'show', name))
+            return {'ssid': ssid, 'password': password or None, 'key_mgmt': key_mgmt}
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
 
 
 # ############################# Formatting #############################
@@ -205,16 +235,24 @@ def duration(s):
     return '%dh %02dm %02ds' % (h, m, sec) if h else ('%dm %02ds' % (m, sec) if m else '%ds' % sec)
 
 
-def rssi_text(rssi, width=0):
+def rssi_quality(rssi):
     if rssi >= -55:
-        q, fg = 'excellent', 'green'
-    elif rssi >= -67:
-        q, fg = 'good', 'green'
-    elif rssi >= -75:
-        q, fg = 'fair', 'yellow'
-    else:
-        q, fg = 'weak', 'red'
-    return click.style(('%d dBm (%s)' % (rssi, q)).ljust(width), fg=fg)
+        return 'excellent', 'green', 4
+    if rssi >= -67:
+        return 'good', 'green', 3
+    if rssi >= -75:
+        return 'fair', 'yellow', 2
+    return 'weak', 'red', 1
+
+
+def rssi_text(rssi):
+    q, fg, _ = rssi_quality(rssi)
+    return click.style('%d dBm (%s)' % (rssi, q), fg=fg)
+
+
+def signal_bars(rssi):
+    _, fg, n = rssi_quality(rssi)
+    return click.style('▂▄▆█'[:n].ljust(4), fg=fg)
 
 
 def mask(s):
@@ -313,75 +351,15 @@ def print_firebase(s):
     row('Initializations', f['init_count'])
 
 
-def print_credentials(unmask):
-    wifi, fb = backend.credentials()
-
-    def secret(d, key):
-        if key in d:
-            return d[key] if unmask else mask(d[key])
-        return '(not published by the server: %s)' % ('set' if d.get(key + '_set') else 'empty')
-
-    header('Wi-Fi credentials')
-    if wifi is None:
-        row('', 'unavailable', fg='yellow')
-    else:
-        row('Configured', yes_no(wifi.get('configured')))
-        row('SSID', '"%s"' % wifi.get('ssid', ''))
-        row('Password', secret(wifi, 'password'))
-    header('Firebase credentials')
-    if fb is None:
-        row('', 'unavailable', fg='yellow')
-    else:
-        row('Configured', yes_no(fb.get('configured')))
-        row('URL', fb.get('url', ''))
-        row('User email', fb.get('user_email', ''))
-        row('API key', secret(fb, 'api_key'))
-        row('User password', secret(fb, 'user_password'))
-    if backend.name == 'server' and wifi is not None and 'password' not in wifi:
-        click.secho('  Secrets are shown with -d (server stopped), or with esp32.publish_credentials: 1.', fg='white')
-
-
-def print_status(sections=('system', 'power', 'wifi', 'firebase')):
+def print_status():
     backend.pull()
     s = backend.snapshot()
-    if 'system' in sections and not print_system(s):
-        return
-    if not s.get('hw_valid'):
+    if not print_system(s):
         click.secho('No ESP32 status.', fg='yellow')
         return
-    if 'power' in sections:
-        print_power(s)
-    if 'wifi' in sections:
-        print_wifi(s)
-    if 'firebase' in sections:
-        print_firebase(s)
-
-
-def print_log():
-    backend.pull()
-    header('ESP32 log')
-    entries = backend.log()
-    if not entries:
-        click.echo('  (nothing new)')
-    colors = {'WARN': 'yellow', 'ERROR': 'red', 'IDF': 'magenta', 'DROPPED': 'red', 'DEBUG': 'white'}
-    for e in entries:
-        t = '%10.3f' % (e['ms'] / 1000.0) if e['ms'] is not None else ' ' * 10
-        click.echo('  %s %s %s' % (t, click.style(e['level_name'].ljust(7), fg=colors.get(e['level_name'])), e['text']))
-
-
-def print_scan():
-    click.echo('Scanning (a few seconds)...')
-    scan = backend.start_scan_and_wait()
-    header('Wi-Fi networks')
-    if scan is None or scan['state_name'] != 'DONE':
-        click.secho('  Scan %s' % ('timed out' if scan is None else scan['state_name'].lower()), fg='yellow')
-        return
-    click.secho('  %-33s %-18s %4s  %s' % ('SSID', 'SIGNAL', 'CH', 'SECURITY'), bold=True)
-    for net in scan['networks']:
-        click.echo('  %-33s %s %4d  %s' % (net['ssid'] or '(hidden)', rssi_text(net['rssi'], 18), net['channel'],
-                                          net['auth']))
-    if not scan['networks']:
-        click.echo('  (none found)')
+    print_power(s)
+    print_wifi(s)
+    print_firebase(s)
 
 
 # ############################# Input #############################
@@ -392,204 +370,433 @@ def ask(prompt, default=None, secret=False):
     return x if len(x) else (default if default is not None else '')
 
 
-def ask_int(prompt, default):
-    """An integer, or None if the input isn't one."""
-    x = ask(prompt, str(default))
-    try:
-        return int(x)
-    except ValueError:
-        click.secho('  Not a number: %s' % x, fg='red')
-        return None
+def confirm(msg, default=False):
+    x = input('  %s %s: ' % (msg, '[Y/n]' if default else '[y/N]')).strip().lower()
+    return default if not x else x in ('y', 'yes')
 
 
-def confirm(msg):
-    return input('  %s [y/N]: ' % msg).strip().lower() in ('y', 'yes')
+def require_esp32():
+    backend.pull()
+    if not backend.snapshot().get('hw_valid'):
+        click.secho('The ESP32 is not connected (%s).' % backend.name, fg='red')
+        return False
+    return True
 
 
-def confirm_yes(msg):
-    return input('  %s [Y/n]: ' % msg).strip().lower() not in ('n', 'no')
+# ############################# Wi-Fi wizard #############################
+
+# What a failed connection most likely means
+WIFI_FAILURE_HINTS = {
+    'AUTH_FAIL': 'wrong password?',
+    '4WAY_HANDSHAKE_TIMEOUT': 'wrong password?',
+    'HANDSHAKE_TIMEOUT': 'wrong password?',
+    'NO_AP_FOUND': 'network not in range, or 5 GHz only (the ESP32 is 2.4 GHz only)',
+    'NO_AP_FOUND_W_COMPATIBLE_SECURITY': 'the network uses security the ESP32 does not support',
+    'ASSOC_FAIL': 'the access point refused the ESP32',
+    'BEACON_TIMEOUT': 'signal too weak',
+}
 
 
-def after_command(ok, what):
-    if ok:
-        click.secho('  %s: sent' % what, fg='green')
-        time.sleep(backend.settle_s)
+def print_wifi_connection():
+    backend.pull()
+    w = backend.snapshot()['wifi']
+    header('Current connection')
+    if w['state_name'] == 'CONNECTED':
+        row('Network', '"%s"' % w['ssid'], fg='green')
+        row('Signal', rssi_text(w['rssi']))
+        row('IP address', w['ip'])
+        row('Connected for', duration(w['connected_s']))
     else:
-        click.secho('  %s: failed' % what, fg='red')
+        row('State', w['state_name'], fg=state_color(w['state_name'], (), ('NOT_CONFIGURED',)))
+        wifi, _ = backend.credentials()
+        if wifi and wifi.get('ssid'):
+            row('Trying', '"%s" (%d attempts, last reason %s)'
+                % (wifi['ssid'], w['connect_attempts'], w['last_disconnect_reason_name'] or '-'))
+    return w
 
 
-def set_wifi_credentials():
-    current, _ = backend.credentials()
-    current = current or {}
-    params, _ = backend.params_credentials()
-    ssid = ask('SSID', current.get('ssid') or params['ssid'])
-    known_pw = current.get('password', params['password'] if params['ssid'] == ssid else None)
-    password = ask('Password (empty for an open network)', known_pw, secret=True)
-    if not password and not confirm('No password: is "%s" an open network?' % ssid):
-        return
+def list_networks(scan, current_ssid, robot_ssid, saved_ssid):
+    """Print the scan as a numbered list. Returns the networks, one per SSID, strongest first."""
+    networks, seen = [], set()
+    for net in scan['networks']:
+        if net['ssid'] and net['ssid'] not in seen:
+            seen.add(net['ssid'])
+            networks.append(net)
+    header('Available networks')
+    if not networks:
+        click.echo('  (none found)')
+    for i, net in enumerate(networks):
+        tags = []
+        if net['ssid'] == current_ssid:
+            tags.append(click.style('connected', fg='green'))
+        if net['ssid'] == robot_ssid:
+            tags.append('robot computer')
+        if net['ssid'] == saved_ssid:
+            tags.append('saved')
+        security = 'open' if net['auth'] == 'OPEN' else net['auth']
+        click.echo('  %2d  %s %-32s %-14s ch %-3d %s' % (i + 1, signal_bars(net['rssi']), net['ssid'], security,
+                                                       net['channel'], ', '.join(tags)))
+    return networks
+
+
+def wifi_attempts():
+    backend.pull()
+    return backend.snapshot()['wifi']['connect_attempts']
+
+
+def wait_for_wifi(ssid, attempts0, ts):
+    """
+    Wait for the ESP32 to join ssid, after a command sent at ts when it had made attempts0
+    connection attempts. Returns (connected, failure reason name).
+    """
+    click.echo('  Connecting to "%s" ' % ssid, nl=False)
+    while time.time() - ts < WIFI_CONNECT_TIMEOUT_S:
+        time.sleep(1.0)
+        click.echo('.', nl=False)
+        backend.pull()
+        w = backend.snapshot()['wifi']
+        # A connection made since the command: not the one it had before
+        if w['state_name'] == 'CONNECTED' and w['ssid'] == ssid and w['connected_s'] < time.time() - ts + 0.5:
+            click.echo('')
+            return True, None
+        # The ESP32 retries every few seconds: three failed tries is an answer
+        if w['connect_attempts'] - attempts0 >= 3:
+            break
+    click.echo('')
+    return False, backend.snapshot()['wifi']['last_disconnect_reason_name'] or None
+
+
+def stop_trying(ssid):
+    """Stop the ESP32 retrying a network that failed, so it is free to scan (firmware v0.2.1p1 or later)."""
+    backend.command('trigger_wifi_disconnect')
+    click.secho('  Stopped trying "%s". The ESP32 goes back to its saved network at its next reboot, or pick '
+                'one here.' % ssid, fg='yellow')
+
+
+def connect_wifi(ssid, password, previous):
+    """
+    Join the network. On success, save it to the ESP32 flash and the robot configuration. On failure,
+    put the ESP32 back as it was: on the previous network if that can be rejoined, with no network if
+    it had none ({'ssid': ''}), else stopped. Returns True on success.
+    """
     try:
         Esp32Base.validate_wifi_config(ssid, password)
     except ValueError as e:
         click.secho('  %s' % e, fg='red')
-        return
-    persist = confirm_yes('Save to the ESP32 flash (survives a reboot)?')
-    after_command(backend.command('set_wifi_config', ssid, password, persist=persist, apply_now=True),
-                  'Wi-Fi credentials')
+        return False
+    # Try it first without saving, so a wrong password doesn't stick after a reboot
+    attempts0, ts = wifi_attempts(), time.time()
+    if not backend.command('set_wifi_config', ssid, password, persist=False, apply_now=True):
+        click.secho('  Could not send the network to the ESP32', fg='red')
+        return False
+    ok, reason = wait_for_wifi(ssid, attempts0, ts)
+    if ok:
+        backend.command('set_wifi_config', ssid, password, persist=True, apply_now=False)
+        w = backend.snapshot()['wifi']
+        click.secho('  Connected to "%s": IP %s, signal %s' % (ssid, w['ip'], rssi_text(w['rssi'])), fg='green')
+        save_to_robot_config('wifi', {'ssid': ssid, 'password': password})
+        return True
+    hint = WIFI_FAILURE_HINTS.get(reason, '')
+    click.secho('  Could not connect to "%s"%s%s' % (ssid, ': %s' % reason if reason else '',
+                                                       ' (%s)' % hint if hint else ''), fg='red')
+    if previous is not None and previous['ssid'] == '':
+        # It had no network: clear the one that failed, rather than leave it retrying
+        backend.command('forget_wifi')
+        click.secho('  The ESP32 is back to no network.', fg='yellow')
+    elif previous and previous['ssid'] != ssid and previous.get('password') is not None and \
+            confirm('Go back to "%s"?' % previous['ssid'], default=True):
+        attempts0, ts = wifi_attempts(), time.time()
+        backend.command('set_wifi_config', previous['ssid'], previous['password'], persist=False,
+                        apply_now=True)
+        if wait_for_wifi(previous['ssid'], attempts0, ts)[0]:
+            click.secho('  Back on "%s"' % previous['ssid'], fg='green')
+        else:
+            click.secho('  Could not get back to "%s" either.' % previous['ssid'], fg='red')
+            stop_trying(previous['ssid'])
+    else:
+        stop_trying(ssid)
+    return False
 
 
-def set_firebase_credentials():
-    _, current = backend.credentials()
-    current = current or {}
-    _, params = backend.params_credentials()
-    url = ask('Database URL', current.get('url') or params['url'])
-    email = ask('User email', current.get('user_email') or params['user_email'])
-    api_key = ask('API key', current.get('api_key') or params['api_key'], secret=True)
-    password = ask('User password', current.get('user_password') or params['user_password'], secret=True)
-    if not all((url, email, api_key, password)):
-        click.secho('  All four are needed (use "forget" to clear Firebase).', fg='red')
+def similar_networks(ssid, visible):
+    """
+    Visible networks that may be the 2.4 GHz side of ssid (e.g. "Home" and "Home 2.4"), likeliest first.
+    Compares names without case, spaces or punctuation.
+    """
+    def norm(s):
+        return ''.join(c for c in s.lower() if c.isalnum())
+    base = norm(ssid)
+    if not base:
+        return []
+    found = [v for v in visible if v != ssid and base in norm(v)]
+    marked = lambda v: any(m in norm(v)[len(base):] for m in ('24', '2g', '24g', '24ghz'))
+    return sorted(found, key=lambda v: (not marked(v), len(v)))
+
+
+def password_for(ssid, security, known):
+    """Ask for the password of ssid, offering a known one. None means cancel."""
+    if security == 'OPEN':
+        return '' if confirm('"%s" is an open network (no password). Connect?' % ssid, default=True) else None
+    if known:
+        click.echo('  A saved password for "%s" is available.' % ssid)
+        x = getpass.getpass('  Password (Enter to use the saved one): ')
+        return x if x else known
+    x = getpass.getpass('  Password for "%s": ' % ssid)
+    return x if x else None
+
+
+def config_wifi():
+    if not require_esp32():
         return
+    click.secho('ESP32 Wi-Fi set-up. The ESP32 is 2.4 GHz only.', bold=True)
+    while True:
+        w = print_wifi_connection()
+        current_ssid = w['ssid'] if w['state_name'] == 'CONNECTED' else None
+        esp_wifi, _ = backend.credentials()
+        saved_wifi, _ = saved_credentials()
+        robot = robot_computer_wifi()
+
+        # Passwords we know, by SSID, to offer as defaults
+        known = {}
+        if saved_wifi['ssid'] and saved_wifi['password']:
+            known[saved_wifi['ssid']] = saved_wifi['password']
+        if robot and robot['ssid'] and robot['password']:
+            known.setdefault(robot['ssid'], robot['password'])
+        if esp_wifi and esp_wifi.get('ssid') and esp_wifi.get('password'):
+            known[esp_wifi['ssid']] = esp_wifi['password']
+        # What to put back on failure. {'ssid': ''}: the ESP32 had no network. None: unknown
+        previous = None
+        if esp_wifi is not None:
+            previous = {'ssid': esp_wifi.get('ssid') or '', 'password': known.get(esp_wifi.get('ssid'))}
+
+        click.echo('\n  Scanning...')
+        scan = backend.scan()
+        if scan is None or scan['state_name'] != 'DONE':
+            click.secho('  Scan %s' % ('timed out' if scan is None else scan['state_name'].lower()), fg='yellow')
+            if backend.snapshot()['wifi']['state_name'] == 'CONNECTING':
+                click.secho('  The ESP32 cannot scan while it keeps trying to join a network. d stops it, then r '
+                            'scans again. (Firmware hello-esp.v0.2.1p1 or later stops it by itself.)', fg='yellow')
+            networks = []
+        else:
+            networks = list_networks(scan, current_ssid, robot['ssid'] if robot else None, saved_wifi['ssid'])
+
+        click.echo('')
+        if networks:
+            click.echo('  1-%d: connect to that network' % len(networks))
+        if robot and robot['ssid']:
+            click.echo('  i:   use the robot computer\'s network ("%s")' % robot['ssid'])
+        if saved_wifi['ssid']:
+            click.echo('  s:   use the saved network ("%s")' % saved_wifi['ssid'])
+        click.echo('  h:   hidden network (type its name)\n'
+                   '  r:   scan again\n'
+                   '  d:   disconnect\n'
+                   '  f:   forget the network saved on the ESP32\n'
+                   '  q:   back to the main menu')
+        k = input('> ').strip()
+
+        if k == 'q' or k == '':
+            return
+        if k == 'r':
+            continue
+        if k.isdigit() and 1 <= int(k) <= len(networks):
+            net = networks[int(k) - 1]
+            password = password_for(net['ssid'], net['auth'], known.get(net['ssid']))
+            if password is not None and connect_wifi(net['ssid'], password, previous):
+                return
+        elif k == 'i' and robot and robot['ssid']:
+            if 'eap' in (robot['key_mgmt'] or ''):
+                click.secho('  The robot computer is on an enterprise (802.1X) network. The ESP32 cannot join it.',
+                            fg='red')
+                continue
+            target = robot['ssid']
+            visible = [n['ssid'] for n in networks]
+            if networks and target not in visible:
+                click.secho('  The ESP32 does not see "%s": it is probably 5 GHz only.' % target, fg='yellow')
+                similar = similar_networks(target, visible)
+                if len(similar) == 1:
+                    if confirm('It sees "%s", which may be the same router\'s 2.4 GHz network. Try it with the '
+                               'robot computer\'s password?' % similar[0], default=True):
+                        target = similar[0]
+                elif similar:
+                    click.echo('  It sees these, which may be the same router\'s 2.4 GHz network:')
+                    for i, v in enumerate(similar):
+                        click.echo('    %d  %s' % (i + 1, v))
+                    x = input('  Try which one with the robot computer\'s password (Enter for none)? ').strip()
+                    if x.isdigit() and 1 <= int(x) <= len(similar):
+                        target = similar[int(x) - 1]
+                if target == robot['ssid'] and not confirm('Try "%s" anyway?' % target):
+                    continue
+            password = robot['password']
+            if password is None:
+                password = password_for(target, 'WPA2_PSK', None)
+            if password is not None and connect_wifi(target, password, previous):
+                return
+        elif k == 's' and saved_wifi['ssid']:
+            if connect_wifi(saved_wifi['ssid'], saved_wifi['password'] or '', previous):
+                return
+        elif k == 'h':
+            ssid = ask('Network name (SSID)')
+            if ssid:
+                password = getpass.getpass('  Password (Enter for an open network): ')
+                if connect_wifi(ssid, password, previous):
+                    return
+        elif k == 'd':
+            backend.command('trigger_wifi_disconnect')
+            click.echo('  Disconnected. The ESP32 stays off Wi-Fi until you pick a network here, or it reboots.')
+            time.sleep(1.0)
+        elif k == 'f':
+            if confirm('Erase the network saved on the ESP32 and disconnect?'):
+                backend.command('forget_wifi')
+                if saved_wifi['ssid'] and confirm('Also remove it from the robot configuration?'):
+                    save_to_robot_config('wifi', {'ssid': 'NA', 'password': 'NA'})
+                time.sleep(1.0)
+        else:
+            click.echo('  Unknown choice')
+
+
+# ############################# Firebase wizard #############################
+
+def print_firebase_connection(esp_fb):
+    backend.pull()
+    s = backend.snapshot()
+    f = s['firebase']
+    header('Current Firebase connection')
+    row('State', f['state_name'], fg=state_color(f['state_name'], ('READY',), ('NOT_CONFIGURED',)))
+    if esp_fb:
+        row('Database URL', esp_fb.get('url') or '-')
+        row('User email', esp_fb.get('user_email') or '-')
+    row('Last publish', age(f['last_publish_age_s']))
+    if f['last_error']:
+        row('Last error', '%d %s' % (f['last_error_code'], f['last_error']), fg='yellow')
+    if s['wifi']['state_name'] != 'CONNECTED':
+        click.secho('  Wi-Fi is not connected: Firebase needs it. Configure Wi-Fi (w in the main menu) first.', fg='yellow')
+    return f
+
+
+def firebase_inits():
+    backend.pull()
+    return backend.snapshot()['firebase']['init_count']
+
+
+def wait_for_firebase(init0):
+    """Wait for Firebase to be ready after a restart, sent when it had init0 initializations. Returns (ready, error)."""
+    ts = time.time()
+    click.echo('  Connecting to Firebase ', nl=False)
+    while time.time() - ts < FIREBASE_READY_TIMEOUT_S:
+        time.sleep(1.0)
+        click.echo('.', nl=False)
+        backend.pull()
+        f = backend.snapshot()['firebase']
+        if f['state_name'] == 'READY' and f['init_count'] > init0:
+            click.echo('')
+            return True, None
+    click.echo('')
+    f = backend.snapshot()['firebase']
+    return False, ('%d %s' % (f['last_error_code'], f['last_error'])) if f['last_error'] else f['state_name']
+
+
+def connect_firebase(cfg, previous):
+    """Use cfg (url, api_key, user_email, user_password). Save it if Firebase comes up. Returns True on success."""
     try:
-        Esp32Base.validate_firebase_config(url, api_key, email, password)
+        Esp32Base.validate_firebase_config(cfg['url'], cfg['api_key'], cfg['user_email'], cfg['user_password'])
     except ValueError as e:
         click.secho('  %s' % e, fg='red')
+        return False
+    fields = (cfg['url'], cfg['api_key'], cfg['user_email'], cfg['user_password'])
+    init0 = firebase_inits()
+    if not backend.command('set_firebase_config', *fields, persist=False, apply_now=True):
+        click.secho('  Could not send the settings to the ESP32', fg='red')
+        return False
+    ok, err = wait_for_firebase(init0)
+    if ok:
+        backend.command('set_firebase_config', *fields, persist=True, apply_now=False)
+        click.secho('  Firebase ready', fg='green')
+        save_to_robot_config('firebase', dict(cfg))
+        return True
+    click.secho('  Firebase did not come up: %s' % err, fg='red')
+    if previous and all(previous.get(k) for k in ('url', 'api_key', 'user_email', 'user_password')):
+        if confirm('Go back to the previous settings (%s)?' % previous['url'], default=True):
+            init0 = firebase_inits()
+            backend.command('set_firebase_config', previous['url'], previous['api_key'], previous['user_email'],
+                            previous['user_password'], persist=False, apply_now=True)
+            if wait_for_firebase(init0)[0]:
+                click.secho('  Back on the previous settings', fg='green')
+            else:
+                click.secho('  The previous settings did not come up either. The ESP32 goes back to its saved '
+                            'settings at its next reboot.', fg='red')
+    else:
+        click.secho('  The ESP32 goes back to its saved settings at its next reboot.', fg='yellow')
+    return False
+
+
+def merge_known(esp_fb, saved_fb):
+    """Best known value of each field: the ESP32's (when readable), else the robot configuration's."""
+    out = {}
+    for k in ('url', 'api_key', 'user_email', 'user_password'):
+        v = (esp_fb or {}).get(k)
+        out[k] = v if v else saved_fb.get(k)
+    return out
+
+
+def config_firebase():
+    if not require_esp32():
         return
-    persist = confirm_yes('Save to the ESP32 flash (survives a reboot)?')
-    after_command(backend.command('set_firebase_config', url, api_key, email, password, persist=persist,
-                                  apply_now=True), 'Firebase credentials')
-
-
-def send_params_credentials():
-    wifi, fb = backend.params_credentials()
-    header('Credentials in the robot parameters')
-    row('Wi-Fi SSID', wifi['ssid'] or '(not set)')
-    row('Firebase URL', fb['url'] or '(not set)')
-    if not wifi['ssid'] and not all(fb.values()):
-        click.secho('  Nothing to send: set esp32.wifi / esp32.firebase in stretch_configuration_params.yaml',
-                    fg='yellow')
-        return
-    if confirm('Send these to the ESP32 and save them to its flash?'):
-        after_command(backend.command('send_credentials_from_params'), 'Credentials from params')
-
-
-# ############################# Menus #############################
-
-def wifi_menu():
+    click.secho('ESP32 Firebase set-up.', bold=True)
     while True:
-        click.secho('\n--- Wi-Fi ---', bold=True)
-        click.echo('  s: status            c: credentials (masked)   C: credentials (unmasked)\n'
-                   '  w: set credentials   n: scan networks\n'
-                   '  r: reconnect         d: disconnect\n'
-                   '  e: enable            x: disable                t: retry period\n'
-                   '  F: forget (erase the credentials from the ESP32 flash)\n'
-                   '  b: back')
+        _, esp_fb = backend.credentials()
+        _, saved_fb = saved_credentials()
+        print_firebase_connection(esp_fb)
+        known = merge_known(esp_fb, saved_fb)
+        # What to go back to on failure: the ESP32's settings, with secrets from the robot
+        # configuration only if that is the same project and user
+        previous = None
+        if esp_fb and esp_fb.get('url'):
+            same = saved_fb['url'] == esp_fb['url'] and saved_fb['user_email'] == esp_fb.get('user_email')
+            if esp_fb.get('user_password') or same:
+                previous = known
+
+        saved_complete = all(saved_fb.values())
+        click.echo('')
+        if saved_complete:
+            click.echo('  i: use the robot configuration\'s settings (%s, %s)' % (saved_fb['url'],
+                                                                                 saved_fb['user_email']))
+        click.echo('  e: enter the settings\n'
+                   '  r: reconnect\n'
+                   '  f: forget the settings saved on the ESP32\n'
+                   '  q: back to the main menu')
         k = input('> ').strip()
-        if k in ('b', 'q', ''):
+
+        if k == 'q' or k == '':
             return
-        if k == 's':
-            print_status(('wifi',))
-        elif k == 'c':
-            print_credentials(unmask=False)
-        elif k == 'C':
-            print_credentials(unmask=True)
-        elif k == 'w':
-            set_wifi_credentials()
-        elif k == 'n':
-            print_scan()
-        elif k == 'r':
-            after_command(backend.command('trigger_wifi_reconnect'), 'Reconnect')
-        elif k == 'd':
-            after_command(backend.command('trigger_wifi_disconnect'), 'Disconnect')
+        if k == 'i' and saved_complete:
+            if connect_firebase(dict(saved_fb), previous):
+                return
         elif k == 'e':
-            after_command(backend.command('set_config', wifi_enable=1), 'Wi-Fi enable')
-        elif k == 'x':
-            if confirm('Disable Wi-Fi (until enabled, or the ESP32 gets its config at the next startup)?'):
-                after_command(backend.command('set_config', wifi_enable=0), 'Wi-Fi disable')
-        elif k == 't':
-            ms = ask_int('Retry period while disconnected (ms, 1000 or more)', 5000)
-            if ms is not None:
-                after_command(backend.command('set_config', wifi_retry_ms=ms), 'Retry period')
-        elif k == 'F':
-            if confirm('Erase the Wi-Fi credentials from the ESP32 and disconnect?'):
-                after_command(backend.command('forget_wifi'), 'Forget Wi-Fi')
-        else:
-            click.echo('Unknown choice')
-
-
-def firebase_menu():
-    while True:
-        click.secho('\n--- Firebase ---', bold=True)
-        click.echo('  s: status            c: credentials (masked)   C: credentials (unmasked)\n'
-                   '  f: set credentials   r: restart\n'
-                   '  e: enable            x: disable                t: publish period\n'
-                   '  F: forget (erase the credentials from the ESP32 flash)\n'
-                   '  b: back')
-        k = input('> ').strip()
-        if k in ('b', 'q', ''):
-            return
-        if k == 's':
-            print_status(('firebase',))
-        elif k == 'c':
-            print_credentials(unmask=False)
-        elif k == 'C':
-            print_credentials(unmask=True)
-        elif k == 'f':
-            set_firebase_credentials()
+            click.echo('  Press Enter to keep a value in [brackets].')
+            cfg = {'url': ask('Database URL', known['url']),
+                   'user_email': ask('User email', known['user_email']),
+                   'api_key': ask('Web API key', known['api_key'], secret=True),
+                   'user_password': ask('User password', known['user_password'], secret=True)}
+            if not all(cfg.values()):
+                click.secho('  All four are needed.', fg='red')
+                continue
+            if connect_firebase(cfg, previous):
+                return
         elif k == 'r':
-            after_command(backend.command('trigger_firebase_restart'), 'Restart')
-        elif k == 'e':
-            after_command(backend.command('set_config', firebase_enable=1), 'Firebase enable')
-        elif k == 'x':
-            if confirm('Disable Firebase (until enabled, or the ESP32 gets its config at the next startup)?'):
-                after_command(backend.command('set_config', firebase_enable=0), 'Firebase disable')
-        elif k == 't':
-            ms = ask_int('Publish period (ms, 1000 or more)', 5000)
-            if ms is not None:
-                after_command(backend.command('set_config', firebase_publish_period_ms=ms), 'Publish period')
-        elif k == 'F':
-            if confirm('Erase the Firebase credentials from the ESP32 and stop Firebase?'):
-                after_command(backend.command('forget_firebase'), 'Forget Firebase')
-        else:
-            click.echo('Unknown choice')
-
-
-def main_menu():
-    while True:
-        click.secho('\n------ ESP32 (%s) ------' % backend.name, bold=True)
-        click.echo('  s: full status       p: power and Pimu link\n'
-                   '  w: Wi-Fi ...         f: Firebase ...\n'
-                   '  c: credentials (masked)\n'
-                   '  P: send the credentials in the robot params\n'
-                   '  l: log               v: log level\n'
-                   '  R: reboot the ESP32\n'
-                   '  q: quit')
-        k = input('> ').strip()
-        if k == 'q':
-            return
-        if k in ('s', ''):
-            print_status()
-        elif k == 'p':
-            print_status(('power',))
-        elif k == 'w':
-            wifi_menu()
+            init0 = firebase_inits()
+            backend.command('trigger_firebase_restart')
+            ok, err = wait_for_firebase(init0)
+            click.secho('  Firebase ready' if ok else '  Firebase did not come up: %s' % err,
+                        fg='green' if ok else 'red')
         elif k == 'f':
-            firebase_menu()
-        elif k == 'c':
-            print_credentials(unmask=False)
-        elif k == 'P':
-            send_params_credentials()
-        elif k == 'l':
-            print_log()
-        elif k == 'v':
-            level = ask_int('Log level (0 DEBUG, 1 INFO, 2 WARN, 3 ERROR)', 1)
-            if level is not None and 0 <= level <= 3:
-                after_command(backend.command('set_config', log_level=level), 'Log level')
-            elif level is not None:
-                click.secho('  The log level is 0 to 3', fg='red')
-        elif k == 'R':
-            if confirm('Reboot the ESP32? Its power outputs reset while it boots.'):
-                after_command(backend.command('reboot'), 'Reboot')
+            if confirm('Erase the Firebase settings saved on the ESP32 and stop Firebase?'):
+                backend.command('forget_firebase')
+                if saved_complete and confirm('Also remove them from the robot configuration?'):
+                    save_to_robot_config('firebase', {'url': 'NA', 'api_key': 'NA', 'user_email': 'NA',
+                                                      'user_password': 'NA'})
+                time.sleep(1.0)
         else:
-            click.echo('Unknown choice')
+            click.echo('  Unknown choice')
 
 
 # ############################# Main #############################
@@ -598,24 +805,29 @@ backend = DirectBackend() if args.direct else ServerBackend()
 if not backend.startup():
     sys.exit(1)
 
-try:
-    one_shot = [args.status, args.wifi, args.firebase, args.config, args.show_credentials, args.scan, args.log]
-    if any(one_shot):
-        if args.status:
+
+def main_menu():
+    """Status, then the menu. Enter, or anything not on the menu, prints both again."""
+    print_status()
+    while True:
+        click.secho('\n------ ESP32 (%s) ------' % backend.name, bold=True)
+        click.echo('  w: configure Wi-Fi\n'
+                   '  f: configure Firebase\n'
+                   '  s: print status\n'
+                   '  q: quit')
+        k = input('> ').strip()
+        if k == 'q':
+            return
+        if k == 'w':
+            config_wifi()
+        elif k == 'f':
+            config_firebase()
+        else:
             print_status()
-        if args.wifi:
-            print_status(('wifi',))
-        if args.firebase:
-            print_status(('firebase',))
-        if args.config or args.show_credentials:
-            print_credentials(unmask=args.show_credentials)
-        if args.scan:
-            print_scan()
-        if args.log:
-            print_log()
-    else:
-        print_status()
-        main_menu()
+
+
+try:
+    main_menu()
 except (KeyboardInterrupt, EOFError):
     click.echo('')
 finally:
