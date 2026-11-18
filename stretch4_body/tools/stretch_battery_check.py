@@ -16,6 +16,10 @@ if not args.direct:
 else:
     from stretch4_body.subsystem.power_periph import PowerPeriph
 
+# With the adapter in, the power board stops the charger once the battery
+# reads 99% and restarts it below 95%, so it isn't charging in between
+CHARGER_RESTART_SOC = 95
+
 
 def battery_check():
     p = PowerPeriph()
@@ -69,11 +73,16 @@ def battery_check():
         click.secho(f'Adapter (physical switch): connected', fg='green')
     
     click.secho('######## Charger Information ##########', fg='cyan')
-    if not battery_is_charging:
-        click.secho(f'Battery Charger: Not Charging', fg='yellow')
     if battery_is_charging:
         click.secho(f'Battery Charger: Charging', fg='green')
         click.secho(f'Battery Charger Current: {current_charge:.2f} A', fg='green')
+    elif not adapter_voltage_present:
+        click.secho(f'Battery Charger: Not Charging. Adapter voltage not present', fg='yellow')
+    elif battery_soc >= CHARGER_RESTART_SOC:
+        click.secho(f'Battery Charger: Not Charging. Battery near full', fg='green')
+    else:
+        # Briefly while the power board restarts the charger; otherwise a fault
+        click.secho(f'Battery Charger: Not Charging. Charger restarting or fault', fg='yellow')
     
     print("")
 
