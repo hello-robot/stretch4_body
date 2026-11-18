@@ -407,12 +407,18 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._dirty_trigger = True
 
     def set_esp32_fw_update(self):
-        """Hold the ESP32 in its bootloader, ready to flash (Pimu drives its BOOT and RESET lines)."""
+        """
+        Hold the ESP32 in its bootloader, ready to flash (Pimu drives its BOOT and RESET lines).
+        Known issue: an ESP32 reset cuts the robot's power (no pull-down on the power-off line).
+        """
         self._trigger = self._trigger | self.TRIGGER_ESP32_FW_UPDATE
         self._dirty_trigger = True
 
     def set_esp32_reset(self):
-        """Reset the ESP32 (Pimu drives its RESET line). Works whatever the ESP32 firmware is doing."""
+        """
+        Reset the ESP32 (Pimu drives its RESET line). Works whatever the ESP32 firmware is doing.
+        Known issue: an ESP32 reset cuts the robot's power (no pull-down on the power-off line).
+        """
         self._trigger = self._trigger | self.TRIGGER_ESP32_RESET
         self._dirty_trigger = True
 

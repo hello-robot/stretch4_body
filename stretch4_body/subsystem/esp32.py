@@ -98,7 +98,9 @@ def esp32_status_template():
         'firebase': {'state': 0, 'state_name': '', 'enabled': False, 'app_ready': False, 'db_setup': False,
                      'init_count': 0, 'publish_ok': 0, 'publish_errors': 0, 'last_publish_age_s': None,
                      'publish_period_s': 0.0, 'last_error_code': 0, 'last_error': '',
-                     'last_power_trigger': 0, 'last_trigger_age_s': None, 'stream_events': 0},
+                     'stream_events': 0, 'stream_age_s': None, 'stream_restarts': 0, 'time_synced': False,
+                     'cmd_action': 0, 'cmd_action_name': '', 'cmd_result': 0, 'cmd_result_name': '',
+                     'cmd_age_s': None, 'cmd_id': ''},
     }
 
 
@@ -167,7 +169,12 @@ class Esp32Defn:
                                     206: 'AP_TSF_RESET', 207: 'ROAMING', 210: 'NO_AP_FOUND_W_COMPATIBLE_SECURITY',
                                     211: 'NO_AP_FOUND_IN_AUTHMODE_THRESHOLD', 212: 'NO_AP_FOUND_IN_RSSI_THRESHOLD'}
     FIREBASE_STATE_NAMES = {0: 'NOT_CONFIGURED', 1: 'DISABLED', 2: 'WAITING_FOR_WIFI', 3: 'AUTHENTICATING',
-                            4: 'READY'}
+                            4: 'READY', 5: 'STREAM_CONNECTING'}
+    # The last power command from the app (requests/power_command) and what came of it
+    CMD_ACTION_NAMES = {0: 'NONE', 1: 'SLEEP', 2: 'WAKE'}
+    CMD_RESULT_NAMES = {0: 'NONE', 1: 'PENDING', 2: 'DONE', 3: 'FAILED', 4: 'REJECTED', 5: 'EXPIRED',
+                        6: 'INVALID'}
+    CMD_ID_LEN = 40
     SCAN_STATE_NAMES = {0: 'IDLE', 1: 'RUNNING', 2: 'DONE', 3: 'FAILED'}
     AUTH_MODE_NAMES = {0: 'OPEN', 1: 'WEP', 2: 'WPA_PSK', 3: 'WPA2_PSK', 4: 'WPA_WPA2_PSK',
                        5: 'WPA2_ENTERPRISE', 6: 'WPA3_PSK', 7: 'WPA2_WPA3_PSK', 8: 'WAPI_PSK',
@@ -186,7 +193,7 @@ class Esp32Defn:
     FMT_BOARD_INFO = '<20s30s'
     FMT_STATUS = '<QBBHIIHHHHff' + 'B' * 12 + 'fff' + 'B' * 6 + 'IIIIII' + 'B'
     FMT_WIFI_STATUS = '<BBBB33sbB6s6s4s4s4s4s32sIIBI'
-    FMT_FIREBASE_STATUS = '<BBBBIIIIIi64siII'
+    FMT_FIREBASE_STATUS = '<BBBBIIIIIi64sIIIBBBI40s'
     FMT_WIFI_CONFIG = '<33s65sB'
     FMT_FIREBASE_CONFIG = '<251s129s251s65sB'
     FMT_CONFIG = '<IIBBB'
@@ -425,7 +432,7 @@ class Esp32Base(Esp32Defn, Device):
         self._trigger |= self.TRIGGER_WIFI_SCAN
 
     def reboot(self):
-        """Restart the ESP32. Its power outputs reset while it boots."""
+        """Restart the ESP32. Known issue: an ESP32 reset cuts the robot's power (no pull-down on the power-off line)."""
         self._trigger |= self.TRIGGER_REBOOT
 
     def clear_log(self):
@@ -584,6 +591,9 @@ class Esp32Base(Esp32Defn, Device):
         print('Firebase: %s | Inits %d | Published ok %d, errors %d, last %s | Last error %s %s | Stream events %d'
               % (f['state_name'], f['init_count'], f['publish_ok'], f['publish_errors'], age, f['last_error_code'],
                  f['last_error'], f['stream_events']))
+        if f['cmd_action']:
+            print('  Last power command: %s "%s" %s, %.0f s ago'
+                  % (f['cmd_action_name'], f['cmd_id'], f['cmd_result_name'], f['cmd_age_s'] or 0))
 
 
 class Esp32_Protocol_P1(Esp32Base):
@@ -671,9 +681,16 @@ class Esp32_Protocol_P1(Esp32Base):
         f['publish_period_s'] = v[8] / 1000.0
         f['last_error_code'] = v[9]
         f['last_error'] = _cstr(v[10])
-        f['last_power_trigger'] = v[11]
-        f['last_trigger_age_s'] = None if v[12] == self.UNKNOWN_AGE else v[12] / 1000.0
-        f['stream_events'] = v[13]
+        f['stream_events'] = v[11]
+        f['stream_age_s'] = None if v[12] == self.UNKNOWN_AGE else v[12] / 1000.0
+        f['stream_restarts'] = v[13]
+        f['time_synced'] = bool(v[14])
+        f['cmd_action'] = v[15]
+        f['cmd_action_name'] = self.CMD_ACTION_NAMES.get(v[15], str(v[15]))
+        f['cmd_result'] = v[16]
+        f['cmd_result_name'] = self.CMD_RESULT_NAMES.get(v[16], str(v[16]))
+        f['cmd_age_s'] = None if v[17] == self.UNKNOWN_AGE else v[17] / 1000.0
+        f['cmd_id'] = _cstr(v[18])
 
 
 class Esp32(Esp32Base):

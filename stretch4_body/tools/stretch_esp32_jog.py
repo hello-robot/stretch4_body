@@ -294,9 +294,16 @@ def print_firebase(s):
     row('Publishes', '%d ok, %d errors' % (f['publish_ok'], f['publish_errors']),
         fg='yellow' if f['publish_errors'] else None)
     row('Last error', '%d %s' % (f['last_error_code'], f['last_error']) if f['last_error'] else '-')
-    trigger = {0: 'none', 1: 'sleep', 2: 'wake'}.get(f['last_power_trigger'], str(f['last_power_trigger']))
-    row('Last power request', '%s (%s)' % (trigger, age(f['last_trigger_age_s'])))
-    row('Stream events', f['stream_events'])
+    row('Command stream', '%d events, last %s, %d restarts'
+        % (f['stream_events'], age(f['stream_age_s']), f['stream_restarts']),
+        fg='yellow' if f['state_name'] == 'STREAM_CONNECTING' else None)
+    row('Clock set (SNTP)', yes_no(f['time_synced']))
+    if f['cmd_action'] or f['cmd_result']:
+        row('Last power command', '%s "%s": %s (%s)'
+            % (f['cmd_action_name'].lower(), f['cmd_id'], f['cmd_result_name'].lower(), age(f['cmd_age_s'])),
+            fg=state_color(f['cmd_result_name'], ('DONE', 'PENDING'), ('FAILED', 'REJECTED', 'INVALID')))
+    else:
+        row('Last power command', 'none')
     row('Initializations', f['init_count'])
 
 

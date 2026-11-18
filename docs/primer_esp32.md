@@ -38,7 +38,7 @@ Without `CDCOnBoot=cdc` the RPC is not on the USB port.
 | board info | board variant, firmware version |
 | status | power state, reset reason, heap, loop times, 12V/aux 20V rails, adapter, the outputs as last driven, the Pimu link (its last `Samd_Status`, freshness, UART counters) |
 | Wi-Fi status | state, SSID, RSSI, channel, BSSID, IP/gateway/netmask/DNS, MAC, hostname, attempts, disconnects, last disconnect reason |
-| Firebase status | state, publish counts, last error, last power trigger, stream events |
+| Firebase status | state, publish counts, last error, command stream health (events, age, restarts), whether the clock is set, the last power command (id, action, result) |
 | Wi-Fi config (get/set) | SSID and password, saved to flash or not, applied now or not |
 | Firebase config (get/set) | URL, API key, user email and password |
 | config | publish period, Wi-Fi retry period, Wi-Fi/Firebase enable, log level. Pushed at startup, not saved |
@@ -101,6 +101,16 @@ has, with no ESP32 code in the server:
 | `adapter_connected`, `adapter_fault` | charger adapter inputs |
 | `connected_to_network` | Wi-Fi connected |
 | `connected_to_firebase` | Firebase ready |
+
+### Remote sleep and wake
+
+An app sleeps and wakes the robot through the Realtime Database: it writes a command
+with a unique id to `requests/power_command`, and the ESP32 writes the outcome to
+`requests/power_command_ack` and the robot's status, with a `last_seen` heartbeat, to
+`system_status`. The contract is in `stretch_firmware_ii/arduino/hello_esp/README.md`,
+"Firebase". `stretch_esp32_jog` shows the last command and the stream health under
+Firebase. Firebase `READY` means the command stream is live; `STREAM_CONNECTING`
+means signed in, but commands won't arrive yet.
 
 ### Credentials
 
