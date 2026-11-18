@@ -233,6 +233,11 @@ def flash_firmware_update(device_name, version_str, port, verbose, dummy=False):
         import glob
         import os
 
+        # Known issue: flashing the ESP32 cuts the robot's power (no pull-down on the power-off line).
+        # Write everything to disk first, so files written just before aren't lost.
+        click.secho("Note: flashing the ESP32 powers off the robot. Syncing files to disk first.", fg="yellow")
+        os.sync()
+
         #Force ESP32 into bootloader as is more reliable to flash this way
         import stretch4_body.subsystem.power_periph
         dd = stretch4_body.subsystem.power_periph.PowerPeriph(backend=0)

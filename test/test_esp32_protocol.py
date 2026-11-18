@@ -19,7 +19,7 @@ FIRMWARE_SIZES = {
     'FMT_BOARD_INFO': 50,
     'FMT_STATUS': 91,
     'FMT_WIFI_STATUS': 112,
-    'FMT_FIREBASE_STATUS': 104,
+    'FMT_FIREBASE_STATUS': 151,
     'FMT_WIFI_CONFIG': 99,
     'FMT_FIREBASE_CONFIG': 697,
     'FMT_CONFIG': 11,
@@ -67,6 +67,13 @@ class TestLayouts:
         ids = dict((k, int(v)) for k, v in re.findall(r'#define (RPC_\w+)\s+(\d+)', src))
         for name, value in ids.items():
             assert getattr(D, name) == value, name
+        for name, value in re.findall(r'#define ESP32_FB_(\w+)\s+(\d+)', src):
+            if name.endswith('_LEN'):
+                continue
+            assert D.FIREBASE_STATE_NAMES[int(value)] == name, name
+        for name, value in re.findall(r'#define ESP32_CMD_RESULT_(\w+)\s+(\d+)', src):
+            assert D.CMD_RESULT_NAMES[int(value)] == name, name
+        assert int(re.search(r'#define ESP32_CMD_ID_LEN\s+(\d+)', src).group(1)) == D.CMD_ID_LEN
         triggers = dict((k, int(v)) for k, v in re.findall(r'#define ESP32_(TRIGGER_\w+)\s+\(1U << (\d+)\)', src))
         for name, bit in triggers.items():
             assert getattr(D, name) == 1 << bit, name
@@ -119,14 +126,26 @@ class TestUnpack:
 
     def test_firebase_status(self):
         packed = struct.pack(D.FMT_FIREBASE_STATUS, 4, 1, 1, 1, 2, 100, 3, 1500, 5000, -118, b'connection refused',
-                             1, D.UNKNOWN_AGE, 9)
+                             9, 12000, 1, 1, 2, 2, 3500, b'-NxAbc123')
         e = p1()
         e._unpack_firebase_status(packed)
         f = e.status['firebase']
         assert f['state_name'] == 'READY' and f['publish_ok'] == 100 and f['publish_errors'] == 3
         assert f['last_publish_age_s'] == pytest.approx(1.5) and f['publish_period_s'] == pytest.approx(5.0)
         assert f['last_error_code'] == -118 and f['last_error'] == 'connection refused'
-        assert f['last_trigger_age_s'] is None
+        assert f['stream_events'] == 9 and f['stream_age_s'] == pytest.approx(12.0) and f['stream_restarts'] == 1
+        assert f['time_synced']
+        assert f['cmd_action_name'] == 'WAKE' and f['cmd_result_name'] == 'DONE'
+        assert f['cmd_age_s'] == pytest.approx(3.5) and f['cmd_id'] == '-NxAbc123'
+
+    def test_firebase_status_no_stream_no_command(self):
+        packed = struct.pack(D.FMT_FIREBASE_STATUS, 5, 1, 1, 1, 1, 0, 0, D.UNKNOWN_AGE, 5000, 0, b'',
+                             0, D.UNKNOWN_AGE, 0, 0, 0, 0, D.UNKNOWN_AGE, b'')
+        e = p1()
+        e._unpack_firebase_status(packed)
+        f = e.status['firebase']
+        assert f['state_name'] == 'STREAM_CONNECTING'
+        assert f['stream_age_s'] is None and f['cmd_age_s'] is None and f['cmd_action_name'] == 'NONE'
 
     def test_board_info(self):
         e = p1()
