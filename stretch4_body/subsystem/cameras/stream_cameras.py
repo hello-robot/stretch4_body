@@ -1,4 +1,5 @@
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 from collections.abc import Generator
@@ -10,7 +11,18 @@ from stretch4_body.subsystem.cameras.models.image_frame import ImageFrame, Synce
 from stretch4_body.subsystem.cameras.models.rgb_camera_config import RGBCameraConfig
 from stretch4_body.subsystem.cameras.detectors.detector_ai_models import AIModelWrapper
 
-def _start_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, config:RGBCameraConfig|None=None) -> Generator[ImageFrame, None, None]:
+# Every stream_* helper takes an optional `stop_event`. Setting it from another thread ends the stream
+# within about 0.1 s, even if no frames are arriving. However the stream ends (stop_event, `break`,
+# generator.close(), or an exception), the camera is stopped and its device is closed.
+
+def _stop_when_done(rgb_pipeline_controller: RGBPipelineController, frames: Generator):
+    try:
+        yield from frames
+    finally:
+        frames.close()
+        rgb_pipeline_controller.stop()
+
+def _start_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, config:RGBCameraConfig|None=None, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     cls = RGBPipelineControllerROS if use_ros_for_cameras else RGBPipelineController
     rgb_pipeline_controller = cls(
         camera_type=camera_type,
@@ -22,11 +34,12 @@ def _start_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_cr
         ai_models_to_use=ai_models_to_use or [],
         detect_aruco_marker_size=detect_aruco_marker_size,
         camera_configs={camera_type.base: config} if config is not None else None,
+        stop_event=stop_event,
     )
 
-    return rgb_pipeline_controller.get_frame(is_run_pipeline=is_run_pipeline)
+    return _stop_when_done(rgb_pipeline_controller, rgb_pipeline_controller.get_frame(is_run_pipeline=is_run_pipeline))
 
-def _start_synced_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False, configs:dict[RGBCameras, RGBCameraConfig]|None=None) -> Generator[SyncedImageFrame, None, None]:
+def _start_synced_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool, is_crop: bool, ai_models_to_use: list[AIModelWrapper]|None, detect_aruco_marker_size: float|None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False, configs:dict[RGBCameras, RGBCameraConfig]|None=None, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     cls = RGBPipelineControllerROS if use_ros_for_cameras else RGBPipelineController
     rgb_pipeline_controller = cls(
         camera_type=camera_type,
@@ -39,34 +52,35 @@ def _start_synced_camera(camera_type:RGBCameras, is_rotate:bool, is_rectify:bool
         detect_aruco_marker_size=detect_aruco_marker_size,
         enable_pointcloud=enable_pointcloud,
         camera_configs=configs,
+        stop_event=stop_event,
     )
 
-    return rgb_pipeline_controller.get_frame_synced(is_run_pipeline=is_run_pipeline)
+    return _stop_when_done(rgb_pipeline_controller, rgb_pipeline_controller.get_frame_synced(is_run_pipeline=is_run_pipeline))
 
 
-def stream_left_camera(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[ImageFrame, None, None]:
+def stream_left_camera(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     """Stream the left head camera"""
-    return _start_camera(camera_type=RGBCameras.head_left, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config)
+    return _start_camera(camera_type=RGBCameras.head_left, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config, stop_event=stop_event)
 
-def stream_right_camera(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[ImageFrame, None, None]:
+def stream_right_camera(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     """Stream the right head camera"""
-    return _start_camera(camera_type=RGBCameras.head_right, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config)
+    return _start_camera(camera_type=RGBCameras.head_right, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config, stop_event=stop_event)
 
-def stream_center_camera(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[ImageFrame, None, None]:
+def stream_center_camera(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     """Stream the right head camera"""
-    return _start_camera(camera_type=RGBCameras.head_center, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config)
+    return _start_camera(camera_type=RGBCameras.head_center, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config, stop_event=stop_event)
 
-def stream_left_right_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[SyncedImageFrame, None, None]:
+def stream_left_right_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     """Stream the left and right head cameras"""
-    return _start_synced_camera(camera_type=RGBCameras.head_left_right, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs)
+    return _start_synced_camera(camera_type=RGBCameras.head_left_right, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, stop_event=stop_event)
 
-def stream_left_right_center_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[SyncedImageFrame, None, None]:
+def stream_left_right_center_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     """Stream the center, left and right head cameras"""
-    return _start_synced_camera(camera_type=RGBCameras.head_left_right_center, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs)
+    return _start_synced_camera(camera_type=RGBCameras.head_left_right_center, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, stop_event=stop_event)
 
-def stream_gripper_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False) -> Generator[SyncedImageFrame, None, None]:
+def stream_gripper_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     """Stream the gripper RGBD camera"""
-    return _start_synced_camera(camera_type=RGBCameras.gripper_rgbd, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, enable_pointcloud=enable_pointcloud)
+    return _start_synced_camera(camera_type=RGBCameras.gripper_rgbd, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, enable_pointcloud=enable_pointcloud, stop_event=stop_event)
 
 
 # The MJPEG variants below stream the same cameras, but the device encodes to JPEG on-chip. Frames
@@ -74,29 +88,29 @@ def stream_gripper_camera(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None
 # BGR to move between processes. `is_run_pipeline=True` decodes them for you; pass False to keep the
 # JPEG bitstream (that is what the ROS 2 camera node does before republishing it).
 
-def stream_left_camera_compressed(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[ImageFrame, None, None]:
+def stream_left_camera_compressed(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     """Stream the left head camera, MJPEG encoded on-device"""
-    return _start_camera(camera_type=RGBCameras.head_left_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config)
+    return _start_camera(camera_type=RGBCameras.head_left_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config, stop_event=stop_event)
 
-def stream_right_camera_compressed(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[ImageFrame, None, None]:
+def stream_right_camera_compressed(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     """Stream the right head camera, MJPEG encoded on-device"""
-    return _start_camera(camera_type=RGBCameras.head_right_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config)
+    return _start_camera(camera_type=RGBCameras.head_right_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config, stop_event=stop_event)
 
-def stream_center_camera_compressed(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[ImageFrame, None, None]:
+def stream_center_camera_compressed(*, config:RGBCameraConfig|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[ImageFrame, None, None]:
     """Stream the center head camera, MJPEG encoded on-device"""
-    return _start_camera(camera_type=RGBCameras.head_center_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config)
+    return _start_camera(camera_type=RGBCameras.head_center_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, config=config, stop_event=stop_event)
 
-def stream_left_right_camera_compressed(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[SyncedImageFrame, None, None]:
+def stream_left_right_camera_compressed(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     """Stream the left and right head cameras, MJPEG encoded on-device"""
-    return _start_synced_camera(camera_type=RGBCameras.head_left_right_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs)
+    return _start_synced_camera(camera_type=RGBCameras.head_left_right_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, stop_event=stop_event)
 
-def stream_left_right_center_camera_compressed(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True) -> Generator[SyncedImageFrame, None, None]:
+def stream_left_right_center_camera_compressed(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     """Stream the center, left and right head cameras, MJPEG encoded on-device"""
-    return _start_synced_camera(camera_type=RGBCameras.head_left_right_center_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs)
+    return _start_synced_camera(camera_type=RGBCameras.head_left_right_center_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, stop_event=stop_event)
 
-def stream_gripper_camera_compressed(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False) -> Generator[SyncedImageFrame, None, None]:
+def stream_gripper_camera_compressed(*, configs:dict[RGBCameras, RGBCameraConfig]|None=None, is_rotate:bool=True, is_rectify:bool=False, is_crop: bool=False, ai_models_to_use: list[AIModelWrapper]|None=None, detect_aruco_marker_size: float|None=None, use_ros_for_cameras:bool=False, is_run_pipeline:bool=True, enable_pointcloud:bool=False, stop_event:threading.Event|None=None) -> Generator[SyncedImageFrame, None, None]:
     """Stream the gripper RGBD camera, MJPEG encoded on-device. The depth map is never compressed."""
-    return _start_synced_camera(camera_type=RGBCameras.gripper_rgbd_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, enable_pointcloud=enable_pointcloud)
+    return _start_synced_camera(camera_type=RGBCameras.gripper_rgbd_compressed, is_rotate=is_rotate, is_rectify=is_rectify, is_crop=is_crop, ai_models_to_use=ai_models_to_use, detect_aruco_marker_size=detect_aruco_marker_size, use_ros_for_cameras=use_ros_for_cameras, is_run_pipeline=is_run_pipeline, configs=configs, enable_pointcloud=enable_pointcloud, stop_event=stop_event)
 
 
 if __name__ == "__main__":
