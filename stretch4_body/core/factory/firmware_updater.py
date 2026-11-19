@@ -284,11 +284,17 @@ class FirmwareUpdater():
                 dd.stop()
                 return False
             dd.pull_status()
-            if dd.status['voltage']<24.0:
+            # The voltage comes from the BMS: without it (no battery, or the BMS not
+            # answering) it is NaN, which says nothing about the board itself
+            if not dd.status.get('battery_valid', True):
+                click.secho('WARN: Power Periph battery voltage not available (battery status %s)'
+                            % dd.status['battery_status'], fg="yellow")
+            elif dd.status['voltage']<24.0:
                 click.secho('FAIL: Power Periph voltage is %f' % dd.status['voltage'], fg="red")
                 dd.stop()
                 return False
-            click.secho('PASS: Power Periph voltage is %f' % dd.status['voltage'], fg="green")
+            else:
+                click.secho('PASS: Power Periph voltage is %f' % dd.status['voltage'], fg="green")
             click.secho('PASS: Established comms with device %s ' % device_name.upper(),fg="green")
             dd.stop()
             return True 

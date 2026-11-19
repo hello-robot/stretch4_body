@@ -129,7 +129,14 @@ class RobotMonitor(Device):
 
     # ##################################
     def monitor_voltage(self):
-        v=self.robot.power_periph.status['voltage']
+        ps = self.robot.power_periph.status
+        battery_status = ps.get('battery_status', 'UNKNOWN')
+        if battery_status != self.monitor_history.get('monitor_battery_status', battery_status):
+            self.logger.info('Battery status: %s' % battery_status)
+        self.monitor_history['monitor_battery_status'] = battery_status
+        if not ps.get('battery_valid', True):
+            return  # The voltage is NaN without valid BMS values
+        v=ps['voltage']
         if v < self.robot.power_periph.config['low_voltage_alert']:
             if v-self.monitor_history['monitor_voltage']<-0.5:#every 0.5V of drop allow to report
                 self.logger.info('Low voltage of: %.2f'%v)
@@ -140,6 +147,8 @@ class RobotMonitor(Device):
     # ##################################
     def monitor_current(self):
         i=self.robot.power_periph.status['current']
+        if i != i:
+            return  # NaN: on battery without valid BMS values the system current is unknown
         if i > self.robot.power_periph.config['high_current_alert']:
             if i-self.monitor_history['monitor_current']>0.25:#every 0.25A of rise allow to report
                 self.logger.info('High current of: %.2f'%i)

@@ -2,6 +2,7 @@
 ESP32 RPC protocol (stretch4_body.subsystem.esp32) without hardware: the packed
 layouts, unpacking, packing, validation, the log format and the credentials helpers.
 """
+import math
 import os
 import re
 import struct
@@ -17,7 +18,8 @@ D = Esp32Defn
 # Sizes asserted in stretch_firmware_ii/arduino/hello_esp/EspRpc.h
 FIRMWARE_SIZES = {
     'FMT_BOARD_INFO': 50,
-    'FMT_STATUS': 91,
+    'FMT_STATUS': 91,           # Up to hello-esp v0.2.3
+    'FMT_STATUS_BATTERY': 92,   # hello-esp v0.2.4 on: + the Pimu's battery status
     'FMT_WIFI_STATUS': 112,
     'FMT_FIREBASE_STATUS': 151,
     'FMT_WIFI_CONFIG': 99,
@@ -58,7 +60,7 @@ class TestLayouts:
     def test_firmware_header_agrees(self):
         src = open(ESP_RPC_H).read()
         asserted = dict(re.findall(r'static_assert\(sizeof\((\w+)\) == (\d+),', src))
-        assert int(asserted['Esp32_Status']) == struct.calcsize(D.FMT_STATUS)
+        assert int(asserted['Esp32_Status']) == struct.calcsize(D.FMT_STATUS_BATTERY)
         assert int(asserted['Esp32_Wifi_Status']) == struct.calcsize(D.FMT_WIFI_STATUS)
         assert int(asserted['Esp32_Firebase_Status']) == struct.calcsize(D.FMT_FIREBASE_STATUS)
         assert int(asserted['Esp32_Wifi_Config']) == struct.calcsize(D.FMT_WIFI_CONFIG)
@@ -101,6 +103,27 @@ class TestUnpack:
         assert p['battery_soc'] == 87 and p['charger_charging'] and not p['runstop_event']
         assert p['cpu_power_state_name'] == 'ON' and p['status_fresh']
         assert p['status_age_ms'] == 12 and p['uart_crc_errors'] == 3 and p['esp_status_counter'] == 42
+
+    def test_status_battery_status(self):
+        base = [123456789, 3, 1, 80, 200000, 150000, 1234, 56, 7, 2, 12.1, 19.8,
+                1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 2,
+                24.5, 19.9, 35.0, 87, 1, 0, 2, 0, 1,
+                12, 1000, 3, 0, 900, 1, 42]
+        e = p1()
+        # Older firmware: no status byte, values used as before
+        e._unpack_status(struct.pack(D.FMT_STATUS, *base))
+        p = e.status['pimu_link']
+        assert p['battery_status'] == 'UNKNOWN' and p['battery_valid'] and p['battery_soc'] == 87
+        e._unpack_status(struct.pack(D.FMT_STATUS_BATTERY, *base, 1))
+        assert p['battery_status'] == 'OK' and p['battery_valid'] and p['battery_soc'] == 87
+        # Lost or not detected: the Pimu sends NaN and 255, both read as NaN
+        lost = list(base)
+        lost[24] = float('nan')
+        lost[27] = 255
+        for code, name in ((2, 'BMS_LOST'), (3, 'NOT_DETECTED')):
+            e._unpack_status(struct.pack(D.FMT_STATUS_BATTERY, *lost, code))
+            assert p['battery_status'] == name and not p['battery_valid']
+            assert math.isnan(p['battery_soc']) and math.isnan(p['voltage_battery'])
 
     def test_status_never_received(self):
         values = [0] * 33 + [D.UNKNOWN_AGE] + [0] * 6
