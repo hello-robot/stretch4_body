@@ -32,7 +32,11 @@ def menu():
     print('r: reset board')
     print('x: reset runstop event')
     print('o: trigger runstop event')
-    print('s: trigger sleep')
+    print('----------')
+    print('s: trigger robot sleep')
+    print('h: trigger robot shutdown')
+    print('v: trigger robot reboot')
+    print('----------')
     print('a: set lidar off')
     print('b: set lidar on')
     print('c: set aux cpu off')
@@ -73,9 +77,18 @@ def step_interaction():
         if x[0]=='o':
             print('Triggering Runstop Event')
             p.trigger_runstop()
-        if x[0]=='s':
+        if x[0] in 'shv' and not args.direct:
+            print('Robot sleep, shutdown and reboot are not sent through the server. '
+                  'Use --direct, or run stretch_shutdown.')
+        elif x[0]=='s':
             if input('Warning: About to sleep robot. Type yes to proceed. ')=='yes':
-                p.trigger_sleep()
+                p.trigger_robot_sleep()
+        elif x[0]=='h':
+            if input('Warning: About to shut down robot. Type yes to proceed. ')=='yes':
+                p.trigger_robot_shutdown()
+        elif x[0]=='v':
+            if input('Warning: About to reboot robot. Type yes to proceed. ')=='yes':
+                p.trigger_robot_reboot()
         if x[0]=='r':
             print('Resetting Board!!!')
             p.board_reset()

@@ -313,6 +313,10 @@ def stretch_runstop():
     sys.argv[0] = "stretch_runstop"
     runpy.run_module("stretch4_body.tools.stretch_runstop", run_name="__main__")
 
+def stretch_shutdown():
+    sys.argv[0] = "stretch_shutdown"
+    runpy.run_module("stretch4_body.tools.stretch_shutdown", run_name="__main__")
+
 def stretch_puppet_teleop():
     sys.argv[0] = "stretch_puppet_teleop"
     runpy.run_module("stretch4_body.tools.stretch_puppet_teleop", run_name="__main__")
