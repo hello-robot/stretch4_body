@@ -255,7 +255,13 @@ def print_power(s):
         row('Battery', 'NOT DETECTED: running from the adapter', fg='yellow')
     else:
         row('Battery', '%.2f V, %d%%' % (p['voltage_battery'], p['battery_soc']))
-    row('Charging', yes_no(p['charger_charging']))
+    # charger_charging means the charger is running, which with no battery powers the robot
+    if p['battery_status'] == 'NOT_DETECTED':
+        row('Charging', 'NO: the charger powers the robot (no battery)', fg='yellow')
+    elif p['battery_status'] == 'BMS_LOST' and p['charger_charging']:
+        row('Charging', 'UNKNOWN: the charger runs, the BMS is not answering', fg='yellow')
+    else:
+        row('Charging', yes_no(p['charger_charging']))
     row('Runstop', yes_no(p['runstop_event'], good=False))
     row('NUC', p['cpu_power_state_name'])
     row('NUC rail cut', yes_no(p['nuc_rail_off'], good=False))

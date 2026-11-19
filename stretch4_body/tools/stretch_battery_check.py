@@ -86,9 +86,17 @@ def battery_check():
         click.secho(f'Adapter (physical switch): connected', fg='green')
     
     click.secho('######## Charger Information ##########', fg='cyan')
-    if battery_is_charging:
+    # battery_is_charging means the charger is running. It feeds the robot's power
+    # bus, so with no battery it powers the robot, and its output is the robot's load.
+    if battery_status == 'NOT_DETECTED':
+        click.secho('Battery Charger: On, powering the robot (no battery to charge)', fg='yellow')
+        click.secho(f'Charger Output: {current_charge:.2f} A (robot load)', fg='yellow')
+    elif battery_status == 'BMS_LOST' and battery_is_charging:
+        click.secho("Battery Charger: On. Can't tell whether the battery is charging (BMS not responding)", fg='yellow')
+        click.secho(f'Charger Output: {current_charge:.2f} A', fg='yellow')
+    elif battery_is_charging:
         click.secho(f'Battery Charger: Charging', fg='green')
-        click.secho(f'Battery Charger Current: {current_charge:.2f} A', fg='green')
+        click.secho(f'Charger Output: {current_charge:.2f} A', fg='green')
     elif not adapter_voltage_present:
         click.secho(f'Battery Charger: Not Charging. Adapter voltage not present', fg='yellow')
     elif battery_soc >= CHARGER_RESTART_SOC:
