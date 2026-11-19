@@ -988,20 +988,32 @@ def check_power_periph():
     all_pass = True
     ps = r.power_periph.status
 
-    soc = ps.get('battery_soc', 0)
-    if soc >= 20:
-        print_result(True, f'Battery SOC = {soc:.0f}%')
-    elif soc >= 10:
-        print_warn(f'Battery SOC = {soc:.0f}% (low — consider charging)')
-    else:
-        print_result(False, f'Battery SOC = {soc:.0f}% (critically low!)')
+    # The battery values come from the BMS, and are NaN when it isn't answering
+    battery_status = ps.get('battery_status', 'UNKNOWN')
+    battery_valid = ps.get('battery_valid', True)
+    if battery_status == 'BMS_LOST':
+        print_result(False, "Battery BMS not responding: battery values can't be trusted. Check the battery and its cable")
         all_pass = False
+    elif battery_status == 'NOT_DETECTED':
+        print_warn('Battery not detected: running from the adapter')
+    elif battery_status == 'UNKNOWN':
+        print_warn('Battery status not reported: update the power board firmware')
 
-    soh = ps.get('battery_soh', 0)
-    if soh >= 75:
-        print_result(True, f'Battery SOH = {soh:.1f}%')
-    else:
-        print_warn(f'Battery SOH = {soh:.1f}% (degraded battery)')
+    if battery_valid:
+        soc = ps.get('battery_soc', 0)
+        if soc >= 20:
+            print_result(True, f'Battery SOC = {soc:.0f}%')
+        elif soc >= 10:
+            print_warn(f'Battery SOC = {soc:.0f}% (low — consider charging)')
+        else:
+            print_result(False, f'Battery SOC = {soc:.0f}% (critically low!)')
+            all_pass = False
+
+        soh = ps.get('battery_soh', 0)
+        if soh >= 75:
+            print_result(True, f'Battery SOH = {soh:.1f}%')
+        else:
+            print_warn(f'Battery SOH = {soh:.1f}% (degraded battery)')
 
     for label, key, vmin, vmax in [
         ('Bus Voltage (V)',  'voltage',     20.0, 30.0),
@@ -1026,7 +1038,10 @@ def check_power_periph():
         all_pass = False
 
     if args.verbose:
-        print_info(f'Battery Current  : {ps.get("battery_current", 0):.2f} A')
+        if battery_valid:
+            print_info(f'Battery Current  : {ps.get("battery_current", 0):.2f} A')
+        else:
+            print_info('Battery Current  : -')
         print_info(f'Adapter present  : {ps.get("adapter_voltage_present", False)}')
         print_info(f'Adapter fault    : {ps.get("adapter_fault", False)}')
         print_info(f'Charging         : {ps.get("charger_is_charging", False)}')

@@ -249,7 +249,12 @@ def print_power(s):
     fresh = 'live' if p['status_fresh'] else 'STALE'
     row('Pimu status', '%s, %s' % (click.style(fresh, fg='green' if p['status_fresh'] else 'red'),
                                    'never received' if p['status_age_ms'] is None else '%d ms old' % p['status_age_ms']))
-    row('Battery', '%.2f V, %d%%' % (p['voltage_battery'], p['battery_soc']))
+    if p['battery_status'] == 'BMS_LOST':
+        row('Battery', "BMS NOT RESPONDING: values can't be trusted", fg='red')
+    elif p['battery_status'] == 'NOT_DETECTED':
+        row('Battery', 'NOT DETECTED: running from the adapter', fg='yellow')
+    else:
+        row('Battery', '%.2f V, %d%%' % (p['voltage_battery'], p['battery_soc']))
     row('Charging', yes_no(p['charger_charging']))
     row('Runstop', yes_no(p['runstop_event'], good=False))
     row('NUC', p['cpu_power_state_name'])

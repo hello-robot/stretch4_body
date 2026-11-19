@@ -85,6 +85,7 @@ def esp32_status_template():
                     'dcm_mode': False, 'robot_active': False, 'cpu_sd': False, 'system_shutdown': False,
                     'sd_pulse_count': 0},
         'pimu_link': {'voltage_battery': 0.0, 'voltage_20v0': 0.0, 'temperature': 0.0, 'battery_soc': 0,
+                      'battery_status': 'UNKNOWN', 'battery_valid': True,
                       'charger_charging': False, 'runstop_event': False, 'cpu_power_state': 0,
                       'cpu_power_state_name': '', 'nuc_rail_off': False, 'status_fresh': False,
                       'status_age_ms': None, 'uart_rx_packets': 0, 'uart_crc_errors': 0,
@@ -192,6 +193,9 @@ class Esp32Defn:
     # Protocol p1 layouts (little endian, packed)
     FMT_BOARD_INFO = '<20s30s'
     FMT_STATUS = '<QBBHIIHHHHff' + 'B' * 12 + 'fff' + 'B' * 6 + 'IIIIII' + 'B'
+    FMT_STATUS_BATTERY = FMT_STATUS + 'B'  # hello-esp v0.2.4 on: the Pimu's battery status, last
+    # The Pimu's battery status (pimu_link battery_status): whether its battery values can be used
+    BATTERY_STATUS_NAMES = {0: 'UNKNOWN', 1: 'OK', 2: 'BMS_LOST', 3: 'NOT_DETECTED'}
     FMT_WIFI_STATUS = '<BBBB33sbB6s6s4s4s4s4s32sIIBI'
     FMT_FIREBASE_STATUS = '<BBBBIIIIIi64sIIIBBBI40s'
     FMT_WIFI_CONFIG = '<33s65sB'
@@ -573,8 +577,9 @@ class Esp32Base(Esp32Defn, Device):
         print('Outputs', s['outputs'])
         p = s['pimu_link']
         age = 'never' if p['status_age_ms'] is None else '%d ms' % p['status_age_ms']
-        print('Pimu link: fresh %s (age %s) | Battery %.2f V %d%% | Charging %s | Runstop %s | NUC %s | NUC rail off %s'
-              % (p['status_fresh'], age, p['voltage_battery'], p['battery_soc'], p['charger_charging'],
+        battery = ('%.2f V %d%%' % (p['voltage_battery'], p['battery_soc'])) if p['battery_valid'] else '-'
+        print('Pimu link: fresh %s (age %s) | Battery %s (%s) | Charging %s | Runstop %s | NUC %s | NUC rail off %s'
+              % (p['status_fresh'], age, battery, p['battery_status'], p['charger_charging'],
                  p['runstop_event'], p['cpu_power_state_name'], p['nuc_rail_off']))
         print('  UART rx %d | crc errors %d | overflows %d | tx %d | tx drops %d'
               % (p['uart_rx_packets'], p['uart_crc_errors'], p['uart_rx_overflows'], p['uart_tx_packets'],
@@ -598,7 +603,11 @@ class Esp32Base(Esp32Defn, Device):
 
 class Esp32_Protocol_P1(Esp32Base):
     def _unpack_status(self, s):
-        v = struct.unpack_from(self.FMT_STATUS, s)
+        # Older firmware ends a byte sooner, without the battery status
+        if len(s) >= struct.calcsize(self.FMT_STATUS_BATTERY):
+            v = struct.unpack_from(self.FMT_STATUS_BATTERY, s)
+        else:
+            v = struct.unpack_from(self.FMT_STATUS, s) + (0,)
         st = self.status
         st['timestamp'] = self.timestamp.set(v[0])
         st['pwr_state'] = v[1]
@@ -640,6 +649,13 @@ class Esp32_Protocol_P1(Esp32Base):
         p['uart_tx_packets'] = v[37]
         p['uart_tx_drops'] = v[38]
         p['esp_status_counter'] = v[39]
+        # Not OK: the Pimu sends NaN and 255 in place of its battery values. Both are
+        # NaN here, so they can't pass for readings. UNKNOWN (older firmware): as before.
+        p['battery_status'] = self.BATTERY_STATUS_NAMES.get(v[40], str(v[40]))
+        p['battery_valid'] = v[40] in (0, 1)
+        if not p['battery_valid']:
+            p['voltage_battery'] = float('nan')
+            p['battery_soc'] = float('nan')
 
     def _unpack_wifi_status(self, s):
         v = struct.unpack_from(self.FMT_WIFI_STATUS, s)
