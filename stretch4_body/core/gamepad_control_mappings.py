@@ -566,7 +566,7 @@ class ControlMapping(Enum):
         else:
             gamepad_teleop.wrist_yaw_command.stop_motion(robot)
             gamepad_teleop.wrist_pitch_command.stop_motion(robot)
-            roll_cmd_rad = np.radians(gamepad_teleop.wrist_roll_command.dx_deg * rot_change[2]) * inversion * -1
+            roll_cmd_rad = np.radians(gamepad_teleop.wrist_roll_command.dx_deg * rot_change[2])
             if abs(roll_cmd_rad) > 0:
                 gamepad_teleop.wrist_roll_command._move(np.degrees(roll_cmd_rad), robot)
             else:
