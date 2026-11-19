@@ -1039,7 +1039,8 @@ def check_power_periph():
             print_info('Battery Current  : -')
         print_info(f'Adapter present  : {ps.get("adapter_voltage_present", False)}')
         print_info(f'Adapter fault    : {ps.get("adapter_fault", False)}')
-        print_info(f'Charging         : {ps.get("charger_is_charging", False)}')
+        print_info(f'Charger running  : {ps.get("charger_is_charging", False)}')
+        print_info(f'Battery charging : {ps.get("battery_charging", ps.get("charger_is_charging", False))}')
 
     return all_pass
 

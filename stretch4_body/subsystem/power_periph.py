@@ -838,7 +838,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'transport': self.transport.status, 'current_charge': 0, 'current_eoa':0,'charger_is_charging': False,
                        'periph_power_state':{},
                        'over_tilt_type': 0, 'battery_current': 0, 'battery_soc':0, 'battery_soh':0,
-                       'battery_status': 'UNKNOWN', 'battery_valid': True,
+                       'battery_status': 'UNKNOWN', 'battery_valid': True, 'battery_charging': False,
                        'battery_chrg_dischrg_cycles': 0, 'voltage_cpu':0, 'voltage_5v0':0, 'voltage_36v0':0,
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
@@ -1010,7 +1010,8 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         print('High Current Alert', self.status['high_current_alert'])
         print('High Current EOA Alert', self.status['high_current_eoa_alert'])
         print('---Battery Charge--')
-        print('Charger is charging', self.status['charger_is_charging'])
+        print('Charger running', self.status['charger_is_charging'])
+        print('Battery charging', self.status['battery_charging'])
         print('Adapter voltage present', self.status['adapter_voltage_present'])
         print('Adapter fault',self.status['adapter_fault'])
         print('Adapter connected', self.status['adapter_connected'])
@@ -1193,6 +1194,11 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         bs = (unpack_to['state'] & self.STATE_BATTERY_STATUS_MASK) >> self.STATE_BATTERY_STATUS_SHIFT
         unpack_to['battery_status'] = self.BATTERY_STATUS_NAMES[bs]
         unpack_to['battery_valid'] = bs in (0, 1)
+        # charger_is_charging means the charger is running (adapter in, charger
+        # enabled). It feeds the robot's battery bus, so with no battery it powers
+        # the robot and current_charge is the robot's load. battery_charging is
+        # whether a battery is actually being charged.
+        unpack_to['battery_charging'] = unpack_to['charger_is_charging'] and unpack_to['battery_valid']
         if not unpack_to['battery_valid']:
             for k in ('voltage', 'battery_current', 'battery_soc', 'battery_soh', 'battery_chrg_dischrg_cycles'):
                 unpack_to[k] = float('nan')
@@ -1481,6 +1487,7 @@ class PowerPeriphStatus(TypedDict):
     battery_chrg_dischrg_cycles: int
     battery_status: str  # 'OK', 'BMS_LOST', 'NOT_DETECTED' or 'UNKNOWN' (older firmware)
     battery_valid: bool  # False: the battery values above are NaN
+    battery_charging: bool  # A battery is being charged (charger_is_charging: only that the charger runs)
     voltage_cpu: float
     voltage_5v0: float
     voltage_36v0: float
