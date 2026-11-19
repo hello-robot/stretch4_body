@@ -33,25 +33,19 @@ class FirmwareInstalled():
         """
         self.use_device = use_device
         self.config_info = {'hello-motor-lift': None, 'hello-motor-arm': None, 'hello-motor-omni-0': None,
-                            'hello-motor-omni-1': None, 'hello-motor-omni-2': None, 'hello-power-periph': None, 'hello-pixart-j3': None}
+                            'hello-motor-omni-1': None, 'hello-motor-omni-2': None, 'hello-power-periph': None,
+                            'hello-pixart-j3': None, 'hello-esp32': None}
         print('Collecting information...')
         for device in self.use_device.keys():
             if self.use_device[device]:
                 if device == 'hello-power-periph':
                     from stretch4_body.subsystem.power_periph import PowerPeriph
                     dd = PowerPeriph(backend=0)
-                elif device in ['hello-pixart-j3', 'hello-esp32']:
-                    self.config_info[device] = {
-                        'board_info': {
-                            'board_version': 'Unknown',
-                            'firmware_version': 'Unknown',
-                            'protocol_version': 'Unknown',
-                            'hardware_id': 0
-                        },
-                        'supported_protocols': ['Unknown'],
-                        'installed_protocol_valid': True,
-                        'version': FirmwareVersion('Unknown')
-                    }
+                elif device == 'hello-esp32':
+                    self.config_info[device] = self._esp32_config_info()
+                    continue
+                elif device == 'hello-pixart-j3':
+                    self.config_info[device] = self._unknown_config_info()
                     continue
                 else:
                     dd = stretch4_body.core.stepper.Stepper('/dev/' + device, backend=0)
@@ -76,6 +70,46 @@ class FirmwareInstalled():
                     else:
                         self.config_info[device] = None
                     dd.stop()
+
+    @staticmethod
+    def _unknown_config_info(supported_protocols=None):
+        """A device that is present but can't report its firmware version."""
+        return {
+            'board_info': {
+                'board_version': 'Unknown',
+                'firmware_version': 'Unknown',
+                'protocol_version': 'Unknown',
+                'hardware_id': 0
+            },
+            'supported_protocols': supported_protocols or ['Unknown'],
+            'installed_protocol_valid': True,
+            'version': FirmwareVersion('Unknown')
+        }
+
+    def _esp32_config_info(self):
+        """
+        Firmware v0.2.0p1 and later report their version over RPC. Older firmware has no
+        RPC, so a present ESP32 that doesn't answer is reported as 'Unknown' (p0).
+        """
+        import os
+        from stretch4_body.subsystem.esp32 import Esp32, ESP32_USB_NAME
+        if not os.path.exists(ESP32_USB_NAME):
+            return None
+        dd = Esp32()
+        try:
+            if dd.startup() or dd.board_info['firmware_version'] is not None:
+                info = {'board_info': dd.board_info.copy(),
+                        'supported_protocols': list(dd.FIRMWARE_PROTOCOLS),
+                        'installed_protocol_valid': dd.board_info['protocol_version'] in dd._supported_protocols,
+                        'version': FirmwareVersion(dd.board_info['firmware_version'])}
+                return info
+        finally:
+            dd.stop()
+        return self._unknown_config_info(list(Esp32.FIRMWARE_PROTOCOLS))
+
+    def is_version_known(self, device_name):
+        """False for a device present on firmware that can't report its version (PixArt J3, ESP32 before RPC)."""
+        return self.is_device_valid(device_name) and self.config_info[device_name]['version'].valid
 
     def get_supported_protocols(self, device_name):
         if self.is_device_valid(device_name):
@@ -102,7 +136,7 @@ class FirmwareInstalled():
         return self.is_device_valid(device_name) and p in self.config_info[device_name]['supported_protocols']
 
     def max_protocol_supported(self, device_name):
-        if device_name in ['hello-pixart-j3', 'hello-esp32']:
+        if not self.is_version_known(device_name):
             return 'p99'
         x = [int(x[1:]) for x in self.config_info[device_name]['supported_protocols']]
         return 'p' + str(max(x))
@@ -113,7 +147,7 @@ class FirmwareInstalled():
             if self.use_device[device]:
                 click.secho('------------ %s ------------' % device.upper(), fg="white", bold=True)
                 if self.config_info[device]:
-                    if device == 'hello-pixart-j3':
+                    if not self.is_version_known(device):
                         click.secho('Device is present, but current version is not available.', fg="yellow")
                     else:
                         click.echo('Installed Firmware: %s' % self.config_info[device]['board_info']['firmware_version'])

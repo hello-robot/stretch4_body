@@ -21,7 +21,7 @@ class FirmwareRecommended():
             if self.use_device[device_name]:
                 if self.fw_installed.is_device_valid(device_name):  # Len 0 if device not found
                     supported = self.fw_installed.get_supported_protocols(device_name)
-                    if device_name in ['hello-pixart-j3', 'hello-esp32']:
+                    if not self.fw_installed.is_version_known(device_name):
                         supported = None
                     self.recommended[device_name] = self.fw_available.get_most_recent_version(device_name, supported)
                 else:
@@ -43,7 +43,7 @@ class FirmwareRecommended():
                 installed_out = 'No device available'.ljust(25)
             else:
                 version = self.fw_installed.get_version(device_name)
-                if device_name in ['hello-pixart-j3', 'hello-esp32']:
+                if not self.fw_installed.is_version_known(device_name):
                     installed_out = 'Unknown'.ljust(25)
                 else:
                     installed_out = str(version).ljust(25)
@@ -51,7 +51,7 @@ class FirmwareRecommended():
                     rec_out = 'None (might be on dev branch)'.ljust(25)
                 else:
                     rec_out = str(self.recommended[device_name]).ljust(25)
-                    if device_name in ['hello-pixart-j3', 'hello-esp32']:
+                    if not self.fw_installed.is_version_known(device_name):
                         action_out = 'Firmware available'.ljust(25)
                     elif self.recommended[device_name] > version:
                         action_out = 'Upgrade recommended'.ljust(25)
@@ -71,7 +71,7 @@ class FirmwareRecommended():
             if self.fw_installed.is_device_valid(device_name):
                 version = self.fw_installed.get_version(device_name)
                 if self.recommended[device_name] != None:
-                    if device_name in ['hello-pixart-j3', 'hello-esp32'] or self.recommended[device_name] > version:
+                    if not self.fw_installed.is_version_known(device_name) or self.recommended[device_name] > version:
                         rec_args = rec_args + dev_arg_map[device_name]
         if len(rec_args):
             click.secho('\nRun recommended command: \nREx_firmware_updater --install %s' % rec_args, fg="green",
