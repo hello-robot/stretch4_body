@@ -240,3 +240,26 @@ def test_reset_keeps_event_count():
     assert drive_into_obstacle(g, t0=10.0)
     assert g.n_events == 2
 
+
+def test_enable_disable():
+    g = ServoGuardedContact(PARAMS)
+    assert drive_into_obstacle(g)
+    g.disable()
+    assert not g.enabled
+    assert not g.in_event  # Disabling frees a joint stuck in an event
+    assert not drive_into_obstacle(g, t0=10.0, duration=2.0)
+    assert g.enable()
+    assert drive_into_obstacle(g, t0=20.0)
+
+
+def test_starts_disabled_but_can_be_enabled():
+    g = ServoGuardedContact({**PARAMS, 'enable_guarded_mode': 0})
+    assert not g.enabled
+    assert g.enable()
+    assert drive_into_obstacle(g)
+
+
+def test_cannot_enable_without_sensitivities():
+    g = ServoGuardedContact()
+    assert not g.enable()
+    assert not g.enabled

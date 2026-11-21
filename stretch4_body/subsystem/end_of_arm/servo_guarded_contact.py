@@ -42,7 +42,9 @@ class ServoGuardedContact:
         self.contact_mA_pos = None
         self.contact_mA_neg = None
         self.contact_s = None
-        if self.enabled and not self.set_sensitivity(self.DEFAULT_SENSITIVITY):
+        # A joint with sensitivities can be enabled at runtime even if enable_guarded_mode starts it off
+        self.available = self.set_sensitivity(self.DEFAULT_SENSITIVITY)
+        if self.enabled and not self.available:
             raise ValueError(f"guarded_contact params need a '{self.DEFAULT_SENSITIVITY}' entry")
         self.n_events = 0
         self.goal = None  # Last position goal (rad), or None in velocity mode
@@ -58,6 +60,20 @@ class ServoGuardedContact:
         self.in_event = False
         self.trip_direction = 0
         self._last_cmd_t = None  # When a command last arrived during the event
+
+    def enable(self):
+        """Turn detection on. Returns False if the params have no sensitivities to run with."""
+        if not self.available:
+            return False
+        if not self.enabled:
+            self.enabled = True
+            self.reset()
+        return True
+
+    def disable(self):
+        """Turn detection off. Clears any guarded event, so the joint can be driven freely."""
+        self.enabled = False
+        self.reset()
 
     def set_sensitivity(self, name):
         """Select a sensitivity profile by name. Returns False, leaving the current one, if it is unknown."""
