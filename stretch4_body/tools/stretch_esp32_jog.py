@@ -934,8 +934,9 @@ def command_snippets(cfg):
     for action in ('sleep', 'wake'):
         curl += ['', '# %s (a new id for every command)' % action.capitalize(),
                  'curl -X PUT "$URL/requests/power_command.json%s" \\' % auth,
-                 '  -d \'{"action": "%s", "id": "%s-\'$(date +%%s)\'", "ts": {".sv": "timestamp"}}\'' % (action, action)]
-    curl += ['', '# The robot\'s answer (pending, then done), and its status',
+                 '  -d \'{"action": "%s", "id": "%s-\'$(date +%%s)\'", "acknowledged": false, '
+                 '"ts": {".sv": "timestamp"}}\'' % (action, action)]
+    curl += ['', '# The robot\'s answer (pending, then done; the command\'s acknowledged turns true), and its status',
              'curl "$URL/requests/power_command_ack.json%s"' % auth, 'curl "$URL/system_status.json%s"' % auth]
 
     py = ['import json', 'import time', 'import urllib.request', '', "URL = '%s'" % url]
@@ -954,7 +955,8 @@ def command_snippets(cfg):
            '', '',
            'def power(action):',
            '    """Sleep or wake the robot: action is \'sleep\' or \'wake\'. Returns the robot\'s answer."""',
-           "    cmd = {'action': action, 'id': '%s-%d' % (action, time.time() * 1000), 'ts': {'.sv': 'timestamp'}}",
+           "    cmd = {'action': action, 'id': '%s-%d' % (action, time.time() * 1000), 'acknowledged': False,",
+           "           'ts': {'.sv': 'timestamp'}}",
            "    urllib.request.urlopen(urllib.request.Request(URL + '/requests/power_command.json' + AUTH,",
            "                                                  data=json.dumps(cmd).encode(), method='PUT'))",
            '    for _ in range(150):  # A wake while going to sleep waits for the sleep to finish',

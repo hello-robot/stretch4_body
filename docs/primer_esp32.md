@@ -118,15 +118,19 @@ means started, but commands won't arrive yet.
 Without an app, write the command in the console's **Data** tab, under
 `robots/<robot key>/`. Sleep shuts down the NUC.
 
-* **Sleep:** add `requests/power_command` with two children, `action` = `sleep` and
-  `id` = `s1`, in one **Add**.
-* **Wake:** delete `power_command`, then add it again with `action` = `wake` and
-  `id` = `w1`. The robot acts only on a new write of the whole node with a new `id`
-  (`s2`, `w2`, ...): editing one field of a command is ignored. `ts` can be left out
+* **Sleep:** add `requests/power_command` with three children, `action` = `sleep`,
+  `id` = `s1` and `acknowledged` = `false`, in one **Add**.
+* **Wake:** delete `power_command`, then add it again with `action` = `wake`,
+  `id` = `w1` and `acknowledged` = `false`. The robot acts only on a new write of the
+  whole node with a new `id` (`s2`, `w2`, ...): editing one field of a command is
+  ignored. Once it has seen a command, the robot sets its `acknowledged` to `true`,
+  and ignores a command that is already acknowledged. Setting it back to `false`
+  doesn't run the command again: the robot also keeps the last `id` it acted on. `ts` can be left out
   (the console can't write a server timestamp): while the robot is online, a command
   without one is carried out.
 
-Then `requests/power_command_ack` goes `pending`, then `done`. After a sleep,
+Then `requests/power_command_ack` goes `pending`, then `done`, and
+`power_command/acknowledged` turns `true`. After a sleep,
 `system_status/power_state` goes `active`, `going_to_sleep` (about 20 s while the NUC
 shuts down), `sleeping`, and `last_seen` keeps advancing (Wi-Fi stays up). A wake sent
 during `going_to_sleep` stays `pending` until the robot is asleep, then `done`; the NUC
@@ -192,7 +196,7 @@ ESP32 checks Google's TLS certificates, so the key can't be read in transit.
 `c` in the Firebase menu prints curl commands and a Python example that sleep and
 wake this robot through the database, with its URL and robot key filled in (and a
 sign-in step, with `<password>` to fill in, if the robot signs in as a user). The
-Python `power('sleep')` / `power('wake')` writes the command with a new id and waits
+Python `power('sleep')` / `power('wake')` writes the command with a new id (and `acknowledged: false`) and waits
 for `power_command_ack`. They are made by `command_snippets()` in
 `stretch_esp32_jog`.
 
