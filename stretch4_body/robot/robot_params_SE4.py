@@ -873,7 +873,8 @@ nominal_params={
         # Absolute hardstop limits. Tune carefully to prevent physical damage.
         'range_m': [0.0, 0.55],#0.555], clipp last 5mm to protect hardstops
         # Homing procedure settings. contact_sensitivity adjusts how hard the arm hits the hardstop.
-        'homing': {'contact_sensitivity': 0.3, 'end_pos': 0.1, 'v_m': 0.2, 'a_m': 0.3, 'to_positive_stop': False,'safety_hold':1,'safety_stiffness':1.0},
+        'homing': {'contact_sensitivity': 0.3, 'end_pos': 0.1, 'v_m': 0.2, 'a_m': 0.3, 'to_positive_stop': False,'safety_hold':1,'safety_stiffness':1.0,
+        'controller': 'gc', 'iMax_pos': 2.0, 'iMax_neg': -3.0},
         'motion':{
             # Predefined motion profiles (m/s, m/s^2)
             'default':{
@@ -1243,7 +1244,8 @@ nominal_params={
         # Absolute hardstop limits. Tune carefully to prevent physical damage.
         'range_m' : [0.0, 1.20], #Calder no shells, [0.0, 1.21], #Dali w/ shells, [0.0, 1.20]
         # Homing procedure settings. contact_sensitivity adjusts how hard the lift hits the hardstop.
-        'homing': {'contact_sensitivity': 0.5,'end_pos':0.5,'v_m':0.15,'a_m':0.3,'to_positive_stop':True,'safety_hold':1,'safety_stiffness':0.2},
+        'homing': {'contact_sensitivity': 0.5,'end_pos':0.5,'v_m':0.15,'a_m':0.3,'to_positive_stop':True,'safety_hold':1,'safety_stiffness':0.2,
+                   'controller': 'imax', 'iMax_pos': 4.0, 'iMax_neg': -4.0},  # controller: imax | gc
         #'homing': {'contact_sensitivity': 0.2,'end_pos':0.5,'v_m':0.15,'a_m':0.3,'to_positive_stop':True,'safety_hold':1,'safety_stiffness':0.7},
         'belt_pitch_m': 0.005,
           'motion':{
