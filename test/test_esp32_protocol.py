@@ -329,9 +329,6 @@ class TestRules:
         assert not fb.rules_are_ours('// a comment\n' + fb.rules_json())
         assert not fb.rules_are_ours(None)
 
-    def test_locked(self):
-        assert fb.rules_are_locked('{\n  "rules": {\n    ".read": false,\n    ".write": false\n  }\n}')
-        assert not fb.rules_are_locked(fb.rules_json())
 
 
 class TestDefaults:
@@ -454,11 +451,39 @@ class TestCli:
         assert fb.rules_are_ours(seen['rules'])
         assert seen['cmd'][1:4] == ['deploy', '--only', 'database']
 
-    def test_current_rules(self):
-        replies = [json.dumps({'status': 'success', 'result': {'labeled': {'stable': 'r1'}, 'rulesets': []}}),
-                   json.dumps({'status': 'success', 'result': {'id': 'r1', 'source': fb.rules_json()}})]
-        with mock.patch.object(esp32.subprocess, 'run', side_effect=[completed(r) for r in replies]):
-            assert fb.rules_are_ours(fb.current_rules('proj', 'inst'))
+    def test_robot_key_works(self):
+        # Checked by what the rules do: the key's node readable, robot_keys not
+        url = 'https://x.firebaseio.com'
+        for statuses, ok in ((([200, 401]), True), ([401, 401], False), ([200, 200], False), ([0, 0], False)):
+            with mock.patch.object(fb, 'http_status', side_effect=statuses) as st:
+                assert fb.robot_key_works(url, 'KEY') == ok, statuses
+            asked = [c[0][0] for c in st.call_args_list]
+            assert asked[0] == url + '/robots/KEY.json?shallow=true'
+            assert asked[1:] in ([], [url + '/robot_keys.json?shallow=true'])
+        with mock.patch.object(fb, 'http_status', side_effect=[200, 401]) as st:
+            fb.robot_key_works(url, 'KEY', id_token='TOK')
+        assert st.call_args_list[0][0][0].endswith('&auth=TOK')
+
+    def test_sign_in(self):
+        class Reply:
+            def __init__(self, body):
+                self.body = body
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def read(self, *a):
+                return self.body
+        with mock.patch.object(esp32.urllib.request, 'urlopen', return_value=Reply(b'{"idToken": "TOK"}')) as u:
+            assert fb.sign_in('API', 'a@b.c', 'pw') == 'TOK'
+        req = u.call_args[0][0]
+        assert req.full_url.endswith('signInWithPassword?key=API')
+        assert json.loads(req.data) == {'email': 'a@b.c', 'password': 'pw', 'returnSecureToken': True}
+        refused = esp32.urllib.error.HTTPError('u', 400, 'Bad', {}, None)
+        refused.read = lambda *a: b'{"error": {"message": "INVALID_LOGIN_CREDENTIALS"}}'
+        with mock.patch.object(esp32.urllib.request, 'urlopen', side_effect=refused):
+            with pytest.raises(ValueError, match='INVALID_LOGIN_CREDENTIALS'):
+                fb.sign_in('API', 'a@b.c', 'bad')
 
     def test_no_database_yet(self):
         err = json.dumps({'status': 'error', 'error': "It looks like you haven't created a Realtime Database "

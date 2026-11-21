@@ -160,8 +160,13 @@ ESP32 checks Google's TLS certificates, so the key can't be read in transit.
    * **With the [Firebase CLI](https://firebase.google.com/docs/cli)** installed
      (recommended: `curl -sL https://firebase.tools | bash`, or with Node.js 20+
      `sudo npm install -g firebase-tools`, then `firebase login`), it
-     offers to do it all: pick or create a project, find its Realtime Database, publish the rules (showing the current ones first: publishing
-     replaces them), and add `robot_keys/<key>`. The CLI can't create a project's
+     offers to do it all: pick or create a project, find its Realtime Database, add
+     `robot_keys/<key>`, and publish the rules if they don't let the key in yet
+     (asking first: publishing replaces them). The CLI can't read a database's rules,
+     so the tool checks them by what they do, from the robot's computer the way the
+     ESP32 connects (`Esp32Firebase.robot_key_works`): `robots/<key>` readable,
+     `robot_keys` not. After publishing, it waits until that passes before it gives the
+     ESP32 the key. The CLI can't create a project's
      first database, so for a new project it asks you to click Create Database in
      the console, then goes on. The CLI must be logged in (`firebase login`): if it
      isn't, or its login has expired, the tool says to run `firebase login` (or
@@ -183,6 +188,13 @@ ESP32 checks Google's TLS certificates, so the key can't be read in transit.
    (`READY`).
 5. Prints what the app needs: the database URL and the robot key (and the user, with
    sign-in). `a` in the menu shows them again.
+
+`c` in the Firebase menu prints curl commands and a Python example that sleep and
+wake this robot through the database, with its URL and robot key filled in (and a
+sign-in step, with `<password>` to fill in, if the robot signs in as a user). The
+Python `power('sleep')` / `power('wake')` writes the command with a new id and waits
+for `power_command_ack`. They are made by `command_snippets()` in
+`stretch_esp32_jog`.
 
 Several robots can share a database: run `n` on each. Each gets its own key, and
 the rules are published once.

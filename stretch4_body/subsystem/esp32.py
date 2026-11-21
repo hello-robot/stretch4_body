@@ -25,6 +25,8 @@ import subprocess
 import tempfile
 import textwrap
 import time
+import urllib.error
+import urllib.request
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.transport.transport import Transport
@@ -817,14 +819,6 @@ class Esp32Firebase:
             return False
 
     @staticmethod
-    def rules_are_locked(source):
-        """Whether a rule set's source is the console's locked mode, which nothing uses yet."""
-        try:
-            return json.loads(source) == {'rules': {'.read': False, '.write': False}}
-        except (TypeError, ValueError):
-            return False
-
-    @staticmethod
     def default_project_id(fleet_id=None):
         """
         This robot's suggested Firebase project ID: $HELLO_FLEET_ID + '-PWR-MGMT', lowercase
@@ -946,22 +940,48 @@ class Esp32Firebase:
         """Where to create the project's first Realtime Database (the CLI can only add more)."""
         return 'https://console.firebase.google.com/project/%s/database' % project
 
+    # ###########  Checking access as the ESP32 has it #############
+
     @staticmethod
-    def current_rules(project, instance):
-        """The database's rules in force, as text, or None if they can't be read."""
+    def http_status(url, timeout=10):
+        """The HTTP status of a GET of url, with no sign-in. 0 if the server can't be reached."""
         try:
-            labels = Esp32Firebase.run_cli(['database:rules:list', '--instance', instance], project=project,
-                                           timeout=60)
-            stable = (labels or {}).get('labeled', {}).get('stable')
-            if not stable:
-                return None
-            ruleset = Esp32Firebase.run_cli(['database:rules:get', stable, '--instance', instance],
-                                            project=project, timeout=60)
-            return (ruleset or {}).get('source')
-        except FirebaseAuthError:
-            raise
-        except FirebaseCliError:
-            return None
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except (urllib.error.URLError, OSError):
+            return 0
+
+    @staticmethod
+    def sign_in(api_key, email, password, timeout=10):
+        """A Firebase ID token for email and password (the ESP32's optional sign-in). Raises ValueError if refused."""
+        req = urllib.request.Request(
+            'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + api_key,
+            data=json.dumps({'email': email, 'password': password, 'returnSecureToken': True}).encode(),
+            headers={'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r)['idToken']
+        except urllib.error.HTTPError as e:
+            try:
+                message = json.load(e)['error']['message']
+            except (ValueError, KeyError, TypeError):
+                message = 'HTTP %d' % e.code
+            raise ValueError('Firebase sign-in refused: %s' % message)
+        except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+            raise ValueError('Firebase sign-in failed: %s' % e)
+
+    @staticmethod
+    def robot_key_works(url, robot_key, id_token=None):
+        """
+        Whether the rules in force let robot_key in, the way the ESP32 connects (signed in
+        with id_token, when the key is bound to a user), and keep robot_keys unreadable.
+        Rules can't be read with the CLI, so this checks them by what they do.
+        """
+        auth = '&auth=' + id_token if id_token else ''
+        return (Esp32Firebase.http_status('%s/robots/%s.json?shallow=true%s' % (url, robot_key, auth)) == 200 and
+                Esp32Firebase.http_status('%s/robot_keys.json?shallow=true' % url) == 401)
 
     @staticmethod
     def deploy_rules(project, instance):
