@@ -333,6 +333,23 @@ class EndOfArm(FeetechSMChain):
         if joint in self.motors and hasattr(self.motors[joint], 'unpause_sentry'):
             self.motors[joint].unpause_sentry()
 
+    def set_guarded_contact_sensitivity(self, sensitivity_name=None, joint=None):
+        """
+        Set the guarded contact sensitivity of the joints that have guarded contact (the wrist joints).
+        sensitivity_name: a 'sensitivity_*' entry in the joints' guarded_contact params (eg 'sensitivity_high').
+                          None resets to sensitivity_default. Normally set from the robot-level profile.
+        joint: name of one joint to set (string), or None for all of them.
+        """
+        if joint is not None and joint not in self.motors:
+            self.logger.warning(f"EndOfArm: Ignoring set_guarded_contact_sensitivity for inactive or "
+                                f"non-existent joint '{joint}'")
+            return
+        motors = [self.motors[joint]] if joint is not None else self.motors.values()
+        with self.pt_lock:
+            for m in motors:
+                if hasattr(m, 'set_guarded_contact_sensitivity'):
+                    m.set_guarded_contact_sensitivity(sensitivity_name)
+
     def move_to(self, joint, x_r, v_r=None, a_r=None):
         """
         joint: name of joint (string)

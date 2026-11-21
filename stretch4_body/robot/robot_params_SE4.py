@@ -97,6 +97,7 @@ SE4_wrist_yaw_DW4={
         'stall_max_effort': 20.0,
         'stall_max_time': 1.0,
         'stall_min_vel': 0.1,
+        # guarded_contact is set per tool, in each tool's 'devices' entry for this joint
         'disable_torque_on_runstop': 1,
         'enable_torque_after_runstop':1,
         'enable_runstop':1}
@@ -401,6 +402,7 @@ SE4_wrist_pitch_DW4={
     'stall_max_effort': 20.0,
     'stall_max_time': 1.0,
     'stall_min_vel': 0.1,
+    # guarded_contact is set per tool, in each tool's 'devices' entry for this joint
     'disable_torque_on_runstop': 1,
     'enable_torque_after_runstop': 1,
     'enable_runstop':1}
@@ -456,6 +458,7 @@ SE4_wrist_roll_DW4={
     'stall_max_effort': 20.0,
     'stall_max_time': 1.0,
     'stall_min_vel': 0.1,
+    # guarded_contact is set per tool, in each tool's 'devices' entry for this joint
     'disable_torque_on_runstop': 1,
     'enable_torque_after_runstop': 1,
     'enable_runstop':1}
@@ -490,17 +493,38 @@ SE4_eoa_wrist_dw4_tool_nil={
             'wrist_pitch': {
                 'py_class_name': 'WristPitch',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
-                'device_params': 'SE4_wrist_pitch_DW4'
+                'device_params': 'SE4_wrist_pitch_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 95.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_roll': {
                 'py_class_name': 'WristRoll',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
-                'device_params': 'SE4_wrist_roll_DW4'
+                'device_params': 'SE4_wrist_roll_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_yaw': {
                 'py_class_name': 'WristYaw',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
-                'device_params': 'SE4_wrist_yaw_DW4'
+                'device_params': 'SE4_wrist_yaw_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             }
             }
             }
@@ -543,17 +567,38 @@ SE4_eoa_wrist_dw4_tool_sg4={
             'wrist_pitch': {
                 'py_class_name': 'WristPitch',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
-                'device_params': 'SE4_wrist_pitch_DW4'
+                'device_params': 'SE4_wrist_pitch_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 90.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_roll': {
                 'py_class_name': 'WristRoll',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
-                'device_params': 'SE4_wrist_roll_DW4'
+                'device_params': 'SE4_wrist_roll_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_yaw': {
                 'py_class_name': 'WristYaw',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
-                'device_params': 'SE4_wrist_yaw_DW4'
+                'device_params': 'SE4_wrist_yaw_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'stretch_gripper': {
                 'py_class_name': 'StretchGripper4',
@@ -587,17 +632,38 @@ SE4_eoa_wrist_dw4_tool_sg4_v2={
             'wrist_pitch': {
                 'py_class_name': 'WristPitch',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
-                'device_params': 'SE4_wrist_pitch_DW4'
+                'device_params': 'SE4_wrist_pitch_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 90.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_roll': {
                 'py_class_name': 'WristRoll',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
-                'device_params': 'SE4_wrist_roll_DW4'
+                'device_params': 'SE4_wrist_roll_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_yaw': {
                 'py_class_name': 'WristYaw',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
-                'device_params': 'SE4_wrist_yaw_DW4'
+                'device_params': 'SE4_wrist_yaw_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'stretch_gripper': {
                 'py_class_name': 'StretchGripper4',
@@ -641,17 +707,38 @@ SE4_eoa_wrist_dw4_tool_pg4={
             'wrist_pitch': {
                 'py_class_name': 'WristPitch',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
-                'device_params': 'SE4_wrist_pitch_DW4'
+                'device_params': 'SE4_wrist_pitch_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 90.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_roll': {
                 'py_class_name': 'WristRoll',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
-                'device_params': 'SE4_wrist_roll_DW4'
+                'device_params': 'SE4_wrist_roll_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_yaw': {
                 'py_class_name': 'WristYaw',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
-                'device_params': 'SE4_wrist_yaw_DW4'
+                'device_params': 'SE4_wrist_yaw_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'parallel_gripper': {
                 'py_class_name': 'ParallelGripper',
@@ -687,17 +774,38 @@ SE4_eoa_wrist_dw4_tool_tablet={
             'wrist_pitch': {
                 'py_class_name': 'WristPitch',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
-                'device_params': 'SE4_wrist_pitch_DW4'
+                'device_params': 'SE4_wrist_pitch_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 95.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_roll': {
                 'py_class_name': 'WristRoll',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
-                'device_params': 'SE4_wrist_roll_DW4'
+                'device_params': 'SE4_wrist_roll_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_yaw': {
                 'py_class_name': 'WristYaw',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
-                'device_params': 'SE4_wrist_yaw_DW4'
+                'device_params': 'SE4_wrist_yaw_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             }
             }
             }
@@ -725,17 +833,38 @@ SE4_eoa_wrist_dw4_tool_calibration={
             'wrist_pitch': {
                 'py_class_name': 'WristPitch',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_pitch',
-                'device_params': 'SE4_wrist_pitch_DW4'
+                'device_params': 'SE4_wrist_pitch_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 95.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_roll': {
                 'py_class_name': 'WristRoll',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_roll',
-                'device_params': 'SE4_wrist_roll_DW4'
+                'device_params': 'SE4_wrist_roll_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             },
             'wrist_yaw': {
                 'py_class_name': 'WristYaw',
                 'py_module_name': 'stretch4_body.subsystem.end_of_arm.wrist_yaw',
-                'device_params': 'SE4_wrist_yaw_DW4'
+                'device_params': 'SE4_wrist_yaw_DW4',
+                'guarded_contact': {
+                    'enable_guarded_mode': 1,
+                    'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
+                    'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'sensitivity_default': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+                    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+                    'sensitivity_low': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
             }
             }
             }
@@ -1492,22 +1621,26 @@ nominal_params={
             'default':{
                     'lift':'sensitivity_default',
                     'arm':'sensitivity_default',
-                    'omnibase':'sensitivity_default'
+                    'omnibase':'sensitivity_default',
+                    'end_of_arm':'sensitivity_default'  # Wrist yaw, pitch, roll
             },
             'high_sensitivity_nav':{
                     'lift':'sensitivity_default',
                     'arm':'sensitivity_default',
-                    'omnibase':'sensitivity_high'
+                    'omnibase':'sensitivity_high',
+                    'end_of_arm':'sensitivity_default'
             },
             'high_sensitivity_manipulation':{
                     'lift':'sensitivity_high',
                     'arm':'sensitivity_high',
-                    'omnibase':'sensitivity_high'
+                    'omnibase':'sensitivity_high',
+                    'end_of_arm':'sensitivity_high'
             },
             'strong_manipulation':{
                     'lift':'sensitivity_low',
                     'arm':'sensitivity_low',
-                    'omnibase':'sensitivity_default'
+                    'omnibase':'sensitivity_default',
+                    'end_of_arm':'sensitivity_low'
             },
         },
         'direct':{

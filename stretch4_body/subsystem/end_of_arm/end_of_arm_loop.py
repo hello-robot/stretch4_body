@@ -172,6 +172,11 @@ class EndOfArmLoop(Device):
             cmd=SubsystemClient._construct_command('end_of_arm','step_sentry',cmd_id,{'power_periph':robot_status['power_periph']})
             self.q_cmd.put(cmd)
 
+    def set_guarded_contact_sensitivity(self, sensitivity_name=None):
+        cmd = SubsystemClient._construct_command('end_of_arm', 'set_guarded_contact_sensitivity', uuid.uuid1(),
+                                                 sensitivity_name)
+        self.q_cmd.put(cmd)
+
     def step_collision_avoidance(self,joint_name,in_collision_stop):
         cmd_id = uuid.uuid1()
         cmd = SubsystemClient._construct_command('end_of_arm', 'step_collision_avoidance', cmd_id,joint_name,in_collision_stop)
