@@ -210,7 +210,7 @@ if i == 'y' or i == 'Y':
     b.write_configuration_param_to_YAML(b.wheels[2].name + '.gains.coeff_acc_neg', coeff_neg2[0].item(), force_creation=True)
     b.write_configuration_param_to_YAML(b.wheels[2].name + '.gains.coeff_intercept_neg', coeff_neg2[1].item(), force_creation=True )
     
-b.set_guarded_contact_sensitivity('sensitivity_default')
+b.set_guarded_contact_sensitivity('medium_strength')
 b.stop()
 p.stop()
 b.push_command()

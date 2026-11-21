@@ -25,19 +25,19 @@ class ServoGuardedContact:
       - A joint that is only holding position barely registers a push (the gearing takes it), so a
         stationary wrist cannot detect being bumped. Only a driven one can.
 
-    Sensitivities are named profiles in the joint's 'guarded_contact' params (sensitivity_default,
-    sensitivity_high, sensitivity_low), selected with set_sensitivity().
+    Sensitivities are named profiles in the joint's 'guarded_contact' params (medium_strength,
+    low_strength, high_strength), selected with set_sensitivity().
 
     Positions are joint radians. This class does no I/O; GuardedWristJoint feeds it and acts on it.
     """
-    DEFAULT_SENSITIVITY = 'sensitivity_default' # Matches the robot_params_SE4.py key.
+    DEFAULT_SENSITIVITY = 'medium_strength' # Matches the robot_params_SE4.py key.
 
     def __init__(self, params=None):
         p = params or {}
         self.enabled = bool(p.get('enable_guarded_mode', 0))
         self.drive_deadband = p.get('drive_deadband_rad', 0.01)
         self.release_after_s = p.get('release_after_s', 0.2)
-        self.sensitivities = {k: v for k, v in p.items() if k.startswith('sensitivity_') and isinstance(v, dict)}
+        self.sensitivities = {k: v for k, v in p.items() if k.endswith('_strength') and isinstance(v, dict)}
         self.sensitivity = None
         self.contact_mA_pos = None
         self.contact_mA_neg = None

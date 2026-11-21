@@ -5,9 +5,9 @@ from stretch4_body.subsystem.end_of_arm.servo_guarded_contact import ServoGuarde
 PARAMS = {
     'enable_guarded_mode': 1,
     'drive_deadband_rad': 0.01,
-    'sensitivity_default': {'contact_mA_pos': 100.0, 'contact_mA_neg': 100.0, 'contact_s': 0.15},
-    'sensitivity_high': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
-    'sensitivity_low': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
+    'medium_strength': {'contact_mA_pos': 100.0, 'contact_mA_neg': 100.0, 'contact_s': 0.15},
+    'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
+    'high_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
 }
 
 
@@ -64,7 +64,7 @@ def test_pushing_while_still_moving_trips():
 def test_acceleration_spike_is_not_contact():
     """Free motion at teleop speed: ~160 mA peaks, but never held over 65 mA for more than 0.04 s."""
     g = ServoGuardedContact(PARAMS)
-    g.set_sensitivity('sensitivity_high')
+    g.set_sensitivity('low_strength')
     g.set_goal(1.0)
     currents = [0, 13, 45, 70, 130, 160, 120, 40, 70, 25, 0, 0]
     for i, c in enumerate(currents):
@@ -200,20 +200,20 @@ def test_velocity_mode_at_soft_limit_is_not_contact():
 
 def test_sensitivity_profiles():
     g = ServoGuardedContact(PARAMS)
-    assert g.sensitivity == 'sensitivity_default'
+    assert g.sensitivity == 'medium_strength'
     assert not drive_into_obstacle(g, current_mA=80.0, duration=2.0)
 
-    assert g.set_sensitivity('sensitivity_high')
+    assert g.set_sensitivity('low_strength')
     assert g.contact_mA_pos == 65.0
     assert drive_into_obstacle(g, current_mA=80.0, t0=10.0)
 
     g.note_hold()
-    assert g.set_sensitivity('sensitivity_low')
+    assert g.set_sensitivity('high_strength')
     assert not drive_into_obstacle(g, current_mA=130.0, t0=20.0, duration=2.0)
 
 
 def test_pos_and_neg_thresholds_follow_driving_direction():
-    params = dict(PARAMS, sensitivity_default={'contact_mA_pos': 100.0, 'contact_mA_neg': 200.0, 'contact_s': 0.15})
+    params = dict(PARAMS, medium_strength={'contact_mA_pos': 100.0, 'contact_mA_neg': 200.0, 'contact_s': 0.15})
     g = ServoGuardedContact(params)
     assert drive_into_obstacle(g, goal=1.0, current_mA=150.0)  # Positive: over 100 mA
     assert g.trip_direction == 1
@@ -227,9 +227,9 @@ def test_pos_and_neg_thresholds_follow_driving_direction():
 
 def test_unknown_sensitivity_keeps_current():
     g = ServoGuardedContact(PARAMS)
-    g.set_sensitivity('sensitivity_high')
+    g.set_sensitivity('low_strength')
     assert not g.set_sensitivity('sensitivity_bogus')
-    assert g.sensitivity == 'sensitivity_high'
+    assert g.sensitivity == 'low_strength'
     assert g.contact_mA_pos == 65.0
 
 

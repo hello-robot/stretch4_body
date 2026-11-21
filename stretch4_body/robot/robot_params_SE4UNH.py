@@ -136,15 +136,15 @@ nominal_params={
             },
         'guarded_contact':{
             'off': 0,
-          'sensitivity_default':{
+          'medium_strength':{
               'coeff_sensitivity_pos': 0.5,
               'coeff_sensitivity_neg': 0.5
           },
-            'sensitivity_high':{
+            'low_strength':{
               'coeff_sensitivity_pos': 0.0,
               'coeff_sensitivity_neg': 0.0
           },
-            'sensitivity_low':{
+            'high_strength':{
               'coeff_sensitivity_pos': 1.0,
               'coeff_sensitivity_neg': 1.0
           }
@@ -202,15 +202,15 @@ nominal_params={
             },
         'guarded_contact':{
             'off': 0,
-          'sensitivity_default':{
+          'medium_strength':{
               'coeff_sensitivity_pos': 0.5,
               'coeff_sensitivity_neg': 0.5
           },
-            'sensitivity_high':{
+            'low_strength':{
               'coeff_sensitivity_pos': 0.0,
               'coeff_sensitivity_neg': 0.0
           },
-            'sensitivity_low':{
+            'high_strength':{
               'coeff_sensitivity_pos': 1.0,
               'coeff_sensitivity_neg': 1.0
           }
@@ -267,15 +267,15 @@ nominal_params={
             },
         'guarded_contact':{
             'off': 0,
-          'sensitivity_default':{
+          'medium_strength':{
               'coeff_sensitivity_pos': 0.5,
               'coeff_sensitivity_neg': 0.5
           },
-            'sensitivity_high':{
+            'low_strength':{
               'coeff_sensitivity_pos': 0.0,
               'coeff_sensitivity_neg': 0.0
           },
-            'sensitivity_low':{
+            'high_strength':{
               'coeff_sensitivity_pos': 1.0,
               'coeff_sensitivity_neg': 1.0
           }
@@ -341,15 +341,15 @@ nominal_params={
         },
         'guarded_contact':{
             'off': 0,
-          'sensitivity_default':{
+          'medium_strength':{
               'coeff_sensitivity_pos': 0.5,
               'coeff_sensitivity_neg': 0.5
           },
-            'sensitivity_high':{
+            'low_strength':{
               'coeff_sensitivity_pos': 0.0,
               'coeff_sensitivity_neg': 0.0
           },
-            'sensitivity_low':{
+            'high_strength':{
               'coeff_sensitivity_pos': 1.0,
               'coeff_sensitivity_neg': 1.0
           }
@@ -556,20 +556,20 @@ nominal_params={
         'guarded_contact':{
             'off':0,
             'default':{
-                    'lift':'sensitivity_default',
-                    'omnibase':'sensitivity_default'
+                    'lift':'medium_strength',
+                    'omnibase':'medium_strength'
             },
             'high_sensitivity_nav':{
-                    'lift':'sensitivity_default',
-                    'omnibase':'sensitivity_high'
+                    'lift':'medium_strength',
+                    'omnibase':'low_strength'
             },
-            'high_sensitivity_manipulation':{
-                    'lift':'sensitivity_high',
-                    'omnibase':'sensitivity_default'
+            'low_strength':{
+                    'lift':'low_strength',
+                    'omnibase':'medium_strength'
             },
-            'strong_manipulation':{
-                    'lift':'sensitivity_low',
-                    'omnibase':'sensitivity_default'
+            'high_strength':{
+                    'lift':'high_strength',
+                    'omnibase':'medium_strength'
             },
         },
         'direct':{

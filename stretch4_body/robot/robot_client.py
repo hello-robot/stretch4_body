@@ -242,7 +242,7 @@ class RobotClient(SubsystemClient):
         Parameters
         ----------
         mode_name : str, optional
-            Name of the sensitivity mode (e.g. 'off', 'default','high_sensitivity_nav', 'high_sensitivity_manipulation')
+            Name of the sensitivity mode (e.g. 'off', 'default','high_sensitivity_nav', 'low_strength')
             None will reset to default
         """
         if mode_name is None:
@@ -1220,8 +1220,8 @@ class WristJointClient(SubsystemClient):
         Parameters
         ----------
         mode_name : str, optional
-            A sensitivity in the joint's guarded_contact params (e.g. 'sensitivity_high').
-            None resets to sensitivity_default.
+            A sensitivity in the joint's guarded_contact params (e.g. 'low_strength').
+            None resets to medium_strength.
         """
         self._queue_command(f'{self.joint_name}.end_of_arm', "set_guarded_contact_sensitivity", mode_name,
                             self.joint_name)
@@ -1572,7 +1572,7 @@ class EndOfArmClient(SubsystemClient):
         ----------
         mode_name : str, optional
             Name of the sensitivity in the wrist joints' guarded_contact params
-            (e.g. 'sensitivity_default', 'sensitivity_high', 'sensitivity_low').
+            (e.g. 'medium_strength', 'low_strength', 'high_strength').
             None will reset to default
         """
         self._queue_command('end_of_arm', "set_guarded_contact_sensitivity", mode_name)

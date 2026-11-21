@@ -91,11 +91,11 @@ try:
         if c == '4':
             rate = 'max'
         if c == '5':
-            l.set_guarded_contact_sensitivity('sensitivity_low')
+            l.set_guarded_contact_sensitivity('high_strength')
         if c == '6':
-            l.set_guarded_contact_sensitivity('sensitivity_default')
+            l.set_guarded_contact_sensitivity('medium_strength')
         if c == '7':
-            l.set_guarded_contact_sensitivity('sensitivity_high')
+            l.set_guarded_contact_sensitivity('low_strength')
         if c == '8':
             l.set_guarded_contact_sensitivity('off')
         if c=='m':

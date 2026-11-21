@@ -159,7 +159,7 @@ if i == 'y' or i == 'Y':
     device.write_configuration_param_to_YAML(device.motor.name + '.gains.coeff_acc_neg', coeff_neg[0].item(), force_creation=True)
     device.write_configuration_param_to_YAML(device.motor.name + '.gains.coeff_intercept_neg', coeff_neg[1].item(), force_creation=True )
     r.push_command()
-device.set_guarded_contact_sensitivity('sensitivity_default')
+device.set_guarded_contact_sensitivity('medium_strength')
 device.enable_sync_mode()
 device.set_soft_motion_limit_max(x=device.params['range_m'][1])
 device.set_soft_motion_limit_min(x=device.params['range_m'][0])

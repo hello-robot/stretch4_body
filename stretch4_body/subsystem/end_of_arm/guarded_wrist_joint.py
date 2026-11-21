@@ -74,8 +74,8 @@ class GuardedWristJoint(FeetechSMHello):
 
     def set_guarded_contact_sensitivity(self, sensitivity_name=None):
         """
-        sensitivity_name: a 'sensitivity_*' entry in this joint's guarded_contact params.
-                          None means sensitivity_default.
+        sensitivity_name: a '*_strength' entry in this joint's guarded_contact params.
+                          None means medium_strength.
         """
         g = self.guarded_contact
         if not g.enabled:
