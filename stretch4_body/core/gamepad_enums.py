@@ -1,20 +1,20 @@
 from stretch4_body.core.hello_utils import *
 from stretch4_body.core.robot_params import RobotParams
 import numpy as np
-from enum import Enum
+from enum import Enum, auto
 
 class GuardedContactSensitivity(Enum):
     """
-    Name of the sensitivity mode as defined in robot_params_SE4. (e.g. 'off', 'default','high_sensitivity_nav', 'high_sensitivity_manipulation')
+    Name of the sensitivity mode as defined in robot_params_SE4.
     """
 
-    HIGH_SENSITIVITY_NAV = 1
-    HIGH_SENSITIVITY_MANIPULATION = 2  # Low Strength
-    MEDIUM = 3 # Medium Strength (default in Stretch Body)
-    STRONG_MANIPULATION = 4 # High Strength
+    low_strength = auto()  # Low Strength
+    medium_strength = auto() # Medium Strength (default in Stretch Body)
+    high_strength = auto() # High Strength
+
     def _get_cycleable_options(self):
         # return list(type(self))
-        return [GuardedContactSensitivity.HIGH_SENSITIVITY_MANIPULATION, GuardedContactSensitivity.MEDIUM, GuardedContactSensitivity.STRONG_MANIPULATION]
+        return [GuardedContactSensitivity.low_strength, GuardedContactSensitivity.medium_strength, GuardedContactSensitivity.high_strength]
 
 
     def cycle(self, is_forward:bool):
@@ -25,14 +25,12 @@ class GuardedContactSensitivity(Enum):
 
     def play_sound_file(self):
         file_name:str
-        if self is GuardedContactSensitivity.MEDIUM:
-            file_name = "contact_sensitivity_medium.wav"
-        elif self is GuardedContactSensitivity.HIGH_SENSITIVITY_NAV:
-            file_name = "contact_sensitivity_high_nav.wav"
-        elif self is GuardedContactSensitivity.HIGH_SENSITIVITY_MANIPULATION:
-            file_name = "contact_sensitivity_high_manipulation.wav"
-        elif self is GuardedContactSensitivity.STRONG_MANIPULATION:
-            file_name = "contact_sensitivity_strong_manipulation.wav"
+        if self is GuardedContactSensitivity.low_strength:
+            file_name = "contact_sensitivity_low_strength.wav"
+        elif self is GuardedContactSensitivity.medium_strength:
+            file_name = "contact_sensitivity_medium_strength.wav"
+        elif self is GuardedContactSensitivity.high_strength:
+            file_name = "contact_sensitivity_high_strength.wav"
         else:
             raise NotImplementedError(f"No sound file for {self}")
         
@@ -40,8 +38,6 @@ class GuardedContactSensitivity(Enum):
 
     def get_name(self):
         """Get the name mapping that works with Stretch Body"""
-        if self == GuardedContactSensitivity.MEDIUM:
-            return "default"
         return self.name.lower()
     
     def apply(self, robot):

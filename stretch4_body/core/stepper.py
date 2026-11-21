@@ -1231,13 +1231,13 @@ class Stepper_Protocol_P8(StepperBase):
         if coeff_sensitivity_pos is not None:
             self._command['coeff_sensitivity_pos'] = max(0.0, min(1.0, coeff_sensitivity_pos))
         else:
-            self._command['coeff_sensitivity_pos'] = self.params['guarded_contact']['sensitivity_default']['coeff_sensitivity_pos']
+            self._command['coeff_sensitivity_pos'] = self.params['guarded_contact']['medium_strength']['coeff_sensitivity_pos']
 
 
         if coeff_sensitivity_neg is not None:
             self._command['coeff_sensitivity_neg'] = max(0.0, min(1.0, coeff_sensitivity_neg))
         else:
-            self._command['coeff_sensitivity_neg'] = self.params['guarded_contact']['sensitivity_default']['coeff_sensitivity_neg']
+            self._command['coeff_sensitivity_neg'] = self.params['guarded_contact']['medium_strength']['coeff_sensitivity_neg']
 
         #print('SETTTTT', self._command['coeff_sensitivity_pos'])
         self._dirty_command=True

@@ -58,7 +58,7 @@ class OmniBase(Device):
                 and int(str(self.wheels[0].board_info['protocol_version'])[1:]) >= 8 
                 and int(str(self.wheels[1].board_info['protocol_version'])[1:]) >= 8 
                 and int(str(self.wheels[2].board_info['protocol_version'])[1:]) >= 8):
-                    self.set_guarded_contact_sensitivity('sensitivity_default')
+                    self.set_guarded_contact_sensitivity('medium_strength')
         else:
             self.logger.error('Failed to start Omnibase')
         return success
@@ -154,7 +154,7 @@ class OmniBase(Device):
         for w in self.wheels:
             if w.hw_valid and int(str(w.board_info['protocol_version'])[1:]) < 8:
                 raise NotImplementedError('This method not supported for firmware on protocol {0}.'.format(w.board_info['protocol_version']))
-        mode_name = mode_name or 'sensitivity_default'
+        mode_name = mode_name or 'medium_strength'
 
         if mode_name == 'off':
             self.disable_guarded_mode()

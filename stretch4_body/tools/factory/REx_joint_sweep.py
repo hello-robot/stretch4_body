@@ -709,9 +709,9 @@ def build_model(tags):
         c_acc_neg = gains.get('coeff_acc_neg', 0.0)
         c_int_neg = gains.get('coeff_intercept_neg', 0.0)
         
-        sens_def = guarded.get('sensitivity_default', {})
-        sens_hi = guarded.get('sensitivity_high', {})
-        sens_lo = guarded.get('sensitivity_low', {})
+        sens_def = guarded.get('medium_strength', {})
+        sens_hi = guarded.get('low_strength', {})
+        sens_lo = guarded.get('high_strength', {})
         
         def eff_to_amps(e):
             mA_per_tick = (3300.0 / 4096.0) / 0.424
