@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from stretch4_body.utils.tool_metadata import ToolMetadata
 
 
+def _guarded_contact_modes(joint_params):
+    """Names in a joint's guarded_contact params that select a sensitivity, skipping its settings."""
+    return [k for k in joint_params.get('guarded_contact', {}) if k == 'off' or k.endswith('_strength')]
+
+
 class RobotClient(SubsystemClient):
     """
     Client interface for controlling the Stretch robot.
@@ -731,6 +736,20 @@ class OmniBaseClient(SubsystemClient):
         """
         self._queue_command("omnibase", "set_guarded_contact_sensitivity",mode_name)
 
+    def enable_guarded_contact(self, mode_name=None):
+        """
+        Turn on guarded contact: set_guarded_contact_sensitivity(mode_name), None for the default.
+        Each status['wheel_N']['enable_guarded_mode'] reports it.
+        """
+        self.set_guarded_contact_sensitivity(mode_name)
+
+    def disable_guarded_contact(self):
+        """
+        Turn off guarded contact: set_guarded_contact_sensitivity('off').
+        Each status['wheel_N']['enable_guarded_mode'] reports it.
+        """
+        self.set_guarded_contact_sensitivity('off')
+
     def get_guarded_contact_modes(self):
         """
         Get the guarded contact modes.
@@ -933,6 +952,26 @@ class PrismaticJointClient(SubsystemClient):
             None will reset to default
         """
         self._queue_command(self.name, "set_guarded_contact_sensitivity",mode_name)
+
+    def enable_guarded_contact(self, mode_name=None):
+        """
+        Turn on guarded contact: set_guarded_contact_sensitivity(mode_name), None for the default.
+        status['motor']['enable_guarded_mode'] reports it.
+        """
+        self.set_guarded_contact_sensitivity(mode_name)
+
+    def disable_guarded_contact(self):
+        """
+        Turn off guarded contact: set_guarded_contact_sensitivity('off').
+        status['motor']['enable_guarded_mode'] reports it.
+        """
+        self.set_guarded_contact_sensitivity('off')
+
+    def get_guarded_contact_modes(self):
+        """
+        The names set_guarded_contact_sensitivity() takes for this joint ('off', 'medium_strength', ...).
+        """
+        return _guarded_contact_modes(self.robot_params[f'hello-motor-{self.name}'])
 
     def is_homed(self):
         """
@@ -1220,11 +1259,29 @@ class WristJointClient(SubsystemClient):
         Parameters
         ----------
         mode_name : str, optional
-            A sensitivity in the joint's guarded_contact params (e.g. 'low_strength').
-            None resets to medium_strength.
+            A sensitivity in the joint's guarded_contact params (e.g. 'low_strength'), which also turns
+            guarded contact on, or 'off' to turn it off. None resets to medium_strength.
         """
         self._queue_command(f'{self.joint_name}.end_of_arm', "set_guarded_contact_sensitivity", mode_name,
                             self.joint_name)
+    def enable_guarded_contact(self, mode_name=None):
+        """
+        Turn on guarded contact: set_guarded_contact_sensitivity(mode_name), None for the default.
+        status['enable_guarded_mode'] reports it.
+        """
+        self.set_guarded_contact_sensitivity(mode_name)
+    def disable_guarded_contact(self):
+        """
+        Turn off guarded contact: set_guarded_contact_sensitivity('off').
+        status['enable_guarded_mode'] reports it.
+        """
+        self.set_guarded_contact_sensitivity('off')
+    def get_guarded_contact_modes(self):
+        """
+        The names set_guarded_contact_sensitivity() takes for this joint ('off', 'medium_strength', ...).
+        Empty if the joint has no guarded contact.
+        """
+        return _guarded_contact_modes(self.robot_params.get(self.joint_name, {}))
     def home(self, end_pos=None,wait_on_completion=True, timeout=20):
         """
         Home the joint.
@@ -1282,6 +1339,7 @@ class WristJointClient(SubsystemClient):
         print('Stalled', self.status['stalled'])
         print('Stall Overload', self.status['stall_overload'])
         if 'in_guarded_event' in self.status:
+            print('Enable Guarded Mode', self.status['enable_guarded_mode'])
             print('In Guarded Event', self.status['in_guarded_event'])
             print('Guarded Events', self.status['guarded_event'])
             print('Guarded Contact Sensitivity', self.status['guarded_contact']['sensitivity'])

@@ -177,10 +177,12 @@ class StepperMotion(StepperDefn):
     def enable_guarded_mode(self):
         self.gains['enable_guarded_mode'] = 1
         self._dirty_gains = 1
+        self.status['enable_guarded_mode'] = 1
 
     def disable_guarded_mode(self):
         self.gains['enable_guarded_mode'] = 0
         self._dirty_gains = 1
+        self.status['enable_guarded_mode'] = 0
 
     def set_motion_limits(self, limit_neg, limit_pos, blocking=True):
         """
@@ -705,7 +707,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
                        'transport': self.transport.status,'pos_calibrated':0,'runstop_on':0,'near_pos_setpoint':0,'near_vel_setpoint':0,
                        'is_moving':0,'is_moving_filtered':0,'is_drv_fault':0,'is_mg_accelerating':0,'is_mg_moving':0,'calibration_rcvd': 0,'in_guarded_event':0,
                        'in_safety_event':0,'waiting_on_sync':0,'in_sync_mode':0,'trace_on':0,'ctrl_cycle_cnt':0,
-                       'voltage':0, 'temperature':0}
+                       'voltage':0, 'temperature':0, 'enable_guarded_mode':0}
 
         self.status_zero=self.status.copy()
         self.board_info={'board_variant':None, 'firmware_version':None,'protocol_version':None,'hardware_id':0, 'stepper_type':0}
@@ -717,6 +719,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         self._trigger_data=0
         self.hw_valid=False
         self.gains = self.params['gains'].copy()
+        self.status['enable_guarded_mode'] = int(self.gains['enable_guarded_mode'])
         self.gains_flash = {}
 
     # ###########  Device Methods #############
@@ -791,6 +794,8 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         """
         Return True if success
         """
+        # The gain as last set (sent with the next command); the board does not report it back
+        self.status['enable_guarded_mode'] = int(self.gains['enable_guarded_mode'])
         if not self.hw_valid:
             return False
         success=True
@@ -811,6 +816,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
     def set_gains(self,g=None):
         if g is not None:
             self.gains=g.copy()
+            self.status['enable_guarded_mode'] = int(self.gains['enable_guarded_mode'])
         self._dirty_gains = True
 
     def write_gains_to_flash(self):
@@ -894,6 +900,7 @@ class StepperBase(StepperMotion, StepperCalibration, StepperTrace, StepperHelper
         print('       Is MG Moving:', self.status['is_mg_moving'])
         print('       Encoder Calibration in Flash:', self.status['calibration_rcvd'])
         print('       In Guarded Event:', self.status['in_guarded_event'])
+        print('       Enable Guarded Mode:', self.status['enable_guarded_mode'])
         print('       In Safety Event:', self.status['in_safety_event'])
         print('       Waiting on Sync:', self.status['waiting_on_sync'])
         print('       Trace recording:', self.status['trace_on'])
@@ -1337,5 +1344,6 @@ class StepperStatus(TypedDict):
     waypoint_traj: StepperBaseWaypointTrajStatus
     voltage: float
     temperature: float
+    enable_guarded_mode: int
 
 

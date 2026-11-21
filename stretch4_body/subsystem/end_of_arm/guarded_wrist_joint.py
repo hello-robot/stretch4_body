@@ -11,15 +11,17 @@ class GuardedWristJoint(FeetechSMHello):
     """
     A wrist joint (yaw, pitch, roll) with software guarded contact. See ServoGuardedContact.
 
-    Configured by the joint's 'guarded_contact' params; without them, or with enable_guarded_mode 0, this
-    behaves exactly like FeetechSMHello. The sensitivity is chosen with set_guarded_contact_sensitivity(),
-    normally from the robot-level guarded contact profile via EndOfArm.
+    Configured by the joint's 'guarded_contact' params; without them, or while off, this behaves exactly
+    like FeetechSMHello. enable_guarded_mode sets whether it starts on. As for the steppers,
+    set_guarded_contact_sensitivity('off') turns it off and selecting any other sensitivity turns it on;
+    normally that comes from the robot-level guarded contact profile via EndOfArm.
 
     Detection runs in pull_status(). Under stretch_body_server that is called by the end-of-arm loop, so it
     is always running. In direct mode (is_direct=True) the guard only works if the caller keeps calling
     pull_status() while the joint moves.
 
     Status:
+        enable_guarded_mode: 1 while detection is on, else 0 (as the steppers' gains['enable_guarded_mode'])
         in_guarded_event: True from a guarded contact until it is released (see ServoGuardedContact)
         guarded_event: count of guarded contacts since startup (as the steppers report it)
         guarded_contact: the active sensitivity and its thresholds, and which way the joint was driven
@@ -74,13 +76,17 @@ class GuardedWristJoint(FeetechSMHello):
 
     def set_guarded_contact_sensitivity(self, sensitivity_name=None):
         """
-        sensitivity_name: a '*_strength' entry in this joint's guarded_contact params.
-                          None means medium_strength.
+        sensitivity_name: a '*_strength' entry in this joint's guarded_contact params, which also turns
+                          guarded contact on, or 'off' to turn it off. None means medium_strength.
         """
         g = self.guarded_contact
-        if not g.enabled:
+        if not g.available:
             return
-        if not g.set_sensitivity(sensitivity_name or ServoGuardedContact.DEFAULT_SENSITIVITY):
+        if sensitivity_name == 'off':
+            g.disable()  # Also clears any guarded event, freeing the joint
+        elif g.set_sensitivity(sensitivity_name or ServoGuardedContact.DEFAULT_SENSITIVITY):
+            g.enable()
+        else:
             self.logger.error(f'{self.name}: unknown guarded contact sensitivity {sensitivity_name}, '
                               f'keeping {g.sensitivity}')
             return
@@ -157,6 +163,7 @@ class GuardedWristJoint(FeetechSMHello):
 
     def _update_guarded_status(self):
         g = self.guarded_contact
+        self.status['enable_guarded_mode'] = int(g.enabled)
         self.status['in_guarded_event'] = g.in_event
         self.status['guarded_event'] = g.n_events
         self.status['guarded_contact'] = g.get_status()
