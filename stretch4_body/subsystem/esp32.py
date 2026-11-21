@@ -15,9 +15,18 @@ PowerPeriph, which the Pimu fills from its UART link to the ESP32.
 The packed layouts below must match stretch_firmware_ii/arduino/hello_esp/EspRpc.h.
 """
 import array as arr
+import json
+import os
+import re
+import secrets
+import shutil
 import struct
+import subprocess
+import tempfile
 import textwrap
 import time
+import urllib.error
+import urllib.request
 
 from stretch4_body.core.device import Device
 from stretch4_body.core.transport.transport import Transport
@@ -50,27 +59,15 @@ def _mac(b):
     return ':'.join('%02X' % x for x in bytes(b))
 
 
-def params_credentials(robot_params):
-    """
-    The Wi-Fi and Firebase credentials in the robot parameters: esp32.wifi and esp32.firebase,
-    falling back to the older power-periph.firebase (stretch_configuration_params.yaml) and
-    power_periph.firebase blocks. 'NA' counts as unset (None).
-    Returns ({'ssid', 'password'}, {'url', 'api_key', 'user_email', 'user_password'}).
-    """
-    def val(d, k):
-        v = (d or {}).get(k)
-        return None if v in (None, 'NA', '') else str(v)
+def firmware_version_tuple(version):
+    """'hello-esp.v0.2.6p1' to (0, 2, 6), () if it isn't a version."""
+    m = re.search(r'\.v(\d+)\.(\d+)\.(\d+)', version or '')
+    return tuple(int(x) for x in m.groups()) if m else ()
 
-    esp32 = robot_params.get('esp32') or {}
-    legacy = [(robot_params.get(name) or {}).get('firebase') or {} for name in ('power-periph', 'power_periph')]
 
-    def first(d, k, legacy_key):
-        return val(d, k) or next((val(l, legacy_key) for l in legacy if val(l, legacy_key)), None)
-
-    wifi = {'ssid': first(esp32.get('wifi'), 'ssid', 'network_ssid'),
-            'password': first(esp32.get('wifi'), 'password', 'network_password')}
-    firebase = {k: first(esp32.get('firebase'), k, k) for k in ('url', 'api_key', 'user_email', 'user_password')}
-    return wifi, firebase
+def generate_robot_key():
+    """A new Firebase robot key: 32 URL-safe characters (192 random bits)."""
+    return secrets.token_urlsafe(24)
 
 
 def esp32_status_template():
@@ -185,6 +182,8 @@ class Esp32Defn:
     SSID_LEN = 33
     WIFI_PASS_LEN = 65
     FB_URL_LEN = 251
+    FB_KEY_LEN = 65
+    FB_KEY_MIN_LEN = 22
     FB_API_LEN = 129
     FB_EMAIL_LEN = 251
     FB_PASS_LEN = 65
@@ -199,7 +198,7 @@ class Esp32Defn:
     FMT_WIFI_STATUS = '<BBBB33sbB6s6s4s4s4s4s32sIIBI'
     FMT_FIREBASE_STATUS = '<BBBBIIIIIi64sIIIBBBI40s'
     FMT_WIFI_CONFIG = '<33s65sB'
-    FMT_FIREBASE_CONFIG = '<251s129s251s65sB'
+    FMT_FIREBASE_CONFIG = '<251s65s129s251s65sB'  # url, robot_key, api_key, user_email, user_password, flags
     FMT_CONFIG = '<IIBBB'
     FMT_TRIGGER = '<I'
     FMT_SCAN_HEADER = '<BB'
@@ -207,6 +206,9 @@ class Esp32Defn:
 
     # Firmware older than this has no RPC (it only prints)
     FIRST_RPC_FIRMWARE = 'hello-esp.v0.2.0p1'
+    # Firebase set-up (the robot key, FMT_FIREBASE_CONFIG) needs this firmware or later. Earlier
+    # p1 firmware has a different Firebase config layout, from before Firebase was used
+    FIRST_FIREBASE_FIRMWARE = 'hello-esp.v0.2.6p1'
     # Protocols the firmware tools may install: p0 is the firmware before RPC
     FIRMWARE_PROTOCOLS = ['p0', 'p1']
 
@@ -336,19 +338,18 @@ class Esp32Base(Esp32Defn, Device):
             self.FMT_WIFI_CONFIG, _pack_cstr(ssid, self.SSID_LEN, 'ssid'),
             _pack_cstr(password, self.WIFI_PASS_LEN, 'password'), flags)
 
-    def set_firebase_config(self, url, api_key, user_email, user_password, persist=True, apply_now=True):
+    def set_firebase_config(self, url, robot_key, api_key='', user_email='', user_password='', persist=True,
+                            apply_now=True):
         """
-        Set the Firebase project and user (sent on the next push_command). All four, or all
-        empty to clear Firebase. persist: save to the ESP32's flash. apply_now: restart Firebase now.
+        Set the Firebase database and robot key (sent on the next push_command). All empty
+        clears Firebase. The sign-in (api_key, user_email, user_password) is optional: all
+        three, or none. persist: save to the ESP32's flash. apply_now: restart Firebase now.
+        Needs firmware hello-esp.v0.2.6p1 or later (supports_firebase).
         """
-        fields = (url or '', api_key or '', user_email or '', user_password or '')
+        fields = (url or '', robot_key or '', api_key or '', user_email or '', user_password or '')
         self.validate_firebase_config(*fields)
         flags = (self.CFG_FLAG_PERSIST if persist else 0) | (self.CFG_FLAG_APPLY_NOW if apply_now else 0)
-        self._pending_firebase_config = struct.pack(
-            self.FMT_FIREBASE_CONFIG, _pack_cstr(fields[0], self.FB_URL_LEN, 'url'),
-            _pack_cstr(fields[1], self.FB_API_LEN, 'api_key'),
-            _pack_cstr(fields[2], self.FB_EMAIL_LEN, 'user_email'),
-            _pack_cstr(fields[3], self.FB_PASS_LEN, 'user_password'), flags)
+        self._pending_firebase_config = self._pack_firebase_config(fields, flags)
 
     @classmethod
     def validate_wifi_config(cls, ssid, password):
@@ -362,31 +363,26 @@ class Esp32Base(Esp32Defn, Device):
             raise ValueError('A Wi-Fi password is 8 to 64 characters, or empty for an open network')
 
     @classmethod
-    def validate_firebase_config(cls, url, api_key, user_email, user_password):
-        """Raise ValueError if the ESP32 would reject these Firebase credentials."""
-        fields = (url or '', api_key or '', user_email or '', user_password or '')
-        if sum(1 for f in fields if len(f)) not in (0, 4):
-            raise ValueError('Set all four Firebase fields, or none')
-        for value, width, name in zip(fields, (cls.FB_URL_LEN, cls.FB_API_LEN, cls.FB_EMAIL_LEN, cls.FB_PASS_LEN),
-                                      ('url', 'api_key', 'user_email', 'user_password')):
+    def validate_robot_key(cls, robot_key):
+        """Raise ValueError if robot_key can't be a robot key."""
+        if not re.fullmatch(r'[A-Za-z0-9_-]{%d,%d}' % (cls.FB_KEY_MIN_LEN, cls.FB_KEY_LEN - 1), robot_key or ''):
+            raise ValueError('A robot key is %d to %d of A-Z a-z 0-9 - _' % (cls.FB_KEY_MIN_LEN, cls.FB_KEY_LEN - 1))
+
+    @classmethod
+    def validate_firebase_config(cls, url, robot_key, api_key='', user_email='', user_password=''):
+        """Raise ValueError if the ESP32 would reject these Firebase settings."""
+        fields = (url or '', robot_key or '', api_key or '', user_email or '', user_password or '')
+        for value, width, name in zip(fields, (cls.FB_URL_LEN, cls.FB_KEY_LEN, cls.FB_API_LEN, cls.FB_EMAIL_LEN,
+                                               cls.FB_PASS_LEN),
+                                      ('url', 'robot_key', 'api_key', 'user_email', 'user_password')):
             _pack_cstr(value, width, name)
-
-    def get_params_credentials(self):
-        """Credentials from the robot parameters (see params_credentials). Returns (wifi, firebase) dicts."""
-        return params_credentials(self.robot_params)
-
-    def send_credentials_from_params(self, persist=True, apply_now=True):
-        """Queue the Wi-Fi and Firebase credentials from the robot parameters. Returns what was queued."""
-        wifi, firebase = self.get_params_credentials()
-        sent = []
-        if wifi['ssid']:
-            self.set_wifi_config(wifi['ssid'], wifi['password'] or '', persist, apply_now)
-            sent.append('wifi')
-        if all(firebase.values()):
-            self.set_firebase_config(firebase['url'], firebase['api_key'], firebase['user_email'],
-                                     firebase['user_password'], persist, apply_now)
-            sent.append('firebase')
-        return sent
+        if not any(fields):
+            return  # Clears Firebase
+        if not fields[0] or not fields[1]:
+            raise ValueError('Firebase needs a database URL and a robot key')
+        cls.validate_robot_key(fields[1])
+        if sum(1 for f in fields[2:] if f) not in (0, 3):
+            raise ValueError('Signing in needs the API key, the email and the password, or none of them')
 
     def get_wifi_config(self):
         """Read the Wi-Fi credentials the ESP32 is using. Returns a dict, or None on failure."""
@@ -401,16 +397,22 @@ class Esp32Base(Esp32Defn, Device):
         return out
 
     def get_firebase_config(self):
-        """Read the Firebase credentials the ESP32 is using. Returns a dict, or None on failure."""
+        """
+        Read the Firebase settings the ESP32 is using: url, robot_key, api_key, user_email,
+        user_password, configured. Returns a dict, or None on failure.
+        """
         out = {}
 
         def cb(s):
-            url, api_key, email, password, flags = struct.unpack_from(self.FMT_FIREBASE_CONFIG, s)
-            out.update({'url': _cstr(url), 'api_key': _cstr(api_key), 'user_email': _cstr(email),
-                        'user_password': _cstr(password), 'configured': bool(flags & self.CFG_FLAG_CONFIGURED)})
+            out.update(self._unpack_firebase_config(s))
         if not self._rpc_pull(self.RPC_GET_FIREBASE_CONFIG, self.RPC_REPLY_FIREBASE_CONFIG, cb):
             return None
         return out
+
+    def supports_firebase(self):
+        """Whether the firmware takes this Firebase config: FIRST_FIREBASE_FIRMWARE or later."""
+        return firmware_version_tuple(self.board_info.get('firmware_version')) >= \
+            firmware_version_tuple(self.FIRST_FIREBASE_FIRMWARE)
 
     # ###########  Triggers (sent on the next push_command) #############
 
@@ -562,6 +564,12 @@ class Esp32Base(Esp32Defn, Device):
     def _unpack_firebase_status(self, s):
         raise NotImplementedError('Esp32 protocol not set')
 
+    def _pack_firebase_config(self, fields, flags):
+        raise NotImplementedError('Esp32 protocol not set')
+
+    def _unpack_firebase_config(self, s):
+        raise NotImplementedError('Esp32 protocol not set')
+
     # ###########  Printing #############
 
     def pretty_print(self):
@@ -708,6 +716,20 @@ class Esp32_Protocol_P1(Esp32Base):
         f['cmd_age_s'] = None if v[17] == self.UNKNOWN_AGE else v[17] / 1000.0
         f['cmd_id'] = _cstr(v[18])
 
+    def _pack_firebase_config(self, fields, flags):
+        url, robot_key, api_key, user_email, user_password = fields
+        return struct.pack(self.FMT_FIREBASE_CONFIG, _pack_cstr(url, self.FB_URL_LEN, 'url'),
+                           _pack_cstr(robot_key, self.FB_KEY_LEN, 'robot_key'),
+                           _pack_cstr(api_key, self.FB_API_LEN, 'api_key'),
+                           _pack_cstr(user_email, self.FB_EMAIL_LEN, 'user_email'),
+                           _pack_cstr(user_password, self.FB_PASS_LEN, 'user_password'), flags)
+
+    def _unpack_firebase_config(self, s):
+        url, robot_key, api_key, email, password, flags = struct.unpack_from(self.FMT_FIREBASE_CONFIG, s)
+        return {'url': _cstr(url), 'robot_key': _cstr(robot_key), 'api_key': _cstr(api_key),
+                'user_email': _cstr(email), 'user_password': _cstr(password),
+                'configured': bool(flags & self.CFG_FLAG_CONFIGURED)}
+
 
 class Esp32(Esp32Base):
     """
@@ -739,6 +761,243 @@ class Esp32(Esp32Base):
         self.push_command()
         self.pull_status()
         return True
+
+
+# ############################# Firebase set-up #############################
+
+class FirebaseCliError(Exception):
+    pass
+
+
+class FirebaseAuthError(FirebaseCliError):
+    """The Firebase CLI is not logged in, or its login has expired: firebase login (--reauth)."""
+
+
+class Esp32Firebase:
+    """
+    Firebase set-up for the ESP32's remote sleep and wake: the database rules, and the
+    Firebase CLI steps that stretch_esp32_jog can run for the user.
+
+    Each robot keeps its data in a Realtime Database under robots/<robot key> (hello_esp
+    firmware v0.2.6p1 on; the layout is in stretch_firmware_ii/arduino/hello_esp/README.md,
+    "Firebase"). The rules (RULES) let a request read or write robots/<key> only when
+    robot_keys lists the key:
+
+        robot_keys/<key>: true      the key alone is enough (the default)
+        robot_keys/<key>: "<uid>"   the request must also be signed in as that Firebase user
+
+    Nobody can list robots/ or read robot_keys/ through the rules, so a key can be used
+    only by someone who has it. Only the project's owners (the Firebase console, the CLI)
+    see the keys.
+    """
+    # Who may read and write robots/<key>
+    ACCESS = ("root.child('robot_keys').child($robot_key).val() === true || "
+              "(auth != null && root.child('robot_keys').child($robot_key).val() === auth.uid)")
+    # The whole rule set for a database that only robots use. Anything not listed is denied.
+    RULES = {'rules': {'robots': {'$robot_key': {'.read': ACCESS, '.write': ACCESS}}}}
+    DATABASE_HOST_SUFFIXES = ('.firebaseio.com', '.firebasedatabase.app')
+    # How the CLI says it can't authenticate. With --json it often says only "Failed to ...",
+    # and the reason is in firebase-debug.log
+    AUTH_ERROR_MARKERS = ('authentication error', 'failed to authenticate', 'have you run firebase login',
+                          'credentials are no longer valid', 'login --reauth')
+    CliError = FirebaseCliError
+    AuthError = FirebaseAuthError
+
+    # ###########  Rules and URLs #############
+
+    @staticmethod
+    def rules_json():
+        """The rules as the text to paste into the console's Rules tab."""
+        return json.dumps(Esp32Firebase.RULES, indent=2)
+
+    @staticmethod
+    def rules_are_ours(source):
+        """Whether a rule set's source is RULES (whitespace aside)."""
+        try:
+            return json.loads(source) == Esp32Firebase.RULES
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def default_project_id(fleet_id=None):
+        """
+        This robot's suggested Firebase project ID: $HELLO_FLEET_ID + '-PWR-MGMT', lowercase
+        (project IDs are), e.g. stretch-se4-4024-pwr-mgmt. None without a fleet ID.
+        """
+        fleet_id = os.environ.get('HELLO_FLEET_ID') if fleet_id is None else fleet_id
+        if not fleet_id:
+            return None
+        return re.sub(r'[^a-z0-9-]', '-', fleet_id.lower()) + '-pwr-mgmt'
+
+    @staticmethod
+    def default_database_url(fleet_id=None):
+        """
+        The database URL of default_project_id's default database, as the console creates it in
+        us-central1: https://<project>-default-rtdb.firebaseio.com. None without a fleet ID.
+        """
+        project = Esp32Firebase.default_project_id(fleet_id)
+        return 'https://%s-default-rtdb.firebaseio.com' % project if project else None
+
+    @staticmethod
+    def normalize_database_url(url):
+        """
+        The database URL as the ESP32 wants it: https://<name>.firebaseio.com or
+        https://<name>.<region>.firebasedatabase.app, with no path. Raises ValueError for
+        something else, such as a console link.
+        """
+        u = (url or '').strip()
+        if '://' not in u:
+            u = 'https://' + u
+        scheme, rest = u.split('://', 1)
+        host = rest.split('/', 1)[0].lower()
+        if scheme.lower() != 'https' or not host.endswith(Esp32Firebase.DATABASE_HOST_SUFFIXES) or \
+                host.startswith('.'):
+            raise ValueError('Not a Realtime Database URL: it looks like https://<name>.firebaseio.com or '
+                             'https://<name>.<region>.firebasedatabase.app (at the top of the console\'s Data tab)')
+        if rest[len(host):].strip('/'):
+            raise ValueError('A database URL has no path: https://%s' % host)
+        return 'https://' + host
+
+    # ###########  Firebase CLI #############
+
+    @staticmethod
+    def cli_path():
+        """The firebase command, or None if the Firebase CLI isn't installed."""
+        return shutil.which('firebase')
+
+    @staticmethod
+    def run_cli(args, project=None, cwd=None, timeout=180):
+        """
+        Run firebase <args> --json and return its result. Raises FirebaseAuthError if the CLI
+        can't authenticate, else FirebaseCliError with the CLI's message on failure.
+        cwd: where to run it. By default a temporary directory, so firebase-debug.log isn't left
+        in the user's directory.
+        """
+        if cwd is None:
+            with tempfile.TemporaryDirectory(prefix='stretch_firebase_') as d:
+                return Esp32Firebase.run_cli(args, project=project, cwd=d, timeout=timeout)
+        cmd = [Esp32Firebase.cli_path() or 'firebase'] + list(args) + \
+            (['--project', project] if project else []) + ['--json', '--non-interactive']
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise FirebaseCliError('firebase %s: %s' % (args[0], e))
+        out = r.stdout
+        try:
+            d = json.loads(out[out.index('{'):])
+            error = None if d.get('status') == 'success' else str(d.get('error') or 'firebase %s failed' % args[0])
+        except ValueError:
+            tail = (r.stderr or out).strip().splitlines()[-3:]
+            error = 'firebase %s failed: %s' % (args[0], ' '.join(tail) or 'no output')
+        if error is None:
+            return d.get('result')
+        # Searched, never shown: the debug log can hold tokens
+        try:
+            with open(os.path.join(cwd, 'firebase-debug.log')) as f:
+                debug_log = f.read()
+        except OSError:
+            debug_log = ''
+        if any(m in (error + r.stderr + debug_log).lower() for m in Esp32Firebase.AUTH_ERROR_MARKERS):
+            raise FirebaseAuthError(error)
+        raise FirebaseCliError(error)
+
+    @staticmethod
+    def logged_in():
+        """
+        Whether the CLI has an account on record. Its login may still have expired: the
+        commands then raise FirebaseAuthError.
+        """
+        try:
+            return bool(Esp32Firebase.run_cli(['login:list'], timeout=30))
+        except FirebaseCliError:
+            return False
+
+    @staticmethod
+    def list_projects():
+        """[{'projectId', 'displayName', ...}] the account can use."""
+        return Esp32Firebase.run_cli(['projects:list'], timeout=60) or []
+
+    @staticmethod
+    def create_project(project_id, display_name=None):
+        """Create a Google Cloud project with Firebase. project_id: 6-30 of a-z 0-9 -, starting with a letter."""
+        return Esp32Firebase.run_cli(['projects:create', project_id] +
+                                     (['--display-name', display_name] if display_name else []), timeout=300)
+
+    @staticmethod
+    def list_databases(project):
+        """The project's Realtime Databases: [{'name', 'databaseUrl', 'type', 'location', ...}]."""
+        try:
+            return Esp32Firebase.run_cli(['database:instances:list'], project=project, timeout=60) or []
+        except FirebaseAuthError:
+            raise
+        except FirebaseCliError as e:
+            if 'default' in str(e).lower() or 'haven\'t created' in str(e).lower():
+                return []
+            raise
+
+    @staticmethod
+    def database_console_url(project):
+        """Where to create the project's first Realtime Database (the CLI can only add more)."""
+        return 'https://console.firebase.google.com/project/%s/database' % project
+
+    # ###########  Checking access as the ESP32 has it #############
+
+    @staticmethod
+    def http_status(url, timeout=10):
+        """The HTTP status of a GET of url, with no sign-in. 0 if the server can't be reached."""
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except (urllib.error.URLError, OSError):
+            return 0
+
+    @staticmethod
+    def sign_in(api_key, email, password, timeout=10):
+        """A Firebase ID token for email and password (the ESP32's optional sign-in). Raises ValueError if refused."""
+        req = urllib.request.Request(
+            'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + api_key,
+            data=json.dumps({'email': email, 'password': password, 'returnSecureToken': True}).encode(),
+            headers={'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r)['idToken']
+        except urllib.error.HTTPError as e:
+            try:
+                message = json.load(e)['error']['message']
+            except (ValueError, KeyError, TypeError):
+                message = 'HTTP %d' % e.code
+            raise ValueError('Firebase sign-in refused: %s' % message)
+        except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+            raise ValueError('Firebase sign-in failed: %s' % e)
+
+    @staticmethod
+    def robot_key_works(url, robot_key, id_token=None):
+        """
+        Whether the rules in force let robot_key in, the way the ESP32 connects (signed in
+        with id_token, when the key is bound to a user), and keep robot_keys unreadable.
+        Rules can't be read with the CLI, so this checks them by what they do.
+        """
+        auth = '&auth=' + id_token if id_token else ''
+        return (Esp32Firebase.http_status('%s/robots/%s.json?shallow=true%s' % (url, robot_key, auth)) == 200 and
+                Esp32Firebase.http_status('%s/robot_keys.json?shallow=true' % url) == 401)
+
+    @staticmethod
+    def deploy_rules(project, instance):
+        """Replace the database's rules with RULES."""
+        with tempfile.TemporaryDirectory(prefix='stretch_firebase_') as d:
+            with open(os.path.join(d, 'database.rules.json'), 'w') as f:
+                f.write(Esp32Firebase.rules_json() + '\n')
+            with open(os.path.join(d, 'firebase.json'), 'w') as f:
+                json.dump({'database': [{'instance': instance, 'rules': 'database.rules.json'}]}, f)
+            Esp32Firebase.run_cli(['deploy', '--only', 'database'], project=project, cwd=d, timeout=300)
+
+    @staticmethod
+    def add_robot_key(project, instance, robot_key, uid=None):
+        """List robot_key in robot_keys: true, or the uid of the user who must sign in with it."""
+        Esp32Firebase.run_cli(['database:set', '/robot_keys/' + robot_key, '--data', json.dumps(uid if uid else True),
+                               '--instance', instance, '--force'], project=project, timeout=60)
 
 
 if __name__ == '__main__':

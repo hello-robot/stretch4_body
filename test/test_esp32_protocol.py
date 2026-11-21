@@ -1,17 +1,30 @@
 """
-ESP32 RPC protocol (stretch4_body.subsystem.esp32) without hardware: the packed
-layouts, unpacking, packing, validation, the log format and the credentials helpers.
+ESP32 (stretch4_body.subsystem.esp32) without hardware: the RPC protocol (packed layouts,
+unpacking, packing, validation, the log format), and the Firebase set-up (Esp32Firebase:
+the rules, the database URL check, and the Firebase CLI wrapper with subprocess mocked;
+the rules also in the Realtime Database emulator, where it is installed).
 """
+import base64
+import glob
+import json
 import math
 import os
 import re
+import shutil
+import socket
 import struct
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from unittest import mock
 
 import pytest
 
+import stretch4_body.subsystem.esp32 as esp32
 from stretch4_body.core.device import DeviceTimestamp
 from stretch4_body.subsystem.esp32 import (Esp32Defn, Esp32Base, Esp32_Protocol_P1, esp32_status_template,
-                                           params_credentials)
+                                           firmware_version_tuple, generate_robot_key)
 
 D = Esp32Defn
 
@@ -23,13 +36,16 @@ FIRMWARE_SIZES = {
     'FMT_WIFI_STATUS': 112,
     'FMT_FIREBASE_STATUS': 151,
     'FMT_WIFI_CONFIG': 99,
-    'FMT_FIREBASE_CONFIG': 697,
+    'FMT_FIREBASE_CONFIG': 762,      # hello-esp v0.2.6 on (with robot_key)
     'FMT_CONFIG': 11,
     'FMT_TRIGGER': 4,
 }
 
 ESP_RPC_H = os.path.join(os.path.dirname(__file__), '..', '..', 'stretch_firmware_ii', 'arduino', 'hello_esp',
                          'EspRpc.h')
+
+
+KEY = 'AbCdEfGhIjKlMnOpQrStUvWxYz012345'  # 32 characters, as generate_robot_key makes
 
 
 def p1():
@@ -69,6 +85,8 @@ class TestLayouts:
         ids = dict((k, int(v)) for k, v in re.findall(r'#define (RPC_\w+)\s+(\d+)', src))
         for name, value in ids.items():
             assert getattr(D, name) == value, name
+        assert int(re.search(r'#define ESP32_FB_KEY_LEN\s+(\d+)', src).group(1)) == D.FB_KEY_LEN
+        assert int(re.search(r'#define ESP32_FB_KEY_MIN_LEN\s+(\d+)', src).group(1)) == D.FB_KEY_MIN_LEN
         for name, value in re.findall(r'#define ESP32_FB_(\w+)\s+(\d+)', src):
             if name.endswith('_LEN'):
                 continue
@@ -191,11 +209,43 @@ class TestPack:
         e.set_wifi_config('Cafe', '')
         assert struct.unpack(D.FMT_WIFI_CONFIG, e._pending_wifi_config)[2] == D.CFG_FLAG_PERSIST | D.CFG_FLAG_APPLY_NOW
 
-    def test_firebase_config(self):
+    def test_firebase_config_robot_key_only(self):
         e = p1()
-        e.set_firebase_config('https://x.firebaseio.com', 'key', 'a@b.c', 'pw')
-        url, key, email, pw, flags = struct.unpack(D.FMT_FIREBASE_CONFIG, e._pending_firebase_config)
-        assert url.rstrip(b'\0') == b'https://x.firebaseio.com' and email.rstrip(b'\0') == b'a@b.c'
+        e.set_firebase_config('https://x.firebaseio.com', KEY, apply_now=False)
+        url, key, api, email, pw, flags = struct.unpack(D.FMT_FIREBASE_CONFIG, e._pending_firebase_config)
+        assert url.rstrip(b'\0') == b'https://x.firebaseio.com' and key.rstrip(b'\0') == KEY.encode()
+        assert api.rstrip(b'\0') == email.rstrip(b'\0') == pw.rstrip(b'\0') == b''
+        assert flags == D.CFG_FLAG_PERSIST
+
+    def test_firebase_config_sign_in(self):
+        e = p1()
+        e.set_firebase_config('https://x.firebaseio.com', KEY, 'api', 'a@b.c', 'pw')
+        assert e._unpack_firebase_config(e._pending_firebase_config) == {
+            'url': 'https://x.firebaseio.com', 'robot_key': KEY, 'api_key': 'api', 'user_email': 'a@b.c',
+            'user_password': 'pw', 'configured': False}
+
+    def test_firebase_config_clear(self):
+        e = p1()
+        e.set_firebase_config('', '')
+        assert not any(e._unpack_firebase_config(e._pending_firebase_config).values())
+
+    def test_supports_firebase(self):
+        # Earlier p1 firmware has another Firebase config layout
+        e = p1()
+        for version, ok in ((None, False), ('hello-esp.v0.2.0p1', False), ('hello-esp.v0.2.5p1', False),
+                            ('hello-esp.v0.2.6p1', True), ('hello-esp.v0.2.10p1', True), ('hello-esp.v1.0.0p1', True)):
+            e.board_info['firmware_version'] = version
+            assert e.supports_firebase() == ok, version
+        assert firmware_version_tuple('hello-esp.v0.2.10p1') == (0, 2, 10) and firmware_version_tuple('x') == ()
+
+    def test_firmware_supports_firebase(self):
+        # The firmware's own version passes the check
+        common_h = os.path.join(os.path.dirname(ESP_RPC_H), 'Common.h')
+        if not os.path.exists(common_h):
+            pytest.skip('stretch_firmware_ii is not next to stretch4_body')
+        version = re.search(r'#define FIRMWARE_VERSION_HR "([^"]+)"', open(common_h).read()).group(1)
+        assert version.endswith('p1')
+        assert firmware_version_tuple(version) >= firmware_version_tuple(D.FIRST_FIREBASE_FIRMWARE)
 
     def test_config(self):
         e = p1()
@@ -215,13 +265,31 @@ class TestValidate:
         Esp32Base.validate_wifi_config('net', '')
         Esp32Base.validate_wifi_config('net', 'p' * 64)
 
-    def test_firebase_all_or_none(self):
-        Esp32Base.validate_firebase_config('', '', '', '')
-        Esp32Base.validate_firebase_config('u', 'k', 'e', 'p')
+    def test_firebase_good(self):
+        Esp32Base.validate_firebase_config('', '')                       # Clears Firebase
+        Esp32Base.validate_firebase_config('u', KEY)                     # Robot key only
+        Esp32Base.validate_firebase_config('u', KEY, 'k', 'e', 'p')      # And signs in
+        Esp32Base.validate_firebase_config('u', 'a-_' + 'x' * 61)        # 64, the longest
+
+    @pytest.mark.parametrize('fields', [
+        ('u', ''), ('', KEY),                          # The URL and the key go together
+        ('u', KEY, 'k', '', 'p'),                       # The sign-in is all three or none
+        ('u', 'x' * 21),                                # Too short
+        ('u', 'x' * 65),                                # Too long
+        ('u', KEY[:-1] + '/'), ('u', KEY[:-1] + '.'),   # Not allowed in a database path
+        ('u' * 251, KEY),
+        ('', '', 'k', 'e', 'p'),
+    ])
+    def test_firebase_bad(self, fields):
         with pytest.raises(ValueError):
-            Esp32Base.validate_firebase_config('u', 'k', '', 'p')
-        with pytest.raises(ValueError):
-            Esp32Base.validate_firebase_config('u' * 251, 'k', 'e', 'p')
+            Esp32Base.validate_firebase_config(*fields)
+
+    def test_generated_keys(self):
+        keys = {generate_robot_key() for _ in range(50)}
+        assert len(keys) == 50
+        for k in keys:
+            assert len(k) == 32
+            Esp32Base.validate_robot_key(k)
 
 
 class TestLog:
@@ -239,17 +307,279 @@ class TestLog:
         assert Esp32Base.unpack_log(struct.pack('<HB', 0, 0)) == []
 
 
-class TestCredentials:
-    def test_esp32_params_first(self):
-        rp = {'esp32': {'wifi': {'ssid': 'New', 'password': 'newpassword'},
-                        'firebase': {'url': 'u2', 'api_key': 'NA', 'user_email': 'NA', 'user_password': 'NA'}},
-              'power-periph': {'firebase': {'network_ssid': 'Old', 'network_password': 'oldpassword', 'url': 'u1',
-                                            'api_key': 'k1', 'user_email': 'e1', 'user_password': 'p1'}}}
-        wifi, fb = params_credentials(rp)
-        assert wifi == {'ssid': 'New', 'password': 'newpassword'}
-        assert fb == {'url': 'u2', 'api_key': 'k1', 'user_email': 'e1', 'user_password': 'p1'}
+# ############################# Firebase set-up (Esp32Firebase) #############################
 
-    def test_unset(self):
-        wifi, fb = params_credentials({'esp32': {'wifi': {'ssid': 'NA', 'password': 'NA'}}})
-        assert wifi == {'ssid': None, 'password': None}
-        assert all(v is None for v in fb.values())
+fb = esp32.Esp32Firebase
+
+
+class TestRules:
+    def test_only_robots_by_key(self):
+        rules = fb.RULES['rules']
+        # Nothing at the root or on robots/ itself: no listing, and robot_keys is unreadable
+        assert list(rules) == ['robots'] and list(rules['robots']) == ['$robot_key']
+        node = rules['robots']['$robot_key']
+        assert node['.read'] == node['.write'] == fb.ACCESS
+        assert "child($robot_key).val() === true" in fb.ACCESS
+        assert 'auth != null' in fb.ACCESS and 'auth.uid' in fb.ACCESS
+
+    def test_text_round_trips(self):
+        assert fb.rules_are_ours(fb.rules_json())
+        assert fb.rules_are_ours(json.dumps(fb.RULES))
+        assert not fb.rules_are_ours('{"rules": {".read": true, ".write": true}}')
+        assert not fb.rules_are_ours('// a comment\n' + fb.rules_json())
+        assert not fb.rules_are_ours(None)
+
+
+
+class TestDefaults:
+    def test_from_fleet_id(self):
+        assert fb.default_project_id('stretch-se4-4024') == 'stretch-se4-4024-pwr-mgmt'
+        assert fb.default_database_url('stretch-se4-4024') == \
+            'https://stretch-se4-4024-pwr-mgmt-default-rtdb.firebaseio.com'
+        # Project IDs are lowercase letters, digits and hyphens
+        assert fb.default_project_id('Stretch_SE4.4024') == 'stretch-se4-4024-pwr-mgmt'
+        assert fb.normalize_database_url(fb.default_database_url('stretch-se4-4024')) == \
+            fb.default_database_url('stretch-se4-4024')
+
+    def test_environment(self):
+        with mock.patch.dict(os.environ, {'HELLO_FLEET_ID': 'stretch-se4-1001'}):
+            assert fb.default_project_id() == 'stretch-se4-1001-pwr-mgmt'
+        with mock.patch.dict(os.environ, {}, clear=True):
+            assert fb.default_project_id() is None and fb.default_database_url() is None
+
+
+class TestDatabaseUrl:
+    @pytest.mark.parametrize('typed,url', [
+        ('https://proj-default-rtdb.firebaseio.com', 'https://proj-default-rtdb.firebaseio.com'),
+        ('https://proj-default-rtdb.firebaseio.com/', 'https://proj-default-rtdb.firebaseio.com'),
+        (' proj-default-rtdb.firebaseio.com ', 'https://proj-default-rtdb.firebaseio.com'),
+        ('https://proj-default-rtdb.europe-west1.firebasedatabase.app/',
+         'https://proj-default-rtdb.europe-west1.firebasedatabase.app'),
+        ('HTTPS://Proj.FirebaseIO.com', 'https://proj.firebaseio.com'),
+    ])
+    def test_good(self, typed, url):
+        assert fb.normalize_database_url(typed) == url
+
+    @pytest.mark.parametrize('typed', [
+        '', 'https://console.firebase.google.com/project/proj/database/proj-default-rtdb/data',
+        'http://proj.firebaseio.com', 'https://proj.firebaseio.com/robots', 'https://example.com',
+        'https://.firebaseio.com',
+    ])
+    def test_bad(self, typed):
+        with pytest.raises(ValueError):
+            fb.normalize_database_url(typed)
+
+
+def completed(stdout, returncode=0, stderr=''):
+    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=stderr)
+
+
+class TestCli:
+    def test_result(self):
+        out = '(node:1) DeprecationWarning\n' + json.dumps({'status': 'success', 'result': [{'projectId': 'p'}]})
+        with mock.patch.object(fb, 'cli_path', return_value='/usr/bin/firebase'), \
+                mock.patch.object(esp32.subprocess, 'run', return_value=completed(out)) as run:
+            assert fb.list_projects() == [{'projectId': 'p'}]
+        cmd = run.call_args[0][0]
+        assert cmd[:2] == ['/usr/bin/firebase', 'projects:list'] and '--json' in cmd and '--non-interactive' in cmd
+
+    def test_error(self):
+        out = json.dumps({'status': 'error', 'error': 'Failed to list Firebase projects.'})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(out, 1)):
+            with pytest.raises(fb.CliError, match='Failed to list'):
+                fb.list_projects()
+
+    def test_no_json(self):
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed('', 1, 'command not found')):
+            with pytest.raises(fb.CliError, match='command not found'):
+                fb.run_cli(['projects:list'])
+
+    def test_expired_login(self):
+        # --json says only "Failed to ...": the reason is in firebase-debug.log, in the directory it runs in
+        def run(cmd, cwd=None, **kw):
+            with open(os.path.join(cwd, 'firebase-debug.log'), 'w') as f:
+                f.write('[error] Authentication Error: Your credentials are no longer valid. '
+                        'Please run firebase login --reauth\n')
+            return completed(json.dumps({'status': 'error', 'error': 'Failed to list Firebase projects. '
+                                                                     'See firebase-debug.log for more info.'}), 1)
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=run):
+            with pytest.raises(fb.AuthError):
+                fb.list_projects()
+
+    def test_not_logged_in(self):
+        err = json.dumps({'status': 'error', 'error': 'Failed to authenticate, have you run firebase login?'})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(err, 1)):
+            with pytest.raises(fb.AuthError):
+                fb.list_projects()
+
+    def test_other_errors_are_not_auth(self):
+        err = json.dumps({'status': 'error', 'error': 'Failed to list Firebase projects.'})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(err, 1)):
+            with pytest.raises(fb.CliError) as e:
+                fb.list_projects()
+        assert not isinstance(e.value, fb.AuthError)
+
+    def test_runs_in_a_temporary_directory(self):
+        # So firebase-debug.log isn't left where the user ran the tool
+        ok = json.dumps({'status': 'success', 'result': []})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(ok)) as run:
+            fb.list_projects()
+        cwd = run.call_args[1]['cwd']
+        assert cwd and cwd != os.getcwd() and not os.path.exists(cwd)
+
+    def test_add_robot_key(self):
+        ok = json.dumps({'status': 'success', 'result': None})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(ok)) as run:
+            fb.add_robot_key('proj', 'proj-default-rtdb', 'KEY')
+            fb.add_robot_key('proj', 'proj-default-rtdb', 'KEY', uid='UID1')
+        a, b = (c[0][0] for c in run.call_args_list)
+        assert a[1:5] == ['database:set', '/robot_keys/KEY', '--data', 'true']
+        assert b[4] == '"UID1"'
+        assert a[a.index('--instance') + 1] == 'proj-default-rtdb' and a[a.index('--project') + 1] == 'proj'
+
+    def test_deploy_writes_rules(self):
+        seen = {}
+
+        def run(cmd, cwd=None, **kw):
+            seen['firebase.json'] = json.load(open(cwd + '/firebase.json'))
+            seen['rules'] = open(cwd + '/database.rules.json').read()
+            seen['cmd'] = cmd
+            return completed(json.dumps({'status': 'success', 'result': {}}))
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=run):
+            fb.deploy_rules('proj', 'inst')
+        assert seen['firebase.json'] == {'database': [{'instance': 'inst', 'rules': 'database.rules.json'}]}
+        assert fb.rules_are_ours(seen['rules'])
+        assert seen['cmd'][1:4] == ['deploy', '--only', 'database']
+
+    def test_robot_key_works(self):
+        # Checked by what the rules do: the key's node readable, robot_keys not
+        url = 'https://x.firebaseio.com'
+        for statuses, ok in ((([200, 401]), True), ([401, 401], False), ([200, 200], False), ([0, 0], False)):
+            with mock.patch.object(fb, 'http_status', side_effect=statuses) as st:
+                assert fb.robot_key_works(url, 'KEY') == ok, statuses
+            asked = [c[0][0] for c in st.call_args_list]
+            assert asked[0] == url + '/robots/KEY.json?shallow=true'
+            assert asked[1:] in ([], [url + '/robot_keys.json?shallow=true'])
+        with mock.patch.object(fb, 'http_status', side_effect=[200, 401]) as st:
+            fb.robot_key_works(url, 'KEY', id_token='TOK')
+        assert st.call_args_list[0][0][0].endswith('&auth=TOK')
+
+    def test_sign_in(self):
+        class Reply:
+            def __init__(self, body):
+                self.body = body
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def read(self, *a):
+                return self.body
+        with mock.patch.object(esp32.urllib.request, 'urlopen', return_value=Reply(b'{"idToken": "TOK"}')) as u:
+            assert fb.sign_in('API', 'a@b.c', 'pw') == 'TOK'
+        req = u.call_args[0][0]
+        assert req.full_url.endswith('signInWithPassword?key=API')
+        assert json.loads(req.data) == {'email': 'a@b.c', 'password': 'pw', 'returnSecureToken': True}
+        refused = esp32.urllib.error.HTTPError('u', 400, 'Bad', {}, None)
+        refused.read = lambda *a: b'{"error": {"message": "INVALID_LOGIN_CREDENTIALS"}}'
+        with mock.patch.object(esp32.urllib.request, 'urlopen', side_effect=refused):
+            with pytest.raises(ValueError, match='INVALID_LOGIN_CREDENTIALS'):
+                fb.sign_in('API', 'a@b.c', 'bad')
+
+    def test_no_database_yet(self):
+        err = json.dumps({'status': 'error', 'error': "It looks like you haven't created a Realtime Database "
+                                                     "instance in this project before."})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(err, 1)):
+            assert fb.list_databases('proj') == []
+
+
+# ############################# The rules, in the database emulator #############################
+# Runs where Java and the Realtime Database emulator are installed (firebase setup:emulators:database),
+# and skips elsewhere. It sends requests the way the ESP32 and the app do: a user's ID token in ?auth=.
+
+EMULATOR_JARS = sorted(glob.glob(os.path.expanduser('~/.cache/firebase/emulators/firebase-database-emulator-*.jar')))
+NS = 'demo-robots'
+
+
+@pytest.fixture(scope='module')
+def emulator():
+    if not EMULATOR_JARS or not shutil.which('java'):
+        pytest.skip('needs Java and the Realtime Database emulator (firebase setup:emulators:database)')
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+    s.close()
+    p = subprocess.Popen(['java', '-jar', EMULATOR_JARS[-1], '--port', str(port)], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(150):
+            try:
+                socket.create_connection(('127.0.0.1', port), 0.2).close()
+                break
+            except OSError:
+                time.sleep(0.2)
+        yield 'http://127.0.0.1:%d' % port
+    finally:
+        p.terminate()
+        p.wait()
+
+
+def id_token(uid):
+    """An unsigned ID token, which the emulator takes."""
+    def enc(d):
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b'=').decode()
+    now = int(time.time())
+    return enc({'alg': 'none', 'typ': 'JWT'}) + '.' + enc({
+        'sub': uid, 'user_id': uid, 'iat': now, 'exp': now + 3600, 'auth_time': now, 'aud': NS,
+        'iss': 'https://securetoken.google.com/' + NS}) + '.'
+
+
+def request(base, method, path, data=None, uid=None, admin=False):
+    """The HTTP status. admin: as the console or the CLI, which bypass the rules."""
+    url = '%s/%s.json?ns=%s' % (base, path.strip('/'), NS) + ('&auth=' + id_token(uid) if uid else '')
+    r = urllib.request.Request(url, method=method, data=None if data is None else json.dumps(data).encode())
+    if admin:
+        r.add_header('Authorization', 'Bearer owner')
+    try:
+        with urllib.request.urlopen(r) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+K1, K2, KU, KX = 'K' * 32, 'J' * 32, 'U' * 32, 'X' * 32
+STATUS = {'power_state': 'active', 'online': True}
+
+
+@pytest.fixture
+def db(emulator):
+    assert request(emulator, 'PUT', '.settings/rules', fb.RULES, admin=True) == 200
+    assert request(emulator, 'PUT', '', {'robot_keys': {K1: True, K2: True, KU: 'UID1'}}, admin=True) == 200
+    return emulator
+
+
+class TestRulesInEmulator:
+    def test_robot_and_app_with_the_key(self, db):
+        assert request(db, 'PUT', 'robots/%s/system_status' % K1, STATUS) == 200
+        cmd = {'action': 'sleep', 'id': 'c1', 'ts': {'.sv': 'timestamp'}}
+        assert request(db, 'PUT', 'robots/%s/requests/power_command' % K1, cmd) == 200
+        assert request(db, 'GET', 'robots/%s/requests/power_command' % K1) == 200
+        assert request(db, 'PUT', 'robots/%s/system_status' % K2, STATUS) == 200  # Two robots, one database
+
+    @pytest.mark.parametrize('method,path', [
+        ('PUT', 'robots/%s/system_status' % KX), ('GET', 'robots/%s' % KX),  # A key robot_keys doesn't list
+        ('GET', 'robots'), ('GET', 'robot_keys'), ('GET', ''),                # No listing
+        ('PUT', 'robot_keys/%s' % KX),                                        # Can't add a key
+    ])
+    def test_denied_without_a_listed_key(self, db, method, path):
+        assert request(db, method, path, True if method == 'PUT' else None) == 401
+        assert request(db, method, path, True if method == 'PUT' else None, uid='UID1') == 401
+
+    def test_key_bound_to_a_user(self, db):
+        assert request(db, 'GET', 'robots/%s' % KU) == 401
+        assert request(db, 'GET', 'robots/%s' % KU, uid='UID2') == 401
+        assert request(db, 'PUT', 'robots/%s/system_status' % KU, STATUS, uid='UID1') == 200
+
+    def test_revoke(self, db):
+        assert request(db, 'GET', 'robots/%s' % K1) == 200
+        assert request(db, 'DELETE', 'robot_keys/%s' % K1, admin=True) == 200
+        assert request(db, 'GET', 'robots/%s' % K1) == 401

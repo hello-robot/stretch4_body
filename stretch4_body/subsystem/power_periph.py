@@ -582,10 +582,10 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
     # They are the only way to configure ESP32 firmware older than hello-esp.v0.2.0p1.
     # With v0.2.0p1 and later use Esp32 (stretch4_body.subsystem.esp32), which talks to the
     # ESP32 directly and also reads the credentials and connection state back.
-    # Defaults come from the robot parameters, as for Esp32 (esp32.wifi, esp32.firebase,
-    # then power-periph.firebase).
+    # The credentials are arguments: they are secrets, and not kept in the robot parameters.
 
-    def connect_to_firebase(self,timeout=10.0):
+    def connect_to_firebase(self, ssid, password, fb_host_url, fb_api_key, fb_user_email, fb_user_password,
+                            timeout=10.0):
         #This likely will need some work to be robust to initial conditions, drop-outs, etc.
         #Nominal example for now
         #Will block server...
@@ -593,7 +593,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         ts=time.time()
 
         if not self.status['connected_to_network']:
-            self.send_network_info()
+            self.send_network_info(ssid, password)
             self.push_command()
         while not self.status['connected_to_network'] and time.time()-ts<timeout:
             self.pull_status() #Todo: make server loop safe.
@@ -602,7 +602,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
             return False
 
         if not self.status['connected_to_firebase']:
-            self.send_firebase_info()
+            self.send_firebase_info(fb_host_url, fb_api_key, fb_user_email, fb_user_password)
             self.push_command()
         while not self.status['connected_to_firebase'] and time.time() - ts < timeout:
             self.pull_status()  # Todo: make server loop safe.
@@ -612,13 +612,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
         return True
 
-    def send_firebase_info(self, fb_host_url=None, fb_api_key=None, fb_user_email=None, fb_user_password=None):
-        from stretch4_body.subsystem.esp32 import params_credentials
-        _, fb = params_credentials(self.robot_params)
-        fb_host_url = fb['url'] if fb_host_url is None else fb_host_url
-        fb_api_key = fb['api_key'] if fb_api_key is None else fb_api_key
-        fb_user_email = fb['user_email'] if fb_user_email is None else fb_user_email
-        fb_user_password = fb['user_password'] if fb_user_password is None else fb_user_password
+    def send_firebase_info(self, fb_host_url, fb_api_key, fb_user_email, fb_user_password):
         if any(v in (None, '', 'NA') for v in (fb_host_url, fb_api_key, fb_user_email, fb_user_password)):
             print('Missing Firebase credentials: url, api_key, user_email and user_password are all needed')
             return
@@ -638,12 +632,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
             sidx += len(i)
         self.transport.do_push_rpc_sync(payload[:sidx], self.rpc_firebase_info_reply)
 
-    def send_network_info(self, ssid=None, password=None):
-        from stretch4_body.subsystem.esp32 import params_credentials
-        wifi, _ = params_credentials(self.robot_params)
-        ssid = wifi['ssid'] if ssid is None else ssid
-        password = wifi['password'] if password is None else password
-
+    def send_network_info(self, ssid, password):
         if ssid in (None, '', 'NA') or password in (None, '', 'NA'):
             print('Missing Wi-Fi SSID or password for the ESP32')
             return
