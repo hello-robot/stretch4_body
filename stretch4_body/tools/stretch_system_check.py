@@ -712,14 +712,19 @@ DEVICE_LABELS = {
 UNQUERYABLE_FIRMWARE = ('hello-pixart-j3', 'hello-esp32')
 
 
-def firmware_use_device():
-    """Devices to query for firmware, honoring the SE4UNH (no arm) configuration."""
-    from stretch4_body.core.device import Device
-    d = Device(req_params=False)
-    is_unh = d.robot_params.get('robot', {}).get('model_name') == 'SE4UNH'
+def firmware_use_device() -> dict[str, bool]:
+    """
+    Build the set of devices whose firmware should be queried.
+
+    Every SE4 device is queried. Boards listed in UNQUERYABLE_FIRMWARE are
+    checked for presence only, since their firmware version cannot be read.
+
+    Returns:
+        A mapping from device name to True for each device to query.
+    """
     return {
         'hello-esp32':        True,
-        'hello-motor-arm':    not is_unh,
+        'hello-motor-arm':    True,
         'hello-motor-lift':   True,
         'hello-motor-omni-0': True,
         'hello-motor-omni-1': True,
