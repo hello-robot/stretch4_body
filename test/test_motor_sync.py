@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from stretch4_body.core.stepper import Stepper
 from stretch4_body.robot.robot_server import RobotServer, LOOP_STATE_RUNNING
+from stretch4_body.subsystem.omnibase import OmniBase
 
 
 class BoardLink:
@@ -120,3 +121,21 @@ def test_a_board_that_drops_out_stops_holding_the_sync():
     run_cycle(server, 'lift', 'arm')
 
     assert events[-3:] == ['lift command', 'lift ack', 'sync']
+
+
+def test_a_base_wheel_that_drops_out_stops_holding_the_sync():
+    events = []
+    server = make_server(events)
+    base = OmniBase.__new__(OmniBase)
+    base.wheels = [make_stepper(f'wheel{i}', events) for i in range(3)]
+    base.pull_status = MagicMock()
+    server.subsystems['base'] = base
+    base.wheels[1].transport.acks = False
+    for w in base.wheels:
+        w._dirty_command = True
+    run_cycle(server, 'lift')
+    base.wheels[0].hw_valid = False
+
+    run_cycle(server, 'lift')
+
+    assert events[-1] == 'sync'

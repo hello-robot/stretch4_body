@@ -616,7 +616,7 @@ class OmniBase(Device):
                 self.wheels[2].is_sync_required(ts_last_motor_sync))
 
     def is_command_ack_missing(self):
-        return any(w.is_command_ack_missing() for w in self.wheels)
+        return all(w.hw_valid for w in self.wheels) and any(w.is_command_ack_missing() for w in self.wheels)
 
     def is_homed(self):
         return True
