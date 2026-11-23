@@ -733,21 +733,46 @@ def ask_fleet_id(default=None):
             click.secho('  %s' % e, fg='red')
 
 
-def ask_sign_in(known):
-    """The optional Firebase user: {'api_key', 'user_email', 'user_password'}, or None to cancel."""
-    click.echo('  With sign-in, reading the robot\'s data needs a signed-in user, and writes need one as well\n'
-               '  as the robot key. In the Firebase console:\n'
-               '    Authentication > Sign-in method: enable Email/Password\n'
-               '    Authentication > Users: add a user for the robot\n'
-               '    Project settings > General: copy the Web API key\n'
-               '  The app must sign in too, as any user of the project.')
-    cfg = {'api_key': ask('Web API key', known['api_key'], secret=True),
+def ask_sign_in(known, project=None, api_key=None):
+    """
+    The optional Firebase user: {'api_key', 'user_email', 'user_password'}, or None to cancel.
+    project: the Firebase project, when known, for direct links. api_key: the project's Web
+    API key when the CLI read it; else it is asked for (sign-in goes through Google's Identity
+    Toolkit, which needs the key to know the project).
+    """
+    where = lambda page: Esp32Firebase.auth_console_url(project, page) if project else ''
+    click.echo('  The robot signs in as a Firebase user of the project. In the Firebase console:')
+    click.echo('    Authentication > Sign-in method: enable Email/Password%s' % ('\n      ' + where('providers') if project else ''))
+    click.echo('    Authentication > Users: add a user for the robot%s' % ('\n      ' + where('users') if project else ''))
+    if not api_key:
+        click.echo('    Project settings > General: copy the Web API key')
+    click.echo('  The app must sign in too, as any user of the project.')
+    cfg = {'api_key': api_key or ask('Web API key', known['api_key'], secret=True),
            'user_email': ask('User email', known['user_email']),
            'user_password': ask('User password', known['user_password'], secret=True)}
     if not all(cfg.values()):
-        click.secho('  All three are needed.', fg='red')
+        click.secho('  The email and the password are needed%s.' % ('' if api_key else ', and the API key'), fg='red')
         return None
     return cfg
+
+
+def cli_sign_in(project, known):
+    """
+    With the CLI: the project's Web API key read from its web app (one made if it has none),
+    then the user to sign in as. Returns the sign-in dict, or None to cancel.
+    """
+    api_key = Esp32Firebase.web_api_key(project)
+    if not api_key:
+        click.echo('  Sign-in needs the project\'s Web API key, which comes with a web app, and "%s" has none.'
+                   % project)
+        if not confirm('Add a web app named "Stretch power" to the project, for its API key?', default=True):
+            return None
+        api_key = Esp32Firebase.web_api_key(project, create=True)
+    if not api_key:
+        click.secho('  Could not read the Web API key: copy it from Project settings > General.', fg='yellow')
+    else:
+        click.secho('  Web API key read from the project.', fg='green')
+    return ask_sign_in(known, project, api_key)
 
 
 def print_rules(sign_in):
@@ -878,12 +903,13 @@ def reconcile_rules(project, instance, url, fleet_id, robot_key, id_token, sign_
         click.secho('  Not yet: %s.' % why, fg='yellow')
 
 
-def setup_database_with_cli(fleet_id, robot_key, sign_in):
+def setup_database_with_cli(fleet_id, robot_key, want_sign_in, known):
     """
     With the Firebase CLI: pick or create a project, find its database, write the robot key,
-    and get the rules in force (published over a new database's defaults, or merged by the
-    user into rules that are there). Returns the database URL, None to go on by hand, or
-    BACK_TO_MENU.
+    take the user to sign in as (with the project's Web API key, if want_sign_in), and get
+    the rules in force (published over a new database's defaults, or merged by the user into
+    rules that are there). Returns (database URL, sign-in dict or None), None to go on by
+    hand, or BACK_TO_MENU.
     """
     fb = Esp32Firebase
     try:
@@ -930,21 +956,32 @@ def setup_database_with_cli(fleet_id, robot_key, sign_in):
         # The key first (the CLI isn't held to the rules), then see whether the rules work with it
         fb.set_robot_key(project, instance, fleet_id, robot_key)
         click.secho('  Robot key written to robots/%s/robot_key' % fleet_id, fg='green')
+        sign_in = None
+        if want_sign_in:
+            sign_in = cli_sign_in(project, known)
+            if sign_in is None:
+                return BACK_TO_MENU
         id_token = robot_sign_in(sign_in)
         if id_token is False:
             return BACK_TO_MENU
         ok, why = fb.rules_work(url, fleet_id, robot_key, id_token)
         if ok:
             click.secho('  %s already has the robot rules.' % url, fg='green')
-            return url
+            return url, sign_in
         click.echo('  The rules %s has now don\'t do what the robot needs (%s).' % (url, why))
         source = fb.current_rules(project, instance)
         if fb.classify_rules(source) == 'other':
-            return url if reconcile_rules(project, instance, url, fleet_id, robot_key, id_token, bool(sign_in),
-                                          source) else BACK_TO_MENU
-        click.echo('  It has %s rules: the robot rules replace them.'
-                   % ('a new database\'s default' if fb.classify_rules(source) == 'default' else 'this tool\'s earlier'))
-        if not confirm('Publish the robot rules?', default=True):
+            return (url, sign_in) if reconcile_rules(project, instance, url, fleet_id, robot_key, id_token,
+                                                     bool(sign_in), source) else BACK_TO_MENU
+        click.echo('  It has %s rules: the robot rules%s replace them.'
+                   % ('a new database\'s default' if fb.classify_rules(source) == 'default' else 'this tool\'s earlier',
+                      ' with sign-in' if sign_in else ''))
+        if sign_in and fb.classify_rules(source) == 'ours':
+            # Rules cover the whole database: a robot here that doesn't sign in stops working
+            click.secho('  With these rules, every robot on this database must sign in: one set up without a\n'
+                        '  Firebase user stops publishing and taking commands until it is set up again with one.',
+                        fg='yellow')
+        if not confirm('Publish the robot rules%s?' % (' with sign-in' if sign_in else ''), default=True):
             return None
         fb.deploy_rules(project, instance, fb.rules_json(bool(sign_in)))
         click.secho('  Rules published', fg='green')
@@ -954,7 +991,7 @@ def setup_database_with_cli(fleet_id, robot_key, sign_in):
             click.secho('  The rules still don\'t work (%s). Check the Rules tab and robots/%s/robot_key in the '
                         'console.' % (why, fleet_id), fg='red')
             return BACK_TO_MENU
-        return url
+        return url, sign_in
     except fb.AuthError:
         firebase_cli_sign_in_error(expired=True)
         return BACK_TO_MENU
@@ -1059,31 +1096,37 @@ def setup_firebase(known, previous):
         robot_key = generate_robot_key()
         click.secho('  New robot key made.', fg='green')
 
-    sign_in = None
     click.echo('  Writes need the robot key. Signing in as a Firebase user as well is optional: it also\n'
                '  keeps people who aren\'t signed in from reading the robot\'s data.')
-    if confirm('Also sign in as a Firebase user? This is optional, prevents unauthenticated reads, and requires extra setup in Firebase Console. Note: Writes are already secured by the robot key without auth.',
-               default=False):
-        sign_in = ask_sign_in(known)
-        if sign_in is None:
-            return False
+    # Only whether, here: the user and the project's Web API key are taken once the project is known
+    want_sign_in = confirm('Also sign in as a Firebase user? This is optional, prevents unauthenticated reads, and '
+                           'requires extra setup in Firebase Console. Note: Writes are already secured by the robot '
+                           'key without auth.', default=False)
 
-    url = None
+    url, sign_in = None, None
     if Esp32Firebase.cli_path():
         if confirm('The Firebase CLI is installed. Use it to set up the database (pick or create a project, '
                    'write the robot key, get the rules in force)? It must be logged in (firebase login)', default=True):
-            url = setup_database_with_cli(fleet_id, robot_key, sign_in)
-            if url == BACK_TO_MENU:
+            done = setup_database_with_cli(fleet_id, robot_key, want_sign_in, known)
+            if done == BACK_TO_MENU:
                 return False
-            if url is None:
+            if done is None:
                 click.echo('  Going on by hand.')
+            else:
+                url, sign_in = done
     else:
         click.secho(FIREBASE_CLI_NOT_INSTALLED, fg='yellow')
         if not confirm('Set up the database by hand in the Firebase console instead?', default=False):
             return False
     if url is None:
-        url = setup_database_by_hand(fleet_id, robot_key, sign_in, known['url'])
-        if url is None or not check_rules_by_hand(url, fleet_id, robot_key, sign_in):
+        url = setup_database_by_hand(fleet_id, robot_key, want_sign_in, known['url'])
+        if url is None:
+            return False
+        if want_sign_in:
+            sign_in = ask_sign_in(known)
+            if sign_in is None:
+                return False
+        if not check_rules_by_hand(url, fleet_id, robot_key, sign_in):
             return False
 
     cfg = dict(url=url, fleet_id=fleet_id, robot_key=robot_key,

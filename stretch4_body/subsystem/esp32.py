@@ -1071,7 +1071,8 @@ class Esp32Firebase:
         Whether the rules in force do what the robot needs, checked by what they do, from this
         computer, the way the ESP32 connects (signed in with id_token, with a user):
         robots/<fleet_id>/robot_key can't be read, a write with another key is refused, a write
-        with robot_key is let in, and the commands can be read.
+        with robot_key is let in, and the commands can be read; with id_token (sign-in), also
+        that they can't be read without signing in.
         Returns (True, '') or (False, what failed).
         """
         base = '%s/robots/%s' % (url, fleet_id)
@@ -1088,6 +1089,9 @@ class Esp32Firebase:
         code = Esp32Firebase.http_status(base + '/power_system_requests.json' + auth)
         if code != 200:
             return False, 'the commands can\'t be read (HTTP %d)' % code
+        # With sign-in, the point is that nobody else can read: the rules must be the sign-in version
+        if id_token and Esp32Firebase.http_status(base + '/power_system_requests.json') != 401:
+            return False, 'the robot\'s data can be read without signing in (rules without sign-in)'
         return True, ''
 
     @staticmethod
@@ -1109,6 +1113,28 @@ class Esp32Firebase:
             with open(os.path.join(d, 'firebase.json'), 'w') as f:
                 json.dump({'database': [{'instance': instance, 'rules': 'database.rules.json'}]}, f)
             Esp32Firebase.run_cli(['deploy', '--only', 'database'], project=project, cwd=d, timeout=300)
+
+    @staticmethod
+    def web_api_key(project, create=False):
+        """
+        The project's Web API key, which a Firebase sign-in needs, from its first web app's
+        config. None if the project has no web app, unless create, which makes one.
+        """
+        apps = Esp32Firebase.run_cli(['apps:list', 'WEB'], project=project, timeout=60) or []
+        if apps:
+            app_id = apps[0]['appId']
+        elif create:
+            app_id = Esp32Firebase.run_cli(['apps:create', 'WEB', 'Stretch power'], project=project,
+                                           timeout=180)['appId']
+        else:
+            return None
+        config = Esp32Firebase.run_cli(['apps:sdkconfig', 'WEB', app_id], project=project, timeout=60) or {}
+        return (config.get('sdkConfig') or {}).get('apiKey')
+
+    @staticmethod
+    def auth_console_url(project, page='providers'):
+        """The console's Authentication page: 'providers' (sign-in methods) or 'users'."""
+        return 'https://console.firebase.google.com/project/%s/authentication/%s' % (project, page)
 
     @staticmethod
     def set_robot_key(project, instance, fleet_id, robot_key):

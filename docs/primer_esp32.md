@@ -158,8 +158,17 @@ key can't be read in transit.
 `stretch_esp32_jog`, `f`, then `n` ("set up Firebase"):
 
 1. Takes the fleet ID from `$HELLO_FLEET_ID`, and keeps the robot's key, or makes one.
-2. Asks whether to sign in as a Firebase user as well. The default is no. With
-   sign-in, it asks for the Web API key, the user's email and password.
+2. Asks whether to sign in as a Firebase user as well. The default is no. The user
+   is asked for once the project is known: with the CLI, the tool reads the project's
+   Web API key from its web app (`Esp32Firebase.web_api_key`, via `apps:list WEB` and
+   `apps:sdkconfig WEB`; it offers to add a "Stretch power" web app if there is none),
+   links to the project's Authentication pages, and asks only for the email and
+   password. By hand, it asks for the API key too. Sign-in goes through Google's
+   Identity Toolkit (`accounts:signInWithPassword`), which needs the key to find the
+   project. With sign-in, `rules_work` also checks that the data can't be read
+   without signing in, so rules without sign-in fail it and the tool offers the sign-in
+   version (`rules(sign_in=True)`). Rules cover the whole database: every robot on it
+   must then sign in.
 3. Sets up the database:
    * **With the [Firebase CLI](https://firebase.google.com/docs/cli)** installed
      (recommended: `curl -sL https://firebase.tools | bash`, or with Node.js 20+

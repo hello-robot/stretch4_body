@@ -467,6 +467,19 @@ class TestCli:
         assert a[1:5] == ['database:set', '/robots/%s/robot_key' % FLEET, '--data', '"KEY"']
         assert a[a.index('--instance') + 1] == 'proj-default-rtdb' and a[a.index('--project') + 1] == 'proj'
 
+    def test_web_api_key(self):
+        ok = lambda r: completed(json.dumps({'status': 'success', 'result': r}))
+        config = ok({'fileName': 'firebase-config.json', 'sdkConfig': {'apiKey': 'AIzaKEY', 'projectId': 'proj'}})
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=[ok([{'appId': '1:2:web:3'}]), config]) as r:
+            assert fb.web_api_key('proj') == 'AIzaKEY'
+        assert [c[0][0][1:4] for c in r.call_args_list] == [['apps:list', 'WEB', '--project'],
+                                                           ['apps:sdkconfig', 'WEB', '1:2:web:3']]
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=[ok([])]):
+            assert fb.web_api_key('proj') is None  # No web app, and not asked to make one
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=[ok([]), ok({'appId': '1:2:web:9'}), config]) as r:
+            assert fb.web_api_key('proj', create=True) == 'AIzaKEY'
+        assert r.call_args_list[1][0][0][1:4] == ['apps:create', 'WEB', 'Stretch power']
+
     def test_current_rules(self):
         # Read from /.settings/rules into a file, comments and all
         def run(cmd, cwd=None, **kw):
@@ -507,9 +520,14 @@ class TestCli:
         assert asked[1][:2] == (base + '/power_system_status.json', 'PATCH') and asked[1][2]['robot_key'] != KEY
         assert asked[2] == (base + '/power_system_status.json', 'PATCH', {'robot_key': KEY})
         assert asked[3] == (base + '/power_system_requests.json',)
-        with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200]) as st:
-            fb.rules_work(url, FLEET, KEY, id_token='TOK')
-        assert all(c[0][0].endswith('?auth=TOK') for c in st.call_args_list)
+        # With sign-in, the last check reads without the token, and must be refused
+        with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200, 401]) as st:
+            assert fb.rules_work(url, FLEET, KEY, id_token='TOK') == (True, '')
+        assert all(c[0][0].endswith('?auth=TOK') for c in st.call_args_list[:4])
+        assert st.call_args_list[4][0] == (base + '/power_system_requests.json',)
+        with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200, 200]):
+            ok, why = fb.rules_work(url, FLEET, KEY, id_token='TOK')  # Rules without sign-in
+        assert not ok and 'without signing in' in why
 
     def test_sign_in(self):
         class Reply:
