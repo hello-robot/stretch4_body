@@ -40,7 +40,7 @@ Without `CDCOnBoot=cdc` the RPC is not on the USB port.
 | Wi-Fi status | state, SSID, RSSI, channel, BSSID, IP/gateway/netmask/DNS, MAC, hostname, attempts, disconnects, last disconnect reason |
 | Firebase status | state, publish counts, last error, command stream health (events, age, restarts), whether the clock is set, the last power command (id, action, result) |
 | Wi-Fi config (get/set) | SSID and password, saved to flash or not, applied now or not |
-| Firebase config (get/set) | database URL and robot key, and optionally a user to sign in as (API key, email, password). Needs `hello-esp.v0.2.6p1` or later |
+| Firebase config (get/set) | database URL, fleet ID and robot key, and optionally a user to sign in as (API key, email, password). Needs `hello-esp.v0.2.6p1` or later |
 | config | publish period, Wi-Fi retry period, Wi-Fi/Firebase enable, log level. Pushed at startup, not saved |
 | trigger | Wi-Fi reconnect/disconnect/forget, Firebase restart/forget, Wi-Fi scan, reboot, clear log |
 | Wi-Fi scan | up to 20 networks, strongest first |
@@ -105,36 +105,38 @@ has, with no ESP32 code in the server:
 ### Remote sleep and wake
 
 An app sleeps and wakes the robot through the Realtime Database. Each robot's data
-is under `robots/<robot key>/`: the app writes a command with a unique id to
-`requests/power_command`, and the ESP32 writes the outcome to
-`requests/power_command_ack` and the robot's status, with a `last_seen` heartbeat, to
-`system_status`. The contract is in `stretch_firmware_ii/arduino/hello_esp/README.md`,
-"Firebase". `stretch_esp32_jog` shows the last command and the stream health under
-Firebase. Firebase `READY` means the command stream is live; `STREAM_CONNECTING`
-means started, but commands won't arrive yet.
+is under `robots/<fleet ID>/` (its `HELLO_FLEET_ID`): the app writes a command with a
+unique id and the robot key to `power_system_requests/power_command`, and the ESP32
+writes the outcome to `power_system_requests/power_command_ack` and the robot's
+status, with a `last_seen` heartbeat, to `power_system_status`. The contract is in
+`stretch_firmware_ii/arduino/hello_esp/README.md`, "Firebase". `stretch_esp32_jog`
+shows the last command and the stream health under Firebase. Firebase `READY` means
+the command stream is live; `STREAM_CONNECTING` means started, but commands won't
+arrive yet.
 
 #### Trying it from the Firebase console
 
 Without an app, write the command in the console's **Data** tab, under
-`robots/<robot key>/`. Sleep shuts down the NUC.
+`robots/<fleet ID>/`. Sleep shuts down the NUC.
 
-* **Sleep:** add `requests/power_command` with three children, `action` = `sleep`,
-  `id` = `s1` and `acknowledged` = `false`, in one **Add**.
-* **Wake:** delete `power_command`, then add it again with `action` = `wake`,
-  `id` = `w1` and `acknowledged` = `false`. The robot acts only on a new write of the
-  whole node with a new `id` (`s2`, `w2`, ...): editing one field of a command is
-  ignored. Once it has seen a command, the robot sets its `acknowledged` to `true`,
+* **Sleep:** add `power_system_requests/power_command` with four children,
+  `robot_key` = the robot key, `action` = `sleep`, `id` = `s1` and `acknowledged` =
+  `false`, in one **Add**. The ESP32 ignores a command without its key.
+* **Wake:** delete `power_command`, then add it again with `robot_key`, `action` =
+  `wake`, `id` = `w1` and `acknowledged` = `false`. The robot acts only on a new write
+  of the whole node with a new `id` (`s2`, `w2`, ...): editing one field of a command
+  is ignored. Once it has seen a command, the robot sets its `acknowledged` to `true`,
   and ignores a command that is already acknowledged. Setting it back to `false`
-  doesn't run the command again: the robot also keeps the last `id` it acted on. `ts` can be left out
-  (the console can't write a server timestamp): while the robot is online, a command
-  without one is carried out.
+  doesn't run the command again: the robot also keeps the last `id` it acted on. `ts`
+  can be left out (the console can't write a server timestamp): while the robot is
+  online, a command without one is carried out.
 
-Then `requests/power_command_ack` goes `pending`, then `done`, and
+Then `power_system_requests/power_command_ack` goes `pending`, then `done`, and
 `power_command/acknowledged` turns `true`. After a sleep,
-`system_status/power_state` goes `active`, `going_to_sleep` (about 20 s while the NUC
-shuts down), `sleeping`, and `last_seen` keeps advancing (Wi-Fi stays up). A wake sent
-during `going_to_sleep` stays `pending` until the robot is asleep, then `done`; the NUC
-takes about 20 s more to boot. A robot that is shut down (`shutting_down`, then
+`power_system_status/power_state` goes `active`, `going_to_sleep` (about 20 s while the
+NUC shuts down), `sleeping`, and `last_seen` keeps advancing (Wi-Fi stays up). A wake
+sent during `going_to_sleep` stays `pending` until the robot is asleep, then `done`;
+the NUC takes about 20 s more to boot. A robot that is shut down (`shutting_down`, then
 `last_seen` stops) can't be woken remotely: press its power button.
 
 ### Firebase set-up
@@ -143,46 +145,52 @@ Remote sleep and wake needs a Firebase project with a Realtime Database. The
 customer guide is "Remote Power Management" in stretch4_docs; this is the same for
 developers.
 
-Access is by **robot key**: each robot's data is under `robots/<robot key>`, and the
-database rules let a request in only with a key listed in `robot_keys`. Nobody can
-list `robots/` or read `robot_keys`, so only someone who has a key can use it. The
-key is 32 random URL-safe characters (192 bits) that `stretch_esp32_jog` makes. The
-ESP32 checks Google's TLS certificates, so the key can't be read in transit.
-
-| `robot_keys/<key>` | who gets in |
-|---|---|
-| `true` | anyone with the key. The default |
-| `"<uid>"` | requests with the key, signed in as that Firebase user. Optional: the ESP32 then signs in with an API key, email and password |
-| missing | no one. Deleting it revokes the key |
+Each robot's data is under `robots/<fleet ID>`, and its key is in
+`robots/<fleet ID>/robot_key`: 32 random URL-safe characters (192 bits) that
+`stretch_esp32_jog` makes. Every write carries `robot_key`, and the rules
+(`Esp32Firebase.rules()`) let it in only if it matches; no rule lets anyone read or
+write `robot_key` itself (the console and the CLI can). The ESP32 also ignores a
+command without its key. Reads are open, so the key keeps out blind writes, not
+someone who reads the database first; with a Firebase user to sign in as, reads and
+writes also need a signed-in user. The ESP32 checks Google's TLS certificates, so the
+key can't be read in transit.
 
 `stretch_esp32_jog`, `f`, then `n` ("set up Firebase"):
 
-1. Keeps the robot's key, or makes one.
+1. Takes the fleet ID from `$HELLO_FLEET_ID`, and keeps the robot's key, or makes one.
 2. Asks whether to sign in as a Firebase user as well. The default is no. With
-   sign-in, it asks for the Web API key, the user's email, password and UID.
+   sign-in, it asks for the Web API key, the user's email and password.
 3. Sets up the database:
    * **With the [Firebase CLI](https://firebase.google.com/docs/cli)** installed
      (recommended: `curl -sL https://firebase.tools | bash`, or with Node.js 20+
-     `sudo npm install -g firebase-tools`, then `firebase login`), it
-     offers to do it all: pick or create a project, find its Realtime Database, add
-     `robot_keys/<key>`, and publish the rules if they don't let the key in yet
-     (asking first: publishing replaces them). The CLI can't read a database's rules,
-     so the tool checks them by what they do, from the robot's computer the way the
-     ESP32 connects (`Esp32Firebase.robot_key_works`): `robots/<key>` readable,
-     `robot_keys` not. After publishing, it waits until that passes before it gives the
-     ESP32 the key. The CLI can't create a project's
-     first database, so for a new project it asks you to click Create Database in
-     the console, then goes on. The CLI must be logged in (`firebase login`): if it
-     isn't, or its login has expired, the tool says to run `firebase login` (or
-     `firebase login --reauth`), and goes back to the Firebase menu. An expired
-     login still shows in `firebase login:list`; the CLI's `--json` error hides
-     the cause, so `Esp32Firebase.run_cli` runs the CLI in a temporary directory
-     and looks in its `firebase-debug.log` (`FirebaseAuthError`).
+     `sudo npm install -g firebase-tools`, then `firebase login`), it offers to do it
+     all: pick or create a project, find its Realtime Database, write
+     `robots/<fleet ID>/robot_key`, and get the rules in force. It checks the rules
+     by what they do, from the robot's computer the way the ESP32 connects
+     (`Esp32Firebase.rules_work`): `robot_key` unreadable, a write with another key
+     refused, a write with the key let in, the commands readable. If that fails, it
+     reads the rules in force (`database:get /.settings/rules`, comments included):
+     * a new database's default rules (locked, or a test-mode date) or this tool's
+       own: it asks, then publishes the robot rules in their place;
+     * other rules: it doesn't replace them. It adds the robot rules to them as a
+       comment inside `"rules"` (`Esp32Firebase.rules_with_comments`; the rules in
+       force don't change), publishes that, asks you to merge them in the console,
+       and checks again when you press Enter.
+
+     Then it waits until the rules work before it gives the ESP32 the settings. The
+     CLI can't create a project's first database, so for a new project it asks you
+     to click Create Database in the console, then goes on. The CLI must be logged in
+     (`firebase login`): if it isn't, or its login has expired, the tool says to run
+     `firebase login` (or `firebase login --reauth`), and goes back to the Firebase
+     menu. An expired login still shows in `firebase login:list`; the CLI's `--json`
+     error hides the cause, so `Esp32Firebase.run_cli` runs the CLI in a temporary
+     directory and looks in its `firebase-debug.log` (`FirebaseAuthError`).
    * **Without it**, it says so, shows how to install it, and asks whether to set up
      by hand instead (the default goes back to the menu). By hand, it prints the
-     steps for the console: create the project and
-     the database (locked mode), paste the rules (`p` in the menu prints them), and
-     add `robot_keys/<key>`. Then it asks for the database URL.
+     steps for the console: create the project and the database (locked mode),
+     publish the rules over the defaults or merge them into other rules (`p` in the
+     menu prints them), and add `robots/<fleet ID>/robot_key`. Then it asks for the
+     database URL, and checks the rules the same way.
 
    The suggested project ID is `$HELLO_FLEET_ID-pwr-mgmt`, lowercase (e.g.
    `stretch-se4-4024-pwr-mgmt`). The URL prompts default to that project's default
@@ -190,21 +198,22 @@ ESP32 checks Google's TLS certificates, so the key can't be read in transit.
    database; other locations use `<name>.<region>.firebasedatabase.app`).
 4. Tries the settings, and saves them to the ESP32's flash if Firebase comes up
    (`READY`).
-5. Prints what the app needs: the database URL and the robot key (and the user, with
-   sign-in). `a` in the menu shows them again.
+5. Prints what the app needs: the database URL, the fleet ID and the robot key. `a`
+   in the menu shows them again.
 
 `c` in the Firebase menu prints curl commands and a Python example that sleep and
-wake this robot through the database, with its URL and robot key filled in (and a
-sign-in step, with `<password>` to fill in, if the robot signs in as a user). The
-Python `power('sleep')` / `power('wake')` writes the command with a new id (and `acknowledged: false`) and waits
-for `power_command_ack`. They are made by `command_snippets()` in
-`stretch_esp32_jog`.
+wake this robot through the database, with its URL, fleet ID and robot key filled in
+(and a sign-in step, with `<password>` to fill in, if the robot signs in as a user).
+The Python `power('sleep')` / `power('wake')` writes the command with the robot key, a
+new id and `acknowledged: false`, and waits for `power_command_ack`. They are made by
+`command_snippets()` in `stretch_esp32_jog`.
 
-Several robots can share a database: run `n` on each. Each gets its own key, and
-the rules are published once.
+Several robots can share a database: run `n` on each. Each uses its fleet ID and its
+own key, and the rules are put in force once.
 
 If Firebase doesn't come up, the last error says why. `401 unauthorized`: the rules
-refused the key (are the rules published, and is `robot_keys/<key>` there?).
+refused the robot (are the robot rules in force, and does
+`robots/<fleet ID>/robot_key` hold its key?).
 
 The rules and the CLI steps are in `subsystem/esp32.py`, class `Esp32Firebase`.
 `test/test_esp32_protocol.py` checks the rules in the Realtime Database emulator

@@ -168,7 +168,7 @@ class Esp32Defn:
                                     211: 'NO_AP_FOUND_IN_AUTHMODE_THRESHOLD', 212: 'NO_AP_FOUND_IN_RSSI_THRESHOLD'}
     FIREBASE_STATE_NAMES = {0: 'NOT_CONFIGURED', 1: 'DISABLED', 2: 'WAITING_FOR_WIFI', 3: 'AUTHENTICATING',
                             4: 'READY', 5: 'STREAM_CONNECTING'}
-    # The last power command from the app (requests/power_command) and what came of it
+    # The last power command from the app (power_system_requests/power_command) and what came of it
     CMD_ACTION_NAMES = {0: 'NONE', 1: 'SLEEP', 2: 'WAKE'}
     CMD_RESULT_NAMES = {0: 'NONE', 1: 'PENDING', 2: 'DONE', 3: 'FAILED', 4: 'REJECTED', 5: 'EXPIRED',
                         6: 'INVALID'}
@@ -182,6 +182,7 @@ class Esp32Defn:
     SSID_LEN = 33
     WIFI_PASS_LEN = 65
     FB_URL_LEN = 251
+    FB_FLEET_LEN = 65
     FB_KEY_LEN = 65
     FB_KEY_MIN_LEN = 22
     FB_API_LEN = 129
@@ -198,7 +199,7 @@ class Esp32Defn:
     FMT_WIFI_STATUS = '<BBBB33sbB6s6s4s4s4s4s32sIIBI'
     FMT_FIREBASE_STATUS = '<BBBBIIIIIi64sIIIBBBI40s'
     FMT_WIFI_CONFIG = '<33s65sB'
-    FMT_FIREBASE_CONFIG = '<251s65s129s251s65sB'  # url, robot_key, api_key, user_email, user_password, flags
+    FMT_FIREBASE_CONFIG = '<251s65s65s129s251s65sB'  # url, fleet_id, robot_key, api_key, user_email, user_password, flags
     FMT_CONFIG = '<IIBBB'
     FMT_TRIGGER = '<I'
     FMT_SCAN_HEADER = '<BB'
@@ -338,15 +339,16 @@ class Esp32Base(Esp32Defn, Device):
             self.FMT_WIFI_CONFIG, _pack_cstr(ssid, self.SSID_LEN, 'ssid'),
             _pack_cstr(password, self.WIFI_PASS_LEN, 'password'), flags)
 
-    def set_firebase_config(self, url, robot_key, api_key='', user_email='', user_password='', persist=True,
-                            apply_now=True):
+    def set_firebase_config(self, url, fleet_id, robot_key, api_key='', user_email='', user_password='',
+                            persist=True, apply_now=True):
         """
-        Set the Firebase database and robot key (sent on the next push_command). All empty
-        clears Firebase. The sign-in (api_key, user_email, user_password) is optional: all
-        three, or none. persist: save to the ESP32's flash. apply_now: restart Firebase now.
+        Set the Firebase database, the robot's fleet ID (its data is under robots/<fleet_id>)
+        and its robot key (sent on the next push_command). All empty clears Firebase. The
+        sign-in (api_key, user_email, user_password) is optional: all three, or none.
+        persist: save to the ESP32's flash. apply_now: restart Firebase now.
         Needs firmware hello-esp.v0.2.6p1 or later (supports_firebase).
         """
-        fields = (url or '', robot_key or '', api_key or '', user_email or '', user_password or '')
+        fields = (url or '', fleet_id or '', robot_key or '', api_key or '', user_email or '', user_password or '')
         self.validate_firebase_config(*fields)
         flags = (self.CFG_FLAG_PERSIST if persist else 0) | (self.CFG_FLAG_APPLY_NOW if apply_now else 0)
         self._pending_firebase_config = self._pack_firebase_config(fields, flags)
@@ -369,19 +371,26 @@ class Esp32Base(Esp32Defn, Device):
             raise ValueError('A robot key is %d to %d of A-Z a-z 0-9 - _' % (cls.FB_KEY_MIN_LEN, cls.FB_KEY_LEN - 1))
 
     @classmethod
-    def validate_firebase_config(cls, url, robot_key, api_key='', user_email='', user_password=''):
+    def validate_fleet_id(cls, fleet_id):
+        """Raise ValueError if fleet_id can't be a fleet ID (a path in the database)."""
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,%d}' % (cls.FB_FLEET_LEN - 1), fleet_id or ''):
+            raise ValueError('A fleet ID is 1 to %d of A-Z a-z 0-9 - _' % (cls.FB_FLEET_LEN - 1))
+
+    @classmethod
+    def validate_firebase_config(cls, url, fleet_id, robot_key, api_key='', user_email='', user_password=''):
         """Raise ValueError if the ESP32 would reject these Firebase settings."""
-        fields = (url or '', robot_key or '', api_key or '', user_email or '', user_password or '')
-        for value, width, name in zip(fields, (cls.FB_URL_LEN, cls.FB_KEY_LEN, cls.FB_API_LEN, cls.FB_EMAIL_LEN,
-                                               cls.FB_PASS_LEN),
-                                      ('url', 'robot_key', 'api_key', 'user_email', 'user_password')):
+        fields = (url or '', fleet_id or '', robot_key or '', api_key or '', user_email or '', user_password or '')
+        for value, width, name in zip(fields, (cls.FB_URL_LEN, cls.FB_FLEET_LEN, cls.FB_KEY_LEN, cls.FB_API_LEN,
+                                               cls.FB_EMAIL_LEN, cls.FB_PASS_LEN),
+                                      ('url', 'fleet_id', 'robot_key', 'api_key', 'user_email', 'user_password')):
             _pack_cstr(value, width, name)
         if not any(fields):
             return  # Clears Firebase
-        if not fields[0] or not fields[1]:
-            raise ValueError('Firebase needs a database URL and a robot key')
-        cls.validate_robot_key(fields[1])
-        if sum(1 for f in fields[2:] if f) not in (0, 3):
+        if not fields[0] or not fields[1] or not fields[2]:
+            raise ValueError('Firebase needs a database URL, a fleet ID and a robot key')
+        cls.validate_fleet_id(fields[1])
+        cls.validate_robot_key(fields[2])
+        if sum(1 for f in fields[3:] if f) not in (0, 3):
             raise ValueError('Signing in needs the API key, the email and the password, or none of them')
 
     def get_wifi_config(self):
@@ -398,8 +407,8 @@ class Esp32Base(Esp32Defn, Device):
 
     def get_firebase_config(self):
         """
-        Read the Firebase settings the ESP32 is using: url, robot_key, api_key, user_email,
-        user_password, configured. Returns a dict, or None on failure.
+        Read the Firebase settings the ESP32 is using: url, fleet_id, robot_key, api_key,
+        user_email, user_password, configured. Returns a dict, or None on failure.
         """
         out = {}
 
@@ -717,16 +726,17 @@ class Esp32_Protocol_P1(Esp32Base):
         f['cmd_id'] = _cstr(v[18])
 
     def _pack_firebase_config(self, fields, flags):
-        url, robot_key, api_key, user_email, user_password = fields
+        url, fleet_id, robot_key, api_key, user_email, user_password = fields
         return struct.pack(self.FMT_FIREBASE_CONFIG, _pack_cstr(url, self.FB_URL_LEN, 'url'),
+                           _pack_cstr(fleet_id, self.FB_FLEET_LEN, 'fleet_id'),
                            _pack_cstr(robot_key, self.FB_KEY_LEN, 'robot_key'),
                            _pack_cstr(api_key, self.FB_API_LEN, 'api_key'),
                            _pack_cstr(user_email, self.FB_EMAIL_LEN, 'user_email'),
                            _pack_cstr(user_password, self.FB_PASS_LEN, 'user_password'), flags)
 
     def _unpack_firebase_config(self, s):
-        url, robot_key, api_key, email, password, flags = struct.unpack_from(self.FMT_FIREBASE_CONFIG, s)
-        return {'url': _cstr(url), 'robot_key': _cstr(robot_key), 'api_key': _cstr(api_key),
+        url, fleet_id, robot_key, api_key, email, password, flags = struct.unpack_from(self.FMT_FIREBASE_CONFIG, s)
+        return {'url': _cstr(url), 'fleet_id': _cstr(fleet_id), 'robot_key': _cstr(robot_key), 'api_key': _cstr(api_key),
                 'user_email': _cstr(email), 'user_password': _cstr(password),
                 'configured': bool(flags & self.CFG_FLAG_CONFIGURED)}
 
@@ -778,45 +788,126 @@ class Esp32Firebase:
     Firebase set-up for the ESP32's remote sleep and wake: the database rules, and the
     Firebase CLI steps that stretch_esp32_jog can run for the user.
 
-    Each robot keeps its data in a Realtime Database under robots/<robot key> (hello_esp
-    firmware v0.2.6p1 on; the layout is in stretch_firmware_ii/arduino/hello_esp/README.md,
-    "Firebase"). The rules (RULES) let a request read or write robots/<key> only when
-    robot_keys lists the key:
+    Each robot keeps its data in a Realtime Database under robots/<fleet ID> (its
+    $HELLO_FLEET_ID; hello_esp firmware v0.2.6p1 on; the layout is in
+    stretch_firmware_ii/arduino/hello_esp/README.md, "Firebase"):
 
-        robot_keys/<key>: true      the key alone is enough (the default)
-        robot_keys/<key>: "<uid>"   the request must also be signed in as that Firebase user
+        robots/<fleet ID>/robot_key              the key, set in the console or with the CLI
+        robots/<fleet ID>/power_system_status    written by the robot
+        robots/<fleet ID>/power_system_requests  power_command (the app), power_command_ack (the robot)
 
-    Nobody can list robots/ or read robot_keys/ through the rules, so a key can be used
-    only by someone who has it. Only the project's owners (the Firebase console, the CLI)
-    see the keys.
+    Every write carries robot_key, and the rules (rules()) let it in only if that matches
+    robots/<fleet ID>/robot_key, which the rules let no one read. Reads are open, or need a
+    signed-in user (rules(sign_in=True)).
     """
-    # Who may read and write robots/<key>
-    ACCESS = ("root.child('robot_keys').child($robot_key).val() === true || "
-              "(auth != null && root.child('robot_keys').child($robot_key).val() === auth.uid)")
-    # The whole rule set for a database that only robots use. Anything not listed is denied.
-    RULES = {'rules': {'robots': {'$robot_key': {'.read': ACCESS, '.write': ACCESS}}}}
+    # A write is let in if it carries the robot's key
+    KEY_CHECK = "newData.child('robot_key').val() === root.child('robots').child($fleetId).child('robot_key').val()"
     DATABASE_HOST_SUFFIXES = ('.firebaseio.com', '.firebasedatabase.app')
     # How the CLI says it can't authenticate. With --json it often says only "Failed to ...",
     # and the reason is in firebase-debug.log
     AUTH_ERROR_MARKERS = ('authentication error', 'failed to authenticate', 'have you run firebase login',
                           'credentials are no longer valid', 'login --reauth')
+    # Marks the robot rules put into someone else's rules as a comment, to reconcile
+    COMMENT_BEGIN = '/* stretch_esp32_jog: robot power rules, NOT ACTIVE.'
+    COMMENT_END = 'end of the robot power rules */'
     CliError = FirebaseCliError
     AuthError = FirebaseAuthError
 
-    # ###########  Rules and URLs #############
+    # ###########  Rules #############
 
     @staticmethod
-    def rules_json():
+    def rules(sign_in=False):
+        """
+        The rules for the robots' power data. Without sign_in, reads are open; with it, they
+        need a signed-in user, and so do writes. robot_key itself has no rule, so no one can
+        read or write it through the rules (the console and the CLI can).
+        """
+        read = 'auth != null' if sign_in else True
+        write = ('auth != null && ' if sign_in else '') + Esp32Firebase.KEY_CHECK
+        return {'rules': {'robots': {'$fleetId': {
+            'power_system_status': {'.read': read, '.write': write},
+            'power_system_requests': {'.read': read,
+                                      'power_command': {'.write': write},
+                                      'power_command_ack': {'.write': write}}}}}}
+
+    @staticmethod
+    def rules_json(sign_in=False):
         """The rules as the text to paste into the console's Rules tab."""
-        return json.dumps(Esp32Firebase.RULES, indent=2)
+        return json.dumps(Esp32Firebase.rules(sign_in), indent=2)
 
     @staticmethod
-    def rules_are_ours(source):
-        """Whether a rule set's source is RULES (whitespace aside)."""
+    def strip_comments(source):
+        """Rules source without its // and /* */ comments (the rules language allows them)."""
+        out, i, n = [], 0, len(source or '')
+        while i < n:
+            c = source[i]
+            if c == '"':
+                j = i + 1
+                while j < n and source[j] != '"':
+                    j += 2 if source[j] == '\\' else 1
+                out.append(source[i:j + 1])
+                i = j + 1
+            elif source.startswith('//', i):
+                j = source.find('\n', i)
+                i = n if j < 0 else j
+            elif source.startswith('/*', i):
+                j = source.find('*/', i + 2)
+                i = n if j < 0 else j + 2
+            else:
+                out.append(c)
+                i += 1
+        return ''.join(out)
+
+    @staticmethod
+    def classify_rules(source):
+        """
+        'default' (a new database's: locked or test mode, which nothing relies on), 'ours'
+        (these rules, or this tool's earlier ones), or 'other' (someone's rules, not to be
+        replaced). Comments don't count.
+        """
         try:
-            return json.loads(source) == Esp32Firebase.RULES
+            parsed = json.loads(Esp32Firebase.strip_comments(source))
         except (TypeError, ValueError):
-            return False
+            return 'other'
+        if parsed in (Esp32Firebase.rules(False), Esp32Firebase.rules(True)):
+            return 'ours'
+        inner = parsed.get('rules') if isinstance(parsed, dict) else None
+        if not isinstance(inner, dict):
+            return 'other'
+        if set(inner) == {'robots'} and '$robot_key' in (inner['robots'] or {}):
+            return 'ours'  # The earlier robots/<key> rules
+        if set(inner) <= {'.read', '.write'} and all(
+                v is False or v == 'auth != null' or (isinstance(v, str) and v.replace(' ', '').startswith('now<'))
+                for v in inner.values()):
+            return 'default'
+        return 'other'
+
+    @staticmethod
+    def rules_with_comments(source, sign_in=False):
+        """
+        source (someone's rules) with the robot rules added as a comment, inside "rules", to
+        reconcile by hand. Rules that change nothing: what was in force stays in force. A
+        comment from an earlier run is replaced.
+        """
+        src = source or ''
+        b = src.find(Esp32Firebase.COMMENT_BEGIN)
+        if b >= 0:
+            e = src.find(Esp32Firebase.COMMENT_END, b)
+            if e >= 0:
+                src = src[:b].rstrip(' ') + src[e + len(Esp32Firebase.COMMENT_END):].lstrip('\n')
+        robots = json.dumps(Esp32Firebase.rules(sign_in)['rules'], indent=2)
+        comment = '\n'.join(
+            ['    ' + Esp32Firebase.COMMENT_BEGIN,
+             '       Merge them into these rules: add the "robots" entry below, or, if there is a',
+             '       "robots" entry already, add "power_system_status" and "power_system_requests" to',
+             '       its "$fleetId" entry (whatever it is named). Then publish, and delete this comment.',
+             '       Until then the robot can\'t publish its status or read commands.'] +
+            ['       ' + line for line in robots[1:-1].strip('\n').splitlines()] +
+            ['       ' + Esp32Firebase.COMMENT_END, ''])
+        m = re.search(r'"rules"\s*:\s*\{[ \t]*\n?', src)
+        if not m:
+            return comment + src
+        return src[:m.end()] + ('' if src[m.end() - 1] == '\n' else '\n') + comment + src[m.end():]
 
     @staticmethod
     def default_project_id(fleet_id=None):
@@ -943,10 +1034,12 @@ class Esp32Firebase:
     # ###########  Checking access as the ESP32 has it #############
 
     @staticmethod
-    def http_status(url, timeout=10):
-        """The HTTP status of a GET of url, with no sign-in. 0 if the server can't be reached."""
+    def http_status(url, method='GET', data=None, timeout=10):
+        """The HTTP status of a request to url (data: JSON to send). 0 if the server can't be reached."""
+        req = urllib.request.Request(url, method=method,
+                                     data=None if data is None else json.dumps(data).encode())
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.status
         except urllib.error.HTTPError as e:
             return e.code
@@ -973,32 +1066,55 @@ class Esp32Firebase:
             raise ValueError('Firebase sign-in failed: %s' % e)
 
     @staticmethod
-    def robot_key_works(url, robot_key, id_token=None):
+    def rules_work(url, fleet_id, robot_key, id_token=None):
         """
-        Whether the rules in force let robot_key in, the way the ESP32 connects (signed in
-        with id_token, when the key is bound to a user), and keep robot_keys unreadable.
-        Rules can't be read with the CLI, so this checks them by what they do.
+        Whether the rules in force do what the robot needs, checked by what they do, from this
+        computer, the way the ESP32 connects (signed in with id_token, with a user):
+        robots/<fleet_id>/robot_key can't be read, a write with another key is refused, a write
+        with robot_key is let in, and the commands can be read.
+        Returns (True, '') or (False, what failed).
         """
-        auth = '&auth=' + id_token if id_token else ''
-        return (Esp32Firebase.http_status('%s/robots/%s.json?shallow=true%s' % (url, robot_key, auth)) == 200 and
-                Esp32Firebase.http_status('%s/robot_keys.json?shallow=true' % url) == 401)
+        base = '%s/robots/%s' % (url, fleet_id)
+        auth = '?auth=' + id_token if id_token else ''
+        status_url = base + '/power_system_status.json' + auth
+        wrong = 'not-' + robot_key if len(robot_key) < 60 else robot_key[::-1]
+        if Esp32Firebase.http_status(base + '/robot_key.json' + auth) != 401:
+            return False, 'robots/%s/robot_key can be read' % fleet_id
+        if Esp32Firebase.http_status(status_url, 'PATCH', {'robot_key': wrong}) != 401:
+            return False, 'a write without the robot key is let in'
+        code = Esp32Firebase.http_status(status_url, 'PATCH', {'robot_key': robot_key})
+        if code != 200:
+            return False, 'a write with the robot key is refused (HTTP %d)' % code
+        code = Esp32Firebase.http_status(base + '/power_system_requests.json' + auth)
+        if code != 200:
+            return False, 'the commands can\'t be read (HTTP %d)' % code
+        return True, ''
 
     @staticmethod
-    def deploy_rules(project, instance):
-        """Replace the database's rules with RULES."""
+    def current_rules(project, instance):
+        """The database's rules in force, as text (comments included)."""
+        with tempfile.TemporaryDirectory(prefix='stretch_firebase_') as d:
+            out = os.path.join(d, 'rules.txt')
+            Esp32Firebase.run_cli(['database:get', '/.settings/rules', '--output', out, '--instance', instance],
+                                  project=project, cwd=d, timeout=60)
+            with open(out) as f:
+                return f.read()
+
+    @staticmethod
+    def deploy_rules(project, instance, source=None):
+        """Publish source (rules text; by default rules_json()) as the database's rules: it replaces them."""
         with tempfile.TemporaryDirectory(prefix='stretch_firebase_') as d:
             with open(os.path.join(d, 'database.rules.json'), 'w') as f:
-                f.write(Esp32Firebase.rules_json() + '\n')
+                f.write((source if source is not None else Esp32Firebase.rules_json()).rstrip('\n') + '\n')
             with open(os.path.join(d, 'firebase.json'), 'w') as f:
                 json.dump({'database': [{'instance': instance, 'rules': 'database.rules.json'}]}, f)
             Esp32Firebase.run_cli(['deploy', '--only', 'database'], project=project, cwd=d, timeout=300)
 
     @staticmethod
-    def add_robot_key(project, instance, robot_key, uid=None):
-        """List robot_key in robot_keys: true, or the uid of the user who must sign in with it."""
-        Esp32Firebase.run_cli(['database:set', '/robot_keys/' + robot_key, '--data', json.dumps(uid if uid else True),
+    def set_robot_key(project, instance, fleet_id, robot_key):
+        """Write robots/<fleet_id>/robot_key (the CLI isn't held to the rules)."""
+        Esp32Firebase.run_cli(['database:set', '/robots/%s/robot_key' % fleet_id, '--data', json.dumps(robot_key),
                                '--instance', instance, '--force'], project=project, timeout=60)
-
 
 if __name__ == '__main__':
     e = Esp32()

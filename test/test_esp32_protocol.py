@@ -36,7 +36,7 @@ FIRMWARE_SIZES = {
     'FMT_WIFI_STATUS': 112,
     'FMT_FIREBASE_STATUS': 151,
     'FMT_WIFI_CONFIG': 99,
-    'FMT_FIREBASE_CONFIG': 762,      # hello-esp v0.2.6 on (with robot_key)
+    'FMT_FIREBASE_CONFIG': 827,      # hello-esp v0.2.6 on (with fleet_id and robot_key)
     'FMT_CONFIG': 11,
     'FMT_TRIGGER': 4,
 }
@@ -46,6 +46,7 @@ ESP_RPC_H = os.path.join(os.path.dirname(__file__), '..', '..', 'stretch_firmwar
 
 
 KEY = 'AbCdEfGhIjKlMnOpQrStUvWxYz012345'  # 32 characters, as generate_robot_key makes
+FLEET = 'stretch-se4-4024'
 
 
 def p1():
@@ -211,22 +212,23 @@ class TestPack:
 
     def test_firebase_config_robot_key_only(self):
         e = p1()
-        e.set_firebase_config('https://x.firebaseio.com', KEY, apply_now=False)
-        url, key, api, email, pw, flags = struct.unpack(D.FMT_FIREBASE_CONFIG, e._pending_firebase_config)
-        assert url.rstrip(b'\0') == b'https://x.firebaseio.com' and key.rstrip(b'\0') == KEY.encode()
+        e.set_firebase_config('https://x.firebaseio.com', FLEET, KEY, apply_now=False)
+        url, fleet, key, api, email, pw, flags = struct.unpack(D.FMT_FIREBASE_CONFIG, e._pending_firebase_config)
+        assert url.rstrip(b'\0') == b'https://x.firebaseio.com' and fleet.rstrip(b'\0') == FLEET.encode()
+        assert key.rstrip(b'\0') == KEY.encode()
         assert api.rstrip(b'\0') == email.rstrip(b'\0') == pw.rstrip(b'\0') == b''
         assert flags == D.CFG_FLAG_PERSIST
 
     def test_firebase_config_sign_in(self):
         e = p1()
-        e.set_firebase_config('https://x.firebaseio.com', KEY, 'api', 'a@b.c', 'pw')
+        e.set_firebase_config('https://x.firebaseio.com', FLEET, KEY, 'api', 'a@b.c', 'pw')
         assert e._unpack_firebase_config(e._pending_firebase_config) == {
-            'url': 'https://x.firebaseio.com', 'robot_key': KEY, 'api_key': 'api', 'user_email': 'a@b.c',
-            'user_password': 'pw', 'configured': False}
+            'url': 'https://x.firebaseio.com', 'fleet_id': FLEET, 'robot_key': KEY, 'api_key': 'api',
+            'user_email': 'a@b.c', 'user_password': 'pw', 'configured': False}
 
     def test_firebase_config_clear(self):
         e = p1()
-        e.set_firebase_config('', '')
+        e.set_firebase_config('', '', '')
         assert not any(e._unpack_firebase_config(e._pending_firebase_config).values())
 
     def test_supports_firebase(self):
@@ -266,19 +268,20 @@ class TestValidate:
         Esp32Base.validate_wifi_config('net', 'p' * 64)
 
     def test_firebase_good(self):
-        Esp32Base.validate_firebase_config('', '')                       # Clears Firebase
-        Esp32Base.validate_firebase_config('u', KEY)                     # Robot key only
-        Esp32Base.validate_firebase_config('u', KEY, 'k', 'e', 'p')      # And signs in
-        Esp32Base.validate_firebase_config('u', 'a-_' + 'x' * 61)        # 64, the longest
+        Esp32Base.validate_firebase_config('', '', '')                          # Clears Firebase
+        Esp32Base.validate_firebase_config('u', FLEET, KEY)                     # Robot key only
+        Esp32Base.validate_firebase_config('u', FLEET, KEY, 'k', 'e', 'p')      # And signs in
+        Esp32Base.validate_firebase_config('u', 'f' * 64, 'a-_' + 'x' * 61)     # 64, the longest
 
     @pytest.mark.parametrize('fields', [
-        ('u', ''), ('', KEY),                          # The URL and the key go together
-        ('u', KEY, 'k', '', 'p'),                       # The sign-in is all three or none
-        ('u', 'x' * 21),                                # Too short
-        ('u', 'x' * 65),                                # Too long
-        ('u', KEY[:-1] + '/'), ('u', KEY[:-1] + '.'),   # Not allowed in a database path
-        ('u' * 251, KEY),
-        ('', '', 'k', 'e', 'p'),
+        ('u', FLEET, ''), ('', FLEET, KEY), ('u', '', KEY),  # The URL, fleet ID and key go together
+        ('u', FLEET, KEY, 'k', '', 'p'),                     # The sign-in is all three or none
+        ('u', FLEET, 'x' * 21),                              # Too short
+        ('u', FLEET, 'x' * 65),                              # Too long
+        ('u', FLEET, KEY[:-1] + '/'), ('u', FLEET, KEY[:-1] + '"'),  # Not in a path, or in JSON
+        ('u', 'stretch/se4', KEY), ('u', 'stretch.se4', KEY), ('u', 'f' * 65, KEY),  # Not a path segment
+        ('u' * 251, FLEET, KEY),
+        ('', '', '', 'k', 'e', 'p'),
     ])
     def test_firebase_bad(self, fields):
         with pytest.raises(ValueError):
@@ -313,22 +316,51 @@ fb = esp32.Esp32Firebase
 
 
 class TestRules:
-    def test_only_robots_by_key(self):
-        rules = fb.RULES['rules']
-        # Nothing at the root or on robots/ itself: no listing, and robot_keys is unreadable
-        assert list(rules) == ['robots'] and list(rules['robots']) == ['$robot_key']
-        node = rules['robots']['$robot_key']
-        assert node['.read'] == node['.write'] == fb.ACCESS
-        assert "child($robot_key).val() === true" in fb.ACCESS
-        assert 'auth != null' in fb.ACCESS and 'auth.uid' in fb.ACCESS
+    def test_paths_and_key_check(self):
+        for sign_in in (False, True):
+            rules = fb.rules(sign_in)['rules']
+            # Nothing at the root, on robots/, on robots/<fleet> or on robot_key: no listing,
+            # and the key can be read or written only from the console or the CLI
+            assert list(rules) == ['robots'] and list(rules['robots']) == ['$fleetId']
+            fleet = rules['robots']['$fleetId']
+            assert sorted(fleet) == ['power_system_requests', 'power_system_status']
+            req = fleet['power_system_requests']
+            writes = [fleet['power_system_status']['.write'], req['power_command']['.write'],
+                      req['power_command_ack']['.write']]
+            assert all(fb.KEY_CHECK in w for w in writes) and '.write' not in req
+            assert ("root.child('robots').child($fleetId).child('robot_key').val()" in fb.KEY_CHECK and
+                    "newData.child('robot_key')" in fb.KEY_CHECK)
+            read = fleet['power_system_status']['.read']
+            assert read == req['.read'] == ('auth != null' if sign_in else True)
+            assert all(w.startswith('auth != null && ') == sign_in for w in writes)
 
-    def test_text_round_trips(self):
-        assert fb.rules_are_ours(fb.rules_json())
-        assert fb.rules_are_ours(json.dumps(fb.RULES))
-        assert not fb.rules_are_ours('{"rules": {".read": true, ".write": true}}')
-        assert not fb.rules_are_ours('// a comment\n' + fb.rules_json())
-        assert not fb.rules_are_ours(None)
+    LOCKED = '{\n  "rules": {\n    ".read": false,\n    ".write": false\n  }\n}'
+    TEST_MODE = '{"rules": {".read": "now < 1735689600000",  // 2025-1-1\n ".write": "now < 1735689600000"}}'
+    OTHER = '{"rules": {"robots": {"$fleetId": {".read": "auth != null", "uid": {".write": true}}}, "maps": {}}}'
 
+    def test_classify(self):
+        assert fb.classify_rules(self.LOCKED) == fb.classify_rules(self.TEST_MODE) == 'default'
+        assert fb.classify_rules('{"rules": {".read": "auth != null", ".write": "auth != null"}}') == 'default'
+        assert fb.classify_rules(fb.rules_json()) == fb.classify_rules(fb.rules_json(True)) == 'ours'
+        assert fb.classify_rules('/* a comment */\n' + fb.rules_json()) == 'ours'
+        assert fb.classify_rules(json.dumps({'rules': {'robots': {'$robot_key': {}}}})) == 'ours'  # The earlier rules
+        assert fb.classify_rules(self.OTHER) == 'other'
+        assert fb.classify_rules('{"rules": {".read": true, ".write": true}}') == 'other'  # Open to all: not ours to take
+        assert fb.classify_rules('not json') == fb.classify_rules(None) == 'other'
+
+    def test_strip_comments_keeps_strings(self):
+        src = '{"a": "x // y /* z */", /* c */ "b": 1 // d\n}'
+        assert json.loads(fb.strip_comments(src)) == {'a': 'x // y /* z */', 'b': 1}
+
+    def test_comment_changes_nothing(self):
+        merged = fb.rules_with_comments(self.OTHER)
+        assert json.loads(fb.strip_comments(merged)) == json.loads(self.OTHER)
+        assert fb.COMMENT_BEGIN in merged and '"power_system_status"' in merged
+        assert merged.index(fb.COMMENT_BEGIN) > merged.index('"rules"')  # Inline, inside "rules"
+        again = fb.rules_with_comments(merged, sign_in=True)  # A re-run replaces it
+        assert again.count(fb.COMMENT_BEGIN) == 1 and "auth != null && newData" in again
+        assert json.loads(fb.strip_comments(again)) == json.loads(self.OTHER)
+        assert fb.classify_rules(merged) == 'other'
 
 
 class TestDefaults:
@@ -427,15 +459,23 @@ class TestCli:
         cwd = run.call_args[1]['cwd']
         assert cwd and cwd != os.getcwd() and not os.path.exists(cwd)
 
-    def test_add_robot_key(self):
+    def test_set_robot_key(self):
         ok = json.dumps({'status': 'success', 'result': None})
         with mock.patch.object(esp32.subprocess, 'run', return_value=completed(ok)) as run:
-            fb.add_robot_key('proj', 'proj-default-rtdb', 'KEY')
-            fb.add_robot_key('proj', 'proj-default-rtdb', 'KEY', uid='UID1')
-        a, b = (c[0][0] for c in run.call_args_list)
-        assert a[1:5] == ['database:set', '/robot_keys/KEY', '--data', 'true']
-        assert b[4] == '"UID1"'
+            fb.set_robot_key('proj', 'proj-default-rtdb', FLEET, 'KEY')
+        a = run.call_args[0][0]
+        assert a[1:5] == ['database:set', '/robots/%s/robot_key' % FLEET, '--data', '"KEY"']
         assert a[a.index('--instance') + 1] == 'proj-default-rtdb' and a[a.index('--project') + 1] == 'proj'
+
+    def test_current_rules(self):
+        # Read from /.settings/rules into a file, comments and all
+        def run(cmd, cwd=None, **kw):
+            with open(cmd[cmd.index('--output') + 1], 'w') as f:
+                f.write('// mine\n' + TestRules.OTHER + '\n')
+            return completed(json.dumps({'status': 'success'}))
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=run) as r:
+            assert fb.current_rules('proj', 'inst').startswith('// mine\n')
+        assert r.call_args[0][0][1:3] == ['database:get', '/.settings/rules']
 
     def test_deploy_writes_rules(self):
         seen = {}
@@ -446,23 +486,30 @@ class TestCli:
             seen['cmd'] = cmd
             return completed(json.dumps({'status': 'success', 'result': {}}))
         with mock.patch.object(esp32.subprocess, 'run', side_effect=run):
-            fb.deploy_rules('proj', 'inst')
+            fb.deploy_rules('proj', 'inst', fb.rules_with_comments(TestRules.OTHER))
         assert seen['firebase.json'] == {'database': [{'instance': 'inst', 'rules': 'database.rules.json'}]}
-        assert fb.rules_are_ours(seen['rules'])
+        assert fb.COMMENT_BEGIN in seen['rules']  # The text given, comments and all
         assert seen['cmd'][1:4] == ['deploy', '--only', 'database']
 
-    def test_robot_key_works(self):
-        # Checked by what the rules do: the key's node readable, robot_keys not
+    def test_rules_work(self):
+        # Checked by what the rules do: the key unreadable, a wrong key refused, the right one
+        # let in, the commands readable
         url = 'https://x.firebaseio.com'
-        for statuses, ok in ((([200, 401]), True), ([401, 401], False), ([200, 200], False), ([0, 0], False)):
+        for statuses, ok in (([401, 401, 200, 200], True), ([200], False), ([401, 200], False),
+                             ([401, 401, 401], False), ([401, 401, 200, 401], False), ([0], False)):
             with mock.patch.object(fb, 'http_status', side_effect=statuses) as st:
-                assert fb.robot_key_works(url, 'KEY') == ok, statuses
-            asked = [c[0][0] for c in st.call_args_list]
-            assert asked[0] == url + '/robots/KEY.json?shallow=true'
-            assert asked[1:] in ([], [url + '/robot_keys.json?shallow=true'])
-        with mock.patch.object(fb, 'http_status', side_effect=[200, 401]) as st:
-            fb.robot_key_works(url, 'KEY', id_token='TOK')
-        assert st.call_args_list[0][0][0].endswith('&auth=TOK')
+                assert fb.rules_work(url, FLEET, KEY)[0] == ok, statuses
+        with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200]) as st:
+            fb.rules_work(url, FLEET, KEY)
+        asked = [c[0] for c in st.call_args_list]
+        base = url + '/robots/' + FLEET
+        assert asked[0] == (base + '/robot_key.json',)
+        assert asked[1][:2] == (base + '/power_system_status.json', 'PATCH') and asked[1][2]['robot_key'] != KEY
+        assert asked[2] == (base + '/power_system_status.json', 'PATCH', {'robot_key': KEY})
+        assert asked[3] == (base + '/power_system_requests.json',)
+        with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200]) as st:
+            fb.rules_work(url, FLEET, KEY, id_token='TOK')
+        assert all(c[0][0].endswith('?auth=TOK') for c in st.call_args_list)
 
     def test_sign_in(self):
         class Reply:
@@ -533,10 +580,11 @@ def id_token(uid):
         'iss': 'https://securetoken.google.com/' + NS}) + '.'
 
 
-def request(base, method, path, data=None, uid=None, admin=False):
-    """The HTTP status. admin: as the console or the CLI, which bypass the rules."""
+def request(base, method, path, data=None, uid=None, admin=False, raw=False):
+    """The HTTP status. admin: as the console or the CLI, which bypass the rules. raw: data is text, sent as is."""
     url = '%s/%s.json?ns=%s' % (base, path.strip('/'), NS) + ('&auth=' + id_token(uid) if uid else '')
-    r = urllib.request.Request(url, method=method, data=None if data is None else json.dumps(data).encode())
+    body = None if data is None else (data if raw else json.dumps(data)).encode()
+    r = urllib.request.Request(url, method=method, data=body)
     if admin:
         r.add_header('Authorization', 'Bearer owner')
     try:
@@ -546,40 +594,83 @@ def request(base, method, path, data=None, uid=None, admin=False):
         return e.code
 
 
-K1, K2, KU, KX = 'K' * 32, 'J' * 32, 'U' * 32, 'X' * 32
+K1, K2 = 'K' * 32, 'J' * 32
+F1, F2 = 'stretch-se4-1001', 'stretch-se4-1002'
 STATUS = {'power_state': 'active', 'online': True}
+
+
+def command(key, cid='c1'):
+    return {'robot_key': key, 'action': 'sleep', 'id': cid, 'acknowledged': False, 'ts': {'.sv': 'timestamp'}}
+
+
+def make_db(base, sign_in):
+    assert request(base, 'PUT', '.settings/rules', fb.rules(sign_in), admin=True) == 200
+    assert request(base, 'PUT', '', {'robots': {F1: {'robot_key': K1}, F2: {'robot_key': K2}}}, admin=True) == 200
+    return base
 
 
 @pytest.fixture
 def db(emulator):
-    assert request(emulator, 'PUT', '.settings/rules', fb.RULES, admin=True) == 200
-    assert request(emulator, 'PUT', '', {'robot_keys': {K1: True, K2: True, KU: 'UID1'}}, admin=True) == 200
-    return emulator
+    return make_db(emulator, sign_in=False)
+
+
+@pytest.fixture
+def db_sign_in(emulator):
+    return make_db(emulator, sign_in=True)
 
 
 class TestRulesInEmulator:
     def test_robot_and_app_with_the_key(self, db):
-        assert request(db, 'PUT', 'robots/%s/system_status' % K1, STATUS) == 200
-        cmd = {'action': 'sleep', 'id': 'c1', 'ts': {'.sv': 'timestamp'}}
-        assert request(db, 'PUT', 'robots/%s/requests/power_command' % K1, cmd) == 200
-        assert request(db, 'GET', 'robots/%s/requests/power_command' % K1) == 200
-        assert request(db, 'PUT', 'robots/%s/system_status' % K2, STATUS) == 200  # Two robots, one database
+        assert request(db, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K1)) == 200
+        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K1)) == 200
+        assert request(db, 'GET', 'robots/%s/power_system_requests/power_command' % F1) == 200
+        # The robot marks the command, writing that field alone: the command carries the key
+        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command/acknowledged' % F1, True) == 200
+        ack = {'robot_key': K1, 'id': 'c1', 'action': 'sleep', 'result': 'done'}
+        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command_ack' % F1, ack) == 200
+        # Two robots, one database, each with its own key
+        assert request(db, 'PUT', 'robots/%s/power_system_status' % F2, dict(STATUS, robot_key=K2)) == 200
+        assert request(db, 'GET', 'robots/%s/power_system_status' % F1) == 200  # Reads are open
 
-    @pytest.mark.parametrize('method,path', [
-        ('PUT', 'robots/%s/system_status' % KX), ('GET', 'robots/%s' % KX),  # A key robot_keys doesn't list
-        ('GET', 'robots'), ('GET', 'robot_keys'), ('GET', ''),                # No listing
-        ('PUT', 'robot_keys/%s' % KX),                                        # Can't add a key
+    @pytest.mark.parametrize('path,data', [
+        ('robots/%s/power_system_status' % F1, STATUS),                                # No key
+        ('robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K2)),            # Another robot's key
+        ('robots/%s/power_system_requests/power_command' % F1, command(None)),
+        ('robots/%s/power_system_requests/power_command' % F1, command(K2)),
+        ('robots/%s/power_system_requests/power_command_ack' % F1, {'result': 'done', 'robot_key': 'x' * 32}),
+        ('robots/%s/robot_key' % F1, K2),                                              # Can't change the key
+        ('robots/%s/something_else' % F1, {'robot_key': K1}),                          # Nothing else
+        ('robots/stretch-se4-9999/power_system_status', dict(STATUS, robot_key=K1)),   # A fleet without a key
     ])
-    def test_denied_without_a_listed_key(self, db, method, path):
-        assert request(db, method, path, True if method == 'PUT' else None) == 401
-        assert request(db, method, path, True if method == 'PUT' else None, uid='UID1') == 401
+    def test_writes_refused(self, db, path, data):
+        assert request(db, 'PUT', path, data) == 401
 
-    def test_key_bound_to_a_user(self, db):
-        assert request(db, 'GET', 'robots/%s' % KU) == 401
-        assert request(db, 'GET', 'robots/%s' % KU, uid='UID2') == 401
-        assert request(db, 'PUT', 'robots/%s/system_status' % KU, STATUS, uid='UID1') == 200
+    @pytest.mark.parametrize('path', ['robots/%s/robot_key' % F1, 'robots/%s' % F1, 'robots', ''])
+    def test_key_and_listing_unreadable(self, db, path):
+        assert request(db, 'GET', path) == 401
+        assert request(db, 'GET', path, uid='UID1') == 401
 
-    def test_revoke(self, db):
-        assert request(db, 'GET', 'robots/%s' % K1) == 200
-        assert request(db, 'DELETE', 'robot_keys/%s' % K1, admin=True) == 200
-        assert request(db, 'GET', 'robots/%s' % K1) == 401
+    def test_sign_in(self, db_sign_in):
+        db = db_sign_in
+        assert request(db, 'GET', 'robots/%s/power_system_status' % F1) == 401              # Not signed in
+        assert request(db, 'GET', 'robots/%s/power_system_status' % F1, uid='UID1') == 200
+        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K1)) == 401
+        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K1),
+                       uid='UID1') == 200
+        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K2, 'c2'),
+                       uid='UID1') == 401                                                     # Signed in, wrong key
+        assert request(db, 'GET', 'robots/%s/robot_key' % F1, uid='UID1') == 401
+
+    def test_change_key(self, db):
+        assert request(db, 'PUT', 'robots/%s/robot_key' % F1, 'N' * 32, admin=True) == 200  # In the console
+        assert request(db, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K1)) == 401
+        assert request(db, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key='N' * 32)) == 200
+
+    def test_unreconciled_rules_change_nothing(self, emulator):
+        # Someone's rules, with the robot rules added as a comment: still theirs
+        theirs = {'rules': {'robots': {'$fleetId': {'.read': 'auth != null', 'status': {'.write': 'auth != null'}}}}}
+        merged = fb.rules_with_comments(json.dumps(theirs, indent=2))
+        assert request(emulator, 'PUT', '.settings/rules', merged, admin=True, raw=True) == 200
+        assert request(emulator, 'PUT', 'robots/%s/robot_key' % F1, K1, admin=True) == 200
+        assert request(emulator, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K1)) == 401
+        assert request(emulator, 'GET', 'robots/%s' % F1, uid='UID1') == 200
