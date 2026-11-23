@@ -225,7 +225,7 @@ If you have any questions, please contact support@hello-robot.com.
     _user_params, _robot_params = RobotParams.get_params()
 
     # Determine Robot Model for header
-    model_name = _robot_params.get('robot', {}).get('model_name', 'SE4UNH')
+    model_name = _robot_params.get('robot', {}).get('model_name', 'SE4')
     param_module_name = 'stretch4_body.robot.robot_params_' + model_name
 
     if factory_reset:

@@ -33,20 +33,10 @@ parser.add_argument("--verbose", help="Verbose output", action="store_true")
 parser.add_argument("--dummy", help="Simulate flashing without arduino-cli", action="store_true")
 args = parser.parse_args()
 
-import sys
-from stretch4_body.core.device import Device
-
-d = Device(req_params=False)
-is_unh = d.robot_params.get('robot', {}).get('model_name') == 'SE4UNH'
-
-if is_unh and args.arm:
-    print("Error: The arm device is not supported on the SE4UNH robot.", file=sys.stderr)
-    sys.exit(1)
-
 if args.arm or args.lift or args.wheel_0 or args.wheel_1 or args.wheel_2 or args.pimu or args.pixart or args.esp32:
     use_device={'hello-esp32':args.esp32,'hello-motor-lift':args.lift,'hello-motor-arm':args.arm, 'hello-motor-omni-0':args.wheel_0, 'hello-motor-omni-1':args.wheel_1, 'hello-motor-omni-2':args.wheel_2,'hello-power-periph':args.pimu, 'hello-pixart-j3':args.pixart}
 else:
-    use_device = {'hello-esp32':True,'hello-motor-arm': not is_unh, 'hello-motor-omni-0': True, 'hello-motor-omni-1': True, 'hello-motor-omni-2': True, 'hello-power-periph': True, 'hello-pixart-j3': True,'hello-motor-lift': True}
+    use_device = {'hello-esp32':True,'hello-motor-arm': True, 'hello-motor-omni-0': True, 'hello-motor-omni-1': True, 'hello-motor-omni-2': True, 'hello-power-periph': True, 'hello-pixart-j3': True,'hello-motor-lift': True}
 
 
 if args.map:
