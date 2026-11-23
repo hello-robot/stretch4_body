@@ -168,7 +168,15 @@ key can't be read in transit.
    project. With sign-in, `rules_work` also checks that the data can't be read
    without signing in, so rules without sign-in fail it and the tool offers the sign-in
    version (`rules(sign_in=True)`). Rules cover the whole database: every robot on it
-   must then sign in.
+   must then sign in. Those rules let in only users assigned to the robot, the way web
+   teleop assigns them (`Esp32Firebase.ASSIGNED`: `assignments/<uid>/robots/<fleet ID>`
+   true, directly or through `uids/<uid>`, or the fleet's robot account). The tool
+   reads `assignments/<uid>` for the robot's user (its UID from the sign-in) and, after
+   asking, adds only `assignments/<uid>/robots/<fleet ID>` = true if it is missing.
+
+   The tool writes only what is missing, since the database may be shared (with web
+   teleop, say): it reads `robots/<fleet ID>/robot_key` first, and if that holds
+   another key it asks to use it (the default), replace it, or stop.
 3. Sets up the database:
    * **With the [Firebase CLI](https://firebase.google.com/docs/cli)** installed
      (recommended: `curl -sL https://firebase.tools | bash`, or with Node.js 20+
@@ -181,10 +189,15 @@ key can't be read in transit.
      reads the rules in force (`database:get /.settings/rules`, comments included):
      * a new database's default rules (locked, or a test-mode date) or this tool's
        own: it asks, then publishes the robot rules in their place;
-     * other rules: it doesn't replace them. It adds the robot rules to them as a
-       comment inside `"rules"` (`Esp32Firebase.rules_with_comments`; the rules in
-       force don't change), publishes that, asks you to merge them in the console,
-       and checks again when you press Enter.
+     * other rules: it keeps them, and merges the robot rules in
+       (`Esp32Firebase.merge_rules`). If they have a `robots` > `$<wildcard>` entry
+       (web teleop's `$fleetId`, say), it adds `power_system_status` and
+       `power_system_requests` under it, renamed to that wildcard, replacing earlier
+       versions of those two; if not, it adds `robots` > `$fleetId`. Nothing else
+       changes, but comments in the rules are lost, so it saves the current rules to
+       `firebase_rules_<database>_<time>.json` in the robot's fleet folder first,
+       shows what it adds, and asks. Rules that can't be read as JSON are left to you
+       (the by-hand steps).
 
      Then it waits until the rules work before it gives the ESP32 the settings. The
      CLI can't create a project's first database, so for a new project it asks you

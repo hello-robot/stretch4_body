@@ -331,8 +331,12 @@ class TestRules:
             assert ("root.child('robots').child($fleetId).child('robot_key').val()" in fb.KEY_CHECK and
                     "newData.child('robot_key')" in fb.KEY_CHECK)
             read = fleet['power_system_status']['.read']
-            assert read == req['.read'] == ('auth != null' if sign_in else True)
-            assert all(w.startswith('auth != null && ') == sign_in for w in writes)
+            assert read == req['.read'] == (fb.ASSIGNED if sign_in else True)
+            assert all(w.startswith(fb.ASSIGNED + ' && ') == sign_in for w in writes)
+        # Assigned the way web teleop assigns users
+        for part in ("child('robots').child($fleetId).val() === true", "child('role').val() === 'robot'",
+                     "child('name').val() === $fleetId", "root.child('uids').child(auth.uid)"):
+            assert part in fb.ASSIGNED
 
     LOCKED = '{\n  "rules": {\n    ".read": false,\n    ".write": false\n  }\n}'
     TEST_MODE = '{"rules": {".read": "now < 1735689600000",  // 2025-1-1\n ".write": "now < 1735689600000"}}'
@@ -344,6 +348,10 @@ class TestRules:
         assert fb.classify_rules(fb.rules_json()) == fb.classify_rules(fb.rules_json(True)) == 'ours'
         assert fb.classify_rules('/* a comment */\n' + fb.rules_json()) == 'ours'
         assert fb.classify_rules(json.dumps({'rules': {'robots': {'$robot_key': {}}}})) == 'ours'  # The earlier rules
+        earlier_sign_in = {'rules': {'robots': {'$fleetId': {'power_system_status': {'.read': 'auth != null'},
+                                                             'power_system_requests': {'.read': 'auth != null'}}}}}
+        assert fb.classify_rules(json.dumps(earlier_sign_in)) == 'ours'
+        assert fb.classify_rules(json.dumps({'rules': {'robots': {'$fleetId': {'status': {}}}}})) == 'other'
         assert fb.classify_rules(self.OTHER) == 'other'
         assert fb.classify_rules('{"rules": {".read": true, ".write": true}}') == 'other'  # Open to all: not ours to take
         assert fb.classify_rules('not json') == fb.classify_rules(None) == 'other'
@@ -352,15 +360,49 @@ class TestRules:
         src = '{"a": "x // y /* z */", /* c */ "b": 1 // d\n}'
         assert json.loads(fb.strip_comments(src)) == {'a': 'x // y /* z */', 'b': 1}
 
-    def test_comment_changes_nothing(self):
-        merged = fb.rules_with_comments(self.OTHER)
-        assert json.loads(fb.strip_comments(merged)) == json.loads(self.OTHER)
-        assert fb.COMMENT_BEGIN in merged and '"power_system_status"' in merged
-        assert merged.index(fb.COMMENT_BEGIN) > merged.index('"rules"')  # Inline, inside "rules"
-        again = fb.rules_with_comments(merged, sign_in=True)  # A re-run replaces it
-        assert again.count(fb.COMMENT_BEGIN) == 1 and "auth != null && newData" in again
-        assert json.loads(fb.strip_comments(again)) == json.loads(self.OTHER)
-        assert fb.classify_rules(merged) == 'other'
+    WEB_TELEOP_RULES = os.path.expanduser('~/ament_ws/src/stretch4_web_teleop/database.rules.json')
+
+    def test_merge_keeps_everything_else(self):
+        theirs = {'rules': {'robots': {'$fleetId': {'.read': 'auth != null', 'status': {'.write': 'auth != null'},
+                                                    '$other': {'.validate': False}}},
+                            'maps': {'.read': True}}}
+        merged, changes = fb.merge_rules(json.dumps(theirs))
+        node = merged['rules']['robots']['$fleetId']
+        assert node['power_system_status'] == fb.rules()['rules']['robots']['$fleetId']['power_system_status']
+        for key in ('power_system_status', 'power_system_requests'):
+            del node[key]
+        assert merged == theirs and len(changes) == 2 and all(c.startswith('added') for c in changes)
+
+    def test_merge_replaces_its_own_and_renames_the_wildcard(self):
+        theirs = {'rules': {'robots': {'$robot': {'power_system_status': {'.read': 'auth != null'}, 'x': {}}}}}
+        merged, changes = fb.merge_rules(json.dumps(theirs), sign_in=True)
+        node = merged['rules']['robots']['$robot']
+        assert set(node) == {'power_system_status', 'power_system_requests', 'x'}
+        text = json.dumps(node)
+        assert '$robot' in text and '$fleetId' not in text  # Their wildcard's name in the expressions
+        assert changes[0].startswith('replaced') and changes[1].startswith('added')
+
+    def test_merge_adds_robots(self):
+        merged, _ = fb.merge_rules('// theirs\n{"rules": {"maps": {".read": true}}}')
+        assert merged == {'rules': {'maps': {'.read': True}, 'robots': fb.rules()['rules']['robots']}}
+        merged, _ = fb.merge_rules('{"rules": {"robots": {"public": {".read": true}}}}')  # No wildcard there
+        assert set(merged['rules']['robots']) == {'public', '$fleetId'}
+
+    @pytest.mark.parametrize('bad', ['not json', '{"x": 1}', '{"rules": {"robots": 3}}',
+                                     '{"rules": {"robots": {"$id": true}}}'])
+    def test_merge_refuses(self, bad):
+        with pytest.raises(ValueError):
+            fb.merge_rules(bad)
+
+    def test_merge_web_teleop_rules(self):
+        if not os.path.exists(self.WEB_TELEOP_RULES):
+            pytest.skip('stretch4_web_teleop is not checked out')
+        source = open(self.WEB_TELEOP_RULES).read()
+        merged, changes = fb.merge_rules(source)
+        node = merged['rules']['robots']['$fleetId']
+        for key in ('power_system_status', 'power_system_requests'):
+            del node[key]
+        assert merged == json.loads(source) and len(changes) == 2
 
 
 class TestDefaults:
@@ -459,6 +501,36 @@ class TestCli:
         cwd = run.call_args[1]['cwd']
         assert cwd and cwd != os.getcwd() and not os.path.exists(cwd)
 
+    @staticmethod
+    def _get_returning(value):
+        def run(cmd, cwd=None, **kw):
+            if cmd[1] == 'database:get':
+                with open(cmd[cmd.index('--output') + 1], 'w') as f:
+                    f.write(json.dumps(value))
+            return completed(json.dumps({'status': 'success'}))
+        return run
+
+    def test_get_value(self):
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=self._get_returning({'a': 1})) as r:
+            assert fb.get_value('proj', 'inst', '/x/y') == {'a': 1}
+        assert r.call_args[0][0][1:3] == ['database:get', '/x/y']
+        with mock.patch.object(esp32.subprocess, 'run', side_effect=self._get_returning(None)):
+            assert fb.get_value('proj', 'inst', '/x/y') is None
+
+    def test_assignment_needed_only_reads(self):
+        for current, needed in ((None, True), ({'robots': {'other': True}}, True), ({'role': 'robot', 'name': 'x'}, True),
+                                ({'robots': {FLEET: True}}, False), ({'role': 'robot', 'name': FLEET}, False)):
+            with mock.patch.object(esp32.subprocess, 'run', side_effect=self._get_returning(current)) as r:
+                got = fb.assignment_needed('proj', 'inst', 'UID9', FLEET)
+            assert got == ('/assignments/UID9/robots/%s' % FLEET if needed else None), current
+            assert [c[0][0][1] for c in r.call_args_list] == ['database:get']  # Nothing written
+
+    def test_set_true(self):
+        ok = json.dumps({'status': 'success'})
+        with mock.patch.object(esp32.subprocess, 'run', return_value=completed(ok)) as r:
+            fb.set_true('proj', 'inst', '/assignments/UID9/robots/%s' % FLEET)
+        assert r.call_args[0][0][1:5] == ['database:set', '/assignments/UID9/robots/%s' % FLEET, '--data', 'true']
+
     def test_set_robot_key(self):
         ok = json.dumps({'status': 'success', 'result': None})
         with mock.patch.object(esp32.subprocess, 'run', return_value=completed(ok)) as run:
@@ -499,9 +571,9 @@ class TestCli:
             seen['cmd'] = cmd
             return completed(json.dumps({'status': 'success', 'result': {}}))
         with mock.patch.object(esp32.subprocess, 'run', side_effect=run):
-            fb.deploy_rules('proj', 'inst', fb.rules_with_comments(TestRules.OTHER))
+            fb.deploy_rules('proj', 'inst', '// as given\n' + TestRules.OTHER)
         assert seen['firebase.json'] == {'database': [{'instance': 'inst', 'rules': 'database.rules.json'}]}
-        assert fb.COMMENT_BEGIN in seen['rules']  # The text given, comments and all
+        assert seen['rules'].startswith('// as given\n')  # The text given, comments and all
         assert seen['cmd'][1:4] == ['deploy', '--only', 'database']
 
     def test_rules_work(self):
@@ -539,8 +611,12 @@ class TestCli:
                 return False
             def read(self, *a):
                 return self.body
-        with mock.patch.object(esp32.urllib.request, 'urlopen', return_value=Reply(b'{"idToken": "TOK"}')) as u:
+        with mock.patch.object(esp32.urllib.request, 'urlopen',
+                               return_value=Reply(b'{"idToken": "TOK", "localId": "UID9"}')) as u:
             assert fb.sign_in('API', 'a@b.c', 'pw') == 'TOK'
+        with mock.patch.object(esp32.urllib.request, 'urlopen',
+                               return_value=Reply(b'{"idToken": "TOK", "localId": "UID9"}')):
+            assert fb.sign_in_account('API', 'a@b.c', 'pw')['localId'] == 'UID9'
         req = u.call_args[0][0]
         assert req.full_url.endswith('signInWithPassword?key=API')
         assert json.loads(req.data) == {'email': 'a@b.c', 'password': 'pw', 'returnSecureToken': True}
@@ -670,25 +746,51 @@ class TestRulesInEmulator:
 
     def test_sign_in(self, db_sign_in):
         db = db_sign_in
-        assert request(db, 'GET', 'robots/%s/power_system_status' % F1) == 401              # Not signed in
-        assert request(db, 'GET', 'robots/%s/power_system_status' % F1, uid='UID1') == 200
-        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K1)) == 401
-        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K1),
-                       uid='UID1') == 200
-        assert request(db, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K2, 'c2'),
-                       uid='UID1') == 401                                                     # Signed in, wrong key
+        # UID1 is assigned to F1, as web teleop assigns operators; UID2 is a user of the project, not assigned
+        assert request(db, 'PUT', 'assignments/UID1/robots/%s' % F1, True, admin=True) == 200
+        status = 'robots/%s/power_system_status' % F1
+        cmd_path = 'robots/%s/power_system_requests/power_command' % F1
+        assert request(db, 'GET', status) == 401                                    # Not signed in
+        assert request(db, 'GET', status, uid='UID2') == 401                        # Signed in, not assigned
+        assert request(db, 'GET', status, uid='UID1') == 200
+        assert request(db, 'GET', 'robots/%s/power_system_status' % F2, uid='UID1') == 401  # Not this robot
+        assert request(db, 'PUT', cmd_path, command(K1)) == 401
+        assert request(db, 'PUT', cmd_path, command(K1), uid='UID2') == 401
+        assert request(db, 'PUT', cmd_path, command(K1), uid='UID1') == 200
+        assert request(db, 'PUT', cmd_path, command(K2, 'c2'), uid='UID1') == 401  # Assigned, wrong key
         assert request(db, 'GET', 'robots/%s/robot_key' % F1, uid='UID1') == 401
+        assert request(db, 'GET', 'assignments', uid='UID1') == 401
+        assert request(db, 'PUT', 'assignments/UID2/robots/%s' % F1, True, uid='UID2') == 401  # Can't assign oneself
+
+    def test_sign_in_web_teleop_forms(self, db_sign_in):
+        db = db_sign_in
+        status = 'robots/%s/power_system_status' % F1
+        # Web teleop's robot account for F1 (role robot, name F1)
+        assert request(db, 'PUT', 'assignments/ROBOT1', {'role': 'robot', 'name': F1}, admin=True) == 200
+        assert request(db, 'PUT', status, dict(STATUS, robot_key=K1), uid='ROBOT1') == 200
+        assert request(db, 'PUT', 'robots/%s/power_system_status' % F2, dict(STATUS, robot_key=K2), uid='ROBOT1') == 401
+        # An operator through web teleop's uids alias
+        assert request(db, 'PUT', 'uids/UID3', 'alice', admin=True) == 200
+        assert request(db, 'PUT', 'assignments/alice/robots/%s' % F1, True, admin=True) == 200
+        assert request(db, 'GET', status, uid='UID3') == 200
 
     def test_change_key(self, db):
         assert request(db, 'PUT', 'robots/%s/robot_key' % F1, 'N' * 32, admin=True) == 200  # In the console
         assert request(db, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K1)) == 401
         assert request(db, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key='N' * 32)) == 200
 
-    def test_unreconciled_rules_change_nothing(self, emulator):
-        # Someone's rules, with the robot rules added as a comment: still theirs
-        theirs = {'rules': {'robots': {'$fleetId': {'.read': 'auth != null', 'status': {'.write': 'auth != null'}}}}}
-        merged = fb.rules_with_comments(json.dumps(theirs, indent=2))
-        assert request(emulator, 'PUT', '.settings/rules', merged, admin=True, raw=True) == 200
+    def test_merged_rules_work(self, emulator):
+        # Someone's rules (shaped like web teleop's), with the robot rules merged in
+        theirs = {'rules': {'robots': {'$fleetId': {'.read': 'auth != null', 'status': {'.write': 'auth != null'},
+                                                    '$other': {'.validate': False}}}}}
+        merged, _ = fb.merge_rules(json.dumps(theirs))
+        assert request(emulator, 'PUT', '.settings/rules', merged, admin=True) == 200
         assert request(emulator, 'PUT', 'robots/%s/robot_key' % F1, K1, admin=True) == 200
-        assert request(emulator, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K1)) == 401
+        assert request(emulator, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K1)) == 200
+        assert request(emulator, 'PUT', 'robots/%s/power_system_status' % F1, dict(STATUS, robot_key=K2)) == 401
+        assert request(emulator, 'PUT', 'robots/%s/power_system_requests/power_command' % F1, command(K1)) == 200
+        # Theirs still apply
+        assert request(emulator, 'PUT', 'robots/%s/status' % F1, 'online') == 401
+        assert request(emulator, 'PUT', 'robots/%s/status' % F1, 'online', uid='UID1') == 200
+        assert request(emulator, 'PUT', 'robots/%s/other' % F1, 1, uid='UID1') == 401
         assert request(emulator, 'GET', 'robots/%s' % F1, uid='UID1') == 200

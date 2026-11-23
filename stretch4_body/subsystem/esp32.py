@@ -802,14 +802,20 @@ class Esp32Firebase:
     """
     # A write is let in if it carries the robot's key
     KEY_CHECK = "newData.child('robot_key').val() === root.child('robots').child($fleetId).child('robot_key').val()"
+    # With sign-in, a user assigned to the robot, as web teleop assigns them: an operator or
+    # app user (assignments/<uid>/robots/<fleet ID> true, directly or through uids/<uid>), or
+    # the robot's own account (assignments/<uid> with role "robot" and name <fleet ID>)
+    ASSIGNED = ("auth != null && ("
+                "root.child('assignments').child(auth.uid).child('robots').child($fleetId).val() === true || "
+                "(root.child('assignments').child(auth.uid).child('role').val() === 'robot' && "
+                "root.child('assignments').child(auth.uid).child('name').val() === $fleetId) || "
+                "(root.child('uids').child(auth.uid).exists() && root.child('assignments')"
+                ".child(root.child('uids').child(auth.uid).val()).child('robots').child($fleetId).val() === true))")
     DATABASE_HOST_SUFFIXES = ('.firebaseio.com', '.firebasedatabase.app')
     # How the CLI says it can't authenticate. With --json it often says only "Failed to ...",
     # and the reason is in firebase-debug.log
     AUTH_ERROR_MARKERS = ('authentication error', 'failed to authenticate', 'have you run firebase login',
                           'credentials are no longer valid', 'login --reauth')
-    # Marks the robot rules put into someone else's rules as a comment, to reconcile
-    COMMENT_BEGIN = '/* stretch_esp32_jog: robot power rules, NOT ACTIVE.'
-    COMMENT_END = 'end of the robot power rules */'
     CliError = FirebaseCliError
     AuthError = FirebaseAuthError
 
@@ -818,12 +824,13 @@ class Esp32Firebase:
     @staticmethod
     def rules(sign_in=False):
         """
-        The rules for the robots' power data. Without sign_in, reads are open; with it, they
-        need a signed-in user, and so do writes. robot_key itself has no rule, so no one can
-        read or write it through the rules (the console and the CLI can).
+        The rules for the robots' power data. Without sign_in, reads are open; with it, reads
+        and writes need a signed-in user assigned to the robot (ASSIGNED, as web teleop
+        assigns users). robot_key itself has no rule, so no one can read or write it through
+        the rules (the console and the CLI can), and neither can anyone write assignments.
         """
-        read = 'auth != null' if sign_in else True
-        write = ('auth != null && ' if sign_in else '') + Esp32Firebase.KEY_CHECK
+        read = Esp32Firebase.ASSIGNED if sign_in else True
+        write = ('%s && ' % Esp32Firebase.ASSIGNED if sign_in else '') + Esp32Firebase.KEY_CHECK
         return {'rules': {'robots': {'$fleetId': {
             'power_system_status': {'.read': read, '.write': write},
             'power_system_requests': {'.read': read,
@@ -876,6 +883,9 @@ class Esp32Firebase:
             return 'other'
         if set(inner) == {'robots'} and '$robot_key' in (inner['robots'] or {}):
             return 'ours'  # The earlier robots/<key> rules
+        fleet = (inner.get('robots') or {}).get('$fleetId') if set(inner) == {'robots'} else None
+        if isinstance(fleet, dict) and set(fleet) == {'power_system_status', 'power_system_requests'}:
+            return 'ours'  # An earlier version of these (such as sign-in with auth != null only)
         if set(inner) <= {'.read', '.write'} and all(
                 v is False or v == 'auth != null' or (isinstance(v, str) and v.replace(' ', '').startswith('now<'))
                 for v in inner.values()):
@@ -883,31 +893,42 @@ class Esp32Firebase:
         return 'other'
 
     @staticmethod
-    def rules_with_comments(source, sign_in=False):
+    def merge_rules(source, sign_in=False):
         """
-        source (someone's rules) with the robot rules added as a comment, inside "rules", to
-        reconcile by hand. Rules that change nothing: what was in force stays in force. A
-        comment from an earlier run is replaced.
+        Someone's rules (source) with the robot rules added, everything else kept:
+        power_system_status and power_system_requests go under their "robots" > "$<wildcard>"
+        (renamed to their wildcard, replacing earlier versions of those two), or a
+        "robots" > "$fleetId" is added if there is none. Comments are not kept (the rules are
+        read as JSON). Returns (merged rules, a list of what was changed). Raises ValueError if
+        source can't be read as rules.
         """
-        src = source or ''
-        b = src.find(Esp32Firebase.COMMENT_BEGIN)
-        if b >= 0:
-            e = src.find(Esp32Firebase.COMMENT_END, b)
-            if e >= 0:
-                src = src[:b].rstrip(' ') + src[e + len(Esp32Firebase.COMMENT_END):].lstrip('\n')
-        robots = json.dumps(Esp32Firebase.rules(sign_in)['rules'], indent=2)
-        comment = '\n'.join(
-            ['    ' + Esp32Firebase.COMMENT_BEGIN,
-             '       Merge them into these rules: add the "robots" entry below, or, if there is a',
-             '       "robots" entry already, add "power_system_status" and "power_system_requests" to',
-             '       its "$fleetId" entry (whatever it is named). Then publish, and delete this comment.',
-             '       Until then the robot can\'t publish its status or read commands.'] +
-            ['       ' + line for line in robots[1:-1].strip('\n').splitlines()] +
-            ['       ' + Esp32Firebase.COMMENT_END, ''])
-        m = re.search(r'"rules"\s*:\s*\{[ \t]*\n?', src)
-        if not m:
-            return comment + src
-        return src[:m.end()] + ('' if src[m.end() - 1] == '\n' else '\n') + comment + src[m.end():]
+        try:
+            parsed = json.loads(Esp32Firebase.strip_comments(source))
+        except (TypeError, ValueError):
+            raise ValueError('the rules can\'t be read as JSON')
+        if not isinstance(parsed, dict) or not isinstance(parsed.get('rules'), dict):
+            raise ValueError('the rules have no "rules" object')
+        inner = parsed['rules']
+        ours = Esp32Firebase.rules(sign_in)['rules']['robots']['$fleetId']
+        robots = inner.get('robots')
+        if robots is None:
+            inner['robots'] = {'$fleetId': ours}
+            return parsed, ['added "robots" > "$fleetId", with power_system_status and power_system_requests']
+        if not isinstance(robots, dict):
+            raise ValueError('"robots" in the rules is not an object')
+        wildcard = next((k for k in robots if k.startswith('$')), None)
+        if wildcard is None:
+            robots['$fleetId'] = ours
+            return parsed, ['added "$fleetId" to "robots", with power_system_status and power_system_requests']
+        node = robots[wildcard]
+        if not isinstance(node, dict):
+            raise ValueError('"robots" > "%s" in the rules is not an object' % wildcard)
+        renamed = json.loads(json.dumps(ours).replace('$fleetId', wildcard))
+        changes = []
+        for key, value in renamed.items():
+            changes.append('%s "robots" > "%s" > "%s"' % ('replaced' if key in node else 'added', wildcard, key))
+            node[key] = value
+        return parsed, changes
 
     @staticmethod
     def default_project_id(fleet_id=None):
@@ -1049,13 +1070,24 @@ class Esp32Firebase:
     @staticmethod
     def sign_in(api_key, email, password, timeout=10):
         """A Firebase ID token for email and password (the ESP32's optional sign-in). Raises ValueError if refused."""
+        return Esp32Firebase.sign_in_account(api_key, email, password, timeout)['idToken']
+
+    @staticmethod
+    def sign_in_account(api_key, email, password, timeout=10):
+        """
+        Sign in with email and password: {'idToken', 'localId' (the user's UID), ...}.
+        Raises ValueError if refused.
+        """
         req = urllib.request.Request(
             'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + api_key,
             data=json.dumps({'email': email, 'password': password, 'returnSecureToken': True}).encode(),
             headers={'Content-Type': 'application/json'})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.load(r)['idToken']
+                account = json.load(r)
+            if 'idToken' not in account or 'localId' not in account:
+                raise KeyError('no idToken or localId in the reply')
+            return account
         except urllib.error.HTTPError as e:
             try:
                 message = json.load(e)['error']['message']
@@ -1137,8 +1169,46 @@ class Esp32Firebase:
         return 'https://console.firebase.google.com/project/%s/authentication/%s' % (project, page)
 
     @staticmethod
+    def get_value(project, instance, path):
+        """The JSON at path in the database (None if nothing is there), read with the CLI."""
+        with tempfile.TemporaryDirectory(prefix='stretch_firebase_') as d:
+            out = os.path.join(d, 'value.json')
+            Esp32Firebase.run_cli(['database:get', path, '--output', out, '--instance', instance],
+                                  project=project, cwd=d, timeout=60)
+            try:
+                with open(out) as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                return None
+
+    @staticmethod
+    def assignment_needed(project, instance, uid, fleet_id):
+        """
+        What gives the user uid access to robots/<fleet_id> under the sign-in rules, the way web
+        teleop assigns users: the path assignments/<uid>/robots/<fleet_id> to set to true, or
+        None if the user is assigned already (that key is true, or uid is that fleet's web
+        teleop robot account: role "robot", name fleet_id). Reads only.
+        """
+        current = Esp32Firebase.get_value(project, instance, '/assignments/%s' % uid)
+        if isinstance(current, dict):
+            if current.get('role') == 'robot' and current.get('name') == fleet_id:
+                return None
+            if (current.get('robots') or {}).get(fleet_id) is True:
+                return None
+        return '/assignments/%s/robots/%s' % (uid, fleet_id)
+
+    @staticmethod
+    def set_true(project, instance, path):
+        """Set the one key at path to true (nothing else changes)."""
+        Esp32Firebase.run_cli(['database:set', path, '--data', 'true', '--instance', instance, '--force'],
+                              project=project, timeout=60)
+
+    @staticmethod
     def set_robot_key(project, instance, fleet_id, robot_key):
-        """Write robots/<fleet_id>/robot_key (the CLI isn't held to the rules)."""
+        """
+        Write robots/<fleet_id>/robot_key, that key alone (the CLI isn't held to the rules). Read
+        it first (get_value): it may hold another key that apps use.
+        """
         Esp32Firebase.run_cli(['database:set', '/robots/%s/robot_key' % fleet_id, '--data', json.dumps(robot_key),
                                '--instance', instance, '--force'], project=project, timeout=60)
 
