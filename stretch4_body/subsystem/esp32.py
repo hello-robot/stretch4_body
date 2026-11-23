@@ -1102,7 +1102,8 @@ class Esp32Firebase:
         """
         Whether the rules in force do what the robot needs, checked by what they do, from this
         computer, the way the ESP32 connects (signed in with id_token, with a user):
-        robots/<fleet_id>/robot_key can't be read, a write with another key is refused, a write
+        robots/<fleet_id>/robot_key can't be read without signing in, a write with another key
+        is refused, a write
         with robot_key is let in, and the commands can be read; with id_token (sign-in), also
         that they can't be read without signing in.
         Returns (True, '') or (False, what failed).
@@ -1111,8 +1112,10 @@ class Esp32Firebase:
         auth = '?auth=' + id_token if id_token else ''
         status_url = base + '/power_system_status.json' + auth
         wrong = 'not-' + robot_key if len(robot_key) < 60 else robot_key[::-1]
-        if Esp32Firebase.http_status(base + '/robot_key.json' + auth) != 401:
-            return False, 'robots/%s/robot_key can be read' % fleet_id
+        # Without signing in: users the rules let in may read it (web teleop's robots/$fleetId
+        # read rule covers everything under a robot), but nobody else
+        if Esp32Firebase.http_status(base + '/robot_key.json') != 401:
+            return False, 'robots/%s/robot_key can be read without signing in' % fleet_id
         if Esp32Firebase.http_status(status_url, 'PATCH', {'robot_key': wrong}) != 401:
             return False, 'a write without the robot key is let in'
         code = Esp32Firebase.http_status(status_url, 'PATCH', {'robot_key': robot_key})

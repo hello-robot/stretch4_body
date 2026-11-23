@@ -184,7 +184,7 @@ key can't be read in transit.
      all: pick or create a project, find its Realtime Database, write
      `robots/<fleet ID>/robot_key`, and get the rules in force. It checks the rules
      by what they do, from the robot's computer the way the ESP32 connects
-     (`Esp32Firebase.rules_work`): `robot_key` unreadable, a write with another key
+     (`Esp32Firebase.rules_work`): `robot_key` unreadable without signing in, a write with another key
      refused, a write with the key let in, the commands readable. If that fails, it
      reads the rules in force (`database:get /.settings/rules`, comments included):
      * a new database's default rules (locked, or a test-mode date) or this tool's

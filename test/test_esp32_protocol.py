@@ -595,7 +595,9 @@ class TestCli:
         # With sign-in, the last check reads without the token, and must be refused
         with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200, 401]) as st:
             assert fb.rules_work(url, FLEET, KEY, id_token='TOK') == (True, '')
-        assert all(c[0][0].endswith('?auth=TOK') for c in st.call_args_list[:4])
+        # The key is checked without signing in (users let in may read it); the rest as the robot
+        assert st.call_args_list[0][0] == (base + '/robot_key.json',)
+        assert all(c[0][0].endswith('?auth=TOK') for c in st.call_args_list[1:4])
         assert st.call_args_list[4][0] == (base + '/power_system_requests.json',)
         with mock.patch.object(fb, 'http_status', side_effect=[401, 401, 200, 200, 200]):
             ok, why = fb.rules_work(url, FLEET, KEY, id_token='TOK')  # Rules without sign-in
@@ -794,3 +796,20 @@ class TestRulesInEmulator:
         assert request(emulator, 'PUT', 'robots/%s/status' % F1, 'online', uid='UID1') == 200
         assert request(emulator, 'PUT', 'robots/%s/other' % F1, 1, uid='UID1') == 401
         assert request(emulator, 'GET', 'robots/%s' % F1, uid='UID1') == 200
+
+    def test_check_passes_on_merged_web_teleop_rules(self, emulator):
+        # Web teleop lets assigned users read all of robots/$fleetId, robot_key included: the
+        # tool's check must still pass for the robot's assigned user
+        if not os.path.exists(TestRules.WEB_TELEOP_RULES):
+            pytest.skip('stretch4_web_teleop is not checked out')
+        merged, _ = fb.merge_rules(open(TestRules.WEB_TELEOP_RULES).read(), sign_in=True)
+        assert request(emulator, 'PUT', '.settings/rules', merged, admin=True) == 200
+        assert request(emulator, 'PUT', 'robots/%s/robot_key' % F1, K1, admin=True) == 200
+        assert request(emulator, 'PUT', 'assignments/ROBOTUSER/robots/%s' % F1, True, admin=True) == 200
+        real = fb.http_status
+        with mock.patch.object(fb, 'http_status', side_effect=lambda url, method='GET', data=None, timeout=10:
+                               real(url + ('&' if '?' in url else '?') + 'ns=' + NS, method, data, timeout)):
+            assert fb.rules_work(emulator, F1, K1, id_token=id_token('ROBOTUSER')) == (True, '')
+            assert not fb.rules_work(emulator, F1, K1, id_token=id_token('STRANGER'))[0]
+        assert request(emulator, 'GET', 'robots/%s/robot_key' % F1) == 401
+        assert request(emulator, 'GET', 'robots/%s/robot_key' % F1, uid='STRANGER') == 401
