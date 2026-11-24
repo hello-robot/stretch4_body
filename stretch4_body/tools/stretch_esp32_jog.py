@@ -4,20 +4,25 @@ ESP32 status, and set-up of its Wi-Fi and Firebase.
 
 Prints the status, then offers a menu:
   w  configure Wi-Fi: pick a network and connect, as in a desktop Wi-Fi menu
-  f  configure Firebase
+  f  configure Firebase (remote sleep and wake): makes a robot key, and sets up the
+     database under robots/$HELLO_FLEET_ID, with the Firebase CLI if it is installed
+     (Esp32Firebase, in subsystem/esp32.py)
   s  print the status
   q  quit
 
 It opens /dev/hello-esp32 directly; the ESP32 is not part of the robot server.
 It talks only to the ESP32.
 
-Settings that work are saved to the ESP32's flash and to the robot's
-stretch_configuration_params.yaml (esp32.wifi, esp32.firebase).
+Settings that work are saved to the ESP32's flash, and only there: they are secrets, so
+they are not written to the robot's configuration files.
 
-Needs ESP32 firmware hello-esp.v0.2.0p1 or later (earlier firmware has no RPC).
+Needs ESP32 firmware hello-esp.v0.2.0p1 or later (earlier firmware has no RPC), and
+hello-esp.v0.2.6p1 or later for Firebase.
 """
 import argparse
 import getpass
+import json
+import os
 import subprocess
 import sys
 import time
@@ -25,7 +30,7 @@ import time
 import click
 
 import stretch4_body.core.hello_utils as hu
-from stretch4_body.subsystem.esp32 import Esp32Base
+from stretch4_body.subsystem.esp32 import Esp32Base, Esp32Firebase, generate_robot_key
 
 hu.print_stretch_re_use()
 
@@ -95,25 +100,7 @@ class Esp32Backend:
         return None
 
 
-# ############################# Robot configuration #############################
-
-def saved_credentials():
-    """(wifi, firebase) saved in the robot configuration (esp32.*, or the older power-periph.firebase)."""
-    from stretch4_body.subsystem.esp32 import params_credentials
-    return params_credentials(backend.device.robot_params)
-
-
-def save_to_robot_config(section, values):
-    """Write esp32.<section>.<key> to stretch_configuration_params.yaml."""
-    try:
-        for k, v in values.items():
-            backend.device.write_configuration_param_to_YAML('esp32.%s.%s' % (section, k), v, force_creation=True)
-        # And in memory, so this session sees it as saved
-        backend.device.robot_params.setdefault('esp32', {}).setdefault(section, {}).update(values)
-        click.secho('  Saved to stretch_configuration_params.yaml (esp32.%s)' % section, fg='green')
-    except Exception as e:
-        click.secho('  Could not save to stretch_configuration_params.yaml: %s' % e, fg='red')
-
+# ############################# Robot computer #############################
 
 def robot_computer_wifi():
     """
@@ -382,7 +369,7 @@ def print_wifi_connection():
     return w
 
 
-def list_networks(scan, current_ssid, robot_ssid, saved_ssid):
+def list_networks(scan, current_ssid, robot_ssid):
     """Print the scan as a numbered list. Returns the networks, one per SSID, strongest first."""
     networks, seen = [], set()
     for net in scan['networks']:
@@ -398,8 +385,6 @@ def list_networks(scan, current_ssid, robot_ssid, saved_ssid):
             tags.append(click.style('connected', fg='green'))
         if net['ssid'] == robot_ssid:
             tags.append('robot computer')
-        if net['ssid'] == saved_ssid:
-            tags.append('saved')
         security = 'open' if net['auth'] == 'OPEN' else net['auth']
         click.echo('  %2d  %s %-32s %-14s ch %-3d %s' % (i + 1, signal_bars(net['rssi']), net['ssid'], security,
                                                        net['channel'], ', '.join(tags)))
@@ -442,7 +427,7 @@ def stop_trying(ssid):
 
 def connect_wifi(ssid, password, previous):
     """
-    Join the network. On success, save it to the ESP32 flash and the robot configuration. On failure,
+    Join the network. On success, save it to the ESP32's flash. On failure,
     put the ESP32 back as it was: on the previous network if that can be rejoined, with no network if
     it had none ({'ssid': ''}), else stopped. Returns True on success.
     """
@@ -460,8 +445,8 @@ def connect_wifi(ssid, password, previous):
     if ok:
         backend.command('set_wifi_config', ssid, password, persist=True, apply_now=False)
         w = backend.snapshot()['wifi']
-        click.secho('  Connected to "%s": IP %s, signal %s' % (ssid, w['ip'], rssi_text(w['rssi'])), fg='green')
-        save_to_robot_config('wifi', {'ssid': ssid, 'password': password})
+        click.secho('  Connected to "%s": IP %s, signal %s. Saved on the ESP32.'
+                    % (ssid, w['ip'], rssi_text(w['rssi'])), fg='green')
         return True
     hint = WIFI_FAILURE_HINTS.get(reason, '')
     click.secho('  Could not connect to "%s"%s%s' % (ssid, ': %s' % reason if reason else '',
@@ -505,8 +490,8 @@ def password_for(ssid, security, known):
     if security == 'OPEN':
         return '' if confirm('"%s" is an open network (no password). Connect?' % ssid, default=True) else None
     if known:
-        click.echo('  A saved password for "%s" is available.' % ssid)
-        x = getpass.getpass('  Password (Enter to use the saved one): ')
+        click.echo('  The password for "%s" is known (from the ESP32 or the robot computer).' % ssid)
+        x = getpass.getpass('  Password (Enter to use the known one): ')
         return x if x else known
     x = getpass.getpass('  Password for "%s": ' % ssid)
     return x if x else None
@@ -520,15 +505,12 @@ def config_wifi():
         w = print_wifi_connection()
         current_ssid = w['ssid'] if w['state_name'] == 'CONNECTED' else None
         esp_wifi, _ = backend.credentials()
-        saved_wifi, _ = saved_credentials()
         robot = robot_computer_wifi()
 
         # Passwords we know, by SSID, to offer as defaults
         known = {}
-        if saved_wifi['ssid'] and saved_wifi['password']:
-            known[saved_wifi['ssid']] = saved_wifi['password']
         if robot and robot['ssid'] and robot['password']:
-            known.setdefault(robot['ssid'], robot['password'])
+            known[robot['ssid']] = robot['password']
         if esp_wifi and esp_wifi.get('ssid') and esp_wifi.get('password'):
             known[esp_wifi['ssid']] = esp_wifi['password']
         # What to put back on failure. {'ssid': ''}: the ESP32 had no network. None: unknown
@@ -545,15 +527,13 @@ def config_wifi():
                             'scans again. (Firmware hello-esp.v0.2.1p1 or later stops it by itself.)', fg='yellow')
             networks = []
         else:
-            networks = list_networks(scan, current_ssid, robot['ssid'] if robot else None, saved_wifi['ssid'])
+            networks = list_networks(scan, current_ssid, robot['ssid'] if robot else None)
 
         click.echo('')
         if networks:
             click.echo('  1-%d: connect to that network' % len(networks))
         if robot and robot['ssid']:
             click.echo('  i:   use the robot computer\'s network ("%s")' % robot['ssid'])
-        if saved_wifi['ssid']:
-            click.echo('  s:   use the saved network ("%s")' % saved_wifi['ssid'])
         click.echo('  h:   hidden network (type its name)\n'
                    '  r:   scan again\n'
                    '  d:   disconnect\n'
@@ -598,9 +578,6 @@ def config_wifi():
                 password = password_for(target, 'WPA2_PSK', None)
             if password is not None and connect_wifi(target, password, previous):
                 return
-        elif k == 's' and saved_wifi['ssid']:
-            if connect_wifi(saved_wifi['ssid'], saved_wifi['password'] or '', previous):
-                return
         elif k == 'h':
             ssid = ask('Network name (SSID)')
             if ssid:
@@ -614,14 +591,16 @@ def config_wifi():
         elif k == 'f':
             if confirm('Erase the network saved on the ESP32 and disconnect?'):
                 backend.command('forget_wifi')
-                if saved_wifi['ssid'] and confirm('Also remove it from the robot configuration?'):
-                    save_to_robot_config('wifi', {'ssid': 'NA', 'password': 'NA'})
                 time.sleep(1.0)
         else:
             click.echo('  Unknown choice')
 
 
 # ############################# Firebase wizard #############################
+
+FIREBASE_FIELDS = ('url', 'fleet_id', 'robot_key', 'api_key', 'user_email', 'user_password')
+SIGN_IN_FIELDS = ('api_key', 'user_email', 'user_password')
+
 
 def print_firebase_connection(esp_fb):
     backend.pull()
@@ -631,7 +610,9 @@ def print_firebase_connection(esp_fb):
     row('State', f['state_name'], fg=state_color(f['state_name'], ('READY',), ('NOT_CONFIGURED',)))
     if esp_fb:
         row('Database URL', esp_fb.get('url') or '-')
-        row('User email', esp_fb.get('user_email') or '-')
+        row('Fleet ID', esp_fb.get('fleet_id') or '-')
+        row('Robot key', esp_fb.get('robot_key') or '-')
+        row('Signs in as', esp_fb.get('user_email') or 'no one (robot key only)')
     row('Last publish', age(f['last_publish_age_s']))
     if f['last_error']:
         row('Last error', '%d %s' % (f['last_error_code'], f['last_error']), fg='yellow')
@@ -662,14 +643,27 @@ def wait_for_firebase(init0):
     return False, ('%d %s' % (f['last_error_code'], f['last_error'])) if f['last_error'] else f['state_name']
 
 
+def firebase_failure_hint(err):
+    e = (err or '').lower()
+    if '401' in e or 'unauthorized' in e or 'permission' in e:
+        return ('the database rules refused the robot. Are the robot rules in force (p prints them), and does '
+                'robots/<fleet ID>/robot_key hold this robot\'s key?')
+    if any(w in e for w in ('credential', 'password', 'email', 'api key', 'api_key')):
+        return 'the sign-in was refused: check the Web API key, the email and the password'
+    return ''
+
+
 def connect_firebase(cfg, previous):
-    """Use cfg (url, api_key, user_email, user_password). Save it if Firebase comes up. Returns True on success."""
+    """
+    Use cfg (url, fleet_id, robot_key, and api_key, user_email, user_password, empty for no
+    sign-in). Save it if Firebase comes up. Returns True on success.
+    """
+    fields = tuple(cfg.get(k) or '' for k in FIREBASE_FIELDS)
     try:
-        Esp32Base.validate_firebase_config(cfg['url'], cfg['api_key'], cfg['user_email'], cfg['user_password'])
+        Esp32Base.validate_firebase_config(*fields)
     except ValueError as e:
         click.secho('  %s' % e, fg='red')
         return False
-    fields = (cfg['url'], cfg['api_key'], cfg['user_email'], cfg['user_password'])
     init0 = firebase_inits()
     if not backend.command('set_firebase_config', *fields, persist=False, apply_now=True):
         click.secho('  Could not send the settings to the ESP32', fg='red')
@@ -677,57 +671,627 @@ def connect_firebase(cfg, previous):
     ok, err = wait_for_firebase(init0)
     if ok:
         backend.command('set_firebase_config', *fields, persist=True, apply_now=False)
-        click.secho('  Firebase ready', fg='green')
-        save_to_robot_config('firebase', dict(cfg))
+        click.secho('  Firebase ready. Saved on the ESP32.', fg='green')
         return True
-    click.secho('  Firebase did not come up: %s' % err, fg='red')
-    if previous and all(previous.get(k) for k in ('url', 'api_key', 'user_email', 'user_password')):
+    hint = firebase_failure_hint(err)
+    click.secho('  Firebase did not come up: %s%s' % (err, ' (%s)' % hint if hint else ''), fg='red')
+    if is_configured(previous):
         if confirm('Go back to the previous settings (%s)?' % previous['url'], default=True):
             init0 = firebase_inits()
-            backend.command('set_firebase_config', previous['url'], previous['api_key'], previous['user_email'],
-                            previous['user_password'], persist=False, apply_now=True)
+            backend.command('set_firebase_config', *(previous.get(k) or '' for k in FIREBASE_FIELDS),
+                            persist=False, apply_now=True)
             if wait_for_firebase(init0)[0]:
                 click.secho('  Back on the previous settings', fg='green')
             else:
                 click.secho('  The previous settings did not come up either. The ESP32 goes back to its saved '
                             'settings at its next reboot.', fg='red')
+        else:
+            click.secho('  The ESP32 keeps trying the new settings, but they are not saved: it goes back to its '
+                        'saved settings at its next reboot.', fg='yellow')
     else:
         click.secho('  The ESP32 goes back to its saved settings at its next reboot.', fg='yellow')
     return False
 
 
-def merge_known(esp_fb, saved_fb):
-    """Best known value of each field: the ESP32's (when readable), else the robot configuration's."""
-    out = {}
-    for k in ('url', 'api_key', 'user_email', 'user_password'):
-        v = (esp_fb or {}).get(k)
-        out[k] = v if v else saved_fb.get(k)
+def is_configured(cfg):
+    return bool(cfg and cfg.get('url') and cfg.get('fleet_id') and cfg.get('robot_key'))
+
+
+def known_firebase(esp_fb):
+    """
+    The settings the ESP32 has (the only place they are kept), to offer as defaults. The
+    fleet ID defaults to $HELLO_FLEET_ID, and the URL to this robot's own project
+    ($HELLO_FLEET_ID-pwr-mgmt) default database.
+    """
+    out = {k: (esp_fb or {}).get(k) or None for k in FIREBASE_FIELDS}
+    out['fleet_id'] = out['fleet_id'] or os.environ.get('HELLO_FLEET_ID')
+    out['url'] = out['url'] or Esp32Firebase.default_database_url()
     return out
+
+
+def ask_database_url(default=None):
+    """The database URL, typed. None if left empty."""
+    while True:
+        url = ask('Database URL', default).strip()
+        if not url:
+            return None
+        try:
+            return Esp32Firebase.normalize_database_url(url)
+        except ValueError as e:
+            click.secho('  %s' % e, fg='red')
+
+
+def ask_fleet_id(default=None):
+    """The robot's fleet ID (its data is under robots/<fleet ID>), typed. None if left empty."""
+    while True:
+        fleet_id = ask('Fleet ID', default).strip()
+        if not fleet_id:
+            return None
+        try:
+            Esp32Base.validate_fleet_id(fleet_id)
+            return fleet_id
+        except ValueError as e:
+            click.secho('  %s' % e, fg='red')
+
+
+def ask_sign_in(known, project=None, api_key=None):
+    """
+    The optional Firebase user: {'api_key', 'user_email', 'user_password'}, or None to cancel.
+    project: the Firebase project, when known, for direct links. api_key: the project's Web
+    API key when the CLI read it; else it is asked for (sign-in goes through Google's Identity
+    Toolkit, which needs the key to know the project).
+    """
+    where = lambda page: Esp32Firebase.auth_console_url(project, page) if project else ''
+    click.echo('  The robot signs in as a Firebase user of the project. In the Firebase console:')
+    click.echo('    Authentication > Sign-in method: enable Email/Password%s' % ('\n      ' + where('providers') if project else ''))
+    click.echo('    Authentication > Users: add a user for the robot%s' % ('\n      ' + where('users') if project else ''))
+    if not api_key:
+        click.echo('    Project settings > General: copy the Web API key')
+    click.echo('  The app must sign in too, as a user assigned to the robot (assignments/<uid>/robots/<fleet ID>\n'
+               '  = true, as in web teleop). The robot\'s own user is assigned for you.')
+    cfg = {'api_key': api_key or ask('Web API key', known['api_key'], secret=True),
+           'user_email': ask('User email', known['user_email']),
+           'user_password': ask('User password', known['user_password'], secret=True)}
+    if not all(cfg.values()):
+        click.secho('  The email and the password are needed%s.' % ('' if api_key else ', and the API key'), fg='red')
+        return None
+    return cfg
+
+
+def cli_sign_in(project, known):
+    """
+    With the CLI: the project's Web API key read from its web app (one made if it has none),
+    then the user to sign in as. Returns the sign-in dict, or None to cancel.
+    """
+    api_key = Esp32Firebase.web_api_key(project)
+    if not api_key:
+        click.echo('  Sign-in needs the project\'s Web API key, which comes with a web app, and "%s" has none.'
+                   % project)
+        if not confirm('Add a web app named "Stretch power" to the project, for its API key?', default=True):
+            return None
+        api_key = Esp32Firebase.web_api_key(project, create=True)
+    if not api_key:
+        click.secho('  Could not read the Web API key: copy it from Project settings > General.', fg='yellow')
+    else:
+        click.secho('  Web API key read from the project.', fg='green')
+    return ask_sign_in(known, project, api_key)
+
+
+def print_rules(sign_in):
+    for line in Esp32Firebase.rules_json(sign_in).splitlines():
+        click.secho('       ' + line, fg='cyan')
+
+
+def setup_database_by_hand(fleet_id, robot_key, sign_in, default_url):
+    """Walk the user through the console. Returns the database URL, or None."""
+    header('Set up the database in the Firebase console')
+    project = Esp32Firebase.default_project_id()
+    click.echo('  1. Open https://console.firebase.google.com and create a project, or pick one.%s\n'
+               % ('\n     For this robot\'s own project, use the project ID %s.' % project if project else ''))
+    click.echo('  2. Build > Realtime Database > Create Database: any location, start in locked mode.\n'
+               '  3. Rules tab. If it has only the default rules (".read" and ".write" false, or a\n'
+               '     "now < ..." test-mode date), replace them with these, then Publish. If it has other\n'
+               '     rules, merge these into them instead: add the "robots" entry, or add\n'
+               '     "power_system_status" and "power_system_requests" to an existing "robots" > "$fleetId".\n'
+               '     Skip this if another robot set up this database already.\n')
+    print_rules(bool(sign_in))
+    click.echo('\n  4. Data tab: add robots > %s > robot_key, with the value (in quotes), and nothing else.\n'
+               '     If robot_key is there already with another value, apps may be using it: leave it, quit,\n'
+               '     and use that key instead (e in the Firebase menu), or replace it knowing they stop working.'
+               % fleet_id)
+    row('     robot_key', '"%s"' % robot_key, fg='cyan')
+    click.echo('  5. Copy the database URL from the top of the Data tab.\n')
+    return ask_database_url(default_url)
+
+
+def pick(items, label, extra=(), enter='set up by hand instead'):
+    """A numbered choice. Returns the item, an extra key typed, or None for Enter."""
+    for i, item in enumerate(items):
+        click.echo('  %2d  %s' % (i + 1, label(item)))
+    for k, text in extra:
+        click.echo('  %2s  %s' % (k, text))
+    click.echo('  Enter: %s' % enter)
+    while True:
+        x = input('> ').strip()
+        if not x:
+            return None
+        if x.isdigit() and 1 <= int(x) <= len(items):
+            return items[int(x) - 1]
+        if x in dict(extra):
+            return x
+        click.echo('  Unknown choice')
+
+
+# setup_database_with_cli: back to the Firebase menu, rather than on by hand
+BACK_TO_MENU = 'back to menu'
+
+FIREBASE_CLI_NOT_INSTALLED = (
+    '  The Firebase CLI is not installed. It is recommended: with it, this tool sets up the database\n'
+    '  for you (project, rules and robot key). To install it, in a terminal:\n'
+    '    curl -sL https://firebase.tools | bash        (or, with Node.js 20+: sudo npm install -g firebase-tools)\n'
+    '    firebase login                                (over SSH: firebase login --no-localhost)\n'
+    '  then choose n here again. More: https://firebase.google.com/docs/cli')
+
+
+def firebase_cli_sign_in_error(expired):
+    """The CLI can't authenticate: say how to sign in. expired: an account is on record, but its login expired."""
+    command = 'firebase login --reauth' if expired else 'firebase login'
+    click.secho('  Error: the Firebase CLI is %s. In a terminal, run\n'
+                '    %s\n'
+                '  (over SSH: %s --no-localhost), then choose n here again.'
+                % ('signed in, but its login has expired' if expired else 'not signed in', command, command),
+                fg='red')
+
+
+def robot_sign_in(sign_in):
+    """
+    Sign in as the optional user, as the ESP32 does: (ID token, UID), (None, None) without
+    one, or False if refused.
+    """
+    if not sign_in:
+        return None, None
+    try:
+        account = Esp32Firebase.sign_in_account(sign_in['api_key'], sign_in['user_email'], sign_in['user_password'])
+        return account['idToken'], account['localId']
+    except ValueError as e:
+        click.secho('  %s. Check the Web API key, the email and the password.' % e, fg='red')
+        return False
+
+
+def assignment_step(uid, fleet_id):
+    """The console step that gives the robot's user access to its data, as web teleop does."""
+    click.echo('  Data tab: give the robot\'s user access to the robot, the way web teleop assigns users: add\n'
+               '  assignments > %s > robots > %s, with the value true, unless it is there (add only that\n'
+               '  key: other keys under assignments may be web teleop\'s). App users need the same, with\n'
+               '  their own UID (Authentication > Users).' % (uid, fleet_id))
+
+
+def wait_for_rules(url, fleet_id, robot_key, id_token, timeout=60.0):
+    """Wait until the rules in force do what the robot needs (Esp32Firebase.rules_work). Returns (ok, why not)."""
+    click.echo('  Checking the rules, as the robot uses them ', nl=False)
+    ts = time.time()
+    while True:
+        ok, why = Esp32Firebase.rules_work(url, fleet_id, robot_key, id_token)
+        if ok:
+            click.secho(' ok', fg='green')
+            return True, ''
+        if time.time() - ts > timeout:
+            click.echo('')
+            return False, why
+        click.echo('.', nl=False)
+        time.sleep(2.0)
+
+
+def check_rules_by_hand(url, fleet_id, robot_key, sign_in):
+    """After the console steps: whether the rules do what the robot needs. Lets the user fix them and check again."""
+    signed_in = robot_sign_in(sign_in)
+    if signed_in is False:
+        return False
+    id_token, uid = signed_in
+    if uid:
+        click.echo('  6. ', nl=False)
+        assignment_step(uid, fleet_id)
+        input('  Enter when it is added: ')
+    while True:
+        ok, why = wait_for_rules(url, fleet_id, robot_key, id_token, timeout=10.0)
+        if ok:
+            return True
+        click.secho('  Not yet: %s. Check steps 3 and 4: the robot rules in force, and\n'
+                    '  robots/%s/robot_key = "%s"%s.' % (why, fleet_id, robot_key,
+                                                       ', and step 6, the assignment' if uid else ''), fg='yellow')
+        if not confirm('Check again?', default=True):
+            return False
+
+
+def rules_backup_path(instance):
+    """Where to keep a copy of a database's rules before changing them: the robot's fleet folder, else home."""
+    folder = os.path.join(os.environ['HELLO_FLEET_PATH'], os.environ.get('HELLO_FLEET_ID', '')) \
+        if os.environ.get('HELLO_FLEET_PATH') else os.path.expanduser('~')
+    if not os.path.isdir(folder):
+        folder = os.path.expanduser('~')
+    return os.path.join(folder, 'firebase_rules_%s_%s.json' % (instance, time.strftime('%Y%m%d-%H%M%S')))
+
+
+def merge_into_rules(project, instance, url, fleet_id, robot_key, id_token, sign_in, source):
+    """
+    The database has its own rules: keep them, and add the robot rules to them
+    (Esp32Firebase.merge_rules), after a backup and the user's yes. Returns True once the
+    rules work, False to stop, or None if they can't be merged (go on by hand).
+    """
+    fb = Esp32Firebase
+    try:
+        merged, changes = fb.merge_rules(source, sign_in)
+    except ValueError as e:
+        click.secho('  This database has its own rules, and they can\'t be merged automatically (%s).' % e,
+                    fg='yellow')
+        return None
+    click.echo('  This database has its own rules. They are kept, and the robot rules are added to them:')
+    for change in changes:
+        click.echo('    ' + change)
+    if fb.strip_comments(source).strip() != (source or '').strip():
+        click.secho('  The rules have comments, which the merged rules won\'t keep.', fg='yellow')
+    backup = rules_backup_path(instance)
+    try:
+        with open(backup, 'w') as f:
+            f.write(source)
+        click.echo('  The current rules are saved in %s.' % backup)
+    except OSError as e:
+        click.secho('  Could not save a copy of the current rules (%s).' % e, fg='yellow')
+    if not confirm('Publish the merged rules?', default=True):
+        return False
+    fb.deploy_rules(project, instance, json.dumps(merged, indent=2))
+    click.secho('  Rules published', fg='green')
+    ok, why = wait_for_rules(url, fleet_id, robot_key, id_token)
+    if not ok:
+        click.secho('  The merged rules still don\'t let the robot in (%s). Check them in the Rules tab:\n'
+                    '  %s/%s/rules' % (why, fb.database_console_url(project), instance), fg='red')
+    return ok
+
+def settle_robot_key(project, instance, fleet_id, robot_key):
+    """
+    Make robots/<fleet_id>/robot_key hold the robot key, without overwriting one that apps may
+    use: create it if missing; if it holds another key, use that one (the default) or replace
+    it, as the user says. Returns the key the robot will use, or None to stop.
+    """
+    fb = Esp32Firebase
+    existing = fb.get_value(project, instance, '/robots/%s/robot_key' % fleet_id)
+    if existing == robot_key:
+        click.secho('  robots/%s/robot_key holds this robot key already.' % fleet_id, fg='green')
+        return robot_key
+    if existing is None:
+        fb.set_robot_key(project, instance, fleet_id, robot_key)
+        click.secho('  Robot key written to robots/%s/robot_key (a new key; nothing else changed).' % fleet_id,
+                    fg='green')
+        return robot_key
+    usable = isinstance(existing, str)
+    if usable:
+        try:
+            Esp32Base.validate_robot_key(existing)
+        except ValueError:
+            usable = False
+    click.secho('  robots/%s/robot_key already holds a different key%s. It may have been set up from another\n'
+                '  computer or by another user, and apps may be using it.'
+                % (fleet_id, ': %s' % existing if usable else ' (not one this robot can use)'), fg='yellow')
+    if usable:
+        click.echo('    u: use that key (the default: apps that use it keep working)')
+    click.echo('    r: replace it with this robot\'s key (apps that use the old key stop working)\n'
+               '    q: stop, and change nothing')
+    k = input('> ').strip().lower()
+    if usable and k in ('', 'u'):
+        click.secho('  Using the key in robots/%s/robot_key.' % fleet_id, fg='green')
+        return existing
+    if k == 'r' and confirm('Replace robots/%s/robot_key? Apps that use the old key stop working.' % fleet_id):
+        fb.set_robot_key(project, instance, fleet_id, robot_key)
+        click.secho('  Robot key replaced.', fg='green')
+        return robot_key
+    return None
+
+
+def settle_assignment(project, instance, uid, fleet_id, email):
+    """
+    With sign-in: make sure the robot's user is assigned to the robot, adding the one key
+    assignments/<uid>/robots/<fleet_id> = true if it isn't, after asking.
+    """
+    fb = Esp32Firebase
+    path = fb.assignment_needed(project, instance, uid, fleet_id)
+    if path is None:
+        click.secho('  %s is assigned to %s already.' % (email, fleet_id), fg='green')
+        return
+    click.echo('  The rules with sign-in let in users assigned to the robot, as web teleop assigns them.\n'
+               '  %s isn\'t yet. This adds one key, %s = true; nothing else changes.' % (email, path))
+    if confirm('Add it?', default=True):
+        fb.set_true(project, instance, path)
+        click.secho('  Added.', fg='green')
+    else:
+        click.secho('  Not added: the robot can\'t use its data under the rules with sign-in until it is.',
+                    fg='yellow')
+
+
+def setup_database_with_cli(fleet_id, robot_key, want_sign_in, known):
+    """
+    With the Firebase CLI: pick or create a project, find its database, write the robot key,
+    take the user to sign in as (with the project's Web API key, if want_sign_in), and get
+    the rules in force (published over a new database's defaults, or merged by the user into
+    rules that are there). It writes only what is missing (the robot key, the user's
+    assignment, power_system_* data), and asks before replacing a key that is there.
+    Returns (database URL, sign-in dict or None, robot key), None to go on by hand, or
+    BACK_TO_MENU.
+    """
+    fb = Esp32Firebase
+    try:
+        if not fb.logged_in():
+            firebase_cli_sign_in_error(expired=False)
+            return BACK_TO_MENU
+        projects = fb.list_projects()  # The first call that needs a valid login
+
+        header('Firebase projects')
+        own = fb.default_project_id()
+        choice = pick(projects, lambda p: '%s (%s)%s' % (p.get('displayName') or p['projectId'], p['projectId'],
+                                                        ', this robot\'s' if p['projectId'] == own else ''),
+                      extra=(('c', 'create a project%s' % (' (%s)' % own if own else '')),))
+        if choice is None:
+            return None
+        if choice == 'c':
+            project = ask('Project ID (6-30 of a-z 0-9 -, starting with a letter)', own).strip()
+            if not project:
+                return None
+            click.echo('  Creating "%s" (this takes a minute)...' % project)
+            fb.create_project(project, ask('Display name', project))
+        else:
+            project = choice['projectId']
+
+        while True:
+            databases = fb.list_databases(project)
+            if databases:
+                break
+            click.secho('  "%s" has no Realtime Database yet, and the CLI can\'t create a project\'s first one.'
+                        % project, fg='yellow')
+            click.echo('  Open %s, click Create Database (any location, locked mode), then come back.'
+                       % fb.database_console_url(project))
+            if input('  Enter when it is created, q to set up by hand: ').strip().lower() == 'q':
+                return None
+        if len(databases) == 1:
+            db = databases[0]
+        else:
+            header('Realtime Databases in %s' % project)
+            db = pick(databases, lambda d: '%s (%s)' % (d['databaseUrl'], d.get('location', '?')))
+            if db is None:
+                return None
+        instance, url = db['name'], fb.normalize_database_url(db['databaseUrl'])
+
+        # The key first (the CLI isn't held to the rules), then see whether the rules work with it
+        robot_key = settle_robot_key(project, instance, fleet_id, robot_key)
+        if robot_key is None:
+            return BACK_TO_MENU
+        sign_in = None
+        if want_sign_in:
+            sign_in = cli_sign_in(project, known)
+            if sign_in is None:
+                return BACK_TO_MENU
+        signed_in = robot_sign_in(sign_in)
+        if signed_in is False:
+            return BACK_TO_MENU
+        id_token, uid = signed_in
+        if uid:
+            settle_assignment(project, instance, uid, fleet_id, sign_in['user_email'])
+        ok, why = fb.rules_work(url, fleet_id, robot_key, id_token)
+        if ok:
+            click.secho('  %s already has the robot rules.' % url, fg='green')
+            return url, sign_in, robot_key
+        click.echo('  The rules %s has now don\'t do what the robot needs (%s).' % (url, why))
+        source = fb.current_rules(project, instance)
+        if fb.classify_rules(source) == 'other':
+            merged = merge_into_rules(project, instance, url, fleet_id, robot_key, id_token, bool(sign_in), source)
+            if merged is None:
+                return None  # By hand: the steps say how to merge
+            return (url, sign_in, robot_key) if merged else BACK_TO_MENU
+        click.echo('  It has %s rules: the robot rules%s replace them.'
+                   % ('a new database\'s default' if fb.classify_rules(source) == 'default' else 'this tool\'s earlier',
+                      ' with sign-in' if sign_in else ''))
+        if sign_in and fb.classify_rules(source) == 'ours':
+            # Rules cover the whole database: a robot here that doesn't sign in stops working
+            click.secho('  With these rules, every robot on this database must sign in: one set up without a\n'
+                        '  Firebase user stops publishing and taking commands until it is set up again with one.',
+                        fg='yellow')
+        if not confirm('Publish the robot rules%s?' % (' with sign-in' if sign_in else ''), default=True):
+            return None
+        fb.deploy_rules(project, instance, fb.rules_json(bool(sign_in)))
+        click.secho('  Rules published', fg='green')
+        # Before the ESP32 tries them: its first connection would fail while the rules take effect
+        ok, why = wait_for_rules(url, fleet_id, robot_key, id_token)
+        if not ok:
+            click.secho('  The rules still don\'t work (%s). Check the Rules tab and robots/%s/robot_key in the '
+                        'console.' % (why, fleet_id), fg='red')
+            return BACK_TO_MENU
+        return url, sign_in, robot_key
+    except fb.AuthError:
+        firebase_cli_sign_in_error(expired=True)
+        return BACK_TO_MENU
+    except (fb.CliError, ValueError) as e:
+        click.secho('  Firebase CLI: %s' % e, fg='red')
+        return None
+
+
+def print_app_settings(cfg):
+    header('For the app')
+    row('Database URL', cfg['url'], fg='cyan')
+    row('Fleet ID', cfg['fleet_id'], fg='cyan')
+    row('Robot key', cfg['robot_key'], fg='cyan')
+    if cfg.get('user_email'):
+        row('Sign in', 'as a user assigned to the robot', fg='cyan')
+    click.echo('  The robot\'s data is under robots/%s. Every command the app writes must carry this robot_key.\n'
+               '  To revoke the key, change robots/%s/robot_key in the Firebase console, then set the new\n'
+               '  key on the robot (e) and in the app.' % (cfg['fleet_id'], cfg['fleet_id']))
+
+
+def command_snippets(cfg):
+    """
+    curl and Python to sleep and wake the robot through its database, from cfg (the ESP32's
+    Firebase settings). Every command carries the robot key. With a user to sign in as, they
+    sign in first (the password left out).
+    """
+    url = '%s/robots/%s' % (cfg['url'], cfg['fleet_id'])
+    sign_in = bool(cfg.get('user_email'))
+    sign_in_url = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=%s' % cfg.get('api_key')
+    curl = ['URL=%s' % url, 'KEY=%s' % cfg['robot_key']]
+    if sign_in:
+        curl += ['# Sign in as a user assigned to this robot (assignments/<uid>/robots/<fleet ID> = true)',
+                 'TOKEN=$(curl -s "%s" -H "Content-Type: application/json" \\' % sign_in_url,
+                 '  -d \'{"email": "%s", "password": "<password>", "returnSecureToken": true}\' \\' % cfg['user_email'],
+                 '  | python3 -c \'import json, sys; print(json.load(sys.stdin)["idToken"])\')']
+    auth = '?auth=$TOKEN' if sign_in else ''
+    for action in ('sleep', 'wake'):
+        curl += ['', '# %s (a new id for every command)' % action.capitalize(),
+                 'curl -X PUT "$URL/power_system_requests/power_command.json%s" \\' % auth,
+                 '  -d \'{"robot_key": "\'$KEY\'", "action": "%s", "id": "%s-\'$(date +%%s)\'", '
+                 '"acknowledged": false, "ts": {".sv": "timestamp"}}\'' % (action, action)]
+    curl += ['', '# The robot\'s answer (pending, then done; the command\'s acknowledged turns true), and its status',
+             'curl "$URL/power_system_requests/power_command_ack.json%s"' % auth,
+             'curl "$URL/power_system_status.json%s"' % auth]
+
+    py = ['import json', 'import time', 'import urllib.request', '', "URL = '%s'" % url,
+          "KEY = '%s'" % cfg['robot_key']]
+    if sign_in:
+        py += ['', '# Sign in as a user assigned to this robot (assignments/<uid>/robots/<fleet ID> = true)',
+               "req = urllib.request.Request('%s'," % sign_in_url,
+               "                             data=json.dumps({'email': '%s', 'password': '<password>',"
+               % cfg['user_email'],
+               "                                              'returnSecureToken': True}).encode(),",
+               "                             headers={'Content-Type': 'application/json'})",
+               "AUTH = '?auth=' + json.load(urllib.request.urlopen(req))['idToken']"]
+    else:
+        py += ["AUTH = ''"]
+    py += ['', '', 'def get(path):',
+           "    return json.load(urllib.request.urlopen(URL + '/' + path + '.json' + AUTH))",
+           '', '',
+           'def power(action):',
+           '    """Sleep or wake the robot: action is \'sleep\' or \'wake\'. Returns the robot\'s answer."""',
+           "    cmd = {'robot_key': KEY, 'action': action, 'id': '%s-%d' % (action, time.time() * 1000),",
+           "           'acknowledged': False, 'ts': {'.sv': 'timestamp'}}",
+           "    urllib.request.urlopen(urllib.request.Request(URL + '/power_system_requests/power_command.json' + AUTH,",
+           "                                                  data=json.dumps(cmd).encode(), method='PUT'))",
+           '    for _ in range(150):  # A wake while going to sleep waits for the sleep to finish',
+           "        ack = get('power_system_requests/power_command_ack') or {}",
+           "        if ack.get('id') == cmd['id'] and ack.get('result') != 'pending':",
+           '            return ack',
+           '        time.sleep(1)',
+           '    return ack',
+           '', '',
+           "print(power('sleep'))  # Or power('wake')",
+           "print(get('power_system_status'))"]
+    return curl, py
+
+
+def print_command_snippets(cfg):
+    curl, py = command_snippets(cfg)
+    header('Sleep and wake with curl')
+    for line in curl:
+        click.secho('  ' + line, fg='cyan')
+    header('Sleep and wake with Python')
+    for line in py:
+        click.secho('  ' + line, fg='cyan')
+    click.echo('\n  Sleep shuts down the robot\'s computer. A robot that is shut down can\'t be woken this way:\n'
+               '  press its power button. The robot key in these lets whoever has them sleep and wake it.')
+
+
+def setup_firebase(known, previous):
+    """Set up Firebase from scratch: fleet ID, robot key, optional sign-in, database, then connect. Returns True on success."""
+    fleet_id = known['fleet_id'] if known['fleet_id'] else ask_fleet_id()
+    if not fleet_id:
+        click.secho('  The fleet ID is needed ($HELLO_FLEET_ID is not set).', fg='red')
+        return False
+    robot_key = known['robot_key']
+    if robot_key and confirm('Keep this robot\'s key (%s)? With a new key, the app needs the new one too.'
+                             % robot_key, default=True):
+        pass
+    else:
+        robot_key = generate_robot_key()
+        click.secho('  New robot key made.', fg='green')
+
+    click.echo('  Writes need the robot key. Signing in as a Firebase user as well is optional: it also\n'
+               '  keeps people who aren\'t signed in from reading the robot\'s data.')
+    # Only whether, here: the user and the project's Web API key are taken once the project is known
+    want_sign_in = confirm('Also sign in as a Firebase user? This is optional, prevents unauthenticated reads, and '
+                           'requires extra setup in Firebase Console. Note: Writes are already secured by the robot '
+                           'key without auth.', default=False)
+
+    url, sign_in = None, None
+    if Esp32Firebase.cli_path():
+        if confirm('The Firebase CLI is installed. Use it to set up the database (pick or create a project, '
+                   'write the robot key, get the rules in force)? It must be logged in (firebase login)', default=True):
+            done = setup_database_with_cli(fleet_id, robot_key, want_sign_in, known)
+            if done == BACK_TO_MENU:
+                return False
+            if done is None:
+                click.echo('  Going on by hand.')
+            else:
+                url, sign_in, robot_key = done
+    else:
+        click.secho(FIREBASE_CLI_NOT_INSTALLED, fg='yellow')
+        if not confirm('Set up the database by hand in the Firebase console instead?', default=False):
+            return False
+    if url is None:
+        url = setup_database_by_hand(fleet_id, robot_key, want_sign_in, known['url'])
+        if url is None:
+            return False
+        if want_sign_in:
+            sign_in = ask_sign_in(known)
+            if sign_in is None:
+                return False
+        if not check_rules_by_hand(url, fleet_id, robot_key, sign_in):
+            return False
+
+    cfg = dict(url=url, fleet_id=fleet_id, robot_key=robot_key,
+               **{k: (sign_in or {}).get(k, '') for k in SIGN_IN_FIELDS})
+    if connect_firebase(cfg, previous):
+        print_app_settings(cfg)
+        return True
+    return False
+
+
+def enter_firebase(known, previous):
+    """Use a database set up already: its URL, the fleet ID and the robot key. Returns True on success."""
+    click.echo('  Press Enter to keep a value in [brackets].')
+    url = ask_database_url(known['url'])
+    fleet_id = ask_fleet_id(known['fleet_id'])
+    robot_key = ask('Robot key', known['robot_key'], secret=True).strip()
+    if not url or not fleet_id or not robot_key:
+        click.secho('  The database URL, the fleet ID and the robot key are needed.', fg='red')
+        return False
+    cfg = {'url': url, 'fleet_id': fleet_id, 'robot_key': robot_key, 'api_key': '', 'user_email': '',
+           'user_password': ''}
+    if confirm('Sign in as a Firebase user as well?', default=bool(known['user_email'])):
+        cfg['api_key'] = ask('Web API key', known['api_key'], secret=True)
+        cfg['user_email'] = ask('User email', known['user_email'])
+        cfg['user_password'] = ask('User password', known['user_password'], secret=True)
+    return connect_firebase(cfg, previous)
 
 
 def config_firebase():
     if not require_esp32():
         return
-    click.secho('ESP32 Firebase set-up.', bold=True)
+    if not backend.esp.supports_firebase():
+        click.secho('Firebase set-up needs ESP32 firmware %s or later (this one is %s). Update it with\n'
+                    '  REx_firmware_updater --install --esp32'
+                    % (Esp32Base.FIRST_FIREBASE_FIRMWARE, backend.esp.board_info['firmware_version']), fg='red')
+        return
+    click.secho('ESP32 Firebase set-up (remote sleep and wake).', bold=True)
     while True:
         _, esp_fb = backend.credentials()
-        _, saved_fb = saved_credentials()
         print_firebase_connection(esp_fb)
-        known = merge_known(esp_fb, saved_fb)
-        # What to go back to on failure: the ESP32's settings, with secrets from the robot
-        # configuration only if that is the same project and user
-        previous = None
-        if esp_fb and esp_fb.get('url'):
-            same = saved_fb['url'] == esp_fb['url'] and saved_fb['user_email'] == esp_fb.get('user_email')
-            if esp_fb.get('user_password') or same:
-                previous = known
+        known = known_firebase(esp_fb)
+        # What to go back to on failure
+        previous = esp_fb if is_configured(esp_fb) else None
 
-        saved_complete = all(saved_fb.values())
         click.echo('')
-        if saved_complete:
-            click.echo('  i: use the robot configuration\'s settings (%s, %s)' % (saved_fb['url'],
-                                                                                 saved_fb['user_email']))
-        click.echo('  e: enter the settings\n'
+        click.echo('  n: set up Firebase (makes a robot key, and sets up the database%s)'
+                   % (' with the Firebase CLI' if Esp32Firebase.cli_path() else
+                      '; installing the Firebase CLI first is recommended'))
+        click.echo('  e: enter the settings (a database set up already, the fleet ID and the robot key)')
+        if previous:
+            click.echo('  a: show what the app needs (database URL, fleet ID and robot key)\n'
+                       '  c: commands to sleep and wake the robot (curl and Python)')
+        click.echo('  p: print the database rules\n'
                    '  r: reconnect\n'
                    '  f: forget the settings saved on the ESP32\n'
                    '  q: back to the main menu')
@@ -735,32 +1299,35 @@ def config_firebase():
 
         if k == 'q' or k == '':
             return
-        if k == 'i' and saved_complete:
-            if connect_firebase(dict(saved_fb), previous):
+        if k == 'n':
+            if setup_firebase(known, previous):
                 return
         elif k == 'e':
-            click.echo('  Press Enter to keep a value in [brackets].')
-            cfg = {'url': ask('Database URL', known['url']),
-                   'user_email': ask('User email', known['user_email']),
-                   'api_key': ask('Web API key', known['api_key'], secret=True),
-                   'user_password': ask('User password', known['user_password'], secret=True)}
-            if not all(cfg.values()):
-                click.secho('  All four are needed.', fg='red')
-                continue
-            if connect_firebase(cfg, previous):
+            if enter_firebase(known, previous):
                 return
+        elif k == 'c' and previous:
+            print_command_snippets(previous)
+        elif k == 'a' and previous:
+            print_app_settings(previous)
+        elif k == 'p':
+            sign_in = bool(previous and previous.get('user_email'))
+            header('Database rules%s' % (' (with sign-in)' if sign_in else ''))
+            click.echo(Esp32Firebase.rules_json(sign_in))
+            click.echo('  Over a new database\'s default rules, publish these as they are. If the database has\n'
+                       '  other rules, merge these into them.')
         elif k == 'r':
             init0 = firebase_inits()
             backend.command('trigger_firebase_restart')
             ok, err = wait_for_firebase(init0)
-            click.secho('  Firebase ready' if ok else '  Firebase did not come up: %s' % err,
-                        fg='green' if ok else 'red')
+            hint = '' if ok else firebase_failure_hint(err)
+            click.secho('  Firebase ready' if ok else '  Firebase did not come up: %s%s'
+                        % (err, ' (%s)' % hint if hint else ''), fg='green' if ok else 'red')
         elif k == 'f':
             if confirm('Erase the Firebase settings saved on the ESP32 and stop Firebase?'):
                 backend.command('forget_firebase')
-                if saved_complete and confirm('Also remove them from the robot configuration?'):
-                    save_to_robot_config('firebase', {'url': 'NA', 'api_key': 'NA', 'user_email': 'NA',
-                                                      'user_password': 'NA'})
+                if previous:
+                    click.echo('  The robot key still works until you change robots/%s/robot_key in the Firebase '
+                               'console.' % previous['fleet_id'])
                 time.sleep(1.0)
         else:
             click.echo('  Unknown choice')

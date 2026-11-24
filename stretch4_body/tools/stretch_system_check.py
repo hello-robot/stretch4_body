@@ -1101,11 +1101,11 @@ def check_esp32():
     if f['state_name'] == 'READY':
         print_result(True, f'Firebase ready ({f["publish_ok"]} publishes, {f["publish_errors"]} errors)')
     elif f['state_name'] == 'NOT_CONFIGURED':
-        print_info('Firebase not configured')
+        print_info('Firebase not configured (remote sleep/wake: stretch_esp32_jog, f)')
     elif f['state_name'] in ('DISABLED', 'WAITING_FOR_WIFI'):
         print_info(f'Firebase {f["state_name"].lower().replace("_", " ")}')
     elif f['state_name'] == 'STREAM_CONNECTING':
-        print_warn(f'Firebase signed in, but the command stream is not live ({f["stream_restarts"]} restarts): '
+        print_warn(f'Firebase started, but the command stream is not live ({f["stream_restarts"]} restarts): '
                    f'remote sleep/wake commands would not arrive')
     else:
         print_warn(f'Firebase {f["state_name"].lower()}: last error {f["last_error_code"]} {f["last_error"]}')
