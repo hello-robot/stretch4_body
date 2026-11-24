@@ -3,6 +3,7 @@ Adapter for connecting and controlling the Luxonis Short-Range stereo camera pai
 """
 
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 import depthai as dai
@@ -20,8 +21,12 @@ import datetime
 
 class GripperCameraLuxonis(SyncedCamera):
     """Start a stream with the gripper left/right stereo cameras and the point cloud pipeline."""
-    def __init__(self, left: RGBCameraConfig, right: RGBCameraConfig, enable_pointcloud: bool = False):
+    # How long a blocking queue read waits before checking stop_event again.
+    QUEUE_POLL_TIMEOUT_S = 0.1
+
+    def __init__(self, left: RGBCameraConfig, right: RGBCameraConfig, enable_pointcloud: bool = False, stop_event: threading.Event | None = None):
         self.do_sync_frames = True
+        self.stop_event = stop_event
         self.enable_pointcloud = enable_pointcloud
 
         self.left = left
@@ -117,7 +122,15 @@ class GripperCameraLuxonis(SyncedCamera):
         empty_left_or_right_frame = ImageFrame(image=np.zeros((self.left.image_size[1], self.left.image_size[0], 3), dtype=np.uint8), timestamp=0, frame_number=0)
             
         while True:
-            msgGroup = self.q_sync.get()
+            # Never block indefinitely inside depthai: a thread stuck in native code when the
+            # interpreter exits is killed with pthread_exit, which aborts the process (SIGABRT).
+            if self.stop_event is not None and self.stop_event.is_set():
+                return
+            try:
+                msgGroup = self.q_sync.get(timeout=self.QUEUE_POLL_TIMEOUT_S)
+            except dai.MessageQueue.QueueException:
+                # The queue was closed because the camera was stopped.
+                return
             if msgGroup is not None:
                 msgNames = msgGroup.getMessageNames()
                 frame_left_msg = msgGroup["left"] if "left" in msgNames else None
@@ -131,7 +144,10 @@ class GripperCameraLuxonis(SyncedCamera):
                     while self.q_pointcloud.has():
                         frame_pointcloud_msg = self.q_pointcloud.tryGet()
                     if frame_pointcloud_msg is None:
-                        frame_pointcloud_msg = self.q_pointcloud.get()
+                        try:
+                            frame_pointcloud_msg = self.q_pointcloud.get(timeout=self.QUEUE_POLL_TIMEOUT_S)
+                        except dai.MessageQueue.QueueException:
+                            return
                     if frame_pointcloud_msg is not None:
                         pointcloud, pointcloud_color = frame_pointcloud_msg.getPointsRGB()
                 
@@ -163,8 +179,15 @@ class GripperCameraLuxonis(SyncedCamera):
                     logger.warning("No depth frame received.")
 
     def stop(self):
-        self.pipeline.stop()
-        self.device.close()
+        try:
+            self.pipeline.stop()
+        except Exception:
+            pass
+        if self.device is not None:
+            try:
+                self.device.close()
+            except Exception:
+                pass
 
 
     def focus_roi(self, roi: list[int], camera_type: RGBCameras | None = None):

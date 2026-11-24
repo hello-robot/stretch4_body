@@ -95,7 +95,14 @@ class SyncedCameraLuxonis(SyncedCamera):
             while True:
                 if self.stop_event is not None and self.stop_event.is_set():
                     return
-                msg_group = self.q_sync.get()
+                try:
+                    # Poll with a timeout so a stop request is noticed even when no frames arrive.
+                    msg_group = self.q_sync.get(timeout=0.1)
+                except dai.MessageQueue.QueueException:
+                    # The queue was closed because the camera was stopped.
+                    return
+                if msg_group is None:
+                    continue
                 left_msg = msg_group["left"]
                 right_msg = msg_group["right"]
                 center_msg = msg_group["center"] if "center" in msg_group else None
