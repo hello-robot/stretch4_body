@@ -708,8 +708,8 @@ DEVICE_LABELS = {
     'hello-esp32':        'ESP32',
 }
 
-# Firmware version can't be read back from these boards
-UNQUERYABLE_FIRMWARE = ('hello-pixart-j3', 'hello-esp32')
+# Firmware version can't be read back from the PixArt J3, nor from ESP32 firmware
+# before hello-esp.v0.2.0p1 (FirmwareInstalled.is_version_known says which)
 
 
 def firmware_use_device() -> dict[str, bool]:
@@ -785,11 +785,13 @@ def check_firmware_versions():
             all_pass = False
             continue
 
-        # ESP32 and PixArt J3 don't expose queryable firmware versions
-        if dev_name in UNQUERYABLE_FIRMWARE:
+        if not fw_installed.is_version_known(dev_name):
             dev_present = os.path.exists(f'/dev/{dev_name}')
             status = 'present' if dev_present else 'not present'
             print_result(dev_present, f'{label}: {status} (firmware version not queryable)')
+            if dev_name == 'hello-esp32' and dev_present:
+                print_warn(f'{label}: firmware older than hello-esp.v0.2.0p1 has no RPC. Update it: '
+                           'REx_firmware_updater --install --esp32')
             if not dev_present:
                 all_pass = False
             continue
@@ -986,20 +988,32 @@ def check_power_periph():
     all_pass = True
     ps = r.power_periph.status
 
-    soc = ps.get('battery_soc', 0)
-    if soc >= 20:
-        print_result(True, f'Battery SOC = {soc:.0f}%')
-    elif soc >= 10:
-        print_warn(f'Battery SOC = {soc:.0f}% (low — consider charging)')
-    else:
-        print_result(False, f'Battery SOC = {soc:.0f}% (critically low!)')
+    # The battery values come from the BMS, and are NaN when it isn't answering
+    battery_status = ps.get('battery_status', 'UNKNOWN')
+    battery_valid = ps.get('battery_valid', True)
+    if battery_status == 'BMS_LOST':
+        print_result(False, "Battery BMS not responding: battery values can't be trusted. Check the battery and its cable")
         all_pass = False
+    elif battery_status == 'NOT_DETECTED':
+        print_warn('Battery not detected: running from the adapter')
+    elif battery_status == 'UNKNOWN':
+        print_warn('Battery status not reported: update the power board firmware')
 
-    soh = ps.get('battery_soh', 0)
-    if soh >= 75:
-        print_result(True, f'Battery SOH = {soh:.1f}%')
-    else:
-        print_warn(f'Battery SOH = {soh:.1f}% (degraded battery)')
+    if battery_valid:
+        soc = ps.get('battery_soc', 0)
+        if soc >= 20:
+            print_result(True, f'Battery SOC = {soc:.0f}%')
+        elif soc >= 10:
+            print_warn(f'Battery SOC = {soc:.0f}% (low — consider charging)')
+        else:
+            print_result(False, f'Battery SOC = {soc:.0f}% (critically low!)')
+            all_pass = False
+
+        soh = ps.get('battery_soh', 0)
+        if soh >= 75:
+            print_result(True, f'Battery SOH = {soh:.1f}%')
+        else:
+            print_warn(f'Battery SOH = {soh:.1f}% (degraded battery)')
 
     for label, key, vmin, vmax in [
         ('Bus Voltage (V)',  'voltage',     20.0, 30.0),
@@ -1024,27 +1038,86 @@ def check_power_periph():
         all_pass = False
 
     if args.verbose:
-        print_info(f'Battery Current  : {ps.get("battery_current", 0):.2f} A')
+        if battery_valid:
+            print_info(f'Battery Current  : {ps.get("battery_current", 0):.2f} A')
+        else:
+            print_info('Battery Current  : -')
         print_info(f'Adapter present  : {ps.get("adapter_voltage_present", False)}')
         print_info(f'Adapter fault    : {ps.get("adapter_fault", False)}')
-        print_info(f'Charging         : {ps.get("charger_is_charging", False)}')
+        print_info(f'Charger running  : {ps.get("charger_is_charging", False)}')
+        print_info(f'Battery charging : {ps.get("battery_charging", ps.get("charger_is_charging", False))}')
 
     return all_pass
 
 
 def check_esp32():
-    print_section('ESP32 Connectivity')
-    ps = r.power_periph.status
-
+    print_section('ESP32')
     esp32_present = os.path.exists('/dev/hello-esp32')
     print_result(esp32_present, '/dev/hello-esp32 present')
     if not esp32_present:
         return False
 
-    if args.verbose:
-        print_info(f'Aux CPU on  : {ps.get("cpu_on_sts", False)}')
+    # The ESP32 isn't part of the robot server: read it directly, briefly
+    from stretch4_body.subsystem.esp32 import Esp32
+    esp = Esp32()
+    try:
+        if not esp.startup(quiet=True):
+            print_warn('ESP32 not answering RPC: firmware older than hello-esp.v0.2.0p1, or the port is in use '
+                       '(stretch_esp32_jog?). Update with REx_firmware_updater --install --esp32')
+            return True
+        es = dict(esp.status)
+        es['board_info'] = dict(esp.board_info)
+        wifi_cfg = esp.get_wifi_config() or {}
+    finally:
+        esp.stop()
 
-    return True
+    all_pass = True
+    print_result(True, f'ESP32 comms ({es["board_info"].get("firmware_version")})')
+
+    link = es['pimu_link']
+    if link['status_fresh']:
+        print_result(True, 'Pimu UART link (power sequencing) is live')
+    else:
+        age = 'never' if link['status_age_ms'] is None else f'{link["status_age_ms"]} ms ago'
+        print_result(False, f'Pimu UART link is stale: last Pimu status {age}')
+        all_pass = False
+    if link['uart_crc_errors'] or link['uart_rx_overflows']:
+        print_warn(f'Pimu UART link: {link["uart_crc_errors"]} CRC errors, {link["uart_rx_overflows"]} overflows '
+                   f'in {link["uart_rx_packets"]} packets')
+
+    w = es['wifi']
+    if w['state_name'] == 'CONNECTED':
+        print_result(True, f'Wi-Fi connected to "{w["ssid"]}" (RSSI {w["rssi"]} dBm, IP {w["ip"]})')
+    elif w['state_name'] == 'NOT_CONFIGURED':
+        print_info('Wi-Fi not configured (set it up with stretch_esp32_jog, w)')
+    elif w['state_name'] in ('DISABLED', 'POWER_OFF', 'DISCONNECTED'):
+        print_info(f'Wi-Fi {w["state_name"].lower()}')
+    else:
+        reason = w['last_disconnect_reason_name'] or '-'
+        print_warn(f'Wi-Fi {w["state_name"].lower()}: SSID "{wifi_cfg.get("ssid", "?")}", '
+                   f'{w["connect_attempts"]} attempts, last reason {reason}')
+
+    f = es['firebase']
+    if f['state_name'] == 'READY':
+        print_result(True, f'Firebase ready ({f["publish_ok"]} publishes, {f["publish_errors"]} errors)')
+    elif f['state_name'] == 'NOT_CONFIGURED':
+        print_info('Firebase not configured (remote sleep/wake: stretch_esp32_jog, f)')
+    elif f['state_name'] in ('DISABLED', 'WAITING_FOR_WIFI'):
+        print_info(f'Firebase {f["state_name"].lower().replace("_", " ")}')
+    elif f['state_name'] == 'STREAM_CONNECTING':
+        print_warn(f'Firebase started, but the command stream is not live ({f["stream_restarts"]} restarts): '
+                   f'remote sleep/wake commands would not arrive')
+    else:
+        print_warn(f'Firebase {f["state_name"].lower()}: last error {f["last_error_code"]} {f["last_error"]}')
+
+    if args.verbose:
+        print_info(f'Power state  : {es["pwr_state_name"]}  (reset reason {es["reset_reason_name"]})')
+        print_info(f'12V0 rail    : {es["voltage_12v0"]:.2f} V   Aux 20V0: {es["voltage_20v0_aux"]:.2f} V')
+        print_info(f'Outputs      : {es["outputs"]}')
+        print_info(f'Free heap    : {es["free_heap"]} (min {es["min_free_heap"]})')
+        print_info(f'Loop max     : {es["loop_time_us"]} us   Power task max: {es["power_task_time_us"]} us')
+
+    return all_pass
 
 LINE_SENSOR_MIN_HZ = 25.0
 LINE_SENSOR_MEASURE_S = 2.0

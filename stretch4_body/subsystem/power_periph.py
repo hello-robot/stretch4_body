@@ -300,6 +300,14 @@ class PowerPeriphDefn():
     STATE_HIGH_CURRENT_EOA_ALERT = (1<<17)
     STATE_ADAPTER_CONNECTED = (1<<18)
     STATE_ADAPTER_FAULT = (1<<19)
+    # Battery status: whether the BMS values (voltage, battery_current, battery_soc,
+    # battery_soh, battery_chrg_dischrg_cycles) can be used. In state bits 20-21.
+    STATE_BATTERY_STATUS_SHIFT = 20
+    STATE_BATTERY_STATUS_MASK = (3 << 20)
+    BATTERY_STATUS_NAMES = {0: 'UNKNOWN',       # Firmware older than hello-pimu2 v0.1.36: values used as before
+                            1: 'OK',            # The BMS values are live
+                            2: 'BMS_LOST',      # The BMS is silent and a battery is (or was) there: a fault
+                            3: 'NOT_DETECTED'}  # No BMS since the PIMU started, on the adapter: most likely no battery
 
     TRIGGER_BOARD_RESET = 1
     TRIGGER_RUNSTOP_RESET = 2
@@ -315,8 +323,8 @@ class PowerPeriphDefn():
     TRIGGER_DISABLE_TRACE = 4096
     TRIGGER_CHARGER_ON = 8192
     TRIGGER_CHARGER_OFF = 16384
-    TRIGGER_ESP_FW_UPDATE = 32768
-    TRIGGER_ESP_RESET = 65536
+    TRIGGER_ESP32_FW_UPDATE = 32768
+    TRIGGER_ESP32_RESET = 65536
     TRIGGER_LIDAR_OFF = (1 << 17)
     TRIGGER_LIDAR_ON = (1 << 18)
     TRIGGER_20V0_AUX_OFF = (1 << 19)
@@ -406,17 +414,31 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         self._trigger = self._trigger | self.TRIGGER_IMU_RESET
         self._dirty_trigger = True
 
-    def set_esp_fw_update(self):
-        self._trigger = self._trigger | self.TRIGGER_ESP_FW_UPDATE
+    def set_esp32_fw_update(self):
+        """
+        Hold the ESP32 in its bootloader, ready to flash (Pimu drives its BOOT and RESET lines).
+        Known issue: an ESP32 reset cuts the robot's power (no pull-down on the power-off line).
+        """
+        self._trigger = self._trigger | self.TRIGGER_ESP32_FW_UPDATE
         self._dirty_trigger = True
+
+    def set_esp32_reset(self):
+        """
+        Reset the ESP32 (Pimu drives its RESET line). Works whatever the ESP32 firmware is doing.
+        Known issue: an ESP32 reset cuts the robot's power (no pull-down on the power-off line).
+        """
+        self._trigger = self._trigger | self.TRIGGER_ESP32_RESET
+        self._dirty_trigger = True
+
+    def set_esp_fw_update(self):
+        """Deprecated: use set_esp32_fw_update."""
+        self.logger.warning('PowerPeriph.set_esp_fw_update is deprecated, use set_esp32_fw_update')
+        self.set_esp32_fw_update()
 
     def set_esp_reset(self):
-        self._trigger = self._trigger | self.TRIGGER_ESP_RESET
-        self._dirty_trigger = True
-
-    def set_esp_status_print(self):
-        self._trigger = self._trigger | self.TRIGGER_ESP32_STATUS_PRINT
-        self._dirty_trigger = True
+        """Deprecated: use set_esp32_reset."""
+        self.logger.warning('PowerPeriph.set_esp_reset is deprecated, use set_esp32_reset')
+        self.set_esp32_reset()
 
     def trigger_robot_sleep(self):
         """
@@ -555,8 +577,15 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
 
 
-    # ###################### Firebase Methods ###########################3
-    def connect_to_firebase(self,timeout=10.0):
+    # ###################### ESP32 Wi-Fi / Firebase (legacy) ###########################
+    # These send the credentials to the Pimu, which forwards them to the ESP32 over UART.
+    # They are the only way to configure ESP32 firmware older than hello-esp.v0.2.0p1.
+    # With v0.2.0p1 and later use Esp32 (stretch4_body.subsystem.esp32), which talks to the
+    # ESP32 directly and also reads the credentials and connection state back.
+    # The credentials are arguments: they are secrets, and not kept in the robot parameters.
+
+    def connect_to_firebase(self, ssid, password, fb_host_url, fb_api_key, fb_user_email, fb_user_password,
+                            timeout=10.0):
         #This likely will need some work to be robust to initial conditions, drop-outs, etc.
         #Nominal example for now
         #Will block server...
@@ -564,7 +593,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
         ts=time.time()
 
         if not self.status['connected_to_network']:
-            self.send_network_info()
+            self.send_network_info(ssid, password)
             self.push_command()
         while not self.status['connected_to_network'] and time.time()-ts<timeout:
             self.pull_status() #Todo: make server loop safe.
@@ -573,7 +602,7 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
             return False
 
         if not self.status['connected_to_firebase']:
-            self.send_firebase_info()
+            self.send_firebase_info(fb_host_url, fb_api_key, fb_user_email, fb_user_password)
             self.push_command()
         while not self.status['connected_to_firebase'] and time.time() - ts < timeout:
             self.pull_status()  # Todo: make server loop safe.
@@ -583,17 +612,9 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
 
         return True
 
-    def send_firebase_info(self, fb_host_url=None, fb_api_key=None, fb_user_email=None, fb_user_password=None):
-        if fb_host_url is None:
-            fb_host_url=self.params['firebase']['url']
-        if fb_api_key is None:
-            fb_api_key=self.params['firebase']['api_key']
-        if fb_user_email is None:
-            fb_user_email=self.params['firebase']['user_email']
-        if fb_user_password is None:
-            fb_user_password=self.params['firebase']['user_password']
-        if fb_host_url=='NA' or fb_api_key=='NA' or fb_user_email=='NA' or fb_user_password=='NA':
-            print('Invalid credentials for Firebase connection',fb_host_url,fb_api_key,fb_user_email,fb_user_password)
+    def send_firebase_info(self, fb_host_url, fb_api_key, fb_user_email, fb_user_password):
+        if any(v in (None, '', 'NA') for v in (fb_host_url, fb_api_key, fb_user_email, fb_user_password)):
+            print('Missing Firebase credentials: url, api_key, user_email and user_password are all needed')
             return
 
         fb_host_url = fb_host_url.encode('utf-8').ljust(250, b'\x00')
@@ -611,14 +632,9 @@ class PowerPeriphPeriphControl(PowerPeriphDefn):
             sidx += len(i)
         self.transport.do_push_rpc_sync(payload[:sidx], self.rpc_firebase_info_reply)
 
-    def send_network_info(self, ssid=None, password=None):
-        if ssid is None:
-            ssid=self.params['firebase']['network_ssid']
-        if password is None:
-            password=self.params['firebase']['network_password']
-
-        if ssid=='NA' or password=='NA':
-            print('Invalid SSID/Password for ESP32 Wifi',ssid,password)
+    def send_network_info(self, ssid, password):
+        if ssid in (None, '', 'NA') or password in (None, '', 'NA'):
+            print('Missing Wi-Fi SSID or password for the ESP32')
             return
 
         ssid = ssid.encode('utf-8').ljust(32, b'\x00')
@@ -811,6 +827,7 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
                        'transport': self.transport.status, 'current_charge': 0, 'current_eoa':0,'charger_is_charging': False,
                        'periph_power_state':{},
                        'over_tilt_type': 0, 'battery_current': 0, 'battery_soc':0, 'battery_soh':0,
+                       'battery_status': 'UNKNOWN', 'battery_valid': True, 'battery_charging': False,
                        'battery_chrg_dischrg_cycles': 0, 'voltage_cpu':0, 'voltage_5v0':0, 'voltage_36v0':0,
                        'voltage_12v0':0, 'voltage_aux_cpu':0, 'current_cpu':0, 'cpu_on_sts': False,
                        'runstop_cause':0, 'connected_to_network':False, 'connected_to_firebase': False,'adapter_fault':False,'adapter_connected':False,
@@ -982,10 +999,12 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         print('High Current Alert', self.status['high_current_alert'])
         print('High Current EOA Alert', self.status['high_current_eoa_alert'])
         print('---Battery Charge--')
-        print('Charger is charging', self.status['charger_is_charging'])
+        print('Charger running', self.status['charger_is_charging'])
+        print('Battery charging', self.status['battery_charging'])
         print('Adapter voltage present', self.status['adapter_voltage_present'])
         print('Adapter fault',self.status['adapter_fault'])
         print('Adapter connected', self.status['adapter_connected'])
+        print('Battery status', self.status['battery_status'])
         print('Battery SOC', self.status['battery_soc'])
         print('Battery SOH', self.status['battery_soh'])
         print('Battery discharge cycles', self.status['battery_chrg_dischrg_cycles'])
@@ -1159,6 +1178,19 @@ class PowerPeriphBase(PowerPeriphPowerMgmt,PowerPeriphPeriphControl,PowerPeriphT
         sidx += 1
         unpack_to['battery_chrg_dischrg_cycles'] = unpack_uint16_t(s[sidx:])
         sidx += 2
+        # Without valid BMS values the firmware sends NaN and 255s; they are all NaN
+        # here, so they can't pass for readings. Check battery_valid before using them.
+        bs = (unpack_to['state'] & self.STATE_BATTERY_STATUS_MASK) >> self.STATE_BATTERY_STATUS_SHIFT
+        unpack_to['battery_status'] = self.BATTERY_STATUS_NAMES[bs]
+        unpack_to['battery_valid'] = bs in (0, 1)
+        # charger_is_charging means the charger is running (adapter in, charger
+        # enabled). It feeds the robot's battery bus, so with no battery it powers
+        # the robot and current_charge is the robot's load. battery_charging is
+        # whether a battery is actually being charged.
+        unpack_to['battery_charging'] = unpack_to['charger_is_charging'] and unpack_to['battery_valid']
+        if not unpack_to['battery_valid']:
+            for k in ('voltage', 'battery_current', 'battery_soc', 'battery_soh', 'battery_chrg_dischrg_cycles'):
+                unpack_to[k] = float('nan')
         unpack_to['voltage_cpu'] = unpack_float_t(s[sidx:])
         sidx += 4
         unpack_to['voltage_5v0'] = unpack_float_t(s[sidx:])
@@ -1442,6 +1474,9 @@ class PowerPeriphStatus(TypedDict):
     battery_soc: float
     battery_soh: float
     battery_chrg_dischrg_cycles: int
+    battery_status: str  # 'OK', 'BMS_LOST', 'NOT_DETECTED' or 'UNKNOWN' (older firmware)
+    battery_valid: bool  # False: the battery values above are NaN
+    battery_charging: bool  # A battery is being charged (charger_is_charging: only that the charger runs)
     voltage_cpu: float
     voltage_5v0: float
     voltage_36v0: float

@@ -48,6 +48,7 @@ class RobotTrace(Device):
     def default_trace(self,robot,data):
         data['timestamp']=time.time()
         data['power_periph.voltage']=robot.power_periph.status['voltage']
+        data['power_periph.battery_status'] = robot.power_periph.status.get('battery_status', 'UNKNOWN')
         data['power_periph.current'] = robot.power_periph.status['current']
         data['power_periph.cpu_temp'] = robot.power_periph.status['cpu_temp']
         data['power_periph.adapter_voltage_present'] = robot.power_periph.status['adapter_voltage_present']

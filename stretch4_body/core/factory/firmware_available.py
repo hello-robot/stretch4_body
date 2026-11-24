@@ -57,7 +57,9 @@ class FirmwareAvailable():
                     if v.valid:
                         for device_name in self.versions:
                             #print('Checking',device_name,self.versions[device_name])
-                            if (v.device in ['hello-esp', 'hello_esp'] and device_name == 'hello-esp32'):
+                            # The ESP32 firmware binaries are named after its sketch, hello_esp
+                            # (stretch4_body.subsystem.esp32.ESP32_FIRMWARE_NAMES)
+                            if (v.device in ('hello-esp', 'hello_esp') and device_name == 'hello-esp32'):
                                 self.versions[device_name].append(v)
             print(' Done.')
         except Exception as e:

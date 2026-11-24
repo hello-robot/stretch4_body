@@ -102,7 +102,11 @@ Try running stretch_body_server --kill""")
             self.logger.error('Transport: do_rpc. nonblocking mode requires C backend: {0}'.format(self.port_name))
             return None
         if backend == self.BACKEND_PY_SERIAL:
-            TransportPySerial.do_pull_rpc_sync(self, payload, rpc_callback, exiting=exiting)
+            # A push can span several frames; a pull request must fit in one
+            if is_push:
+                TransportPySerial.do_push_rpc_sync(self, payload, rpc_callback, exiting=exiting)
+            else:
+                TransportPySerial.do_pull_rpc_sync(self, payload, rpc_callback, exiting=exiting)
             return None
         if backend == self.BACKEND_C_SERIAL:
             #Always use the non-blocking function, just wait for it to finish if blocking

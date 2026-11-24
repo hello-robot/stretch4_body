@@ -21,14 +21,6 @@ configuration_params_template={
     'hello-motor-omni-0':{'serial_no': 'NA'},
     'hello-motor-omni-1':{'serial_no': 'NA'},
     'hello-motor-omni-2': {'serial_no': 'NA'},
-    'power-periph':{
-         'firebase':{
-           'url': "NA",
-           'api_key': "NA",
-           'user_email': "NA",
-           'user_password': "NA",
-           'network_ssid': "NA",
-           'network_password': "NA"}},
     'robot':{
         'batch_name': 'NA',
         'serial_no': 'NA',
@@ -1294,14 +1286,19 @@ nominal_params={
         'stop_at_runstop': 1,
         'temp_LPF': 1.0,
         'voltage_LPF': 1.0,
-        'nuc_safe_shutdown':1},
-      'firebase':{
-        'url': 'NA',
-        'api_key':'NA',
-        'user_email':'NA',
-        'user_password': 'NA',
-        'network_ssid': 'NA',
-        'network_password':'NA'}},
+        'nuc_safe_shutdown':1}},
+    'esp32':{
+      # ESP32 (hello_esp firmware v0.2.0p1+). Not part of the robot server: used only through
+      # the direct API (stretch4_body.subsystem.esp32.Esp32) and stretch_esp32_jog
+      'usb_name': '/dev/hello-esp32',
+      'config':{                    # Pushed to the ESP32 when Esp32 starts
+        'firebase_publish_period_ms': 5000,
+        'wifi_retry_ms': 5000,
+        'wifi_enable': 1,
+        'firebase_enable': 1,
+        'log_level': 1},            # 0 DEBUG, 1 INFO, 2 WARN, 3 ERROR
+      # No Wi-Fi or Firebase credentials here: they are secrets, kept only on the ESP32 (stretch_esp32_jog)
+      },
     'robot_server':{
         # 'control_loop_rate_Hz': 100,
         # 'network_loop_rate_Hz':50,

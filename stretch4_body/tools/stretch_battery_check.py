@@ -38,25 +38,38 @@ def battery_check():
     current_battery = p.status['battery_current']
 
     click.secho('######## Stretch Battery Information ##########', fg='cyan')
-    if battery_soc > 20:
-        click.secho(f'Battery Remaining Capacity: {battery_soc}%', fg='green')
-        click.secho(f'Battery Voltage: {battery_voltage:.2f} V', fg='green')
-    if 10 < battery_soc <= 20:
-        click.secho(f'Battery Remaining Capacity: {battery_soc}%', fg='yellow')
-        click.secho(f'Battery Voltage: {battery_voltage:.2f} V', fg='yellow')
-    if battery_soc <= 10 and not battery_is_charging:
-        click.secho(f'Battery Remaining Capacity: {battery_soc}% Please Plug In The Charger', fg='red')
-        click.secho(f'Battery Voltage: {battery_voltage:.2f}V', fg='red')
-    elif battery_soc <= 10 and battery_is_charging:
-        click.secho(f'Battery Remaining Capacity: {battery_soc}%', fg='red')
-        click.secho(f'Battery Voltage: {battery_voltage:.2f}V', fg='red')
+    # The battery values come from the BMS. When it isn't answering they are NaN:
+    # show a dash rather than a number that can't be trusted
+    battery_status = p.status.get('battery_status', 'UNKNOWN')
+    if battery_status == 'BMS_LOST':
+        click.secho("Battery: NOT RESPONDING. Values can't be trusted. Check the battery and its cable.", fg='red')
+    elif battery_status == 'NOT_DETECTED':
+        click.secho('Battery: NOT DETECTED. Running from the adapter.', fg='yellow')
+    elif battery_status == 'UNKNOWN':
+        click.secho('Battery: status not reported. Update the power board firmware to tell when the values are stale.')
+    if not p.status.get('battery_valid', True):
+        for name in ('Battery Remaining Capacity', 'Battery Voltage', 'Battery Health Percentage', 'Battery Current Supplied'):
+            click.secho(f'{name}: -', fg='bright_black')
+    else:
+        if battery_soc > 20:
+            click.secho(f'Battery Remaining Capacity: {battery_soc}%', fg='green')
+            click.secho(f'Battery Voltage: {battery_voltage:.2f} V', fg='green')
+        if 10 < battery_soc <= 20:
+            click.secho(f'Battery Remaining Capacity: {battery_soc}%', fg='yellow')
+            click.secho(f'Battery Voltage: {battery_voltage:.2f} V', fg='yellow')
+        if battery_soc <= 10 and not battery_is_charging:
+            click.secho(f'Battery Remaining Capacity: {battery_soc}% Please Plug In The Charger', fg='red')
+            click.secho(f'Battery Voltage: {battery_voltage:.2f}V', fg='red')
+        elif battery_soc <= 10 and battery_is_charging:
+            click.secho(f'Battery Remaining Capacity: {battery_soc}%', fg='red')
+            click.secho(f'Battery Voltage: {battery_voltage:.2f}V', fg='red')
 
-    if battery_soh >= 75:
-        click.secho(f'Battery Health Percentage: {battery_soh}%', fg='green')
-    if battery_soh < 75:
-        click.secho(f'Battery Health Percentage: {battery_soh}%', fg='yellow')
+        if battery_soh >= 75:
+            click.secho(f'Battery Health Percentage: {battery_soh}%', fg='green')
+        if battery_soh < 75:
+            click.secho(f'Battery Health Percentage: {battery_soh}%', fg='yellow')
 
-    click.secho(f'Battery Current Supplied: {current_battery:.2f} A', fg='green')
+        click.secho(f'Battery Current Supplied: {current_battery:.2f} A', fg='green')
 
     click.secho('######## Adapter Information ##########', fg='cyan')
     if not adapter_voltage_present:
@@ -73,9 +86,17 @@ def battery_check():
         click.secho(f'Adapter (physical switch): connected', fg='green')
     
     click.secho('######## Charger Information ##########', fg='cyan')
-    if battery_is_charging:
+    # battery_is_charging means the charger is running. It feeds the robot's power
+    # bus, so with no battery it powers the robot, and its output is the robot's load.
+    if battery_status == 'NOT_DETECTED':
+        click.secho('Battery Charger: On, powering the robot (no battery to charge)', fg='yellow')
+        click.secho(f'Charger Output: {current_charge:.2f} A (robot load)', fg='yellow')
+    elif battery_status == 'BMS_LOST' and battery_is_charging:
+        click.secho("Battery Charger: On. Can't tell whether the battery is charging (BMS not responding)", fg='yellow')
+        click.secho(f'Charger Output: {current_charge:.2f} A', fg='yellow')
+    elif battery_is_charging:
         click.secho(f'Battery Charger: Charging', fg='green')
-        click.secho(f'Battery Charger Current: {current_charge:.2f} A', fg='green')
+        click.secho(f'Charger Output: {current_charge:.2f} A', fg='green')
     elif not adapter_voltage_present:
         click.secho(f'Battery Charger: Not Charging. Adapter voltage not present', fg='yellow')
     elif battery_soc >= CHARGER_RESTART_SOC:
