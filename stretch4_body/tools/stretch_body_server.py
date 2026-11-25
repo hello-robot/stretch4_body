@@ -645,6 +645,7 @@ def main() -> int:
 
     robot_client = RobotClient()
     daemon_started_at = None # Set when this call (re)starts the daemon, so we wait for its server to come up
+    old_pid = None # The daemon's server process that --restart stops, if one was running
 
     if args.cleanup:
         hu.force_kill_process('stretch_body_server')
@@ -673,13 +674,20 @@ def main() -> int:
     elif args.restart:
         if not daemon_is_installed():
             if is_server_active(robot_client):
-                print("Stopping existing server...")
+                print("Stopping the running Stretch Body Server...")
                 with robot_client:
                     robot_client.kill_server()
-                wait_for_server_exit()
-            else: print("No instances of the server was found. Launching a new instance.")
+                if wait_for_server_exit():
+                    print("Stopped. Starting a new one...")
+            else:
+                print("No Stretch Body Server was running. Starting one...")
             return 0 if _launch(robot_client, args) else 1
 
+        old_pid = _daemon_pid()
+        if old_pid:
+            print(f"Stopping the running Stretch Body Server (pid {old_pid})...")
+        else:
+            print("No Stretch Body Server was running. Starting one...")
         daemon_started_at = time.time()
         if not install_and_start_daemon():
             print(f"{Fore.RED + Style.BRIGHT}Could not restart the Stretch Body Server daemon.{Style.RESET_ALL}")
@@ -723,7 +731,12 @@ def main() -> int:
     if daemon_started_at is not None:
         if not wait_for_daemon(robot_client, daemon_started_at):
             return 1
-        print(f"\n{Fore.GREEN + Style.BRIGHT}Stretch Body Server has {'restarted' if args.restart else 'started'} successfully.{Style.RESET_ALL}\nUse --status to see status, or --logs for logs.")
+        new_pid = _daemon_pid()
+        if old_pid:
+            done = f"Stretch Body Server restarted: stopped pid {old_pid}, now running as pid {new_pid}."
+        else:
+            done = f"Stretch Body Server started (pid {new_pid})."
+        print(f"\n{Fore.GREEN + Style.BRIGHT}{done}{Style.RESET_ALL}\nUse --status to see status, or --logs for logs.")
 
     if not is_server_active(robot_client):
         if args.print:
@@ -888,11 +901,18 @@ def _manage_daemon(action:str):
     try:
         if action == "install":
             user_systemd_dir.mkdir(parents=True, exist_ok=True)
-            with open(service_file_path, "w") as f:
-                f.write(get_service_file_content(log_level))
+            content = get_service_file_content(log_level)
+            previous = service_file_path.read_text() if service_file_path.exists() else None
+            if previous != content:
+                with open(service_file_path, "w") as f:
+                    f.write(content)
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "--user", "enable", "stretch_body_server.service"], check=True)
-            print(f"Installed the service to {service_file_path}")
+            # Every --restart/--daemon reinstalls the service, so only say so when something changed
+            if previous is None:
+                print(f"Installed the service to {service_file_path}")
+            elif previous != content:
+                print(f"Updated the service at {service_file_path}")
             
         elif action == "uninstall":
             subprocess.run(["systemctl", "--user", "stop", "stretch_body_server.service"], check=False)
@@ -982,6 +1002,11 @@ def _daemon_props(*names) -> dict:
     except FileNotFoundError:
         return {}
     return dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+
+def _daemon_pid():
+    """PID of the daemon's server process, or None if it isn't running."""
+    pid = _daemon_props('MainPID').get('MainPID', '0')
+    return int(pid) if pid.isdigit() and int(pid) > 0 else None
 
 def _daemon_journal(since:float) -> list:
     """The daemon's output since the given time: its log records, plus anything it printed before logging was set up."""
