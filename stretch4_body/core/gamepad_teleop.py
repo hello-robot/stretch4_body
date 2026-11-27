@@ -72,7 +72,7 @@ class GamePadTeleop(Device):
 
         self.motion_profile = MotionProfile.MEDIUM
         self.control_mapping = ControlMapping.JOINT_SPACE
-        self.contact_sensitivity_profile = GuardedContactSensitivity.MEDIUM
+        self.contact_sensitivity_profile = GuardedContactSensitivity.medium_strength
 
         self.gamepad_controller = gc.GamePadController()
         self.precision_mode = 0.0

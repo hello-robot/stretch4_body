@@ -57,8 +57,8 @@ class PrismaticJoint(Device):
         self.watchdog_enabled = False
         self.total_range = abs(self.params['range_m'][1] - self.params['range_m'][0])
         self.ts_collision_stop = {'pos': 0, 'neg': 0}
-        self.contact_sensitivity_pos = self.motor.params['guarded_contact']['sensitivity_default']['coeff_sensitivity_pos']
-        self.contact_sensitivity_neg = self.motor.params['guarded_contact']['sensitivity_default']['coeff_sensitivity_neg']
+        self.contact_sensitivity_pos = self.motor.params['guarded_contact']['medium_strength']['coeff_sensitivity_pos']
+        self.contact_sensitivity_neg = self.motor.params['guarded_contact']['medium_strength']['coeff_sensitivity_neg']
 
     # ###########  Device Methods #############
     def startup(self):
@@ -71,7 +71,7 @@ class PrismaticJoint(Device):
             self.motor.set_motion_limits(self.translate_m_to_motor_rad(self.soft_motion_limits['current'][0]),
                                          self.translate_m_to_motor_rad(self.soft_motion_limits['current'][1]))
             if int(str(self.motor.board_info['protocol_version'])[1:]) >= 8:
-                self.set_guarded_contact_sensitivity('sensitivity_default')
+                self.set_guarded_contact_sensitivity('medium_strength')
         else:
             self.logger.error('Failed to start %s'%self.name.capitalize())
         return success
@@ -192,7 +192,7 @@ class PrismaticJoint(Device):
     def set_guarded_contact_sensitivity(self, mode_name=None):
         if self.motor.hw_valid and int(str(self.motor.board_info['protocol_version'])[1:]) < 8:
             raise NotImplementedError('This method not supported for firmware on protocol {0}.'.format(self.motor.board_info['protocol_version']))
-        mode_name = mode_name or 'sensitivity_default'
+        mode_name = mode_name or 'medium_strength'
         if mode_name == 'off':
             self.disable_guarded_mode()
             return

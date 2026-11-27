@@ -43,7 +43,7 @@ def goals_sent(w):
 
 def test_params_loaded(wrist):
     assert wrist.guarded_contact.enabled
-    assert wrist.status['guarded_contact']['sensitivity'] == 'sensitivity_default'
+    assert wrist.status['guarded_contact']['sensitivity'] == 'medium_strength'
     assert wrist.status['in_guarded_event'] is False
 
 
@@ -125,16 +125,16 @@ def test_runstop_clears_event(wrist):
 
 
 def test_set_sensitivity(wrist):
-    wrist.set_guarded_contact_sensitivity('sensitivity_high')
+    wrist.set_guarded_contact_sensitivity('low_strength')
     assert wrist.status['guarded_contact']['contact_mA_pos'] == 65.0
     wrist.move_to(1.0)
     stall(wrist, 0.3, current_mA=80.0)  # Over high's 65 mA, under default's 150
     assert wrist.status['in_guarded_event']
 
     wrist.set_guarded_contact_sensitivity('sensitivity_bogus')
-    assert wrist.status['guarded_contact']['sensitivity'] == 'sensitivity_high'
+    assert wrist.status['guarded_contact']['sensitivity'] == 'low_strength'
     wrist.set_guarded_contact_sensitivity(None)
-    assert wrist.status['guarded_contact']['sensitivity'] == 'sensitivity_default'
+    assert wrist.status['guarded_contact']['sensitivity'] == 'medium_strength'
 
 
 def test_robot_profiles_name_wrist_sensitivities():
@@ -162,7 +162,7 @@ def test_reads_current_every_cycle_in_direct_mode(wrist):
 
 def test_strong_ignores_a_hand(wrist):
     """Strong is nearly no guard: pushing into a hand (up to ~490 mA, briefly) does not trip it."""
-    wrist.set_guarded_contact_sensitivity('sensitivity_low')
+    wrist.set_guarded_contact_sensitivity('high_strength')
     wrist.move_to(1.0)
     stall(wrist, 2.0, current_mA=300.0)
     assert not wrist.status['in_guarded_event']
@@ -179,12 +179,12 @@ def test_end_of_arm_sets_one_joint_or_all(wrist):
     eoa.motors = {'wrist_pitch': wrist, 'wrist_yaw': other}
     eoa.pt_lock = MagicMock()
     eoa.logger = MagicMock()
-    eoa.set_guarded_contact_sensitivity('sensitivity_high', 'wrist_pitch')
-    assert wrist.status['guarded_contact']['sensitivity'] == 'sensitivity_high'
+    eoa.set_guarded_contact_sensitivity('low_strength', 'wrist_pitch')
+    assert wrist.status['guarded_contact']['sensitivity'] == 'low_strength'
     other.set_guarded_contact_sensitivity.assert_not_called()
     eoa.set_guarded_contact_sensitivity(None)
-    assert wrist.status['guarded_contact']['sensitivity'] == 'sensitivity_default'
+    assert wrist.status['guarded_contact']['sensitivity'] == 'medium_strength'
     other.set_guarded_contact_sensitivity.assert_called_once_with(None)
-    eoa.set_guarded_contact_sensitivity('sensitivity_high', 'no_such_joint')
+    eoa.set_guarded_contact_sensitivity('low_strength', 'no_such_joint')
     eoa.logger.warning.assert_called_once()
 
