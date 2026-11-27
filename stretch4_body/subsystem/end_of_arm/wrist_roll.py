@@ -1,15 +1,16 @@
 import threading
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
+from stretch4_body.subsystem.end_of_arm.guarded_wrist_joint import GuardedWristJoint
 import stretch4_body.core.hello_utils as hu
 
 
-class WristRoll(FeetechSMHello):
+class WristRoll(GuardedWristJoint):
     """
     API to the Stretch RE1 wrist roll joint
     """
 
     def __init__(self, chain=None, usb=None, name="wrist_roll"):
-        FeetechSMHello.__init__(self, name, chain, usb)
+        GuardedWristJoint.__init__(self, name, chain, usb)
         self.poses = {
             "cw_90": hu.deg_to_rad(90.0),
             "forward": hu.deg_to_rad(0.0),

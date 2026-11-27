@@ -1,15 +1,16 @@
 import threading
 from stretch4_body.core.feetech.feetech_SM_hello import FeetechSMHello
+from stretch4_body.subsystem.end_of_arm.guarded_wrist_joint import GuardedWristJoint
 import stretch4_body.core.hello_utils as hu
 
 
-class WristPitch(FeetechSMHello):
+class WristPitch(GuardedWristJoint):
     """
     API to the Stretch SE4 wrist pitch joint
     """
 
     def __init__(self, chain=None, usb=None, name="wrist_pitch"):
-        FeetechSMHello.__init__(self, name, chain, usb)
+        GuardedWristJoint.__init__(self, name, chain, usb)
         self.poses = {
             "up": hu.deg_to_rad(56.0),
             "forward": hu.deg_to_rad(0.0),

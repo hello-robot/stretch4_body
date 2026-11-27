@@ -1213,6 +1213,18 @@ class WristJointClient(SubsystemClient):
         Enable torque on the joint to actively hold position.
         """
         self._queue_command(f'{self.joint_name}.end_of_arm', "enable_torque", self.joint_name)
+    def set_guarded_contact_sensitivity(self, mode_name=None):
+        """
+        Set this joint's guarded contact sensitivity (wrist joints).
+
+        Parameters
+        ----------
+        mode_name : str, optional
+            A sensitivity in the joint's guarded_contact params (e.g. 'sensitivity_high').
+            None resets to sensitivity_default.
+        """
+        self._queue_command(f'{self.joint_name}.end_of_arm', "set_guarded_contact_sensitivity", mode_name,
+                            self.joint_name)
     def home(self, end_pos=None,wait_on_completion=True, timeout=20):
         """
         Home the joint.
@@ -1269,6 +1281,10 @@ class WristJointClient(SubsystemClient):
         print('Timestamp PC', self.status['timestamp_pc'])
         print('Stalled', self.status['stalled'])
         print('Stall Overload', self.status['stall_overload'])
+        if 'in_guarded_event' in self.status:
+            print('In Guarded Event', self.status['in_guarded_event'])
+            print('Guarded Events', self.status['guarded_event'])
+            print('Guarded Contact Sensitivity', self.status['guarded_contact']['sensitivity'])
         print('Is Calibrated', self.status['pos_calibrated'])
         print('Is homing: %d' % self.status['is_homing'])
 
@@ -1547,6 +1563,19 @@ class EndOfArmClient(SubsystemClient):
             return False
         self._queue_command(f'{joint}.end_of_arm', "unpause_sentry", joint)
         return True
+
+    def set_guarded_contact_sensitivity(self, mode_name=None):
+        """
+        Set the guarded contact sensitivity of the wrist joints.
+
+        Parameters
+        ----------
+        mode_name : str, optional
+            Name of the sensitivity in the wrist joints' guarded_contact params
+            (e.g. 'sensitivity_default', 'sensitivity_high', 'sensitivity_low').
+            None will reset to default
+        """
+        self._queue_command('end_of_arm', "set_guarded_contact_sensitivity", mode_name)
 
     def home(self,wait_on_completion=True,timeout=45):
         """
