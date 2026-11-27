@@ -490,6 +490,7 @@ SE4_eoa_wrist_dw4_tool_nil={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 95.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -502,6 +503,7 @@ SE4_eoa_wrist_dw4_tool_nil={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -514,6 +516,7 @@ SE4_eoa_wrist_dw4_tool_nil={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -564,6 +567,7 @@ SE4_eoa_wrist_dw4_tool_sg4={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 90.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -576,6 +580,7 @@ SE4_eoa_wrist_dw4_tool_sg4={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -588,6 +593,7 @@ SE4_eoa_wrist_dw4_tool_sg4={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -629,6 +635,7 @@ SE4_eoa_wrist_dw4_tool_sg4_v2={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 90.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -641,6 +648,7 @@ SE4_eoa_wrist_dw4_tool_sg4_v2={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -653,6 +661,7 @@ SE4_eoa_wrist_dw4_tool_sg4_v2={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -704,6 +713,7 @@ SE4_eoa_wrist_dw4_tool_pg4={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 90.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -716,6 +726,7 @@ SE4_eoa_wrist_dw4_tool_pg4={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -728,6 +739,7 @@ SE4_eoa_wrist_dw4_tool_pg4={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -771,6 +783,7 @@ SE4_eoa_wrist_dw4_tool_tablet={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 95.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -783,6 +796,7 @@ SE4_eoa_wrist_dw4_tool_tablet={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -795,6 +809,7 @@ SE4_eoa_wrist_dw4_tool_tablet={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -830,6 +845,7 @@ SE4_eoa_wrist_dw4_tool_calibration={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 95.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -842,6 +858,7 @@ SE4_eoa_wrist_dw4_tool_calibration={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -854,6 +871,7 @@ SE4_eoa_wrist_dw4_tool_calibration={
                     'enable_guarded_mode': 1,
                     'drive_deadband_rad': 0.01,  # Goal must lead the joint by this much for it to count as driven
                     'release_after_s': 0.2,  # Event clears once no command arrives for this long (teleop sends every ~67 ms)
+                    'off': 0,  # set_guarded_contact_sensitivity('off') turns guarded contact off; any other turns it on
                     'medium_strength': {'contact_mA_pos': 150.0, 'contact_mA_neg': 150.0, 'contact_s': 0.25},
                     'low_strength': {'contact_mA_pos': 65.0, 'contact_mA_neg': 65.0, 'contact_s': 0.1},
                     'high_strength': {'contact_mA_pos': 500.0, 'contact_mA_neg': 500.0, 'contact_s': 0.5}}  # Hard jams only: near the 48% PWM cap
@@ -1616,7 +1634,12 @@ nominal_params={
         'max_rate_log_samples':10000,
         'guarded_contact':{
             # Profiles defining how sensitive the robot should be to unexpected forces (collisions) during different activities
-            'off':0,
+            'off':{
+                    'lift':'off',
+                    'arm':'off',
+                    'omnibase':'off',
+                    'end_of_arm':'off'
+            },
             'low_strength':{
                     'lift':'low_strength',
                     'arm':'low_strength',

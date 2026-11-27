@@ -142,8 +142,7 @@ def test_robot_profiles_name_wrist_sensitivities():
     params = RobotParams.get_params()[1]
     sensitivities = params['wrist_pitch']['guarded_contact']
     for mode, profile in params['robot']['guarded_contact'].items():
-        if isinstance(profile, dict):
-            assert profile['end_of_arm'] in sensitivities, mode
+        assert profile['end_of_arm'] in sensitivities, mode
 
 
 def test_reads_current_every_cycle_in_direct_mode(wrist):
@@ -172,6 +171,31 @@ def test_strong_ignores_a_hand(wrist):
     assert wrist.status['in_guarded_event']
 
 
+def test_off_profile_and_status(wrist):
+    """'off' turns guarded contact off and any other sensitivity turns it back on, as on the steppers."""
+    assert wrist.status['enable_guarded_mode'] == 1
+    wrist.move_to(1.0)
+    stall(wrist, 0.3)
+    assert wrist.status['in_guarded_event']
+
+    wrist.set_guarded_contact_sensitivity('off')
+    assert wrist.status['enable_guarded_mode'] == 0
+    assert wrist.status['guarded_contact']['enabled'] is False
+    assert not wrist.status['in_guarded_event']  # Turning it off frees the joint
+    wrist.move_to(1.0)
+    stall(wrist, 2.0)
+    assert not wrist.status['in_guarded_event']
+
+    wrist.set_guarded_contact_sensitivity('sensitivity_bogus')  # Rejected, so stays off
+    assert wrist.status['enable_guarded_mode'] == 0
+
+    wrist.set_guarded_contact_sensitivity('low_strength')
+    assert wrist.status['enable_guarded_mode'] == 1
+    wrist.move_to(1.0)
+    stall(wrist, 0.2, current_mA=80.0)  # The high sensitivity trips at 0.1 s
+    assert wrist.status['in_guarded_event']
+
+
 def test_end_of_arm_sets_one_joint_or_all(wrist):
     from stretch4_body.subsystem.end_of_arm.end_of_arm import EndOfArm
     other = MagicMock()
@@ -179,12 +203,46 @@ def test_end_of_arm_sets_one_joint_or_all(wrist):
     eoa.motors = {'wrist_pitch': wrist, 'wrist_yaw': other}
     eoa.pt_lock = MagicMock()
     eoa.logger = MagicMock()
-    eoa.set_guarded_contact_sensitivity('low_strength', 'wrist_pitch')
-    assert wrist.status['guarded_contact']['sensitivity'] == 'low_strength'
+    eoa.set_guarded_contact_sensitivity('off', 'wrist_pitch')
+    assert wrist.status['enable_guarded_mode'] == 0
     other.set_guarded_contact_sensitivity.assert_not_called()
     eoa.set_guarded_contact_sensitivity(None)
-    assert wrist.status['guarded_contact']['sensitivity'] == 'medium_strength'
+    assert wrist.status['enable_guarded_mode'] == 1
     other.set_guarded_contact_sensitivity.assert_called_once_with(None)
-    eoa.set_guarded_contact_sensitivity('low_strength', 'no_such_joint')
+    eoa.set_guarded_contact_sensitivity('off', 'no_such_joint')
     eoa.logger.warning.assert_called_once()
 
+
+def test_robot_client_enable_disable_use_the_off_profile():
+    from stretch4_body.robot.robot_client import OmniBaseClient, PrismaticJointClient, WristJointClient
+    cases = [(WristJointClient, 'wrist_pitch.end_of_arm', ('wrist_pitch',)),
+             (PrismaticJointClient, 'lift', ()),
+             (OmniBaseClient, 'omnibase', ())]
+    for cls, subsystem, extra in cases:
+        c = cls.__new__(cls)
+        c.joint_name = 'wrist_pitch'
+        c.name = 'lift'
+        c._queue_command = MagicMock()
+        c.disable_guarded_contact()
+        c.enable_guarded_contact()
+        c.enable_guarded_contact('low_strength')
+        assert [call.args for call in c._queue_command.call_args_list] == [
+            (subsystem, 'set_guarded_contact_sensitivity', 'off', *extra),
+            (subsystem, 'set_guarded_contact_sensitivity', None, *extra),
+            (subsystem, 'set_guarded_contact_sensitivity', 'low_strength', *extra)], cls
+
+
+def test_robot_client_lists_per_joint_modes():
+    from stretch4_body.core.robot_params import RobotParams
+    from stretch4_body.robot.robot_client import PrismaticJointClient, WristJointClient
+    params = RobotParams.get_params()[1]
+    for joint in ('wrist_yaw', 'wrist_pitch', 'wrist_roll'):
+        c = WristJointClient.__new__(WristJointClient)
+        c.joint_name = joint
+        c.robot_params = params
+        assert c.get_guarded_contact_modes() == ['off', 'medium_strength', 'low_strength', 'high_strength']
+    c = PrismaticJointClient.__new__(PrismaticJointClient)
+    c.name = 'lift'
+    c.robot_params = params
+    modes = c.get_guarded_contact_modes()
+    assert 'off' in modes and 'medium_strength' in modes

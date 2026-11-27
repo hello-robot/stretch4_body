@@ -551,7 +551,10 @@ nominal_params={
         'enable_rate_log':1,
         'max_rate_log_samples':10000,
         'guarded_contact':{
-            'off':0,
+            'off':{
+                    'lift':'off',
+                    'omnibase':'off'
+            },
             'default':{
                     'lift':'medium_strength',
                     'omnibase':'medium_strength'

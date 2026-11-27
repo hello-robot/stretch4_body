@@ -336,8 +336,8 @@ class EndOfArm(FeetechSMChain):
     def set_guarded_contact_sensitivity(self, sensitivity_name=None, joint=None):
         """
         Set the guarded contact sensitivity of the joints that have guarded contact (the wrist joints).
-        sensitivity_name: a '*_strength' entry in the joints' guarded_contact params (eg 'low_strength').
-                          None resets to medium_strength. Normally set from the robot-level profile.
+        sensitivity_name: a '*_strength' entry in the joints' guarded_contact params (eg 'low_strength'),
+                          or 'off'. None resets to medium_strength. Normally set from the robot-level profile.
         joint: name of one joint to set (string), or None for all of them.
         """
         if joint is not None and joint not in self.motors:

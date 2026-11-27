@@ -11,6 +11,7 @@ class GuardedContactSensitivity(Enum):
     low_strength = auto()  # Low Strength
     medium_strength = auto() # Medium Strength (default in Stretch Body)
     high_strength = auto() # High Strength
+    off = auto()  # No GC
 
     def _get_cycleable_options(self):
         # return list(type(self))
